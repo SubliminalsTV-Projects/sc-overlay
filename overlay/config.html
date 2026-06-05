@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SC Loadout Overlay — Config</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root { --cyan: #36e0ff; --amber: #ffb23e; --muted: #8ba6b6; --bg: #070e14; --card: #0d1822; --line: rgba(54,224,255,.22); }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Rajdhani", system-ui, sans-serif; background: radial-gradient(circle at 20% 0%, #112030, #04070b 70%); color: #eaf6fb; min-height: 100vh; padding: 32px; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-family: "Orbitron", sans-serif; font-size: 22px; color: #fff; text-shadow: 0 0 14px rgba(54,224,255,.4); }
+  h1 small { display:block; font-family:"Rajdhani"; font-size:13px; letter-spacing:2px; color: var(--cyan); text-transform:uppercase; margin-top:4px; font-weight:600; }
+  .card { background: var(--card); border: 1px solid var(--line); padding: 18px; margin-top: 20px; clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px)); }
+  .label { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--cyan); font-weight: 700; margin-bottom: 10px; }
+  input[type=text] { width: 100%; background: #04090d; border: 1px solid var(--line); color: #eaf6fb; padding: 10px 12px; font-family: "Rajdhani"; font-size: 15px; }
+  input[type=text]:focus { outline: none; border-color: var(--cyan); }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .row .ship { font-weight: 600; min-width: 150px; }
+  .row .ship.bad { color: #ff6b6b; }
+  .row .u { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button { font-family: "Rajdhani"; font-weight: 600; letter-spacing: 1px; cursor: pointer; border: 1px solid var(--cyan); background: rgba(54,224,255,.1); color: var(--cyan); padding: 7px 14px; text-transform: uppercase; font-size: 12px; }
+  button:hover { background: rgba(54,224,255,.2); }
+  button.amber { border-color: var(--amber); color: var(--amber); background: rgba(255,178,62,.1); }
+  button.danger { border-color: #ff6b6b; color: #ff6b6b; background: rgba(255,107,107,.08); padding: 5px 9px; }
+  .active-tag { font-size: 10px; letter-spacing: 1px; color: #07140a; background: var(--cyan); padding: 2px 7px; font-weight: 700; }
+  .add { display: flex; gap: 8px; margin-top: 6px; }
+  .opt { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 15px; }
+  .opt input { width: 18px; height: 18px; accent-color: var(--cyan); }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+  a { color: var(--cyan); }
+  .saved { color: var(--amber); font-size: 13px; margin-left: 10px; opacity: 0; transition: opacity .2s; }
+  .saved.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Loadout Overlay<small>Configuration</small></h1>
+
+  <div class="card">
+    <div class="label">Erkul Loadout URLs</div>
+    <div id="list"></div>
+    <div class="add">
+      <input type="text" id="newUrl" placeholder="https://www.erkul.games/loadout/XXXXXXXX" />
+      <button onclick="addUrl()">Add</button>
+    </div>
+    <div class="hint">Paste an erkul share URL per ship. The overlay reads the ship from each build automatically — when that ship spawns in-game, it switches to it. Click a row to make it the active overlay now.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Game Log + Auto-Switch</div>
+    <input type="text" id="logPath" placeholder="path to game.log" />
+    <label class="opt"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
+    <div class="hint">Only <em>your</em> ship triggers a switch (the log marks it <code>by player 0</code>). Leave the path as the default unless your install differs.</div>
+  </div>
+
+  <div style="margin-top:20px; display:flex; align-items:center;">
+    <button class="amber" onclick="save()">Save</button>
+    <span class="saved" id="saved">Saved ✓</span>
+    <span style="flex:1"></span>
+    <a href="/" target="_blank">Open overlay ↗</a>
+  </div>
+</div>
+
+<script>
+  let cfg = { urls: [], activeUrl: null, logPath: "", autoSwitch: true, resolved: [] };
+
+  async function loadCfg() {
+    cfg = await (await fetch("/api/config")).json();
+    document.getElementById("logPath").value = cfg.logPath || "";
+    document.getElementById("autoSwitch").checked = !!cfg.autoSwitch;
+    renderList();
+  }
+
+  function renderList() {
+    const host = document.getElementById("list");
+    host.innerHTML = "";
+    if (!cfg.urls.length) { host.innerHTML = '<div class="hint">No loadouts yet — add one below.</div>'; return; }
+    cfg.urls.forEach((u, i) => {
+      const r = (cfg.resolved || []).find((x) => x.url === u) || { ship: "…", ok: true };
+      const isActive = u === cfg.activeUrl;
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML =
+        '<span class="ship' + (r.ok ? "" : " bad") + '">' + r.ship + "</span>" +
+        '<span class="u">' + u + "</span>" +
+        (isActive ? '<span class="active-tag">ACTIVE</span>' : '<button onclick="setActive(\'' + u + "')\">Set Active</button>") +
+        '<button class="danger" onclick="removeUrl(' + i + ')">✕</button>';
+      host.appendChild(row);
+    });
+  }
+
+  function addUrl() {
+    const el = document.getElementById("newUrl");
+    const v = el.value.trim();
+    if (!v) return;
+    if (!/loadout\/[A-Za-z0-9_-]+/.test(v)) {
+      alert("That's not a shareable build link. In erkul, click Share to save your build, then paste the /loadout/<id> URL it gives you.\n\nThe /live/calculator URL only exists in your browser and can't be loaded.");
+      return;
+    }
+    cfg.urls.push(v); el.value = ""; renderList(); save();
+  }
+  function removeUrl(i) { cfg.urls.splice(i, 1); renderList(); save(); }
+  async function setActive(url) {
+    const r = await (await fetch("/api/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })).json();
+    if (!r.ok) { alert("Couldn't load that build — make sure it's a saved erkul /loadout/ link, not the calculator."); return; }
+    cfg.activeUrl = url; renderList();
+  }
+
+  async function save() {
+    cfg.logPath = document.getElementById("logPath").value.trim();
+    cfg.autoSwitch = document.getElementById("autoSwitch").checked;
+    await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: cfg.urls, logPath: cfg.logPath, autoSwitch: cfg.autoSwitch }) });
+    const s = document.getElementById("saved"); s.classList.add("show"); setTimeout(() => s.classList.remove("show"), 1400);
+    await loadCfg();
+  }
+
+  loadCfg();
+</script>
+</body>
+</html>

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SC Loadout Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --cyan: #36e0ff;
+    --cyan-dim: #6fa8bd;
+    --amber: #ffb23e;
+    --text: #eaf6fb;
+    --muted: #8ba6b6;
+    --panel: rgba(7, 14, 20, 0.82);
+    --line: rgba(54, 224, 255, 0.28);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; }
+  body {
+    font-family: "Rajdhani", system-ui, sans-serif;
+    color: var(--text);
+    padding: 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .panel {
+    width: 410px;
+    background: linear-gradient(160deg, rgba(11, 20, 28, 0.9), rgba(5, 10, 15, 0.82));
+    border: 1px solid var(--line);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.4),
+      0 18px 60px rgba(0, 0, 0, 0.55),
+      inset 0 0 60px rgba(54, 224, 255, 0.05);
+    backdrop-filter: blur(9px);
+    clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .head {
+    position: relative;
+    padding: 16px 18px 14px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--line);
+    background:
+      linear-gradient(90deg, rgba(54, 224, 255, 0.08), transparent 60%);
+  }
+  .eyebrow {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--cyan); font-weight: 600;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan); animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  .ship {
+    font-family: "Orbitron", sans-serif; font-weight: 800;
+    font-size: 26px; line-height: 1.05; margin-top: 8px; color: #fff;
+    text-shadow: 0 0 16px rgba(54, 224, 255, 0.45);
+  }
+  .subline {
+    margin-top: 5px; font-size: 13px; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--cyan-dim); font-weight: 600;
+  }
+  .chev {
+    position: absolute; top: 18px; right: 18px;
+    color: var(--cyan); font-size: 18px; transition: transform 0.25s;
+  }
+  .panel.collapsed .chev { transform: rotate(180deg); }
+
+  /* ── Body ── */
+  .body { padding: 6px 18px 4px; transition: opacity 0.2s; }
+  .panel.collapsed .body, .panel.collapsed .foot { display: none; }
+
+  .section { padding: 11px 0 4px; }
+  .section + .section { border-top: 1px solid rgba(54, 224, 255, 0.1); }
+  .sec-label {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 10.5px; letter-spacing: 2.5px; text-transform: uppercase;
+    color: var(--cyan); font-weight: 700; margin-bottom: 8px;
+  }
+  .sec-icon {
+    width: 15px; height: 15px; flex: none; background: var(--cyan);
+    -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat;
+    filter: drop-shadow(0 0 4px rgba(54, 224, 255, 0.5));
+  }
+
+  .row {
+    display: flex; align-items: center; gap: 11px;
+    padding: 7px 9px; margin-bottom: 4px;
+    background: rgba(255, 255, 255, 0.02);
+    border-left: 2px solid rgba(54, 224, 255, 0.25);
+  }
+  .row.mod {
+    border-left-color: var(--amber);
+    background: linear-gradient(90deg, rgba(255, 178, 62, 0.13), rgba(255, 178, 62, 0.02));
+  }
+  .size {
+    flex: none; min-width: 30px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Orbitron", sans-serif; font-size: 12px; font-weight: 700;
+    color: var(--cyan); border: 1px solid var(--line);
+    background: rgba(54, 224, 255, 0.06);
+    clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
+  }
+  .row.mod .size { color: var(--amber); border-color: rgba(255, 178, 62, 0.5); background: rgba(255, 178, 62, 0.08); }
+  .info { flex: 1; min-width: 0; }
+  .name {
+    font-size: 16px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .row.mod .name { color: #fff; }
+  .meta { font-size: 12px; color: var(--muted); letter-spacing: 0.5px; }
+  .qty {
+    flex: none; font-family: "Orbitron", sans-serif; font-weight: 700;
+    font-size: 13px; color: var(--cyan-dim);
+  }
+  .modpill {
+    flex: none; font-size: 9.5px; letter-spacing: 1.5px; font-weight: 700;
+    color: #1a1205; background: var(--amber); padding: 2px 6px;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 4px 100%, 0 calc(100% - 4px));
+  }
+
+  /* ── Footer ── */
+  .foot {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 18px 12px; font-size: 11px; color: var(--muted);
+    letter-spacing: 0.5px; border-top: 1px solid var(--line);
+  }
+  .legend { display: flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; background: var(--amber); display: inline-block;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 3px 100%, 0 calc(100% - 3px)); }
+  .src { color: var(--cyan-dim); text-decoration: none; }
+  .src:hover { color: var(--cyan); }
+  .erkul-btn {
+    font-family: "Rajdhani", sans-serif; font-weight: 600; font-size: 11px;
+    letter-spacing: 1px; text-transform: uppercase; text-decoration: none;
+    color: var(--cyan); border: 1px solid var(--line);
+    background: rgba(54, 224, 255, 0.08); padding: 5px 11px; white-space: nowrap;
+    clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
+    transition: background 0.15s, box-shadow 0.15s;
+  }
+  .erkul-btn:hover { background: rgba(54, 224, 255, 0.2); box-shadow: 0 0 12px rgba(54, 224, 255, 0.25); }
+</style>
+</head>
+<body>
+  <div class="panel" id="panel">
+    <div class="head" id="head">
+      <div class="eyebrow"><span class="dot"></span> Active Loadout</div>
+      <div class="ship" id="ship">—</div>
+      <div class="subline" id="subline"></div>
+      <div class="chev">▾</div>
+    </div>
+    <div class="body" id="sections"></div>
+    <div class="foot">
+      <span class="legend"><i></i> Modified from stock · <a class="src" href="https://www.erkul.games" target="_blank" rel="noopener noreferrer">via erkul.games</a></span>
+      <a id="loadoutLink" class="erkul-btn" href="https://www.erkul.games" target="_blank" rel="noopener noreferrer">View loadout ↗</a>
+    </div>
+  </div>
+
+  <script src="loadout.js"></script>
+  <script>
+    // Section config: which categories go where, in display order.
+    // Section order mirrors erkul's component panel. Empty sections auto-hide.
+    // (Mining/EMP/QED positions are inferred — refine when a ship with them shows up.)
+    const SECTIONS = [
+      { label: "Weapons", cats: ["mount", "weapon"], icon: "weapons" },
+      { label: "Turrets", cats: ["turret"], icon: "turrets", aggregate: "turrets" },
+      { label: "Mining Lasers", cats: ["mining-laser"], icon: "weapons" },
+      { label: "Missiles", cats: ["missile-rack"], icon: "missiles", aggregate: "children" },
+      { label: "Modules", cats: ["module"], icon: "computer" },
+      { label: "EMP", cats: ["emp"], icon: "emps" },
+      { label: "QED", cats: ["qed"], icon: "qeds" },
+      { label: "Shields", cats: ["shield"], icon: "shields" },
+      { label: "Power", cats: ["power-plant"], icon: "power-plants" },
+      { label: "Cooling", cats: ["cooler"], icon: "coolers" },
+      { label: "Quantum", cats: ["qdrive"], icon: "quantum-drives" },
+      { label: "Systems", cats: ["radar", "controller-flight"], icon: "radars" },
+      { label: "Paint", cats: ["paint"], icon: "paints" },
+    ];
+
+    // Turn one top-level build item into a display entry {name, sub, size, modified, key}.
+    function toEntry(item) {
+      if (item.category === "mount") {
+        const w = item.children.find((c) => c.category === "weapon" || c.category === "mining-laser") || item;
+        return {
+          name: w.name, sub: "on " + item.name,
+          size: w.size, modified: w.modified || item.modified,
+        };
+      }
+      if (item.category === "missile-rack" || item.category === "module") {
+        // Summarize what's loaded inside the rack/module (torpedoes, turret guns, etc.).
+        const counts = {};
+        for (const m of item.children) counts[m.name] = (counts[m.name] || 0) + 1;
+        const inner = Object.entries(counts).map(([n, c]) => c + "× " + n).join(", ");
+        const sub = inner || item.subType || (item.category === "module" ? "Module" : "");
+        const childMod = item.children.some((c) => c.modified);
+        return { name: item.name, sub, size: item.size, modified: item.modified || childMod };
+      }
+      if (item.category === "paint") {
+        return { name: item.name, sub: "Livery", size: null, modified: item.modified };
+      }
+      const sub = [item.subType, item.grade ? "Grade " + item.grade : ""].filter(Boolean).join(" · ");
+      return { name: item.name, sub, size: item.size, modified: item.modified };
+    }
+
+    function groupKey(e) { return [e.name, e.sub, e.size, e.modified].join("|"); }
+
+    function render(build) {
+      document.getElementById("ship").textContent = build.ship.name;
+      document.getElementById("subline").textContent =
+        (build.ship.size != null ? "Size " + build.ship.size + " · " : "") + "Ship Loadout";
+
+      // Point the footer button at this exact build on erkul.
+      document.getElementById("loadoutLink").href =
+        build.id ? "https://www.erkul.games/loadout/" + build.id : "https://www.erkul.games";
+
+      const host = document.getElementById("sections");
+      host.innerHTML = "";
+      for (const sec of SECTIONS) {
+        const items = build.items.filter((i) => sec.cats.includes(i.category));
+        if (!items.length) continue;
+
+        // Build entries, then group identical ones with a count.
+        const groups = new Map();
+        if (sec.aggregate === "turrets") {
+          // A turret's guns are nested turret -> mount -> weapon. Total them so
+          // turret firepower shows (e.g. "10× CF-337 Panther"), not blank.
+          for (const turret of items) {
+            const weps = [];
+            const dig = (ns) => { for (const n of ns || []) { if (n.category === "weapon") weps.push(n); dig(n.children); } };
+            dig(turret.children);
+            if (!weps.length) {
+              const k = "t|" + turret.name + "|" + turret.size;
+              const g = groups.get(k) || { name: turret.name, sub: "Turret", size: turret.size, modified: turret.modified, qty: 0 };
+              g.qty += 1;
+              groups.set(k, g);
+              continue;
+            }
+            for (const w of weps) {
+              const k = w.name + "|" + w.size;
+              const g = groups.get(k) || { name: w.name, sub: "Turret-mounted", size: w.size, modified: false, qty: 0 };
+              g.qty += 1;
+              g.modified = g.modified || w.modified || turret.modified;
+              groups.set(k, g);
+            }
+          }
+        } else if (sec.aggregate === "children") {
+          // Count the actual ordnance across ALL racks, so 2 racks × 4 reads
+          // as "8× Ignite II" — the real total — not "4×" with a hidden ×2.
+          for (const rack of items) {
+            if (!rack.children.length) {
+              const k = "rack|" + rack.name + "|" + rack.size;
+              const g = groups.get(k) || { name: rack.name, sub: rack.subType || "Rack", size: rack.size, modified: rack.modified, qty: 0 };
+              g.qty += 1;
+              groups.set(k, g);
+              continue;
+            }
+            for (const ch of rack.children) {
+              const k = ch.name + "|" + ch.size;
+              const g = groups.get(k) || { name: ch.name, size: ch.size, modified: false, qty: 0, _racks: new Set() };
+              g.qty += 1;
+              g.modified = g.modified || ch.modified || rack.modified;
+              g._racks.add(rack.name);
+              groups.set(k, g);
+            }
+          }
+          for (const g of groups.values()) if (g._racks) g.sub = [...g._racks].join(", ");
+        } else {
+          for (const it of items) {
+            const e = toEntry(it);
+            const k = groupKey(e);
+            if (groups.has(k)) groups.get(k).qty++;
+            else groups.set(k, { ...e, qty: 1 });
+          }
+        }
+
+        const secEl = document.createElement("div");
+        secEl.className = "section";
+        const iconStyle = sec.icon
+          ? ' style="-webkit-mask-image:url(icons/' + sec.icon + '.png);mask-image:url(icons/' + sec.icon + '.png)"'
+          : "";
+        secEl.innerHTML =
+          '<div class="sec-label"><span class="sec-icon"' + iconStyle + "></span>" + sec.label + "</div>";
+        for (const e of groups.values()) {
+          const row = document.createElement("div");
+          row.className = "row" + (e.modified ? " mod" : "");
+          row.innerHTML =
+            '<div class="size">' + (e.size != null ? "S" + e.size : "—") + "</div>" +
+            '<div class="info"><div class="name">' + e.name + "</div>" +
+            (e.sub ? '<div class="meta">' + e.sub + "</div>" : "") + "</div>" +
+            (e.qty > 1 ? '<div class="qty">×' + e.qty + "</div>" : "") +
+            (e.modified ? '<div class="modpill">MOD</div>' : "");
+          secEl.appendChild(row);
+        }
+        host.appendChild(secEl);
+      }
+    }
+
+    // Collapse toggle: click header, or press "h" (Stream Deck can send the key).
+    const panel = document.getElementById("panel");
+    document.getElementById("head").addEventListener("click", () => panel.classList.toggle("collapsed"));
+    document.addEventListener("keydown", (e) => { if (e.key.toLowerCase() === "h") panel.classList.toggle("collapsed"); });
+
+    // Live data from the local backend, with SSE updates on ship-switch.
+    // Falls back to a baked loadout.js if the server isn't running.
+    async function load() {
+      try {
+        const r = await fetch("/api/loadout");
+        if (r.ok) { const b = await r.json(); if (b) { render(b); return; } }
+      } catch {}
+      if (window.LOADOUT) render(window.LOADOUT);
+    }
+    load();
+    try {
+      const es = new EventSource("/events");
+      es.onmessage = (ev) => { const b = JSON.parse(ev.data); if (b) render(b); };
+    } catch {}
+  </script>
+</body>
+</html>
