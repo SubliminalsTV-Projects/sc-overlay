@@ -9,6 +9,7 @@
     "start": "tsx src/index.ts",
     "loadout": "tsx src/erkul-dump.ts",
     "overlay": "tsx src/overlay-server.ts",
+    "agent": "tsx src/agent.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
