@@ -36,7 +36,11 @@ const SAMPLE_LOADOUT = "8GTv2047";
 async function probe(path: string) {
   const started = Date.now();
   try {
-    const r = await fetch(API + path, { headers: HEADERS, cache: "no-store" });
+    const r = await fetch(API + path, {
+      headers: HEADERS,
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
     const ms = Date.now() - started;
     const h = Object.fromEntries(r.headers);
 
@@ -73,7 +77,12 @@ export async function GET() {
   // are ephemeral, so expect this to vary between runs.
   let egressIp: string | null = null;
   try {
-    const j = await (await fetch("https://api.ipify.org?format=json", { cache: "no-store" })).json();
+    const j = await (
+      await fetch("https://api.ipify.org?format=json", {
+        cache: "no-store",
+        signal: AbortSignal.timeout(5_000),
+      })
+    ).json();
     egressIp = j.ip ?? null;
   } catch {
     /* non-fatal */
