@@ -45,11 +45,23 @@
     margin-top: 8px; color: #fff; text-shadow: 0 0 16px rgba(54,224,255,0.45); }
   .sub { margin-top: 3px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
     color: var(--cyan-dim); font-weight: 600; }
-  #missionSel { display: none; margin-top: 9px; width: 100%; font-family: "Rajdhani", sans-serif;
-    font-size: 13px; font-weight: 600; background: rgba(54,224,255,0.1); color: var(--text);
-    border: 1px solid var(--cyan); padding: 6px 9px; cursor: pointer; }
-  #missionSel:hover { background: rgba(54,224,255,0.18); }
-  #missionSel:focus { outline: none; box-shadow: 0 0 0 2px rgba(54,224,255,0.3); }
+  /* Custom mission dropdown (native <select> popups don't render in a transparent
+     always-on-top window). -webkit-app-region:no-drag so it stays clickable. */
+  #missionPick { display: none; position: relative; margin-top: 9px; -webkit-app-region: no-drag; }
+  #missionBtn { width: 100%; display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-family: "Rajdhani", sans-serif; font-size: 13px; font-weight: 600; text-align: left;
+    background: rgba(54,224,255,0.1); color: var(--text); border: 1px solid var(--cyan); padding: 6px 9px; }
+  #missionBtn:hover { background: rgba(54,224,255,0.18); }
+  #missionBtnLabel { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #missionBtn .caret { color: var(--cyan); font-size: 12px; }
+  #missionMenu { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 20;
+    background: #081218; border: 1px solid var(--cyan); max-height: 240px; overflow-y: auto;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+  #missionMenu.open { display: block; }
+  #missionMenu .opt { padding: 7px 10px; font-size: 13px; cursor: pointer; border-bottom: 1px solid rgba(54,224,255,0.1); }
+  #missionMenu .opt:last-child { border-bottom: none; }
+  #missionMenu .opt:hover { background: rgba(54,224,255,0.14); }
+  #missionMenu .opt.active { color: var(--cyan); font-weight: 700; }
   .progress { position: absolute; top: 14px; right: 16px; text-align: right; }
   .progress .frac { font-family: "Orbitron", sans-serif; font-weight: 700; font-size: 18px; color: var(--cyan); }
   .progress .lbl { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
@@ -106,7 +118,10 @@
       <div class="eyebrow"><span class="dot"></span> Blueprint Pool</div>
       <div class="title" id="title">No mission tracked</div>
       <div class="sub" id="sub"></div>
-      <select id="missionSel" title="Pick which accepted mission to show"></select>
+      <div id="missionPick">
+        <button id="missionBtn" type="button"><span id="missionBtnLabel">No mission tracked</span><span class="caret">▾</span></button>
+        <div id="missionMenu"></div>
+      </div>
       <div class="progress"><span class="frac" id="frac">0/0</span><div class="lbl">owned</div></div>
       <div id="completed"></div>
     </div>
@@ -186,24 +201,38 @@
   // Mission picker: the log can't tell us which mission you've *selected* to track,
   // so list every accepted mission and let you choose. Auto = newest with a pool.
   function renderPicker(v) {
-    const sel = $("missionSel");
+    const pick = $("missionPick");
     const list = v.missions || [];
-    if (list.length < 1) { sel.style.display = "none"; return; }
-    sel.style.display = "";
-    const opts = ['<option value="">Auto — newest with blueprints</option>'];
+    if (list.length < 1) { pick.style.display = "none"; return; }
+    pick.style.display = "";
+    $("missionBtnLabel").textContent = v.selectedId
+      ? (list.find((m) => m.id === v.selectedId)?.title || v.title || "Mission")
+      : ("Auto: " + (v.title || "none"));
+    // Disambiguate duplicate mission titles with a (1)/(2) suffix.
+    const counts = {}; list.forEach((m) => (counts[m.title] = (counts[m.title] || 0) + 1));
+    const seen = {};
+    const rows = ['<div class="opt' + (v.selectedId ? "" : " active") + '" data-id="">Auto — newest with blueprints</div>'];
     for (const m of list) {
-      const tag = m.hasPool ? "◆ " : "○ ";
-      opts.push('<option value="' + escapeAttr(m.id) + '">' + tag + escapeHtml(m.title) + "</option>");
+      let label = (m.hasPool ? "◆ " : "○ ") + m.title;
+      if (counts[m.title] > 1) { seen[m.title] = (seen[m.title] || 0) + 1; label += " (" + seen[m.title] + ")"; }
+      rows.push('<div class="opt' + (v.selectedId === m.id ? " active" : "") + '" data-id="' + escapeAttr(m.id) + '">' + escapeHtml(label) + "</div>");
     }
-    sel.innerHTML = opts.join("");
-    sel.value = v.selectedId || "";
+    $("missionMenu").innerHTML = rows.join("");
   }
-  $("missionSel").addEventListener("change", (e) => {
+  $("missionBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    $("missionMenu").classList.toggle("open");
+  });
+  $("missionMenu").addEventListener("click", (e) => {
+    const opt = e.target.closest(".opt");
+    if (!opt) return;
     fetch("/api/missions/select", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ missionId: e.target.value }),
+      body: JSON.stringify({ missionId: opt.getAttribute("data-id") }),
     });
+    $("missionMenu").classList.remove("open");
   });
+  document.addEventListener("click", () => $("missionMenu").classList.remove("open"));
 
   function setOwned(name, owned) {
     fetch("/api/missions/own", {
