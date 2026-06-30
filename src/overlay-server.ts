@@ -1,7 +1,7 @@
 import { createServer, type ServerResponse } from "node:http";
 import { writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, readFile } from "node:fs";
-import { extname, join } from "node:path";
+import { existsSync, readFileSync, readFile, readdirSync } from "node:fs";
+import { extname, join, dirname } from "node:path";
 
 import { resolveLoadout, type Build } from "./erkul.js";
 import { LogWatcher } from "./watcher.js";
@@ -225,6 +225,26 @@ const server = createServer(async (req, res) => {
   if (url === "/api/missions" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(tracker.view()));
+    return;
+  }
+
+  // Re-scan the current log + all rotated logbackups for received-blueprint receipts
+  // and fold them into the collected set (recovers history + accidental un-ticks).
+  if (url === "/api/missions/verify" && req.method === "POST") {
+    const paths: string[] = [];
+    if (existsSync(config.logPath)) paths.push(config.logPath);
+    try {
+      const backups = join(dirname(config.logPath), "logbackups");
+      for (const f of readdirSync(backups)) {
+        if (f.toLowerCase().endsWith(".log")) paths.push(join(backups, f));
+      }
+    } catch {
+      /* no logbackups dir */
+    }
+    const result = tracker.verifyFromLogs(paths);
+    syncFull(); // push the recovered collection to subliminal.gg if sync is on
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, ...result }));
     return;
   }
 

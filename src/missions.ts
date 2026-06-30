@@ -13,7 +13,8 @@
 import { EventEmitter } from "node:events";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { MissionEvent } from "./missions-parser.js";
+import { parseMissionEvent, type MissionEvent } from "./missions-parser.js";
+import { parseLine } from "./parser.js";
 
 // ---- dataset shape (matches tools/build-blueprint-data.sql output) ----
 export interface PoolEntry {
@@ -253,6 +254,51 @@ export class MissionTracker extends EventEmitter {
         // Reserved for finer tracked-mission detection; markers already cover it.
         break;
     }
+  }
+
+  /** Re-scan a set of log files for `Received Blueprint` receipts and fold them into
+   *  the collected set. Recovers history from rotated logbackups AND undoes accidental
+   *  un-ticks (a not-owned override is cleared when the logs prove the blueprint was
+   *  received). Read sequentially — backups can be tens of MB. */
+  verifyFromLogs(paths: string[]): { files: number; receipts: number; added: number; restored: number } {
+    const names = new Set<string>();
+    let files = 0;
+    let receipts = 0;
+    for (const p of paths) {
+      let text: string;
+      try {
+        text = readFileSync(p, "utf8");
+      } catch {
+        continue;
+      }
+      files++;
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.includes("Received Blueprint:")) continue; // cheap prefilter
+        const ev = parseMissionEvent(parseLine(line));
+        if (ev && ev.kind === "blueprintReceived") {
+          names.add(ev.name);
+          receipts++;
+        }
+      }
+    }
+    let added = 0;
+    for (const n of names) {
+      if (!this.observed.has(n)) {
+        this.observed.add(n);
+        added++;
+      }
+    }
+    // Clear any not-owned override the logs contradict — recovers accidental un-ticks.
+    let restored = 0;
+    for (const [name, val] of [...this.overrides]) {
+      if (val === false && matchesPoolName(name, names)) {
+        this.overrides.delete(name);
+        restored++;
+      }
+    }
+    this.saveState();
+    this.emit("change");
+    return { files, receipts, added, restored };
   }
 
   /** Manual owned/not-owned override (seeds pre-existing inventory the log can't see). */

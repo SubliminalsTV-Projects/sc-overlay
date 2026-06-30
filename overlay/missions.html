@@ -69,7 +69,16 @@
     font-weight: 700; font-size: 15px; margin-bottom: 4px; }
   .foot { padding: 8px 16px 12px; font-size: 11px; color: var(--muted); letter-spacing: 1px;
     display: flex; justify-content: space-between; border-top: 1px solid rgba(54,224,255,0.08); }
+  .foot { flex-direction: column; gap: 6px; }
+  .footrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; }
   .foot .patch { color: var(--cyan-dim); }
+  #verify { font-family: "Rajdhani", sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .5px;
+    cursor: pointer; padding: 3px 10px; border: 1px solid var(--line); color: var(--cyan);
+    background: rgba(54,224,255,0.08);
+    clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px)); }
+  #verify:hover { background: rgba(54,224,255,0.18); }
+  #verify:disabled { opacity: .6; cursor: default; }
+  #vstatus { color: var(--owned); font-size: 11px; }
 
   /* Confirm-before-removing (prevents an accidental click un-owning a blueprint). */
   .row.confirming { background: rgba(255,107,107,0.08); border-left-color: #ff6b6b; }
@@ -93,8 +102,14 @@
     <div class="pool" id="pool"></div>
     <div id="msg"></div>
     <div class="foot">
-      <span id="collected">collected: 0</span>
-      <span class="patch" id="patch"></span>
+      <div class="footrow">
+        <span id="collected">collected: 0</span>
+        <button id="verify" title="Re-scan your game logs (including backups) for received blueprints">⟳ Verify from logs</button>
+      </div>
+      <div class="footrow">
+        <span id="vstatus"></span>
+        <span class="patch" id="patch"></span>
+      </div>
     </div>
   </div>
 
@@ -185,6 +200,23 @@
     el.innerHTML = '<span class="cf-q">Mark not owned?</span>' +
       '<button class="cf-no">Keep</button><button class="cf-yes">Remove</button>';
     row.appendChild(el);
+  });
+
+  // Re-scan every game log (current + backups) for received blueprints.
+  $("verify").addEventListener("click", async () => {
+    const btn = $("verify");
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = "Verifying…"; $("vstatus").textContent = "";
+    try {
+      const r = await (await fetch("/api/missions/verify", { method: "POST" })).json();
+      $("vstatus").textContent = r.ok
+        ? "scanned " + r.files + " logs · +" + r.added + " new" + (r.restored ? " · " + r.restored + " restored" : "")
+        : "verify failed";
+    } catch {
+      $("vstatus").textContent = "verify failed";
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
   });
 
   // Live updates.
