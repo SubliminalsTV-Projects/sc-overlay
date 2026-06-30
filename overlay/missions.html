@@ -30,7 +30,12 @@
 
   .head { padding: 14px 16px 12px; position: relative;
     background: linear-gradient(90deg, rgba(54,224,255,0.08), transparent 60%);
-    border-bottom: 1px solid rgba(54,224,255,0.12); }
+    border-bottom: 1px solid rgba(54,224,255,0.12);
+    /* Drag handle for the Electron overlay (ignored by OBS/browser). Move the
+       window by the header when it's Interactive (Ctrl+Alt+B). */
+    -webkit-app-region: drag; cursor: grab; }
+  /* Interactive controls inside the header must stay clickable. */
+  #missionSel, .progress { -webkit-app-region: no-drag; }
   .eyebrow { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 2px;
     text-transform: uppercase; color: var(--cyan); font-weight: 600; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan);

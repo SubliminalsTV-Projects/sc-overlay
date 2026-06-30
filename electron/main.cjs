@@ -14,6 +14,7 @@ const { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, screen, she
 const { spawn } = require("node:child_process");
 const http = require("node:http");
 const path = require("node:path");
+const fs = require("node:fs");
 
 const ROOT = path.join(__dirname, "..");
 const PORT = 8778;
@@ -58,15 +59,47 @@ function waitForServer(tries = 60) {
 }
 
 // ── overlay window ──────────────────────────────────────────────────────────
+function boundsFile() {
+  return path.join(app.getPath("userData"), "overlay-bounds.json");
+}
+function loadBounds() {
+  try {
+    const b = JSON.parse(fs.readFileSync(boundsFile(), "utf8"));
+    // Only restore if it lands on a connected display (avoids off-screen windows).
+    const onScreen = screen.getAllDisplays().some((d) => {
+      const a = d.workArea;
+      return b.x >= a.x - 50 && b.y >= a.y - 50 && b.x < a.x + a.width && b.y < a.y + a.height;
+    });
+    if (onScreen && b.width && b.height) return b;
+  } catch {
+    /* none saved */
+  }
+  return null;
+}
+let saveTimer = null;
+function saveBounds() {
+  if (!overlay) return;
+  clearTimeout(saveTimer);
+  const b = overlay.getBounds();
+  saveTimer = setTimeout(() => {
+    try {
+      fs.writeFileSync(boundsFile(), JSON.stringify(b));
+    } catch {
+      /* non-fatal */
+    }
+  }, 400);
+}
+
 function createOverlay() {
   const { workArea } = screen.getPrimaryDisplay();
   const w = 400;
   const h = 760;
+  const saved = loadBounds();
   overlay = new BrowserWindow({
-    width: w,
-    height: h,
-    x: workArea.x + workArea.width - w - 24,
-    y: workArea.y + 40,
+    width: saved?.width ?? w,
+    height: saved?.height ?? h,
+    x: saved?.x ?? workArea.x + workArea.width - w - 24,
+    y: saved?.y ?? workArea.y + 40,
     frame: false,
     transparent: true,
     resizable: true,
@@ -82,6 +115,8 @@ function createOverlay() {
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlay.loadURL(HUD_URL);
   applyClickThrough();
+  overlay.on("moved", saveBounds);
+  overlay.on("resize", saveBounds);
   overlay.on("closed", () => {
     overlay = null;
   });
