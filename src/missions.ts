@@ -129,6 +129,9 @@ export class MissionTracker extends EventEmitter {
   private markerSeq: string[] = [];
   /** Manual override from the overlay picker; null = auto-follow. */
   private selectedMissionId: string | null = null;
+  /** Has a CreateMarker fired since the last PU (re)entry? If not, don't auto-show
+   *  a stale mission from a previous shard — wait for a marker or a manual pick. */
+  private markerSinceJoin = false;
   private completedMissionIds = new Set<string>();
   /** Any mission that logged an end (complete/fail/abandon) — dropped from the
    *  active picker and auto-follow so only missions you currently have show. */
@@ -242,6 +245,8 @@ export class MissionTracker extends EventEmitter {
         this.missions.set(ev.missionId, info);
         // The most recent objective marker = the newest accepted mission.
         this.trackedMissionId = ev.missionId;
+        this.markerSinceJoin = true;
+        this.endedMissionIds.delete(ev.missionId); // a re-marked mission is active again
         this.markerSeq = this.markerSeq.filter((id) => id !== ev.missionId);
         this.markerSeq.push(ev.missionId);
         this.emit("change");
@@ -267,6 +272,17 @@ export class MissionTracker extends EventEmitter {
       case "activeObjective":
         // Reserved for finer tracked-mission detection; markers already cover it.
         break;
+
+      case "sessionStart": {
+        // Joined/re-entered the PU — the previous shard's tracking no longer applies.
+        // Stop auto-showing a stale mission; keep the mission list so the picker still
+        // works, and wait for a new marker or a manual pick in this shard.
+        this.trackedMissionId = null;
+        this.selectedMissionId = null;
+        this.markerSinceJoin = false;
+        this.emit("change");
+        break;
+      }
     }
   }
 
@@ -352,6 +368,9 @@ export class MissionTracker extends EventEmitter {
    *  mission doesn't hide it); falling back to the newest of all. */
   private effectiveMissionId(): string | null {
     if (this.selectedMissionId && this.missions.has(this.selectedMissionId)) return this.selectedMissionId;
+    // After a fresh PU entry with no marker yet, show nothing rather than a mission
+    // carried over from the previous shard. The picker still lets you choose one.
+    if (!this.markerSinceJoin) return null;
     const active = (id: string) => !this.endedMissionIds.has(id);
     if (this.trackedMissionId && active(this.trackedMissionId) && this.missionHasPool(this.trackedMissionId)) {
       return this.trackedMissionId;

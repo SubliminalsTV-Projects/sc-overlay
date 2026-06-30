@@ -39,6 +39,8 @@ const fmt = (e: MissionEvent): string => {
       return `END      [${short(e.missionId)}] ${e.state}`;
     case "blueprintReceived":
       return `BLUEPRINT  «${e.name}»  (mission ${short(e.missionId)})`;
+    case "sessionStart":
+      return `SESSION  (PU entered / server change)`;
   }
 };
 

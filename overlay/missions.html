@@ -46,9 +46,10 @@
   .sub { margin-top: 3px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
     color: var(--cyan-dim); font-weight: 600; }
   #missionSel { display: none; margin-top: 9px; width: 100%; font-family: "Rajdhani", sans-serif;
-    font-size: 12px; font-weight: 600; background: #04090d; color: var(--text);
-    border: 1px solid var(--line); padding: 5px 8px; cursor: pointer; }
-  #missionSel:focus { outline: none; border-color: var(--cyan); }
+    font-size: 13px; font-weight: 600; background: rgba(54,224,255,0.1); color: var(--text);
+    border: 1px solid var(--cyan); padding: 6px 9px; cursor: pointer; }
+  #missionSel:hover { background: rgba(54,224,255,0.18); }
+  #missionSel:focus { outline: none; box-shadow: 0 0 0 2px rgba(54,224,255,0.3); }
   .progress { position: absolute; top: 14px; right: 16px; text-align: right; }
   .progress .frac { font-family: "Orbitron", sans-serif; font-weight: 700; font-size: 18px; color: var(--cyan); }
   .progress .lbl { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
@@ -144,7 +145,10 @@
       $("title").textContent = "No mission tracked";
       $("sub").textContent = "";
       $("pool").innerHTML = "";
-      $("msg").innerHTML = '<div class="msg">Track a mission in-game to see its blueprint pool.</div>';
+      const hasList = v.missions && v.missions.length;
+      $("msg").innerHTML = '<div class="msg">' +
+        (hasList ? "Pick one from the dropdown above, or track a mission in-game." :
+                   "Track a mission in-game to see its blueprint pool.") + "</div>";
       return;
     }
     $("title").textContent = v.title || v.contractKey;
@@ -184,7 +188,7 @@
   function renderPicker(v) {
     const sel = $("missionSel");
     const list = v.missions || [];
-    if (list.length < 2) { sel.style.display = "none"; return; }
+    if (list.length < 1) { sel.style.display = "none"; return; }
     sel.style.display = "";
     const opts = ['<option value="">Auto — newest with blueprints</option>'];
     for (const m of list) {

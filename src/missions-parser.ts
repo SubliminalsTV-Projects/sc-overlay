@@ -44,7 +44,10 @@ export type MissionEvent =
     }
   | { kind: "activeObjective"; ts: string | null; missionId: string | null; objectiveId: string | null }
   | { kind: "end"; ts: string | null; missionId: string; state: string }
-  | { kind: "blueprintReceived"; ts: string | null; name: string; missionId: string | null };
+  | { kind: "blueprintReceived"; ts: string | null; name: string; missionId: string | null }
+  /** Entered/re-entered the persistent universe (login / server change) — the
+   *  previous shard's tracked-mission selection no longer applies. */
+  | { kind: "sessionStart"; ts: string | null };
 
 const UUID = "[0-9a-fA-F-]{36}";
 
@@ -120,6 +123,12 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
       const mid = m.match(RE.endMissionId);
       if (!mid) return null;
       return { kind: "end", ts: e.timestamp, missionId: mid[1], state: m.match(RE.endState)?.[1] ?? "" };
+    }
+
+    // PU context (re)established — login or server/shard change. map="megamap" =
+    // the persistent universe (ignore Arena Commander / other game modes).
+    case "Context Establisher Done": {
+      return /map="?megamap"?/i.test(m) ? { kind: "sessionStart", ts: e.timestamp } : null;
     }
 
     default:
