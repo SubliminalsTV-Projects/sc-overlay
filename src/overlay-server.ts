@@ -243,6 +243,16 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Re-sync to the current log: wipe the active-mission set and re-read game.log
+  // (drops stale missions from a previous shard the log never logged ending).
+  if (url === "/api/missions/refresh" && req.method === "POST") {
+    tracker.resetSession();
+    seedTrackerFromLog();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // Pin the overlay to a specific accepted mission (picker), or "" / null = auto.
   if (url === "/api/missions/select" && req.method === "POST") {
     const body = await readBody(req);

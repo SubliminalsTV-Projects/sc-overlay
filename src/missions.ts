@@ -274,12 +274,10 @@ export class MissionTracker extends EventEmitter {
         break;
 
       case "sessionStart": {
-        // Joined/re-entered the PU — the previous shard's tracking no longer applies.
-        // Stop auto-showing a stale mission; keep the mission list so the picker still
-        // works, and wait for a new marker or a manual pick in this shard.
-        this.trackedMissionId = null;
-        this.selectedMissionId = null;
-        this.markerSinceJoin = false;
+        // Joined/re-entered the PU — the previous shard's missions no longer apply
+        // (they're not active here and SC won't log their end). Wipe the whole active
+        // set so stale missions don't linger; it rebuilds from this shard's markers.
+        this.resetSession();
         this.emit("change");
         break;
       }
@@ -348,6 +346,18 @@ export class MissionTracker extends EventEmitter {
     this.overrides.set(blueprintName, owned);
     this.saveState();
     this.emit("change");
+  }
+
+  /** Clear the per-shard active-mission state (markers, ended/completed flags, the
+   *  tracked/selected pointers). Keeps the collected blueprints — those are account-
+   *  wide. Used on PU (re)entry and the manual "Refresh from log". */
+  resetSession(): void {
+    this.markerSeq = [];
+    this.trackedMissionId = null;
+    this.selectedMissionId = null;
+    this.markerSinceJoin = false;
+    this.endedMissionIds.clear();
+    this.completedMissionIds.clear();
   }
 
   /** Pin the overlay to a specific accepted mission (from the picker), or null to

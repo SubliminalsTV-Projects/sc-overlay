@@ -159,14 +159,17 @@ function openConfig() {
   });
 }
 
-function verifyFromLogs() {
-  // Fire the same endpoint the HUD button uses.
-  const req = http.request(
-    { host: "localhost", port: PORT, path: "/api/missions/verify", method: "POST" },
-    (r) => r.resume(),
-  );
+function postApi(p) {
+  const req = http.request({ host: "localhost", port: PORT, path: p, method: "POST" }, (r) => r.resume());
   req.on("error", () => {});
   req.end();
+}
+function verifyFromLogs() {
+  postApi("/api/missions/verify");
+}
+function refreshMissions() {
+  // Re-read the log and drop stale missions (e.g. after a server change).
+  postApi("/api/missions/refresh");
 }
 
 // ── tray ────────────────────────────────────────────────────────────────────
@@ -182,6 +185,7 @@ function refreshTray() {
         click: toggleLock,
       },
       { type: "separator" },
+      { label: "Refresh missions (re-read log)", click: refreshMissions },
       { label: "Verify from logs", click: verifyFromLogs },
       { label: "Open config…", click: openConfig },
       { type: "separator" },
