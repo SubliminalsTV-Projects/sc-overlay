@@ -3,21 +3,29 @@
  * subliminal.gg account (the /blueprints collection tracker). Bearer-authed with a
  * device token the player mints on the site ("Connect the desktop tracker").
  *
- * The log only ever yields blueprint NAMES; the caller resolves those to dataset
- * item UUIDs (MissionTracker.itemUuidsForName) before queueing — the site keys the
- * collection by item UUID. Offline-safe: batches, debounces, retries on the next
- * tick, disables itself on a rejected token, and never throws into the caller.
+ * Snapshot model: every push sends the FULL current set as an authoritative replace
+ * (the server swaps the log-sourced collection for it), so a corrected resync fixes
+ * any earlier over-count instead of only ever adding. A provider supplies the fresh
+ * snapshot at flush time, so frequent state changes just markDirty() cheaply.
+ *
+ * Offline-safe: debounced, retries on the next tick, disables on a rejected token,
+ * never throws into the caller.
  */
 const SYNC_PATH = "/api/sc/sync";
 const DEBOUNCE_MS = 1500;
+
+export interface SyncSnapshot {
+  got: string[];
+  mission: { debugName: string; patch: string } | null;
+}
 
 export class SiteSync {
   private readonly baseUrl: string;
   private token = "";
   private enabled = false;
+  private provider: (() => SyncSnapshot) | null = null;
 
-  private pendingGot = new Set<string>();
-  private mission: { debugName: string; patch: string } | null = null;
+  private dirty = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
 
@@ -32,25 +40,19 @@ export class SiteSync {
     return this.active;
   }
 
+  /** Supplies the current full snapshot at flush time (computed lazily). */
+  setProvider(fn: () => SyncSnapshot): void {
+    this.provider = fn;
+  }
+
   get active(): boolean {
-    return this.enabled && this.token.length > 0;
+    return this.enabled && this.token.length > 0 && !!this.provider;
   }
 
-  /** Queue received blueprints (item UUIDs) for the next flush. */
-  addGot(uuids: string[]): void {
-    if (!this.active || uuids.length === 0) return;
-    for (const u of uuids) this.pendingGot.add(u);
-    this.schedule();
-  }
-
-  /** Set the currently-tracked mission (dataset debug_name + build changelist). */
-  setMission(debugName: string, patch: string): void {
-    if (!this.active || !debugName) return;
-    this.mission = { debugName, patch };
-    this.schedule();
-  }
-
-  private schedule(): void {
+  /** Mark state as changed; a debounced flush will push the latest snapshot. */
+  markDirty(): void {
+    if (!this.active) return;
+    this.dirty = true;
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -59,11 +61,10 @@ export class SiteSync {
   }
 
   private async flush(): Promise<void> {
-    if (!this.active || this.flushing) return;
-    if (this.pendingGot.size === 0 && !this.mission) return;
+    if (!this.active || this.flushing || !this.dirty) return;
     this.flushing = true;
-    const got = [...this.pendingGot];
-    const mission = this.mission;
+    this.dirty = false;
+    const snap = this.provider!();
     try {
       const res = await fetch(`${this.baseUrl}${SYNC_PATH}`, {
         method: "POST",
@@ -72,26 +73,29 @@ export class SiteSync {
           Authorization: `Bearer ${this.token}`,
         },
         body: JSON.stringify({
-          got,
-          currentMission: mission?.debugName ?? "",
-          patch: mission?.patch ?? "",
+          got: snap.got,
+          replace: true, // authoritative full-state — server swaps the log collection
+          currentMission: snap.mission?.debugName ?? "",
+          patch: snap.mission?.patch ?? "",
         }),
       });
-      if (res.ok) {
-        // Clear only what we actually sent; anything queued meanwhile survives.
-        for (const u of got) this.pendingGot.delete(u);
-        if (this.mission === mission) this.mission = null;
-      } else if (res.status === 401) {
+      if (res.status === 401) {
         console.error("[sync] subliminal.gg rejected the token (401) — re-paste it in config.");
-        this.enabled = false; // stop hammering with a bad token until reconfigured
-      } else {
+        this.enabled = false;
+      } else if (!res.ok) {
         console.error(`[sync] subliminal.gg returned ${res.status}`);
+        this.dirty = true; // retry
       }
     } catch {
-      /* offline / unreachable — keep pending, retry on the next schedule */
+      this.dirty = true; // offline — retry on next schedule
     } finally {
       this.flushing = false;
-      if (this.active && (this.pendingGot.size || this.mission)) this.schedule();
+      if (this.active && this.dirty) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          void this.flush();
+        }, DEBOUNCE_MS);
+      }
     }
   }
 }

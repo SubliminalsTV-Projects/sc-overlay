@@ -108,26 +108,21 @@ tracker.on("change", broadcastMissions);
 // player's subliminal.gg account. No-op until a token is configured + enabled.
 const sync = new SiteSync(process.env.SC_SYNC_BASE || "https://subliminal.gg");
 sync.configure(config.syncToken, config.syncEnabled);
+// The snapshot is the full authoritative collection + current mission, computed
+// lazily at flush time so frequent state changes just markDirty() cheaply.
+sync.setProvider(() => ({
+  got: tracker.collectedItemUuids(),
+  mission: tracker.currentContractKey()
+    ? { debugName: tracker.currentContractKey()!, patch: tracker.currentChangelist() ?? "" }
+    : null,
+}));
 
-let lastSyncedContract: string | null = null;
-function syncMissionIfChanged(): void {
-  const key = tracker.currentContractKey();
-  if (key && key !== lastSyncedContract) {
-    lastSyncedContract = key;
-    sync.setMission(key, tracker.currentChangelist() ?? "");
-  }
-}
+// Any tracker state change (receipt, manual toggle, verify, mission switch) → resync.
+tracker.on("change", () => sync.markDirty());
 
-// A new receipt → resolve to item UUID(s) and queue; mission marker → push mission.
-tracker.on("collected", (name: string) => sync.addGot(tracker.itemUuidsForName(name)));
-tracker.on("change", syncMissionIfChanged);
-
-/** Push the full collected set + current mission (after a reconnect / token set). */
+/** Force a resync now (token set / startup / verify). */
 function syncFull(): void {
-  if (!sync.active) return;
-  sync.addGot(tracker.collectedItemUuids());
-  lastSyncedContract = null;
-  syncMissionIfChanged();
+  sync.markDirty();
 }
 
 /** One-time read of the current log so the overlay knows the tracked mission +

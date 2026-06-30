@@ -271,16 +271,28 @@ export class MissionTracker extends EventEmitter {
   /** Re-scan a set of log files for `Received Blueprint` receipts and fold them into
    *  the collected set. Recovers history from rotated logbackups AND undoes accidental
    *  un-ticks (a not-owned override is cleared when the logs prove the blueprint was
-   *  received). Read sequentially — backups can be tens of MB. */
-  verifyFromLogs(paths: string[]): { files: number; receipts: number; added: number; restored: number } {
+   *  received). Read sequentially — backups can be tens of MB.
+   *  ONLY counts PUB (live) sessions — PTU/EPTU/TECH-PREVIEW progress is on a
+   *  separate account and must not pollute your live collection. Blueprints are NOT
+   *  wiped between patches, so all live patches count. */
+  verifyFromLogs(paths: string[]): { files: number; receipts: number; added: number; restored: number; skipped: number } {
     const names = new Set<string>();
     let files = 0;
     let receipts = 0;
+    let skipped = 0;
     for (const p of paths) {
       let text: string;
       try {
         text = readFileSync(p, "utf8");
       } catch {
+        continue;
+      }
+      // Environment tag lives in the header (--envtag='PUB' / Environment: PUB).
+      // Anything not PUB is a test environment — skip it.
+      const env = /--envtag=.?([A-Za-z0-9_]+)|Environment:\s*([A-Za-z0-9_]+)/.exec(text.slice(0, 4000));
+      const tag = (env?.[1] || env?.[2] || "").toUpperCase();
+      if (tag && tag !== "PUB") {
+        skipped++;
         continue;
       }
       files++;
@@ -310,7 +322,7 @@ export class MissionTracker extends EventEmitter {
     }
     this.saveState();
     this.emit("change");
-    return { files, receipts, added, restored };
+    return { files, receipts, added, restored, skipped };
   }
 
   /** Manual owned/not-owned override (seeds pre-existing inventory the log can't see). */
@@ -373,18 +385,39 @@ export class MissionTracker extends EventEmitter {
   // The site collection is keyed by output item UUID; the log only yields names,
   // so map names → UUIDs through the dataset (variant-aware, same as ownership).
 
-  /** Item UUIDs whose blueprint name matches `received` in the current dataset. */
+  /** Item UUID(s) for a received blueprint name. Precise on purpose — a loose
+   *  bidirectional prefix match fanned one receipt out to many items and inflated
+   *  the synced collection. Resolution: an EXACT name match wins; otherwise the
+   *  received name is treated as a variant ("Geist Armor Arms Whiteout") of the
+   *  LONGEST pool base name that prefixes it ("Geist Armor Arms"). No reverse
+   *  (base→all-variants) matching. */
   itemUuidsForName(received: string): string[] {
     if (!this.dataset) return [];
-    const out = new Set<string>();
+    const target = norm(received);
+    const exact = new Set<string>();
+    let bestBase = "";
+    const baseItems = new Set<string>();
     for (const mission of Object.values(this.dataset.missions)) {
       for (const entries of Object.values(mission.pools)) {
         for (const e of entries) {
-          if (e.item && matchesPoolName(e.blueprint, [received])) out.add(e.item);
+          if (!e.item) continue;
+          const p = norm(e.blueprint);
+          if (p === target) {
+            exact.add(e.item);
+          } else if (target.startsWith(p + " ")) {
+            // `received` is a variant of base `p`; keep only the most specific base.
+            if (p.length > bestBase.length) {
+              bestBase = p;
+              baseItems.clear();
+              baseItems.add(e.item);
+            } else if (p === bestBase) {
+              baseItems.add(e.item);
+            }
+          }
         }
       }
     }
-    return [...out];
+    return exact.size ? [...exact] : [...baseItems];
   }
 
   /** Every collected blueprint (observed + owned-overrides) as item UUIDs. */

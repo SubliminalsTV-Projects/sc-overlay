@@ -238,7 +238,9 @@
     try {
       const r = await (await fetch("/api/missions/verify", { method: "POST" })).json();
       $("vstatus").textContent = r.ok
-        ? "scanned " + r.files + " logs · +" + r.added + " new" + (r.restored ? " · " + r.restored + " restored" : "")
+        ? "scanned " + r.files + " live logs · +" + r.added + " new"
+          + (r.restored ? " · " + r.restored + " restored" : "")
+          + (r.skipped ? " · " + r.skipped + " PTU skipped" : "")
         : "verify failed";
     } catch {
       $("vstatus").textContent = "verify failed";
