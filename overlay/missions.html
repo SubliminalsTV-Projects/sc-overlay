@@ -123,11 +123,12 @@
     display: flex; flex-direction: column; gap: 7px; border-top: 1px solid var(--divider); }
   .footrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; }
   .foot .patch { color: var(--faint); font-family: var(--mono); font-size: 9.5px; }
-  #verify { font-family: var(--sans); font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em;
+  #verify, #oddsToggle { font-family: var(--sans); font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em;
     text-transform: uppercase; cursor: pointer; padding: 4px 11px; border-radius: 3px;
     border: 1px solid var(--border); color: var(--cyan); background: rgba(69, 208, 224, 0.08); }
-  #verify:hover { background: rgba(69, 208, 224, 0.18); border-color: var(--cyan); }
+  #verify:hover, #oddsToggle:hover { background: rgba(69, 208, 224, 0.18); border-color: var(--cyan); }
   #verify:disabled { opacity: .6; cursor: default; }
+  #oddsToggle { letter-spacing: 0.04em; }
   #vstatus { color: var(--cyan); font-size: 10px; }
 
   /* Confirm-before-removing (prevents an accidental click un-owning a blueprint). */
@@ -158,6 +159,7 @@
     <div class="foot">
       <div class="footrow">
         <span id="collected">collected: 0</span>
+        <button id="oddsToggle" title="Base odds (out of the full pool) vs your real odds counting only what you still need">odds: base</button>
         <button id="verify" title="Re-scan your game logs (including backups) for received blueprints">⟳ Verify from logs</button>
       </div>
       <div class="footrow">
@@ -170,6 +172,9 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let current = null;
+  // "base" = odds out of the full pool; "adjusted" = your real odds counting only
+  // the blueprints you still need (no duplicates), owned shown as —.
+  let oddsMode = "base";
 
   function render(v) {
     current = v;
@@ -212,11 +217,16 @@
       // Real odds of getting a specific blueprint = its weight / the pool's total,
       // not the raw per-entry chance (which is 1.0 for every entry → misleading 100%).
       const poolSum = pool.blueprints.reduce((a, b) => a + (b.chance || 0), 0) || 1;
+      const missing = pool.blueprints.filter((x) => !x.owned).length;
       for (const b of pool.blueprints) {
         const ovr = b.source === "override" ? '<span class="ovr">[manual]</span>' : "";
-        const pctNum = ((b.chance || 0) / poolSum) * 100;
-        const pct = pctNum >= 10 ? Math.round(pctNum) : pctNum.toFixed(1);
-        const ch = '<span class="chance">' + pct + "%</span>";
+        // base = weight / pool total; adjusted = 1 / what you still need (owned → —).
+        const p = oddsMode === "adjusted"
+          ? (b.owned ? null : (missing > 0 ? 1 / missing : 0))
+          : (b.chance || 0) / poolSum;
+        const ch = p == null
+          ? '<span class="chance">—</span>'
+          : '<span class="chance">' + (p * 100 >= 10 ? Math.round(p * 100) : (p * 100).toFixed(1)) + "%</span>";
         rows.push(
           '<div class="row ' + (b.owned ? "owned" : "") + '" data-name="' + escapeAttr(b.name) + '" title="Click to toggle owned">' +
             '<span class="mark">' + (b.owned ? "✔" : "") + "</span>" +
@@ -328,6 +338,13 @@
     panel.addEventListener("mouseenter", () => { clearTimeout(leaveT); window.overlayApi.hover(true); });
     panel.addEventListener("mouseleave", () => { leaveT = setTimeout(() => window.overlayApi.hover(false), 150); });
   }
+
+  // Toggle base vs adjusted (for-what-you-have) drop odds.
+  $("oddsToggle").addEventListener("click", () => {
+    oddsMode = oddsMode === "base" ? "adjusted" : "base";
+    $("oddsToggle").textContent = "odds: " + (oddsMode === "base" ? "base" : "mine");
+    if (current) render(current);
+  });
 
   // Live updates.
   const es = new EventSource("/missions/events");
