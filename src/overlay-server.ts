@@ -248,6 +248,15 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Pin the overlay to a specific accepted mission (picker), or "" / null = auto.
+  if (url === "/api/missions/select" && req.method === "POST") {
+    const body = await readBody(req);
+    tracker.selectMission(typeof body.missionId === "string" && body.missionId ? body.missionId : null);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // Manual owned/not-owned override: { name, owned }.
   if (url === "/api/missions/own" && req.method === "POST") {
     const body = await readBody(req);

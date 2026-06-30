@@ -40,6 +40,10 @@
     margin-top: 8px; color: #fff; text-shadow: 0 0 16px rgba(54,224,255,0.45); }
   .sub { margin-top: 3px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
     color: var(--cyan-dim); font-weight: 600; }
+  #missionSel { display: none; margin-top: 9px; width: 100%; font-family: "Rajdhani", sans-serif;
+    font-size: 12px; font-weight: 600; background: #04090d; color: var(--text);
+    border: 1px solid var(--line); padding: 5px 8px; cursor: pointer; }
+  #missionSel:focus { outline: none; border-color: var(--cyan); }
   .progress { position: absolute; top: 14px; right: 16px; text-align: right; }
   .progress .frac { font-family: "Orbitron", sans-serif; font-weight: 700; font-size: 18px; color: var(--cyan); }
   .progress .lbl { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
@@ -96,6 +100,7 @@
       <div class="eyebrow"><span class="dot"></span> Blueprint Pool</div>
       <div class="title" id="title">No mission tracked</div>
       <div class="sub" id="sub"></div>
+      <select id="missionSel" title="Pick which accepted mission to show"></select>
       <div class="progress"><span class="frac" id="frac">0/0</span><div class="lbl">owned</div></div>
       <div id="completed"></div>
     </div>
@@ -127,6 +132,7 @@
     $("patch").textContent = patchTxt;
     $("collected").textContent = "collected: " + (v.collectedTotal ?? 0);
     $("completed").innerHTML = v.completed ? '<span class="completed">Mission complete</span>' : "";
+    renderPicker(v);
 
     if (!v.contractKey) {
       panel.classList.add("empty");
@@ -167,6 +173,28 @@
 
   function escapeHtml(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
   function escapeAttr(s){return s.replace(/"/g,"&quot;");}
+
+  // Mission picker: the log can't tell us which mission you've *selected* to track,
+  // so list every accepted mission and let you choose. Auto = newest with a pool.
+  function renderPicker(v) {
+    const sel = $("missionSel");
+    const list = v.missions || [];
+    if (list.length < 2) { sel.style.display = "none"; return; }
+    sel.style.display = "";
+    const opts = ['<option value="">Auto — newest with blueprints</option>'];
+    for (const m of list) {
+      const tag = m.hasPool ? "◆ " : "○ ";
+      opts.push('<option value="' + escapeAttr(m.id) + '">' + tag + escapeHtml(m.title) + "</option>");
+    }
+    sel.innerHTML = opts.join("");
+    sel.value = v.selectedId || "";
+  }
+  $("missionSel").addEventListener("change", (e) => {
+    fetch("/api/missions/select", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ missionId: e.target.value }),
+    });
+  });
 
   function setOwned(name, owned) {
     fetch("/api/missions/own", {

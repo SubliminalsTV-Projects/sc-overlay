@@ -60,6 +60,12 @@ export interface TrackedView {
   totals: { owned: number; total: number };
   /** Lifetime collected count across all observed + overridden blueprints. */
   collectedTotal: number;
+  /** The manually-pinned missionId, or null when auto-following. */
+  selectedId: string | null;
+  /** Every mission seen this session, newest first — powers the overlay picker.
+   *  The log can't say which mission you've *selected* to track in-game, so the
+   *  user picks; auto-mode shows the newest one that actually has a pool. */
+  missions: { id: string; title: string; contractKey: string | null; hasPool: boolean }[];
 }
 
 interface Persisted {
@@ -119,6 +125,10 @@ export class MissionTracker extends EventEmitter {
   /** missionId -> info, built from accept + marker events. */
   private missions = new Map<string, { title?: string; contractKey?: string; generator?: string }>();
   private trackedMissionId: string | null = null;
+  /** missionIds in CreateMarker order, most recent last (deduped move-to-end). */
+  private markerSeq: string[] = [];
+  /** Manual override from the overlay picker; null = auto-follow. */
+  private selectedMissionId: string | null = null;
   private completedMissionIds = new Set<string>();
 
   constructor(opts: MissionTrackerOptions) {
@@ -227,8 +237,10 @@ export class MissionTracker extends EventEmitter {
         info.contractKey = ev.contractKey;
         info.generator = ev.generator;
         this.missions.set(ev.missionId, info);
-        // The most recent objective marker = the mission being actively tracked.
+        // The most recent objective marker = the newest accepted mission.
         this.trackedMissionId = ev.missionId;
+        this.markerSeq = this.markerSeq.filter((id) => id !== ev.missionId);
+        this.markerSeq.push(ev.missionId);
         this.emit("change");
         break;
       }
@@ -308,6 +320,41 @@ export class MissionTracker extends EventEmitter {
     this.emit("change");
   }
 
+  /** Pin the overlay to a specific accepted mission (from the picker), or null to
+   *  auto-follow. The log can't tell us which mission you've selected to track, so
+   *  this is the manual escape hatch. */
+  selectMission(missionId: string | null): void {
+    this.selectedMissionId = missionId && this.missions.has(missionId) ? missionId : null;
+    this.emit("change");
+  }
+
+  private missionHasPool(missionId: string): boolean {
+    const key = this.missions.get(missionId)?.contractKey;
+    return !!(key && this.dataset?.missions[key]);
+  }
+
+  /** The mission whose pool to show: the manual pick if set; otherwise the newest
+   *  accepted mission that has a pool (so a cargo haul accepted after a blueprint
+   *  mission doesn't hide it); falling back to the newest of all. */
+  private effectiveMissionId(): string | null {
+    if (this.selectedMissionId && this.missions.has(this.selectedMissionId)) return this.selectedMissionId;
+    if (this.trackedMissionId && this.missionHasPool(this.trackedMissionId)) return this.trackedMissionId;
+    for (let i = this.markerSeq.length - 1; i >= 0; i--) {
+      if (this.missionHasPool(this.markerSeq[i])) return this.markerSeq[i];
+    }
+    return this.trackedMissionId;
+  }
+
+  /** Missions seen this session, newest first — for the overlay picker. */
+  private knownMissions(): TrackedView["missions"] {
+    return [...this.markerSeq].reverse().map((id) => {
+      const info = this.missions.get(id);
+      const key = info?.contractKey ?? null;
+      const title = info?.title || (key && this.dataset?.missions[key]?.title) || key || id;
+      return { id, title, contractKey: key, hasPool: this.missionHasPool(id) };
+    });
+  }
+
   // ---- ownership resolution ----
 
   private isOwned(poolName: string): { owned: boolean; source: "observed" | "override" | null } {
@@ -364,7 +411,8 @@ export class MissionTracker extends EventEmitter {
   // ---- view for the overlay ----
 
   view(): TrackedView {
-    const tracked = this.trackedMissionId ? this.missions.get(this.trackedMissionId) : undefined;
+    const effectiveId = this.effectiveMissionId();
+    const tracked = effectiveId ? this.missions.get(effectiveId) : undefined;
     const key = tracked?.contractKey ?? null;
     const mission = key && this.dataset ? this.dataset.missions[key] : undefined;
 
@@ -390,10 +438,12 @@ export class MissionTracker extends EventEmitter {
       title: mission?.title ?? tracked?.title ?? null,
       generator: tracked?.generator ?? mission?.generatorClass ?? null,
       hasPool: !!mission,
-      completed: this.trackedMissionId ? this.completedMissionIds.has(this.trackedMissionId) : false,
+      completed: effectiveId ? this.completedMissionIds.has(effectiveId) : false,
       pools,
       totals: { owned, total },
       collectedTotal: this.observed.size + [...this.overrides.values()].filter(Boolean).length,
+      selectedId: this.selectedMissionId,
+      missions: this.knownMissions(),
     };
   }
 
