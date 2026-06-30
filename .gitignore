@@ -3,3 +3,6 @@ dist/
 *.log
 .env
 sc-loadout-overlay.code-workspace
+
+# local dev/test state
+.replay-state/

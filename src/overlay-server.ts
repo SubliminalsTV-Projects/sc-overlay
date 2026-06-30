@@ -1,14 +1,17 @@
 import { createServer, type ServerResponse } from "node:http";
 import { writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, readFile } from "node:fs";
-import { extname, join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { extname, join } from "node:path";
 
 import { resolveLoadout, type Build } from "./erkul.js";
 import { LogWatcher } from "./watcher.js";
+import { parseLine } from "./parser.js";
+import { parseMissionEvent } from "./missions-parser.js";
+import { MissionTracker } from "./missions.js";
+import { assetDir } from "./paths.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const overlayDir = join(here, "..", "overlay");
+const overlayDir = assetDir(import.meta.url, "overlay");
+const dataDir = assetDir(import.meta.url, "data");
 const configPath = join(overlayDir, "config.json");
 const PORT = 8778;
 
@@ -82,12 +85,44 @@ async function setActive(url: string, reason: string): Promise<boolean> {
   }
 }
 
+// ── Mission / blueprint tracker ─────────────────────────────────────────────
+// remoteBaseUrl: pull a patch's pool data from subliminal.gg if it isn't bundled
+// (offline-first — always falls back to the shipped data/ files).
+const tracker = new MissionTracker({ dataDir, remoteBaseUrl: "https://subliminal.gg/sc" });
+const missionClients = new Set<ServerResponse>();
+function broadcastMissions(): void {
+  const data = `data: ${JSON.stringify(tracker.view())}\n\n`;
+  for (const res of missionClients) res.write(data);
+}
+tracker.on("change", broadcastMissions);
+
+/** One-time read of the current log so the overlay knows the tracked mission +
+ *  collected state immediately on start (the watcher then tails from the end). */
+function seedTrackerFromLog(): void {
+  try {
+    const text = readFileSync(config.logPath, "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) continue;
+      tracker.detectPatch(line);
+      const ev = parseMissionEvent(parseLine(line));
+      if (ev) tracker.apply(ev);
+    }
+  } catch {
+    /* log not present yet */
+  }
+}
+
 // ── Log watcher → auto ship-switch ──────────────────────────────────────────
 let watcher: LogWatcher | null = null;
 function startWatcher(): void {
   watcher?.stop();
   watcher = new LogWatcher(config.logPath, { pollInterval: 1000 });
   watcher.on("event", (e) => {
+    // Feed the mission/blueprint tracker on every line (independent of ship auto-switch).
+    tracker.detectPatch(e.raw);
+    const me = parseMissionEvent(e);
+    if (me) tracker.apply(me);
+
     if (!config.autoSwitch) return;
     // Only the LOCAL player's ship is logged as "... by player 0".
     const m = e.message.match(/OnVehicleSpawned\s+\d+\s+\(([A-Za-z0-9_]+?)_\d+\)\s+by player 0/);
@@ -135,6 +170,38 @@ const server = createServer(async (req, res) => {
     clients.add(res);
     if (activeBuild) res.write(`data: ${JSON.stringify(activeBuild)}\n\n`);
     req.on("close", () => clients.delete(res));
+    return;
+  }
+
+  // Live mission/blueprint state stream.
+  if (url === "/missions/events") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.write("\n");
+    missionClients.add(res);
+    res.write(`data: ${JSON.stringify(tracker.view())}\n\n`);
+    req.on("close", () => missionClients.delete(res));
+    return;
+  }
+
+  // Current mission/blueprint view (snapshot).
+  if (url === "/api/missions" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(tracker.view()));
+    return;
+  }
+
+  // Manual owned/not-owned override: { name, owned }.
+  if (url === "/api/missions/own" && req.method === "POST") {
+    const body = await readBody(req);
+    if (typeof body.name === "string" && typeof body.owned === "boolean") {
+      tracker.setOwned(body.name, body.owned);
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 
@@ -199,9 +266,22 @@ const server = createServer(async (req, res) => {
   });
 });
 
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    // Another instance already owns the port — fine. A standalone launcher will just
+    // open its window against the running server instead of crashing with a stack trace.
+    console.log(`[server] port ${PORT} already in use — using the running instance.`);
+    return;
+  }
+  throw err;
+});
+
 server.listen(PORT, async () => {
-  console.log(`overlay server  →  http://localhost:${PORT}/`);
+  console.log(`loadout overlay →  http://localhost:${PORT}/`);
+  console.log(`blueprints      →  http://localhost:${PORT}/missions.html`);
   console.log(`config page     →  http://localhost:${PORT}/config.html`);
+  tracker.loadDataset();
+  seedTrackerFromLog();
   await reindex();
   if (config.activeUrl) await setActive(config.activeUrl, "startup");
   startWatcher();

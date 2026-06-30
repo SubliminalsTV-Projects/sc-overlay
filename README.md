@@ -6,6 +6,10 @@ foundation layer — the watcher core only reads, parses, and emits. Apps
 
 Zero runtime dependencies — pure Node built-ins.
 
+**Apps built on it:** a ship-loadout overlay (erkul.games), and a **[Mission &
+Blueprint Tracker](BLUEPRINTS.md)** that shows the reward pool of the mission you're
+tracking and checks off what you've collected.
+
 ## Run the demo
 
 ```bash

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SC Blueprint Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --cyan: #36e0ff; --cyan-dim: #6fa8bd; --amber: #ffb23e;
+    --text: #eaf6fb; --muted: #8ba6b6;
+    --panel: rgba(7, 14, 20, 0.82); --line: rgba(54, 224, 255, 0.28);
+    --owned: #3effa6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; }
+  body { font-family: "Rajdhani", system-ui, sans-serif; color: var(--text); }
+
+  #panel {
+    width: 380px; margin: 12px;
+    background: linear-gradient(160deg, rgba(11, 20, 28, 0.9), rgba(5, 10, 15, 0.82));
+    border: 1px solid var(--line);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 18px 60px rgba(0,0,0,0.55), inset 0 0 60px rgba(54,224,255,0.05);
+    clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+    overflow: hidden;
+  }
+  #panel.empty .pool, #panel.empty .head .progress { display: none; }
+
+  .head { padding: 14px 16px 12px; position: relative;
+    background: linear-gradient(90deg, rgba(54,224,255,0.08), transparent 60%);
+    border-bottom: 1px solid rgba(54,224,255,0.12); }
+  .eyebrow { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--cyan); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan); animation: pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .title { font-family: "Orbitron", sans-serif; font-weight: 800; font-size: 21px; line-height: 1.1;
+    margin-top: 8px; color: #fff; text-shadow: 0 0 16px rgba(54,224,255,0.45); }
+  .sub { margin-top: 3px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--cyan-dim); font-weight: 600; }
+  .progress { position: absolute; top: 14px; right: 16px; text-align: right; }
+  .progress .frac { font-family: "Orbitron", sans-serif; font-weight: 700; font-size: 18px; color: var(--cyan); }
+  .progress .lbl { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .completed { margin-top: 6px; display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--owned); border: 1px solid rgba(62,255,166,0.5);
+    background: rgba(62,255,166,0.08); padding: 1px 8px;
+    clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px)); }
+
+  .pool { padding: 8px 12px 12px; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; margin-top: 4px;
+    background: rgba(255,255,255,0.02); border-left: 2px solid rgba(54,224,255,0.18);
+    cursor: pointer; user-select: none; transition: background .15s, border-color .15s; }
+  .row:hover { background: rgba(54,224,255,0.06); }
+  .row.owned { border-left-color: var(--owned);
+    background: linear-gradient(90deg, rgba(62,255,166,0.1), rgba(62,255,166,0.015)); }
+  .mark { flex: none; width: 16px; height: 16px; display: grid; place-items: center;
+    border: 1px solid var(--line); color: var(--owned); font-size: 12px; font-weight: 700;
+    clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 4px 100%, 0 calc(100% - 4px)); }
+  .row.owned .mark { border-color: rgba(62,255,166,0.6); background: rgba(62,255,166,0.12); }
+  .name { flex: 1; font-size: 14px; font-weight: 500; color: var(--muted); }
+  .row.owned .name { color: #fff; }
+  .name .ovr { font-size: 10px; color: var(--amber); margin-left: 6px; letter-spacing: 1px; }
+  .chance { flex: none; font-family: "Orbitron", sans-serif; font-weight: 700; font-size: 11px; color: var(--cyan-dim); }
+
+  .msg { padding: 26px 18px; text-align: center; color: var(--muted); font-size: 14px; }
+  .msg b { color: var(--cyan); display: block; font-family: "Orbitron", sans-serif;
+    font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  .foot { padding: 8px 16px 12px; font-size: 11px; color: var(--muted); letter-spacing: 1px;
+    display: flex; justify-content: space-between; border-top: 1px solid rgba(54,224,255,0.08); }
+  .foot .patch { color: var(--cyan-dim); }
+</style>
+</head>
+<body>
+  <div id="panel" class="empty">
+    <div class="head">
+      <div class="eyebrow"><span class="dot"></span> Blueprint Pool</div>
+      <div class="title" id="title">No mission tracked</div>
+      <div class="sub" id="sub"></div>
+      <div class="progress"><span class="frac" id="frac">0/0</span><div class="lbl">owned</div></div>
+      <div id="completed"></div>
+    </div>
+    <div class="pool" id="pool"></div>
+    <div id="msg"></div>
+    <div class="foot">
+      <span id="collected">collected: 0</span>
+      <span class="patch" id="patch"></span>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let current = null;
+
+  function render(v) {
+    current = v;
+    const panel = $("panel");
+    $("patch").textContent = v.patch || "";
+    $("collected").textContent = "collected: " + (v.collectedTotal ?? 0);
+    $("completed").innerHTML = v.completed ? '<span class="completed">Mission complete</span>' : "";
+
+    if (!v.contractKey) {
+      panel.classList.add("empty");
+      $("title").textContent = "No mission tracked";
+      $("sub").textContent = "";
+      $("pool").innerHTML = "";
+      $("msg").innerHTML = '<div class="msg">Track a mission in-game to see its blueprint pool.</div>';
+      return;
+    }
+    $("title").textContent = v.title || v.contractKey;
+    $("sub").textContent = (v.generator || "").replace(/_/g, " ");
+
+    if (!v.hasPool || !v.pools.length) {
+      panel.classList.add("empty");
+      $("pool").innerHTML = "";
+      $("msg").innerHTML = '<div class="msg"><b>No blueprint reward</b>This mission doesn’t drop blueprints.</div>';
+      return;
+    }
+    panel.classList.remove("empty");
+    $("msg").innerHTML = "";
+    $("frac").textContent = v.totals.owned + "/" + v.totals.total;
+
+    const rows = [];
+    for (const pool of v.pools) {
+      for (const b of pool.blueprints) {
+        const ovr = b.source === "override" ? '<span class="ovr">[manual]</span>' : "";
+        const ch = b.chance != null && b.chance < 1 ? '<span class="chance">' + Math.round(b.chance * 100) + "%</span>" : "";
+        rows.push(
+          '<div class="row ' + (b.owned ? "owned" : "") + '" data-name="' + escapeAttr(b.name) + '" title="Click to toggle owned">' +
+            '<span class="mark">' + (b.owned ? "✔" : "") + "</span>" +
+            '<span class="name">' + escapeHtml(b.name) + ovr + "</span>" + ch +
+          "</div>"
+        );
+      }
+    }
+    $("pool").innerHTML = rows.join("");
+  }
+
+  function escapeHtml(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+  function escapeAttr(s){return s.replace(/"/g,"&quot;");}
+
+  // Click a blueprint to manually toggle owned (seeds pre-existing inventory).
+  $("pool").addEventListener("click", (e) => {
+    const row = e.target.closest(".row");
+    if (!row || !current) return;
+    const name = row.getAttribute("data-name");
+    const nowOwned = !row.classList.contains("owned");
+    fetch("/api/missions/own", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, owned: nowOwned }),
+    });
+  });
+
+  // Live updates.
+  const es = new EventSource("/missions/events");
+  es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
+  es.onerror = () => { /* auto-reconnects */ };
+</script>
+</body>
+</html>

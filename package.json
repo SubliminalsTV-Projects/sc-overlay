@@ -10,6 +10,10 @@
     "loadout": "tsx src/erkul-dump.ts",
     "overlay": "tsx src/overlay-server.ts",
     "agent": "tsx src/agent.ts",
+    "missions-dump": "tsx src/missions-dump.ts",
+    "missions-replay": "tsx src/missions-replay.ts",
+    "standalone": "tsx src/standalone.ts",
+    "package": "node tools/package.mjs",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
