@@ -7,6 +7,7 @@
  */
 import { execSync } from "node:child_process";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { basename } from "node:path";
 
 const out = "build/server";
 rmSync(out, { recursive: true, force: true });
@@ -18,7 +19,9 @@ execSync(`bun build src/overlay-server.ts --compile --outfile ${out}/sc-overlay-
 });
 
 for (const dir of ["overlay", "data"]) {
-  cpSync(dir, `${out}/${dir}`, { recursive: true });
+  // Never ship overlay/config.json — it's the developer's personal config (erkul
+  // URLs + sync token). The server seeds from DEFAULTS and persists to %APPDATA%.
+  cpSync(dir, `${out}/${dir}`, { recursive: true, filter: (src) => basename(src) !== "config.json" });
   console.log(`copied ${dir}/ -> ${out}/${dir}/`);
 }
 console.log("server bundle ->", out);

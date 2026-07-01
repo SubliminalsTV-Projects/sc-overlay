@@ -8,3 +8,6 @@ sc-loadout-overlay.code-workspace
 .replay-state/
 release/
 build/server/
+
+# personal runtime config (erkul URLs + sync token) — seeded from DEFAULTS, stored in %APPDATA%
+overlay/config.json

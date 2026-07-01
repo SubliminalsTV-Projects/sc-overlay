@@ -287,7 +287,10 @@ if (!app.requestSingleInstanceLock()) {
     hovering = !!on;
     applyMouse();
   });
-  // The page's "Done" button leaves move mode.
+  // The page's grab handle enters move mode; the "Done" button leaves it.
+  ipcMain.on("overlay:begin-move", () => {
+    if (!moveMode) setMoveMode(true);
+  });
   ipcMain.on("overlay:end-move", () => {
     if (moveMode) setMoveMode(false);
   });

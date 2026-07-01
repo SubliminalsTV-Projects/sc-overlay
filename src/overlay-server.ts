@@ -1,6 +1,6 @@
 import { createServer, type ServerResponse } from "node:http";
 import { writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, readFile, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readFile, readdirSync, mkdirSync, copyFileSync } from "node:fs";
 import { extname, join, dirname } from "node:path";
 
 import { resolveLoadout, type Build } from "./erkul.js";
@@ -12,9 +12,20 @@ import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
 
 const overlayDir = assetDir(import.meta.url, "overlay");
-const dataDir = assetDir(import.meta.url, "data");
-const configPath = join(overlayDir, "config.json");
+const bundledDataDir = assetDir(import.meta.url, "data");
 const PORT = 8778;
+
+// Persist runtime state in a per-user writable dir — NEVER next to the binary.
+// The installed app lives under Program Files (read-only); writing config.json
+// there threw EPERM and crashed the whole server. This matches where the mission
+// tracker already keeps collected.json.
+const userDir = join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");
+const configPath = join(userDir, "config.json");
+// Read-only default that ships with the app; only used to seed a first run.
+const seedConfigPath = join(overlayDir, "config.json");
+// Writable copy of the datasets: bundled pools are seeded in, and any pools the
+// tracker fetches for a not-yet-bundled patch cache here (Program Files is read-only).
+const dataDir = join(userDir, "data");
 
 interface Config {
   urls: string[];
@@ -36,10 +47,44 @@ const DEFAULTS: Config = {
   syncEnabled: false,
 };
 
-let config: Config = existsSync(configPath)
-  ? { ...DEFAULTS, ...JSON.parse(readFileSync(configPath, "utf8")) }
-  : { ...DEFAULTS };
-const saveConfig = () => writeFile(configPath, JSON.stringify(config, null, 2));
+function loadConfig(): Config {
+  // Prefer the user's saved config; fall back to the bundled default on first run.
+  for (const p of [configPath, seedConfigPath]) {
+    try {
+      if (existsSync(p)) return { ...DEFAULTS, ...JSON.parse(readFileSync(p, "utf8")) };
+    } catch {
+      /* corrupt — try the next source */
+    }
+  }
+  return { ...DEFAULTS };
+}
+let config: Config = loadConfig();
+
+// Save to the writable user dir; a write failure must never crash the server
+// (an EPERM writing under Program Files is exactly what took it down before).
+const saveConfig = async (): Promise<void> => {
+  try {
+    mkdirSync(userDir, { recursive: true });
+    await writeFile(configPath, JSON.stringify(config, null, 2));
+  } catch (e) {
+    console.error("[config] save failed:", String(e));
+  }
+};
+
+// Seed the writable data dir from the bundled pools. Bundled files are refreshed
+// each start (an app update ships newer pools); runtime-fetched patch datasets are
+// left in place so offline patches keep working.
+function seedDataDir(): void {
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    for (const f of readdirSync(bundledDataDir)) {
+      if (f.endsWith(".json")) copyFileSync(join(bundledDataDir, f), join(dataDir, f));
+    }
+  } catch (e) {
+    console.error("[data] seed failed:", String(e));
+  }
+}
+seedDataDir();
 
 // ── Loadout cache + ship index ──────────────────────────────────────────────
 const TTL = 60_000;

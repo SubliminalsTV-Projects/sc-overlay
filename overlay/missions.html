@@ -60,6 +60,20 @@
     border: 1px solid var(--cyan); background: rgba(69, 208, 224, 0.15); color: var(--cyan); }
   #moveDone:hover { background: rgba(69, 208, 224, 0.3); }
 
+  /* Grab handle: a discoverable "move" affordance that fades in on hover (Electron
+     only). Clicking it drops into move mode — the reliable, hover-suspended drag. */
+  #grip { display: none; position: absolute; top: 9px; right: 11px; z-index: 20;
+    align-items: center; gap: 5px; padding: 3px 8px; border-radius: 3px;
+    -webkit-app-region: no-drag; cursor: grab; user-select: none;
+    border: 1px solid var(--border); background: rgba(8, 17, 26, 0.72); color: var(--cyan);
+    font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; opacity: 0; transition: opacity 0.15s ease; }
+  #grip .dots { font-size: 12px; line-height: 1; letter-spacing: -1px; }
+  #panel.electron #grip { display: flex; }
+  #panel.electron:hover #grip { opacity: 0.85; }
+  #grip:hover { opacity: 1 !important; background: rgba(69, 208, 224, 0.2); }
+  #panel.moving #grip { display: none; }
+
   /* Gold corner cradle brackets */
   .bracket { position: absolute; width: 13px; height: 13px; z-index: 4; pointer-events: none; }
   .bracket.tl { top: 7px; left: 7px; border-top: 1.4px solid var(--gold); border-left: 1.4px solid var(--gold); }
@@ -157,6 +171,7 @@
     <span class="bracket tl"></span><span class="bracket tr"></span><span class="bracket bl"></span><span class="bracket br"></span>
     <div id="moveBanner"><div class="movebox">⠿ Drag anywhere to move<button id="moveDone">Done</button></div></div>
     <div class="head">
+      <div id="grip" title="Move overlay"><span class="dots">⠿</span>Move</div>
       <div class="eyebrow"><span class="dot"></span> Blueprint Pool</div>
       <div class="title" id="title">No mission tracked</div>
       <div class="sub" id="sub"></div>
@@ -347,11 +362,13 @@
   // the pointer is over it (clicks pass to the game everywhere else). No-op in OBS.
   if (window.overlayApi) {
     const panel = $("panel");
+    panel.classList.add("electron"); // reveals the grab handle (OBS mode has no window to move)
     let leaveT;
     panel.addEventListener("mouseenter", () => { clearTimeout(leaveT); window.overlayApi.hover(true); });
     panel.addEventListener("mouseleave", () => { leaveT = setTimeout(() => window.overlayApi.hover(false), 150); });
-    // Move mode (tray "Move overlay…" / Ctrl+Alt+M): show the drag banner.
+    // Move mode (grab handle / tray "Move overlay…" / Ctrl+Alt+M): show the drag banner.
     window.overlayApi.onMoveMode?.((on) => panel.classList.toggle("moving", on));
+    $("grip").addEventListener("click", () => window.overlayApi.beginMove?.());
     $("moveDone").addEventListener("click", () => window.overlayApi.endMove());
   }
 
