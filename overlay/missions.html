@@ -147,6 +147,7 @@
   .name { flex: 1; font-size: 13.5px; font-weight: 500; color: var(--cyan-dim); }
   .row.owned .name { color: #eaf6fb; }
   .name .ovr { font-size: 9px; color: var(--gold); margin-left: 6px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .name .ovr.def { color: var(--cyan-dim); }
   .chance { flex: none; font-family: var(--mono); font-weight: 500; font-size: 11px; color: var(--cyan-dim); font-variant-numeric: tabular-nums; }
 
   .msg { padding: 28px 18px; text-align: center; color: var(--cyan-dim); font-size: 13px; position: relative; z-index: 2; }
@@ -255,7 +256,8 @@
       const poolSum = pool.blueprints.reduce((a, b) => a + (b.chance || 0), 0) || 1;
       const missing = pool.blueprints.filter((x) => !x.owned).length;
       for (const b of pool.blueprints) {
-        const ovr = b.source === "override" ? '<span class="ovr">[manual]</span>' : "";
+        const ovr = b.source === "manual" ? '<span class="ovr">[manual]</span>'
+          : b.source === "default" ? '<span class="ovr def">[default]</span>' : "";
         // base = weight / pool total; adjusted = 1 / what you still need (owned → —).
         const p = oddsMode === "adjusted"
           ? (b.owned ? null : (missing > 0 ? 1 / missing : 0))

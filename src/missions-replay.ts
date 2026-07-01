@@ -41,7 +41,7 @@ if (v.hasPool) {
   console.log(`\nPOOL  (${v.totals.owned}/${v.totals.total} owned):`);
   for (const pool of v.pools) {
     for (const b of pool.blueprints) {
-      const mark = b.owned ? (b.source === "override" ? "[~]" : "[x]") : "[ ]";
+      const mark = b.owned ? (b.source === "manual" ? "[~]" : b.source === "default" ? "[d]" : "[x]") : "[ ]";
       console.log(`  ${mark} ${b.name}${b.chance !== 1 ? `  (${Math.round(b.chance * 100)}%)` : ""}`);
     }
   }

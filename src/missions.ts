@@ -34,14 +34,25 @@ export interface Dataset {
   changelist: string;
   missionCount: number;
   missions: Record<string, DatasetMission>;
+  /** Starter-gear blueprints every account owns by default. NOT mission rewards and
+   *  never logged as "Received Blueprint", so they only become "owned" via this list.
+   *  Populated by the dataset generator from sc-api (item UUID + display name). */
+  defaults?: { name: string; item: string }[];
 }
 
 // ---- overlay-facing view ----
+/** How a blueprint came to be owned:
+ *   in-game  — witnessed a "Received Blueprint" receipt in the log,
+ *   manual   — the user ticked it on (seeds inventory the log can't see),
+ *   default  — starter gear every account owns (see DEFAULT_BLUEPRINTS).
+ *   null     — not owned. */
+export type BlueprintSource = "in-game" | "manual" | "default" | null;
+
 export interface BlueprintStatus {
   name: string;
   owned: boolean;
-  /** Why we think it's owned: an observed receipt, a manual override, or not owned. */
-  source: "observed" | "override" | null;
+  /** Why we think it's owned (in-game / manual / default), or null when not owned. */
+  source: BlueprintSource;
   chance: number;
 }
 export interface TrackedView {
@@ -552,15 +563,20 @@ export class MissionTracker extends EventEmitter {
 
   // ---- ownership resolution ----
 
-  private isOwned(poolName: string): { owned: boolean; source: "observed" | "override" | null } {
-    // Explicit override on the exact pool name wins.
-    if (this.overrides.has(poolName)) return { owned: this.overrides.get(poolName)!, source: "override" };
-    // Otherwise any observed receipt that matches (incl. variant) counts.
-    if (matchesPoolName(poolName, this.observed)) return { owned: true, source: "observed" };
-    // Or an override on a variant name.
-    for (const [name, val] of this.overrides) {
-      if (val && matchesPoolName(poolName, [name])) return { owned: true, source: "override" };
+  private isOwned(poolName: string): { owned: boolean; source: BlueprintSource } {
+    // Explicit manual override on the exact pool name wins (owned or not-owned).
+    if (this.overrides.has(poolName)) {
+      const v = this.overrides.get(poolName)!;
+      return { owned: v, source: v ? "manual" : null };
     }
+    // Earned in-game (an observed receipt, incl. a variant) — most specific.
+    if (matchesPoolName(poolName, this.observed)) return { owned: true, source: "in-game" };
+    // A manual override on a variant name.
+    for (const [name, val] of this.overrides) {
+      if (val && matchesPoolName(poolName, [name])) return { owned: true, source: "manual" };
+    }
+    // Starter gear owned by default (never appears in the log); from the dataset.
+    if (this.dataset?.defaults?.some((d) => matchesPoolName(poolName, [d.name]))) return { owned: true, source: "default" };
     return { owned: false, source: null };
   }
 
@@ -617,24 +633,29 @@ export class MissionTracker extends EventEmitter {
    *  the earliest in-game receipt time among the names mapping to that UUID; null for
    *  manual overrides and receipts logged before unlock-time tracking existed (the
    *  site falls back to when it first recorded the blueprint). */
-  collectedItemsWithDates(): { uuid: string; unlockedAt: string | null }[] {
-    const earliest = new Map<string, string | null>();
-    const consider = (uuid: string, ts: string | null) => {
-      if (!earliest.has(uuid)) {
-        earliest.set(uuid, ts);
+  collectedItemsWithDates(): { uuid: string; unlockedAt: string | null; source: "in-game" | "manual" | "default" }[] {
+    const RANK = { default: 1, manual: 2, "in-game": 3 } as const;
+    const map = new Map<string, { unlockedAt: string | null; source: "in-game" | "manual" | "default" }>();
+    const consider = (uuid: string, ts: string | null, source: "in-game" | "manual" | "default") => {
+      const cur = map.get(uuid);
+      if (!cur) {
+        map.set(uuid, { unlockedAt: ts, source });
         return;
       }
-      const cur = earliest.get(uuid) ?? null;
-      if (ts && (cur == null || Date.parse(ts) < Date.parse(cur))) earliest.set(uuid, ts);
+      // Keep the strongest source (in-game > manual > default) + earliest unlock time.
+      if (RANK[source] > RANK[cur.source]) cur.source = source;
+      if (ts && (cur.unlockedAt == null || Date.parse(ts) < Date.parse(cur.unlockedAt))) cur.unlockedAt = ts;
     };
+    // Add low→high so a stronger source upgrades the same uuid (defaults first).
+    for (const d of this.dataset?.defaults ?? []) if (d.item) consider(d.item, null, "default");
+    for (const [name, val] of this.overrides) {
+      if (val) for (const u of this.itemUuidsForName(name)) consider(u, null, "manual");
+    }
     for (const name of this.observed) {
       const ts = this.observedAt.get(name) ?? null;
-      for (const u of this.itemUuidsForName(name)) consider(u, ts);
+      for (const u of this.itemUuidsForName(name)) consider(u, ts, "in-game");
     }
-    for (const [name, val] of this.overrides) {
-      if (val) for (const u of this.itemUuidsForName(name)) consider(u, null);
-    }
-    return [...earliest].map(([uuid, unlockedAt]) => ({ uuid, unlockedAt }));
+    return [...map].map(([uuid, v]) => ({ uuid, unlockedAt: v.unlockedAt, source: v.source }));
   }
 
   /** The tracked mission's dataset key (debug_name), or null. */
