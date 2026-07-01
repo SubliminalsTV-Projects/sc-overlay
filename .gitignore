@@ -6,3 +6,5 @@ sc-loadout-overlay.code-workspace
 
 # local dev/test state
 .replay-state/
+release/
+build/server/

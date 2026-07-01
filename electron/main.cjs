@@ -10,11 +10,12 @@
 // game; toggle "Interactive" (tray or Ctrl+Alt+B) to click the picker/buttons.
 // Requires SC in BORDERLESS WINDOWED — overlays can't draw over exclusive fullscreen.
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, screen, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, screen, shell, ipcMain, dialog } = require("electron");
 const { spawn } = require("node:child_process");
 const http = require("node:http");
 const path = require("node:path");
 const fs = require("node:fs");
+const { autoUpdater } = require("electron-updater");
 
 const ROOT = path.join(__dirname, "..");
 const PORT = 8778;
@@ -30,13 +31,20 @@ let locked = false; // force click-through always (ignore hover), for uninterrup
 
 // ── server lifecycle ────────────────────────────────────────────────────────
 function startServer() {
-  // Dev: run the TS server via tsx. (Packaging will swap this for a bundled binary.)
-  server = spawn("npx tsx src/overlay-server.ts", {
-    cwd: ROOT,
-    shell: true,
-    env: { ...process.env },
-    stdio: "ignore",
-  });
+  if (app.isPackaged) {
+    // Prod: the bun-compiled server binary shipped as an extraResource (no Node/tsx
+    // on the user's machine). cwd = its dir so assetDir finds overlay/ + data/.
+    const exe = path.join(process.resourcesPath, "server", "sc-overlay-server.exe");
+    server = spawn(exe, { cwd: path.dirname(exe), env: { ...process.env }, stdio: "ignore" });
+  } else {
+    // Dev: run the TS server via tsx.
+    server = spawn("npx tsx src/overlay-server.ts", {
+      cwd: ROOT,
+      shell: true,
+      env: { ...process.env },
+      stdio: "ignore",
+    });
+  }
   server.on("exit", (code) => {
     if (code && !app.isQuitting) console.error(`[electron] server exited (${code})`);
   });
@@ -173,6 +181,35 @@ function refreshMissions() {
   postApi("/api/missions/refresh");
 }
 
+// Auto-update via electron-updater. Feed URL comes from the `publish` config
+// (subliminal.gg proxies the private GitHub release). Silent background download,
+// then a prompt to restart. No-op in dev (unpackaged).
+function setupUpdater() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.on("update-downloaded", (info) => {
+    dialog
+      .showMessageBox({
+        type: "info",
+        title: "Update ready",
+        message: `SC Blueprint Tracker ${info.version} is ready to install.`,
+        detail: "Restart now to update?",
+        buttons: ["Restart now", "Later"],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then((r) => {
+        if (r.response === 0) {
+          app.isQuitting = true;
+          autoUpdater.quitAndInstall();
+        }
+      });
+  });
+  autoUpdater.on("error", (e) => console.error("[updater]", String(e)));
+  autoUpdater.checkForUpdates().catch(() => {});
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 3 * 60 * 60 * 1000);
+}
+
 // ── tray ────────────────────────────────────────────────────────────────────
 function refreshTray() {
   if (!tray) return;
@@ -220,6 +257,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!up) console.error("[electron] server did not come up on :" + PORT);
     createOverlay();
     createTray();
+    setupUpdater();
     globalShortcut.register("Control+Alt+L", toggleLock); // lock/unlock click-through
     globalShortcut.register("Control+Alt+H", toggleShow); // show/hide
   });

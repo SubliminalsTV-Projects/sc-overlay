@@ -1,9 +1,10 @@
 {
   "name": "sc-log-watcher",
   "version": "0.1.0",
-  "description": "Watches the Star Citizen game.log and emits structured events.",
+  "description": "SubliminalsTV SC Blueprint Tracker — game.log watcher + overlay.",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "electron/main.cjs",
+  "author": "SubliminalsTV",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
@@ -15,13 +16,34 @@
     "standalone": "tsx src/standalone.ts",
     "overlay-app": "electron electron/main.cjs",
     "package": "node tools/package.mjs",
+    "build:server": "node tools/build-server.mjs",
+    "dist": "npm run build:server && electron-builder",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "electron": "^43.0.0",
+    "electron-builder": "^25.1.8",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "gg.subliminal.blueprint-tracker",
+    "productName": "SC Blueprint Tracker",
+    "directories": { "output": "release", "buildResources": "build" },
+    "files": ["electron/**/*", "!**/*.map"],
+    "extraResources": [{ "from": "build/server", "to": "server" }],
+    "win": { "target": "nsis", "icon": "build/icon.png" },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "SC Blueprint Tracker"
+    },
+    "publish": [{ "provider": "generic", "url": "https://subliminal.gg/api/updates/blueprint-tracker" }]
   }
 }
