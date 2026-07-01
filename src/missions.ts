@@ -71,6 +71,9 @@ export interface TrackedView {
 interface Persisted {
   observed: string[];
   overrides: Record<string, boolean>;
+  /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log).
+   *  Optional: older state files predate it; a "Verify from logs" run backfills it. */
+  observedAt?: Record<string, string>;
 }
 
 /** "Geist Armor Arms" matches an observed "Geist Armor Arms Whiteout" (variant suffix). */
@@ -120,6 +123,8 @@ export class MissionTracker extends EventEmitter {
   private detectedFamily: string | null = null;
 
   private observed = new Set<string>();
+  /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log). */
+  private observedAt = new Map<string, string>();
   private overrides = new Map<string, boolean>();
 
   /** missionId -> info, built from accept + marker events. */
@@ -261,10 +266,12 @@ export class MissionTracker extends EventEmitter {
         break;
       }
       case "blueprintReceived": {
-        if (!this.observed.has(ev.name)) {
-          this.observed.add(ev.name);
+        const isNew = !this.observed.has(ev.name);
+        const dateChanged = this.noteReceiptTime(ev.name, ev.ts);
+        if (isNew) this.observed.add(ev.name);
+        if (isNew || dateChanged) {
           this.saveState();
-          this.emit("collected", ev.name);
+          if (isNew) this.emit("collected", ev.name);
           this.emit("change");
         }
         break;
@@ -284,6 +291,18 @@ export class MissionTracker extends EventEmitter {
     }
   }
 
+  /** Record the earliest in-game unlock time seen for a blueprint name. Returns true
+   *  if it set or moved the stored time earlier. Ignores empty/unparseable stamps. */
+  private noteReceiptTime(name: string, ts: string | null): boolean {
+    if (!ts) return false;
+    const t = Date.parse(ts);
+    if (Number.isNaN(t)) return false;
+    const prev = this.observedAt.get(name);
+    if (prev && Date.parse(prev) <= t) return false;
+    this.observedAt.set(name, ts);
+    return true;
+  }
+
   /** Re-scan a set of log files for `Received Blueprint` receipts and fold them into
    *  the collected set. Recovers history from rotated logbackups AND undoes accidental
    *  un-ticks (a not-owned override is cleared when the logs prove the blueprint was
@@ -292,7 +311,10 @@ export class MissionTracker extends EventEmitter {
    *  separate account and must not pollute your live collection. Blueprints are NOT
    *  wiped between patches, so all live patches count. */
   verifyFromLogs(paths: string[]): { files: number; receipts: number; added: number; restored: number; skipped: number } {
-    const names = new Set<string>();
+    // name -> earliest receipt timestamp across all scanned logs (backups carry the
+    // real historical unlock times, so this also backfills dates for names already
+    // observed without one).
+    const receiptTimes = new Map<string, string | null>();
     let files = 0;
     let receipts = 0;
     let skipped = 0;
@@ -316,22 +338,30 @@ export class MissionTracker extends EventEmitter {
         if (!line.includes("Received Blueprint:")) continue; // cheap prefilter
         const ev = parseMissionEvent(parseLine(line));
         if (ev && ev.kind === "blueprintReceived") {
-          names.add(ev.name);
           receipts++;
+          const prev = receiptTimes.get(ev.name);
+          // Keep the earliest parseable stamp; ensure the name is present even if the
+          // stamp is missing (so it still counts toward observed).
+          if (ev.ts && (prev == null || (prev !== undefined && Date.parse(ev.ts) < Date.parse(prev)))) {
+            receiptTimes.set(ev.name, ev.ts);
+          } else if (!receiptTimes.has(ev.name)) {
+            receiptTimes.set(ev.name, ev.ts ?? null);
+          }
         }
       }
     }
     let added = 0;
-    for (const n of names) {
+    for (const [n, ts] of receiptTimes) {
       if (!this.observed.has(n)) {
         this.observed.add(n);
         added++;
       }
+      this.noteReceiptTime(n, ts); // backfill / refine the unlock date
     }
     // Clear any not-owned override the logs contradict — recovers accidental un-ticks.
     let restored = 0;
     for (const [name, val] of [...this.overrides]) {
-      if (val === false && matchesPoolName(name, names)) {
+      if (val === false && matchesPoolName(name, receiptTimes.keys())) {
         this.overrides.delete(name);
         restored++;
       }
@@ -467,6 +497,30 @@ export class MissionTracker extends EventEmitter {
     return [...out];
   }
 
+  /** Every collected blueprint as { uuid, unlockedAt } for the site sync. The date is
+   *  the earliest in-game receipt time among the names mapping to that UUID; null for
+   *  manual overrides and receipts logged before unlock-time tracking existed (the
+   *  site falls back to when it first recorded the blueprint). */
+  collectedItemsWithDates(): { uuid: string; unlockedAt: string | null }[] {
+    const earliest = new Map<string, string | null>();
+    const consider = (uuid: string, ts: string | null) => {
+      if (!earliest.has(uuid)) {
+        earliest.set(uuid, ts);
+        return;
+      }
+      const cur = earliest.get(uuid) ?? null;
+      if (ts && (cur == null || Date.parse(ts) < Date.parse(cur))) earliest.set(uuid, ts);
+    };
+    for (const name of this.observed) {
+      const ts = this.observedAt.get(name) ?? null;
+      for (const u of this.itemUuidsForName(name)) consider(u, ts);
+    }
+    for (const [name, val] of this.overrides) {
+      if (val) for (const u of this.itemUuidsForName(name)) consider(u, null);
+    }
+    return [...earliest].map(([uuid, unlockedAt]) => ({ uuid, unlockedAt }));
+  }
+
   /** The tracked mission's dataset key (debug_name), or null. */
   currentContractKey(): string | null {
     const t = this.trackedMissionId ? this.missions.get(this.trackedMissionId) : undefined;
@@ -523,6 +577,7 @@ export class MissionTracker extends EventEmitter {
     try {
       const data = JSON.parse(readFileSync(this.statePath, "utf8")) as Persisted;
       this.observed = new Set(data.observed ?? []);
+      this.observedAt = new Map(Object.entries(data.observedAt ?? {}));
       this.overrides = new Map(Object.entries(data.overrides ?? {}));
     } catch {
       /* first run */
@@ -533,6 +588,7 @@ export class MissionTracker extends EventEmitter {
     const data: Persisted = {
       observed: [...this.observed],
       overrides: Object.fromEntries(this.overrides),
+      observedAt: Object.fromEntries(this.observedAt),
     };
     try {
       if (!existsSync(this.stateDir)) mkdirSync(this.stateDir, { recursive: true });

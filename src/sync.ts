@@ -15,7 +15,9 @@ const SYNC_PATH = "/api/sc/sync";
 const DEBOUNCE_MS = 1500;
 
 export interface SyncSnapshot {
-  got: string[];
+  /** Collected blueprints as { uuid, unlockedAt } (unlockedAt = ISO in-game unlock
+   *  time, or null when unknown — the server falls back to when it first saw it). */
+  got: { uuid: string; unlockedAt: string | null }[];
   mission: { debugName: string; patch: string } | null;
 }
 

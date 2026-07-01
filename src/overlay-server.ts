@@ -111,7 +111,7 @@ sync.configure(config.syncToken, config.syncEnabled);
 // The snapshot is the full authoritative collection + current mission, computed
 // lazily at flush time so frequent state changes just markDirty() cheaply.
 sync.setProvider(() => ({
-  got: tracker.collectedItemUuids(),
+  got: tracker.collectedItemsWithDates(),
   mission: tracker.currentContractKey()
     ? { debugName: tracker.currentContractKey()!, patch: tracker.currentChangelist() ?? "" }
     : null,
