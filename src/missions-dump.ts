@@ -37,6 +37,10 @@ const fmt = (e: MissionEvent): string => {
       return `ACTIVE   [${short(e.missionId)}] obj=${short(e.objectiveId)}`;
     case "end":
       return `END      [${short(e.missionId)}] ${e.state}`;
+    case "contractComplete":
+      return `COMPLETE [${short(e.missionId)}] ${e.title ?? ""}`;
+    case "reward":
+      return `REWARD   +${e.amount.toLocaleString()} aUEC`;
     case "blueprintReceived":
       return `BLUEPRINT  «${e.name}»  (mission ${short(e.missionId)})`;
     case "sessionStart":

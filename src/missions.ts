@@ -60,6 +60,18 @@ export interface TrackedView {
   totals: { owned: number; total: number };
   /** Lifetime collected count across all observed + overridden blueprints. */
   collectedTotal: number;
+  /** Present for ~30s after the on-screen mission completes: a summary card
+   *  (payout, duration, blueprints received) shown before moving to the next
+   *  mission. null the rest of the time. */
+  completion: {
+    title: string | null;
+    /** aUEC awarded, or null if none correlated. */
+    aUEC: number | null;
+    /** Accept→complete duration in ms, or null if the accept wasn't seen. */
+    durationMs: number | null;
+    /** Blueprint names received during the mission. */
+    blueprints: string[];
+  } | null;
   /** The manually-pinned missionId, or null when auto-following. */
   selectedId: string | null;
   /** Every mission seen this session, newest first — powers the overlay picker.
@@ -96,6 +108,15 @@ export function detectChangelist(rawLine: string): string | null {
   return m ? (m[1] ?? m[2]) : null;
 }
 
+/** How long to keep a just-completed mission's summary card up before moving on. */
+const COMPLETION_HOLD_MS = 30_000;
+/** An "Awarded N aUEC" counts as a mission's payout if it fired within this of the
+ *  completion (the award's own missionId is null, so we correlate by log time). */
+const REWARD_WINDOW_MS = 6_000;
+/** Only show the completion card for a real-time completion — not the historical
+ *  ones replayed when the app seeds from the log on startup. */
+const COMPLETION_FRESH_MS = 90_000;
+
 export interface MissionTrackerOptions {
   /** Directory holding blueprints.<changelist>.json (+ blueprints.latest.json). */
   dataDir: string;
@@ -127,8 +148,9 @@ export class MissionTracker extends EventEmitter {
   private observedAt = new Map<string, string>();
   private overrides = new Map<string, boolean>();
 
-  /** missionId -> info, built from accept + marker events. */
-  private missions = new Map<string, { title?: string; contractKey?: string; generator?: string }>();
+  /** missionId -> info, built from accept + marker events. `acceptedAt` (log time,
+   *  ms) powers the mission-duration readout on the completion card. */
+  private missions = new Map<string, { title?: string; contractKey?: string; generator?: string; acceptedAt?: number }>();
   private trackedMissionId: string | null = null;
   /** missionIds in CreateMarker order, most recent last (deduped move-to-end). */
   private markerSeq: string[] = [];
@@ -141,6 +163,16 @@ export class MissionTracker extends EventEmitter {
   /** Any mission that logged an end (complete/fail/abandon) — dropped from the
    *  active picker and auto-follow so only missions you currently have show. */
   private endedMissionIds = new Set<string>();
+
+  /** The brief "mission complete" summary card, shown over the just-completed
+   *  mission for COMPLETION_HOLD_MS before the overlay moves to the next mission.
+   *  Only set for real-time completions (see beginCompletion). */
+  private completion:
+    | { missionId: string; title: string | null; completedAtMs: number; acceptedAtMs: number | null; aUEC: number | null; until: number }
+    | null = null;
+  private completionTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Last "Awarded N aUEC" seen (log time), to attach to the completion near it. */
+  private lastReward: { amount: number; atMs: number } | null = null;
 
   constructor(opts: MissionTrackerOptions) {
     super();
@@ -240,6 +272,10 @@ export class MissionTracker extends EventEmitter {
       case "accept": {
         const info = this.missions.get(ev.missionId) ?? {};
         if (ev.title) info.title = ev.title;
+        if (ev.ts && info.acceptedAt == null) {
+          const t = Date.parse(ev.ts);
+          if (Number.isFinite(t)) info.acceptedAt = t; // first accept = mission start
+        }
         this.missions.set(ev.missionId, info);
         break;
       }
@@ -258,11 +294,41 @@ export class MissionTracker extends EventEmitter {
         break;
       }
       case "end": {
+        // Capture whether this was the on-screen mission BEFORE marking it ended
+        // (marking it ended removes it from effectiveMissionId()).
+        const wasDisplayed = this.effectiveMissionId() === ev.missionId;
         // Any ended mission (complete/fail/abandon) leaves the active set, so the
         // picker matches what you actually have. COMPLETED also flags the badge.
         this.endedMissionIds.add(ev.missionId);
-        if (ev.state.includes("COMPLETED")) this.completedMissionIds.add(ev.missionId);
+        if (ev.state.includes("COMPLETED")) {
+          this.completedMissionIds.add(ev.missionId);
+          if (wasDisplayed) this.beginCompletion(ev.missionId, this.missions.get(ev.missionId)?.title ?? null, ev.ts);
+        }
         this.emit("change");
+        break;
+      }
+
+      case "contractComplete": {
+        // Friendlier completion signal (has the title); usually fires just before the
+        // MissionEnded push. Take over the display only for the mission on screen now.
+        if (ev.missionId) {
+          const info = this.missions.get(ev.missionId) ?? {};
+          if (ev.title && !info.title) info.title = ev.title;
+          this.missions.set(ev.missionId, info);
+          if (ev.missionId === this.effectiveMissionId()) this.beginCompletion(ev.missionId, ev.title, ev.ts);
+        }
+        break;
+      }
+
+      case "reward": {
+        const t = ev.ts ? Date.parse(ev.ts) : Date.now();
+        this.lastReward = { amount: ev.amount, atMs: Number.isFinite(t) ? t : Date.now() };
+        // The award fires a beat AFTER the completion, so attach it to a live card
+        // that hasn't captured its payout yet.
+        if (this.completion && this.completion.aUEC == null && Math.abs(this.lastReward.atMs - this.completion.completedAtMs) <= REWARD_WINDOW_MS) {
+          this.completion.aUEC = ev.amount;
+          this.emit("change");
+        }
         break;
       }
       case "blueprintReceived": {
@@ -301,6 +367,53 @@ export class MissionTracker extends EventEmitter {
     if (prev && Date.parse(prev) <= t) return false;
     this.observedAt.set(name, ts);
     return true;
+  }
+
+  /** Start the brief "mission complete" hold-card for a just-completed mission.
+   *  Idempotent (the same completion arrives via contractComplete AND MissionEnded)
+   *  and gated to real-time completions so seeding from the log on startup doesn't
+   *  pop a stale card. Correlates the aUEC award by log-time proximity. */
+  private beginCompletion(missionId: string, title: string | null, ts: string | null): void {
+    const completedAtMs = ts ? Date.parse(ts) : Date.now();
+    if (!Number.isFinite(completedAtMs)) return;
+    if (Date.now() - completedAtMs > COMPLETION_FRESH_MS) return; // historical replay — no card
+    if (this.completion && this.completion.missionId === missionId) {
+      if (title && !this.completion.title) this.completion.title = title;
+      return;
+    }
+    const info = this.missions.get(missionId);
+    const aUEC =
+      this.lastReward && Math.abs(this.lastReward.atMs - completedAtMs) <= REWARD_WINDOW_MS ? this.lastReward.amount : null;
+    this.completion = {
+      missionId,
+      title: title ?? info?.title ?? null,
+      completedAtMs,
+      acceptedAtMs: info?.acceptedAt ?? null,
+      aUEC,
+      until: Date.now() + COMPLETION_HOLD_MS,
+    };
+    if (this.completionTimer) clearTimeout(this.completionTimer);
+    this.completionTimer = setTimeout(() => {
+      this.completion = null;
+      this.completionTimer = null;
+      this.emit("change"); // hold expired → overlay moves to the next mission
+    }, COMPLETION_HOLD_MS);
+    this.emit("change");
+  }
+
+  /** Blueprint names received during the completed mission (receipt time between its
+   *  accept and completion) — the "+N blueprints" line on the completion card. */
+  private completionBlueprints(): string[] {
+    const c = this.completion;
+    if (!c) return [];
+    const lo = c.acceptedAtMs ?? -Infinity;
+    const hi = c.completedAtMs + REWARD_WINDOW_MS;
+    const out: string[] = [];
+    for (const [name, ts] of this.observedAt) {
+      const t = Date.parse(ts);
+      if (Number.isFinite(t) && t >= lo && t <= hi) out.push(name);
+    }
+    return out;
   }
 
   /** Re-scan a set of log files for `Received Blueprint` receipts and fold them into
@@ -388,6 +501,9 @@ export class MissionTracker extends EventEmitter {
     this.markerSinceJoin = false;
     this.endedMissionIds.clear();
     this.completedMissionIds.clear();
+    if (this.completionTimer) clearTimeout(this.completionTimer);
+    this.completionTimer = null;
+    this.completion = null;
   }
 
   /** Pin the overlay to a specific accepted mission (from the picker), or null to
@@ -535,7 +651,10 @@ export class MissionTracker extends EventEmitter {
   // ---- view for the overlay ----
 
   view(): TrackedView {
-    const effectiveId = this.effectiveMissionId();
+    // While the completion card is up, keep the just-completed mission on screen
+    // (it's already in endedMissionIds, so effectiveMissionId() has moved on).
+    const holdActive = !!this.completion && Date.now() < this.completion.until;
+    const effectiveId = holdActive ? this.completion!.missionId : this.effectiveMissionId();
     const tracked = effectiveId ? this.missions.get(effectiveId) : undefined;
     const key = tracked?.contractKey ?? null;
     const mission = key && this.dataset ? this.dataset.missions[key] : undefined;
@@ -562,10 +681,18 @@ export class MissionTracker extends EventEmitter {
       title: mission?.title ?? tracked?.title ?? null,
       generator: tracked?.generator ?? mission?.generatorClass ?? null,
       hasPool: !!mission,
-      completed: effectiveId ? this.completedMissionIds.has(effectiveId) : false,
+      completed: holdActive || (effectiveId ? this.completedMissionIds.has(effectiveId) : false),
       pools,
       totals: { owned, total },
       collectedTotal: this.observed.size + [...this.overrides.values()].filter(Boolean).length,
+      completion: holdActive
+        ? {
+            title: this.completion!.title ?? mission?.title ?? tracked?.title ?? null,
+            aUEC: this.completion!.aUEC,
+            durationMs: this.completion!.acceptedAtMs != null ? this.completion!.completedAtMs - this.completion!.acceptedAtMs : null,
+            blueprints: this.completionBlueprints(),
+          }
+        : null,
       selectedId: this.selectedMissionId,
       missions: this.knownMissions(),
     };

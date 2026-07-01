@@ -44,6 +44,12 @@ export type MissionEvent =
     }
   | { kind: "activeObjective"; ts: string | null; missionId: string | null; objectiveId: string | null }
   | { kind: "end"; ts: string | null; missionId: string; state: string }
+  /** "Contract Complete: <title>" notification — carries the friendly title + the
+   *  real missionId (unlike the MissionEnded push, which has no title). */
+  | { kind: "contractComplete"; ts: string | null; missionId: string | null; title: string | null }
+  /** "Awarded <N> aUEC" notification. Its OWN missionId is null (all-zeros) in the
+   *  log, so callers correlate it to the completion that fired just before by time. */
+  | { kind: "reward"; ts: string | null; amount: number }
   | { kind: "blueprintReceived"; ts: string | null; name: string; missionId: string | null }
   /** Entered/re-entered the persistent universe (login / server change) — the
    *  previous shard's tracked-mission selection no longer applies. */
@@ -58,6 +64,8 @@ export function contractKeyOf(contract: string): string {
 
 const RE = {
   acceptTitle: /Added notification "Contract Accepted:\s*(.+?):\s*"/,
+  completeTitle: /Added notification "Contract Complete:\s*(.+?):\s*"/,
+  reward: /Added notification "Awarded\s+([\d,]+)\s+aUEC/,
   blueprint: /Added notification "Received Blueprint:\s*(.+?):\s*"/,
   missionIdField: new RegExp(`MissionId:\\s*\\[(${UUID})\\]`),
   // CreateMarker fields (note: contractDefinitionId has NO space before its bracket)
@@ -90,6 +98,15 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
       if (acc) {
         const mid = m.match(RE.missionIdField);
         if (mid) return { kind: "accept", ts: e.timestamp, missionId: mid[1], title: acc[1].trim() };
+      }
+      const cc = m.match(RE.completeTitle);
+      if (cc) {
+        const mid = m.match(RE.missionIdField);
+        return { kind: "contractComplete", ts: e.timestamp, missionId: mid?.[1] ?? null, title: cc[1].trim() };
+      }
+      const rw = m.match(RE.reward);
+      if (rw) {
+        return { kind: "reward", ts: e.timestamp, amount: parseInt(rw[1].replace(/,/g, ""), 10) };
       }
       return null;
     }

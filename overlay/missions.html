@@ -9,8 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
   /* Mission Control stream-overlay design language (SC diegetic HUD):
-     navy-teal translucent glass, cyan system chrome, gold value accents, gold
-     corner cradle brackets, cyan diamond glyph, scanlines + visor sheen,
+     navy-teal translucent glass, cyan system chrome, gold value accents,
+     cyan diamond glyph, scanlines + visor sheen,
      Inter (uppercase) labels + monospace numbers, subtle helmet-projection tilt. */
   :root {
     --cyan: #45D0E0; --cyan-bright: #7fe3ef; --cyan-text: #c4dbe6; --cyan-dim: #7fa7bb; --faint: #5d7e90;
@@ -74,13 +74,6 @@
   #grip:hover { opacity: 1 !important; background: rgba(69, 208, 224, 0.2); }
   #panel.moving #grip { display: none; }
 
-  /* Gold corner cradle brackets */
-  .bracket { position: absolute; width: 13px; height: 13px; z-index: 4; pointer-events: none; }
-  .bracket.tl { top: 7px; left: 7px; border-top: 1.4px solid var(--gold); border-left: 1.4px solid var(--gold); }
-  .bracket.tr { top: 7px; right: 7px; border-top: 1.4px solid var(--gold); border-right: 1.4px solid var(--gold); }
-  .bracket.bl { bottom: 7px; left: 7px; border-bottom: 1.4px solid var(--gold); border-left: 1.4px solid var(--gold); }
-  .bracket.br { bottom: 7px; right: 7px; border-bottom: 1.4px solid var(--gold); border-right: 1.4px solid var(--gold); }
-
   .head { position: relative; padding: 15px 17px 13px; z-index: 10;
     /* tick-strip data-texture divider under the header */
     border-bottom: 1px solid var(--divider);
@@ -128,6 +121,21 @@
     text-transform: uppercase; color: var(--green); border: 1px solid rgba(46, 230, 160, 0.45);
     background: rgba(46, 230, 160, 0.1); padding: 2px 9px; border-radius: 3px; }
 
+  /* Mission-complete summary card — shown briefly over the completed mission. */
+  .cc { margin-top: 10px; border: 1px solid rgba(255, 210, 122, 0.5); border-radius: 5px;
+    background: linear-gradient(180deg, rgba(255, 210, 122, 0.14), rgba(46, 230, 160, 0.06));
+    padding: 9px 11px 10px; box-shadow: 0 0 18px rgba(255, 210, 122, 0.14) inset;
+    animation: ccIn 0.35s ease both; }
+  @keyframes ccIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .cc-head { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); }
+  .cc-check { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px;
+    border-radius: 50%; background: var(--green); color: #062018; font-size: 10px; font-weight: 800; }
+  .cc-stats { display: flex; gap: 16px; margin-top: 8px; }
+  .cc-stat { display: flex; flex-direction: column; line-height: 1.05; }
+  .cc-val { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 18px; font-weight: 700; color: var(--gold); }
+  .cc-lbl { font-size: 8.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan-dim); margin-top: 2px; }
+
   .pool { padding: 9px 11px 11px; position: relative; z-index: 2; }
   .row { display: flex; align-items: center; gap: 10px; padding: 7px 9px; margin-top: 3px; border-radius: 3px;
     background: rgba(255, 255, 255, 0.02); cursor: pointer; user-select: none; transition: background .15s; }
@@ -168,7 +176,6 @@
 </head>
 <body>
   <div id="panel" class="empty">
-    <span class="bracket tl"></span><span class="bracket tr"></span><span class="bracket bl"></span><span class="bracket br"></span>
     <div id="moveBanner"><div class="movebox">⠿ Drag anywhere to move<button id="moveDone">Done</button></div></div>
     <div class="head">
       <div id="grip" title="Move overlay"><span class="dots">⠿</span>Move</div>
@@ -213,7 +220,8 @@
     if (v.build && v.patch && !v.patch.includes(v.build)) patchTxt += " · build " + v.build + " (approx)";
     $("patch").textContent = patchTxt;
     $("collected").textContent = "collected: " + (v.collectedTotal ?? 0);
-    $("completed").innerHTML = v.completed ? '<span class="completed">Mission complete</span>' : "";
+    $("completed").innerHTML = v.completion ? completionCard(v.completion)
+      : v.completed ? '<span class="completed">Mission complete</span>' : "";
     renderPicker(v);
 
     if (!v.contractKey) {
@@ -268,6 +276,20 @@
 
   function escapeHtml(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
   function escapeAttr(s){return s.replace(/"/g,"&quot;");}
+
+  // Mission-complete summary card: payout, time taken, blueprints received. Shown
+  // for ~30s over the completed mission, then the overlay moves to the next one.
+  function fmtDur(ms){ if(ms==null) return null; const s=Math.max(0,Math.round(ms/1000)); const m=Math.floor(s/60); return m+":"+String(s%60).padStart(2,"0"); }
+  function completionCard(c){
+    const stats = [];
+    if (c.aUEC != null) stats.push('<div class="cc-stat"><span class="cc-val">+' + c.aUEC.toLocaleString() + '</span><span class="cc-lbl">aUEC</span></div>');
+    const dur = fmtDur(c.durationMs);
+    if (dur) stats.push('<div class="cc-stat"><span class="cc-val">' + dur + '</span><span class="cc-lbl">time</span></div>');
+    const nbp = (c.blueprints || []).length;
+    if (nbp) stats.push('<div class="cc-stat"><span class="cc-val">+' + nbp + '</span><span class="cc-lbl">blueprint' + (nbp>1?"s":"") + '</span></div>');
+    return '<div class="cc"><div class="cc-head"><span class="cc-check">✓</span> Mission Complete</div>' +
+      (stats.length ? '<div class="cc-stats">' + stats.join("") + '</div>' : "") + '</div>';
+  }
 
   // Mission picker: the log can't tell us which mission you've *selected* to track,
   // so list every accepted mission and let you choose. Auto = newest with a pool.
