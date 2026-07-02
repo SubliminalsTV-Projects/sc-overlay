@@ -214,6 +214,10 @@ const MIME: Record<string, string> = {
   ".js": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  // SVG must be served as image/svg+xml or Chromium won't use it as a CSS mask
+  // (SVG in image contexts is MIME-strict; raster is content-sniffed regardless).
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
 };
 
 function readBody(req: import("node:http").IncomingMessage): Promise<any> {
