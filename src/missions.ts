@@ -166,11 +166,32 @@ interface Persisted {
 function norm(s: string): string {
   return s.toLowerCase().replace(/\s+/g, " ").trim();
 }
+
+/** SC ship-component blueprints are logged with a classification designation the
+ *  dataset doesn't carry — "Mil/2/B Bolide" (Class/Size/Grade + model) or the
+ *  quantum-drive form `STL-1B "Zephyr"` (code + quoted model) — while the dataset
+ *  stores the bare model ("Bolide", "Zephyr"). Return the bare-model form when a name
+ *  looks like a component designation, else null. Used as a resolve fallback only, so
+ *  a stray match can't hurt: the stripped candidate still has to hit the dataset. */
+function componentModel(received: string): string | null {
+  // Class/Size/Grade prefix: "Mil/2/B ", "Ind/0/C ", "Civ/3/D ", "Sth/1/A ", …
+  const cls = received.match(/^[A-Za-z]{2,4}\/\d+\/[A-Za-z0-9]+\s+(.+)$/);
+  if (cls) return cls[1].trim();
+  // Code + quoted model at the end: `STL-1B "Zephyr"` -> "Zephyr" (but NOT a variant
+  // like `BR-2 "Purgatory Camo" Shotgun`, which has text after the quote).
+  const qd = received.match(/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\s+"([^"]+)"\s*$/);
+  if (qd) return qd[1].trim();
+  return null;
+}
+
 function matchesPoolName(poolName: string, owned: Iterable<string>): boolean {
   const p = norm(poolName);
   for (const o of owned) {
     const n = norm(o);
     if (n === p || n.startsWith(p + " ") || p.startsWith(n + " ")) return true;
+    // Component designation → bare model (pool carries the bare model name).
+    const model = componentModel(o);
+    if (model && norm(model) === p) return true;
   }
   return false;
 }
@@ -734,13 +755,17 @@ export class MissionTracker extends EventEmitter {
    *  a variant with no exact entry anywhere falls back to its longest base prefix. */
   itemUuidsForName(received: string): string[] {
     if (!this.dataset) return [];
-    const target = norm(received);
     const entries: { name: string; item: string | null }[] = [];
     for (const mission of Object.values(this.dataset.missions))
       for (const pool of Object.values(mission.pools))
         for (const e of pool) entries.push({ name: e.blueprint, item: e.item });
     if (this.dataset.index) for (const e of this.dataset.index) entries.push({ name: e.name, item: e.item });
-    return this.resolveName(target, entries);
+    const direct = this.resolveName(norm(received), entries);
+    if (direct.length) return direct;
+    // Fallback: SC ship-component designation ("Mil/2/B Bolide", `STL-1B "Zephyr"`) →
+    // the bare model the dataset stores ("Bolide", "Zephyr").
+    const model = componentModel(received);
+    return model ? this.resolveName(norm(model), entries) : [];
   }
 
   /** Every collected blueprint (observed + owned-overrides) as item UUIDs. */
