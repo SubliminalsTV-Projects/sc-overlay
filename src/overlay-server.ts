@@ -13,7 +13,7 @@ import { assetDir } from "./paths.js";
 
 const overlayDir = assetDir(import.meta.url, "overlay");
 const bundledDataDir = assetDir(import.meta.url, "data");
-const PORT = 8778;
+const PORT = Number(process.env.PORT) || 8778;
 
 // Persist runtime state in a per-user writable dir — NEVER next to the binary.
 // The installed app lives under Program Files (read-only); writing config.json

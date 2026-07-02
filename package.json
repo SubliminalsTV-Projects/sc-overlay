@@ -1,6 +1,6 @@
 {
   "name": "sc-log-watcher",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "SubliminalsTV SC Blueprint Tracker — game.log watcher + overlay.",
   "type": "module",
   "main": "electron/main.cjs",
@@ -34,16 +34,35 @@
   "build": {
     "appId": "gg.subliminal.blueprint-tracker",
     "productName": "SC Blueprint Tracker",
-    "directories": { "output": "release", "buildResources": "build" },
-    "files": ["electron/**/*", "!**/*.map"],
-    "extraResources": [{ "from": "build/server", "to": "server" }],
-    "win": { "target": "nsis", "icon": "build/icon.png" },
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "build/server",
+        "to": "server"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "SC Blueprint Tracker"
     },
-    "publish": [{ "provider": "generic", "url": "https://subliminal.gg/api/updates/blueprint-tracker" }]
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://subliminal.gg/api/updates/blueprint-tracker"
+      }
+    ]
   }
 }

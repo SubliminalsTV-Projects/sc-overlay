@@ -46,7 +46,7 @@
   /* visor sheen */
   #panel::after { content: ""; position: absolute; inset: 0; border-radius: 12px; pointer-events: none; z-index: 3;
     background: linear-gradient(180deg, rgba(180, 235, 250, 0.09), transparent 36%); }
-  #panel.empty .pool, #panel.empty .head .progress { display: none; }
+  #panel.empty .pool, #panel.empty .catbar, #panel.empty .head .progress { display: none; }
 
   /* Move/reposition mode: whole panel becomes a drag surface with a banner. */
   #moveBanner { display: none; position: absolute; inset: 0; z-index: 50; -webkit-app-region: drag; cursor: move;
@@ -150,6 +150,45 @@
   .name .ovr.def { color: var(--cyan-dim); }
   .chance { flex: none; font-family: var(--mono); font-weight: 500; font-size: 11px; color: var(--cyan-dim); font-variant-numeric: tabular-nums; }
 
+  /* Fabricator-style category filter bar (mirrors the in-game item fabricator
+     filter). 10 top-level tabs; tabs absent from the current pool are greyed. */
+  .catbar { display: flex; gap: 4px; padding: 9px 11px 3px; flex-wrap: wrap; position: relative; z-index: 2; }
+  .cat { position: relative; width: 30px; height: 30px; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--divider); background: rgba(69, 208, 224, 0.05); display: grid; place-items: center;
+    transition: background .12s, border-color .12s; }
+  .cat .ci { width: 18px; height: 18px; background: var(--cyan-dim);
+    -webkit-mask: var(--u) center / contain no-repeat; mask: var(--u) center / contain no-repeat; transition: background .12s; }
+  .cat:hover { border-color: var(--cyan); background: rgba(69, 208, 224, 0.14); }
+  .cat:hover .ci { background: var(--cyan-bright); }
+  .cat.active { border-color: var(--cyan); background: rgba(69, 208, 224, 0.24);
+    box-shadow: 0 0 10px rgba(69, 208, 224, 0.28) inset; }
+  .cat.active .ci { background: var(--cyan-bright); }
+  .cat.off { cursor: default; opacity: 0.3; }
+  .cat.off:hover { border-color: var(--divider); background: rgba(69, 208, 224, 0.05); }
+  .cat.off .ci { background: var(--faint); }
+  .cat .cnt { position: absolute; top: -5px; right: -5px; min-width: 14px; height: 14px; padding: 0 3px;
+    border-radius: 7px; background: var(--cyan); color: #04141b; font-family: var(--mono); font-size: 8.5px;
+    font-weight: 700; line-height: 14px; text-align: center; }
+  .cat.off .cnt { display: none; }
+  /* text-only sub-category header within the pool list */
+  .subhead { display: flex; align-items: center; gap: 8px; margin: 10px 3px 4px; font-size: 9px; font-weight: 700;
+    letter-spacing: 0.15em; text-transform: uppercase; color: var(--cyan-dim); }
+  .subhead:first-child { margin-top: 2px; }
+  .subhead::after { content: ""; flex: 1; height: 1px; background: var(--divider); }
+
+  /* Dynamic-event reward ladder (Return of XenoThreat) shown on a pool-less event
+     mission: an event header, a "check your journal" note, and per-tier reward rows. */
+  .evhead { display: flex; align-items: center; gap: 8px; margin: 2px 3px 7px; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); text-shadow: 0 0 12px rgba(255, 210, 122, 0.3); }
+  .evhead .dot { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+  .evnote { margin: 0 3px 8px; padding: 7px 9px; font-size: 10.5px; line-height: 1.4; color: var(--cyan-text);
+    background: rgba(69, 208, 224, 0.06); border: 1px solid var(--divider); border-radius: 4px; }
+  .evtier { display: flex; align-items: center; gap: 9px; margin: 11px 3px 4px; }
+  .evtier .evpct { font-family: var(--mono); font-weight: 700; font-size: 13px; color: var(--gold);
+    font-variant-numeric: tabular-nums; }
+  .evtier .evbar { flex: 1; height: 1px; background: var(--divider); }
+  .evtier .evcount { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+
   .msg { padding: 28px 18px; text-align: center; color: var(--cyan-dim); font-size: 13px; position: relative; z-index: 2; }
   .msg b { color: var(--cyan); display: block; font-weight: 600; font-size: 13px; text-transform: uppercase;
     letter-spacing: 0.1em; margin-bottom: 5px; }
@@ -190,6 +229,7 @@
       <div class="progress"><span class="frac" id="frac">0/0</span><div class="lbl">owned</div></div>
       <div id="completed"></div>
     </div>
+    <div class="catbar" id="catbar"></div>
     <div class="pool" id="pool"></div>
     <div id="msg"></div>
     <div class="foot">
@@ -211,6 +251,24 @@
   // "base" = odds out of the full pool; "adjusted" = your real odds counting only
   // the blueprints you still need (no duplicates), owned shown as —.
   let oddsMode = "base";
+  // Active fabricator category filter (null = All). Set by the icon filter bar.
+  let activeTab = null;
+
+  // The 10 in-game fabricator filter tabs, in game order. Mirrors src/categories.ts
+  // (the overlay is standalone HTML with no bundler; keep the two in sync). Icons are
+  // the game's own filter glyphs, staged in overlay/icons/cat-*.svg.
+  const TABS = [
+    { key: "armor", label: "Armor", icon: "cat-armor.svg" },
+    { key: "clothing", label: "Clothing", icon: "cat-clothing.svg" },
+    { key: "weapons", label: "Weapons", icon: "cat-weapons.svg" },
+    { key: "utility", label: "Utility", icon: "cat-utility.svg" },
+    { key: "ammo", label: "Ammo", icon: "cat-ammo.svg" },
+    { key: "vehicles", label: "Vehicles", icon: "cat-vehicles.svg" },
+    { key: "sustenance", label: "Sustenance", icon: "cat-sustenance.svg" },
+    { key: "container", label: "Container", icon: "cat-container.svg" },
+    { key: "other", label: "Other", icon: "cat-other.svg" },
+    { key: "missions", label: "Missions", icon: "cat-missions.svg" },
+  ];
 
   function render(v) {
     current = v;
@@ -240,6 +298,9 @@
     $("sub").textContent = (v.generator || "").replace(/_/g, " ");
 
     if (!v.hasPool || !v.pools.length) {
+      // Dynamic-event mission (e.g. Return of XenoThreat): show the personal reward
+      // ladder instead of "no reward" — what unlocks at each contribution %.
+      if (v.eventTrack) { renderEventTrack(v.eventTrack); return; }
       panel.classList.add("empty");
       $("pool").innerHTML = "";
       $("msg").innerHTML = '<div class="msg"><b>No blueprint reward</b>This mission doesn’t drop blueprints.</div>';
@@ -249,31 +310,106 @@
     $("msg").innerHTML = "";
     $("frac").textContent = v.totals.owned + "/" + v.totals.total;
 
-    const rows = [];
+    // Flatten pool entries, computing each blueprint's display odds within ITS pool
+    // (odds are per-pool), then regroup by fabricator category for display.
+    const items = [];
     for (const pool of v.pools) {
       // Real odds of getting a specific blueprint = its weight / the pool's total,
       // not the raw per-entry chance (which is 1.0 for every entry → misleading 100%).
       const poolSum = pool.blueprints.reduce((a, b) => a + (b.chance || 0), 0) || 1;
       const missing = pool.blueprints.filter((x) => !x.owned).length;
       for (const b of pool.blueprints) {
-        const ovr = b.source === "manual" ? '<span class="ovr">[manual]</span>'
-          : b.source === "default" ? '<span class="ovr def">[default]</span>' : "";
         // base = weight / pool total; adjusted = 1 / what you still need (owned → —).
-        const p = oddsMode === "adjusted"
+        const oddsP = oddsMode === "adjusted"
           ? (b.owned ? null : (missing > 0 ? 1 / missing : 0))
           : (b.chance || 0) / poolSum;
-        const ch = p == null
-          ? '<span class="chance">—</span>'
-          : '<span class="chance">' + (p * 100 >= 10 ? Math.round(p * 100) : (p * 100).toFixed(1)) + "%</span>";
-        rows.push(
-          '<div class="row ' + (b.owned ? "owned" : "") + '" data-name="' + escapeAttr(b.name) + '" title="Click to toggle owned">' +
-            '<span class="mark">' + (b.owned ? "✔" : "") + "</span>" +
-            '<span class="name">' + escapeHtml(b.name) + ovr + "</span>" + ch +
+        items.push({ ...b, oddsP });
+      }
+    }
+
+    // Per-tab counts drive the filter bar (computed before filtering so counts are stable).
+    const counts = {};
+    for (const it of items) {
+      const c = counts[it.tab] || (counts[it.tab] = { total: 0, owned: 0 });
+      c.total++; if (it.owned) c.owned++;
+    }
+    if (activeTab && !counts[activeTab]) activeTab = null; // selected tab not in this pool
+    renderCatbar(counts);
+
+    // Group by fabricator tab (game order) → text sub-category. When a tab is
+    // selected, only that tab shows; otherwise all groups render.
+    const shown = activeTab ? items.filter((it) => it.tab === activeTab) : items;
+    const html = [];
+    for (const tab of TABS) {
+      const inTab = shown.filter((it) => it.tab === tab.key);
+      if (!inTab.length) continue;
+      const subs = [];
+      for (const it of inTab) if (!subs.includes(it.sub)) subs.push(it.sub);
+      for (const sub of subs) {
+        const label = activeTab ? sub : (tab.label + " · " + sub);
+        html.push('<div class="subhead">' + escapeHtml(label) + "</div>");
+        for (const it of inTab) if (it.sub === sub) html.push(rowHtml(it));
+      }
+    }
+    $("pool").innerHTML = html.join("");
+  }
+
+  // One blueprint row (odds already computed into b.oddsP).
+  function rowHtml(b) {
+    const ovr = b.source === "manual" ? '<span class="ovr">[manual]</span>'
+      : b.source === "default" ? '<span class="ovr def">[default]</span>' : "";
+    const ch = b.oddsP == null
+      ? '<span class="chance">—</span>'
+      : '<span class="chance">' + (b.oddsP * 100 >= 10 ? Math.round(b.oddsP * 100) : (b.oddsP * 100).toFixed(1)) + "%</span>";
+    return '<div class="row ' + (b.owned ? "owned" : "") + '" data-name="' + escapeAttr(b.name) + '" title="Click to toggle owned">' +
+      '<span class="mark">' + (b.owned ? "✔" : "") + "</span>" +
+      '<span class="name">' + escapeHtml(b.name) + ovr + "</span>" + ch +
+    "</div>";
+  }
+
+  // Fabricator filter bar: all 10 tabs; tabs with no blueprint in the current pool
+  // are greyed (non-clickable), the selected tab is highlighted, and a count badge
+  // shows how many blueprints each tab holds.
+  function renderCatbar(counts) {
+    $("catbar").innerHTML = TABS.map((t) => {
+      const c = counts[t.key];
+      const cls = "cat" + (c ? "" : " off") + (activeTab === t.key ? " active" : "");
+      const title = t.label + (c ? " · " + c.owned + "/" + c.total + " owned" : " · none in this pool");
+      const cnt = c ? '<span class="cnt">' + c.total + "</span>" : "";
+      return '<div class="' + cls + '" data-tab="' + t.key + '" title="' + escapeAttr(title) +
+        '" style="--u:url(\'icons/' + t.icon + '\')"><span class="ci"></span>' + cnt + "</div>";
+    }).join("");
+  }
+
+  // Dynamic-event reward ladder (Return of XenoThreat): shown on an event mission that
+  // has no blueprint pool. A note + each contribution-% tier with its rewards and owned
+  // checks. Rows carry data-name so the existing click-to-toggle handler works.
+  function renderEventTrack(track) {
+    $("panel").classList.remove("empty");
+    $("catbar").innerHTML = "";
+    $("msg").innerHTML = "";
+    const all = track.tiers.flatMap((t) => t.items);
+    $("frac").textContent = all.filter((i) => i.owned).length + "/" + all.length;
+
+    const html = [
+      '<div class="evhead"><span class="dot"></span>' + escapeHtml(track.name) + " · Reward Track</div>",
+      '<div class="evnote">' + escapeHtml(track.note) + "</div>",
+    ];
+    for (const tier of track.tiers) {
+      const tOwned = tier.items.filter((i) => i.owned).length;
+      html.push('<div class="evtier"><span class="evpct">' + tier.pct + '%</span><span class="evbar"></span>' +
+        '<span class="evcount">' + tOwned + "/" + tier.items.length + "</span></div>");
+      for (const it of tier.items) {
+        const ovr = it.source === "manual" ? '<span class="ovr">[manual]</span>' : "";
+        html.push(
+          '<div class="row ' + (it.owned ? "owned" : "") + '" data-name="' + escapeAttr(it.name) + '" title="Click to toggle owned">' +
+            '<span class="mark">' + (it.owned ? "✔" : "") + "</span>" +
+            '<span class="name">' + escapeHtml(it.name) + ovr + "</span>" +
           "</div>"
         );
       }
     }
-    $("pool").innerHTML = rows.join("");
+    $("pool").innerHTML = html.join("");
   }
 
   function escapeHtml(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
@@ -395,6 +531,16 @@
     $("grip").addEventListener("click", () => window.overlayApi.beginMove?.());
     $("moveDone").addEventListener("click", () => window.overlayApi.endMove());
   }
+
+  // Filter bar: click a lit tab to filter the pool to that category; click it again
+  // (or its highlighted state) to clear back to All. Greyed tabs are inert.
+  $("catbar").addEventListener("click", (e) => {
+    const cat = e.target.closest(".cat");
+    if (!cat || cat.classList.contains("off")) return;
+    const tab = cat.getAttribute("data-tab");
+    activeTab = activeTab === tab ? null : tab;
+    if (current) render(current);
+  });
 
   // Toggle base vs adjusted (for-what-you-have) drop odds.
   $("oddsToggle").addEventListener("click", () => {

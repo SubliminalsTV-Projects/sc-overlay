@@ -14,6 +14,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseMissionEvent, type MissionEvent } from "./missions-parser.js";
+import { categorize, type TabKey } from "./categories.js";
 import { parseLine } from "./parser.js";
 
 // ---- dataset shape (matches tools/build-blueprint-data.sql output) ----
@@ -21,6 +22,11 @@ export interface PoolEntry {
   blueprint: string;
   chance: number;
   item: string | null;
+  /** Item taxonomy (from the dataset) used to bucket into fabricator categories.
+   *  `type` is always present; `classification`/`subType` refine the sub-category. */
+  type?: string | null;
+  subType?: string | null;
+  classification?: string | null;
 }
 export interface DatasetMission {
   title: string;
@@ -54,6 +60,9 @@ export interface BlueprintStatus {
   /** Why we think it's owned (in-game / manual / default), or null when not owned. */
   source: BlueprintSource;
   chance: number;
+  /** Fabricator category tab (matches the in-game filter) + text sub-category. */
+  tab: TabKey;
+  sub: string;
 }
 export interface TrackedView {
   /** The loaded dataset's version (the pools being shown). */
@@ -89,6 +98,40 @@ export interface TrackedView {
    *  The log can't say which mission you've *selected* to track in-game, so the
    *  user picks; auto-mode shows the newest one that actually has a pool. */
   missions: { id: string; title: string; contractKey: string | null; hasPool: boolean }[];
+  /** For dynamic-event missions that don't drop blueprints from a pool (e.g. Return
+   *  of XenoThreat): the event's reward ladder to show instead of "no reward". The
+   *  points are INDIVIDUAL — every event mission you run raises YOUR own %. */
+  eventTrack: EventTrack | null;
+}
+
+/** A dynamic-event reward ladder — rewards unlock at personal contribution %. */
+export interface EventTrack {
+  name: string;
+  /** One-line note telling the player where to see their % (in-game journal). */
+  note: string;
+  tiers: { pct: number; items: { name: string; owned: boolean; source: BlueprintSource }[] }[];
+}
+
+// Return of XenoThreat reward ladder — mirrors the site's blueprints-extra.json.
+// Blueprint names are exactly as they appear in the log's "Received Blueprint" lines
+// so owned-status matches via the observed set. Rewards unlock at personal
+// contribution % (individual, not server-wide). Detection: the tracked mission's
+// generator is "TheBackpocket" or its contract starts with "RoX_".
+const XENOTHREAT_TIERS: { pct: number; items: string[] }[] = [
+  { pct: 15, items: ["Chiron Helmet Purgatory Camo", "Chiron Core Purgatory Camo", "Chiron Arms Purgatory Camo", "Chiron Legs Purgatory Camo", "Chiron Backpack Purgatory Camo", 'BR-2 "Purgatory Camo" Shotgun'] },
+  { pct: 25, items: ["Testudo Helmet Purgatory Camo", "Testudo Core Purgatory Camo", "Testudo Arms Purgatory Camo", "Testudo Legs Purgatory Camo", "Testudo Backpack Purgatory Camo", 'S71 "Purgatory Camo" Rifle'] },
+  { pct: 50, items: ["Monde Helmet Purgatory Camo", "Monde Core Purgatory Camo", "Monde Arms Purgatory Camo", "Monde Legs Purgatory Camo", 'Demeco "Purgatory Camo" LMG', "Warden Backpack Purgatory Camo"] },
+  { pct: 60, items: ["QuadraCell", "QuadraCell MT"] },
+  { pct: 85, items: ["FR-66", "FR-76"] },
+  { pct: 100, items: ["NDB-26 Repeater", "NDB-28 Repeater", "NDB-30 Repeater"] },
+];
+const XENOTHREAT_NOTE =
+  "Every XenoThreat mission you run adds to YOUR personal progress (not the server's). Check your in-game Journal → Return of XenoThreat for your current %.";
+
+/** A dynamic-event mission whose rewards come from the personal contribution ladder,
+ *  not a blueprint pool (Return of XenoThreat). Keyed off the shared generator. */
+function isXenoThreatMission(contractKey: string | null, generator: string | null): boolean {
+  return generator === "TheBackpocket" || !!contractKey?.startsWith("RoX_");
 }
 
 interface Persisted {
@@ -530,6 +573,15 @@ export class MissionTracker extends EventEmitter {
     return !!(key && this.dataset?.missions[key]);
   }
 
+  /** Has something to show: a blueprint pool OR a dynamic-event reward ladder
+   *  (XenoThreat). Lets the mission you're actively on display its ladder instead
+   *  of falling behind an older pooled mission. */
+  private missionHasContent(missionId: string): boolean {
+    if (this.missionHasPool(missionId)) return true;
+    const info = this.missions.get(missionId);
+    return isXenoThreatMission(info?.contractKey ?? null, info?.generator ?? null);
+  }
+
   /** The mission whose pool to show: the manual pick if set; otherwise the newest
    *  accepted mission that has a pool (so a cargo haul accepted after a blueprint
    *  mission doesn't hide it); falling back to the newest of all. */
@@ -539,7 +591,7 @@ export class MissionTracker extends EventEmitter {
     // carried over from the previous shard. The picker still lets you choose one.
     if (!this.markerSinceJoin) return null;
     const active = (id: string) => !this.endedMissionIds.has(id);
-    if (this.trackedMissionId && active(this.trackedMissionId) && this.missionHasPool(this.trackedMissionId)) {
+    if (this.trackedMissionId && active(this.trackedMissionId) && this.missionHasContent(this.trackedMissionId)) {
       return this.trackedMissionId;
     }
     for (let i = this.markerSeq.length - 1; i >= 0; i--) {
@@ -689,10 +741,29 @@ export class MissionTracker extends EventEmitter {
           const o = this.isOwned(e.blueprint);
           if (o.owned) owned++;
           total++;
-          return { name: e.blueprint, owned: o.owned, source: o.source, chance: e.chance };
+          const cat = categorize(e);
+          return { name: e.blueprint, owned: o.owned, source: o.source, chance: e.chance, tab: cat.tab, sub: cat.sub };
         });
         pools.push({ poolUuid, blueprints });
       }
+    }
+
+    // XenoThreat (and other pool-less event missions): show the personal reward
+    // ladder instead of "no blueprint reward". Owned status matches by name via the
+    // observed set (the log's "Received Blueprint" lines).
+    let eventTrack: EventTrack | null = null;
+    if (!mission && isXenoThreatMission(key, tracked?.generator ?? null)) {
+      eventTrack = {
+        name: "Return of XenoThreat",
+        note: XENOTHREAT_NOTE,
+        tiers: XENOTHREAT_TIERS.map((t) => ({
+          pct: t.pct,
+          items: t.items.map((name) => {
+            const o = this.isOwned(name);
+            return { name, owned: o.owned, source: o.source };
+          }),
+        })),
+      };
     }
 
     return {
@@ -702,6 +773,7 @@ export class MissionTracker extends EventEmitter {
       title: mission?.title ?? tracked?.title ?? null,
       generator: tracked?.generator ?? mission?.generatorClass ?? null,
       hasPool: !!mission,
+      eventTrack,
       completed: holdActive || (effectiveId ? this.completedMissionIds.has(effectiveId) : false),
       pools,
       totals: { owned, total },
