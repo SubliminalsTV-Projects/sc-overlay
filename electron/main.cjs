@@ -304,7 +304,13 @@ function refreshTray() {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(ROOT, "overlay", "tray-icon.png"));
+  // The asar only packs electron/**, so overlay/ isn't inside it — in the packaged
+  // app the icon ships with the sidecar under resources/server/overlay/. Resolve
+  // there when packaged, else from the repo (dev). (Was ROOT/overlay → blank tray.)
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "server", "overlay", "tray-icon.png")
+    : path.join(ROOT, "overlay", "tray-icon.png");
+  const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon);
   tray.setToolTip("SC Blueprint Tracker");
   tray.on("click", toggleShow);

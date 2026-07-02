@@ -44,6 +44,13 @@ export interface Dataset {
    *  never logged as "Received Blueprint", so they only become "owned" via this list.
    *  Populated by the dataset generator from sc-api (item UUID + display name). */
   defaults?: { name: string; item: string }[];
+  /** Global name -> item-UUID index of EVERY blueprint in the game, not just mission
+   *  pools. Lets a "Received Blueprint" receipt resolve to its item even when it came
+   *  from a source we don't model as a pool (e.g. dynamic-event contribution tiers like
+   *  XenoThreat, which drop with an all-zeros MissionId). Without it those receipts
+   *  count toward the collected total but map to no UUID — no owned flag, no site sync.
+   *  Consulted by itemUuidsForName only after mission pools miss. */
+  index?: { name: string; item: string }[];
 }
 
 // ---- overlay-facing view ----
@@ -477,7 +484,7 @@ export class MissionTracker extends EventEmitter {
    *  ONLY counts PUB (live) sessions — PTU/EPTU/TECH-PREVIEW progress is on a
    *  separate account and must not pollute your live collection. Blueprints are NOT
    *  wiped between patches, so all live patches count. */
-  verifyFromLogs(paths: string[]): { files: number; receipts: number; added: number; restored: number; skipped: number } {
+  verifyFromLogs(paths: string[]): { files: number; receipts: number; added: number; restored: number; skipped: number; unresolved: string[] } {
     // name -> earliest receipt timestamp across all scanned logs (backups carry the
     // real historical unlock times, so this also backfills dates for names already
     // observed without one).
@@ -535,7 +542,17 @@ export class MissionTracker extends EventEmitter {
     }
     this.saveState();
     this.emit("change");
-    return { files, receipts, added, restored, skipped };
+    // Diagnostic: receipts we witnessed but couldn't tie to a dataset item (so they
+    // count as collected but can't sync or show owned). With the global `index` these
+    // should be empty; a non-empty list flags a data gap (a blueprint missing from the
+    // mirror) worth regenerating the dataset for. Only meaningful once a dataset loaded.
+    const unresolved = this.dataset
+      ? [...receiptTimes.keys()].filter((n) => this.itemUuidsForName(n).length === 0).sort()
+      : [];
+    if (unresolved.length) {
+      console.warn(`[verify] ${unresolved.length} received blueprint(s) not in the dataset:`, unresolved);
+    }
+    return { files, receipts, added, restored, skipped, unresolved };
   }
 
   /** Manual owned/not-owned override (seeds pre-existing inventory the log can't see). */
@@ -636,39 +653,48 @@ export class MissionTracker extends EventEmitter {
   // The site collection is keyed by output item UUID; the log only yields names,
   // so map names → UUIDs through the dataset (variant-aware, same as ownership).
 
-  /** Item UUID(s) for a received blueprint name. Precise on purpose — a loose
-   *  bidirectional prefix match fanned one receipt out to many items and inflated
-   *  the synced collection. Resolution: an EXACT name match wins; otherwise the
-   *  received name is treated as a variant ("Geist Armor Arms Whiteout") of the
-   *  LONGEST pool base name that prefixes it ("Geist Armor Arms"). No reverse
-   *  (base→all-variants) matching. */
-  itemUuidsForName(received: string): string[] {
-    if (!this.dataset) return [];
-    const target = norm(received);
+  /** Resolve a normalized name against a set of {name,item} entries. Precise on
+   *  purpose — a loose bidirectional prefix match once fanned one receipt out to many
+   *  items and inflated the synced collection. An EXACT name match wins; otherwise the
+   *  target is treated as a variant ("Geist Armor Arms Whiteout") of the LONGEST base
+   *  name that prefixes it ("Geist Armor Arms"). No reverse (base→all-variants) match. */
+  private resolveName(target: string, entries: Iterable<{ name: string; item: string | null }>): string[] {
     const exact = new Set<string>();
     let bestBase = "";
     const baseItems = new Set<string>();
-    for (const mission of Object.values(this.dataset.missions)) {
-      for (const entries of Object.values(mission.pools)) {
-        for (const e of entries) {
-          if (!e.item) continue;
-          const p = norm(e.blueprint);
-          if (p === target) {
-            exact.add(e.item);
-          } else if (target.startsWith(p + " ")) {
-            // `received` is a variant of base `p`; keep only the most specific base.
-            if (p.length > bestBase.length) {
-              bestBase = p;
-              baseItems.clear();
-              baseItems.add(e.item);
-            } else if (p === bestBase) {
-              baseItems.add(e.item);
-            }
-          }
+    for (const e of entries) {
+      if (!e.item) continue;
+      const p = norm(e.name);
+      if (p === target) {
+        exact.add(e.item);
+      } else if (target.startsWith(p + " ")) {
+        if (p.length > bestBase.length) {
+          bestBase = p;
+          baseItems.clear();
+          baseItems.add(e.item);
+        } else if (p === bestBase) {
+          baseItems.add(e.item);
         }
       }
     }
     return exact.size ? [...exact] : [...baseItems];
+  }
+
+  /** Item UUID(s) for a received blueprint name. Mission pools are the canonical drop
+   *  source, so they're tried first; the global blueprint `index` is the fallback so a
+   *  receipt from a non-pool source (dynamic-event tier rewards — XenoThreat Purgatory
+   *  camo, etc.) still resolves to its item and syncs, instead of counting toward the
+   *  collected total but mapping to nothing. */
+  itemUuidsForName(received: string): string[] {
+    if (!this.dataset) return [];
+    const target = norm(received);
+    const poolEntries: { name: string; item: string | null }[] = [];
+    for (const mission of Object.values(this.dataset.missions))
+      for (const entries of Object.values(mission.pools))
+        for (const e of entries) poolEntries.push({ name: e.blueprint, item: e.item });
+    const fromPools = this.resolveName(target, poolEntries);
+    if (fromPools.length) return fromPools;
+    return this.dataset.index?.length ? this.resolveName(target, this.dataset.index) : [];
   }
 
   /** Every collected blueprint (observed + owned-overrides) as item UUIDs. */

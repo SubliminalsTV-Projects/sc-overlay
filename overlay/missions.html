@@ -170,11 +170,6 @@
     border-radius: 7px; background: var(--cyan); color: #04141b; font-family: var(--mono); font-size: 8.5px;
     font-weight: 700; line-height: 14px; text-align: center; }
   .cat.off .cnt { display: none; }
-  /* text-only sub-category header within the pool list */
-  .subhead { display: flex; align-items: center; gap: 8px; margin: 10px 3px 4px; font-size: 9px; font-weight: 700;
-    letter-spacing: 0.15em; text-transform: uppercase; color: var(--cyan-dim); }
-  .subhead:first-child { margin-top: 2px; }
-  .subhead::after { content: ""; flex: 1; height: 1px; background: var(--divider); }
 
   /* Dynamic-event reward ladder (Return of XenoThreat) shown on a pool-less event
      mission: an event header, a "check your journal" note, and per-tier reward rows. */
@@ -336,22 +331,12 @@
     if (activeTab && !counts[activeTab]) activeTab = null; // selected tab not in this pool
     renderCatbar(counts);
 
-    // Group by fabricator tab (game order) → text sub-category. When a tab is
-    // selected, only that tab shows; otherwise all groups render.
+    // Filter by the selected category tab (the icon bar at top). No in-line
+    // category/sub-category headers — just the rows, grouped by tab order so a
+    // filtered/unfiltered list stays visually tidy.
     const shown = activeTab ? items.filter((it) => it.tab === activeTab) : items;
-    const html = [];
-    for (const tab of TABS) {
-      const inTab = shown.filter((it) => it.tab === tab.key);
-      if (!inTab.length) continue;
-      const subs = [];
-      for (const it of inTab) if (!subs.includes(it.sub)) subs.push(it.sub);
-      for (const sub of subs) {
-        const label = activeTab ? sub : (tab.label + " · " + sub);
-        html.push('<div class="subhead">' + escapeHtml(label) + "</div>");
-        for (const it of inTab) if (it.sub === sub) html.push(rowHtml(it));
-      }
-    }
-    $("pool").innerHTML = html.join("");
+    const ordered = TABS.flatMap((tab) => shown.filter((it) => it.tab === tab.key));
+    $("pool").innerHTML = ordered.map(rowHtml).join("");
   }
 
   // One blueprint row (odds already computed into b.oddsP).
