@@ -29,6 +29,7 @@ let tray = null;
 let hovering = false; // pointer is over the HUD (reported by the page)
 let locked = false; // force click-through always (ignore hover), for uninterrupted play
 let moveMode = false; // reposition mode: fully interactive + drag banner, hover suspended
+let manualCheck = false; // true while a tray-triggered update check is in flight (gates dialogs)
 
 // ── server lifecycle ────────────────────────────────────────────────────────
 function startServer() {
@@ -220,9 +221,57 @@ function setupUpdater() {
         }
       });
   });
-  autoUpdater.on("error", (e) => console.error("[updater]", String(e)));
+  // Manual checks (tray "Check for updates") get feedback; the automatic launch +
+  // 3-hourly checks stay silent (manualCheck gates the extra dialogs).
+  autoUpdater.on("update-available", (info) => {
+    if (!manualCheck) return;
+    manualCheck = false;
+    dialog.showMessageBox({
+      type: "info", title: "Update available",
+      message: `SC Blueprint Tracker ${info.version} is available.`,
+      detail: "Downloading now — you'll be prompted to restart when it's ready.",
+      buttons: ["OK"],
+    });
+  });
+  autoUpdater.on("update-not-available", () => {
+    if (!manualCheck) return;
+    manualCheck = false;
+    dialog.showMessageBox({
+      type: "info", title: "No updates",
+      message: `You're on the latest version (${app.getVersion()}).`,
+      buttons: ["OK"],
+    });
+  });
+  autoUpdater.on("error", (e) => {
+    console.error("[updater]", String(e));
+    if (!manualCheck) return;
+    manualCheck = false;
+    dialog.showMessageBox({
+      type: "error", title: "Update check failed",
+      message: "Couldn't check for updates right now.", detail: String(e),
+      buttons: ["OK"],
+    });
+  });
   autoUpdater.checkForUpdates().catch(() => {});
   setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 3 * 60 * 60 * 1000);
+}
+
+// Tray "Check for updates" — kicks a check with visible feedback. In dev (unpackaged)
+// there's no updater, so just say so.
+function checkForUpdatesManual() {
+  if (!app.isPackaged) {
+    dialog.showMessageBox({
+      type: "info", title: "Check for updates",
+      message: "Updates are only available in the installed app.",
+      buttons: ["OK"],
+    });
+    return;
+  }
+  manualCheck = true;
+  autoUpdater.checkForUpdates().catch((e) => {
+    manualCheck = false;
+    console.error("[updater]", String(e));
+  });
 }
 
 // ── tray ────────────────────────────────────────────────────────────────────
@@ -245,6 +294,9 @@ function refreshTray() {
       { label: "Refresh missions (re-read log)", click: refreshMissions },
       { label: "Verify from logs", click: verifyFromLogs },
       { label: "Open config…", click: openConfig },
+      { type: "separator" },
+      { label: "Check for updates…", click: checkForUpdatesManual },
+      { label: `Version ${app.getVersion()}`, enabled: false },
       { type: "separator" },
       { label: "Quit", click: () => app.quit() },
     ]),
