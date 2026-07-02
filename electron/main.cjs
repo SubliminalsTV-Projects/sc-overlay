@@ -30,6 +30,9 @@ let hovering = false; // pointer is over the HUD (reported by the page)
 let locked = false; // force click-through always (ignore hover), for uninterrupted play
 let moveMode = false; // reposition mode: fully interactive + drag banner, hover suspended
 let manualCheck = false; // true while a tray-triggered update check is in flight (gates dialogs)
+// Background update download in flight: { version, percent, bps } — drives the live
+// progress line in the tray menu + the tray tooltip. null when idle.
+let updateDownload = null;
 
 // ── server lifecycle ────────────────────────────────────────────────────────
 function startServer() {
@@ -204,6 +207,9 @@ function setupUpdater() {
   if (!app.isPackaged) return;
   autoUpdater.autoDownload = true;
   autoUpdater.on("update-downloaded", (info) => {
+    updateDownload = null;
+    refreshTray();
+    if (tray) tray.setToolTip("SC Blueprint Tracker");
     dialog
       .showMessageBox({
         type: "info",
@@ -224,14 +230,30 @@ function setupUpdater() {
   // Manual checks (tray "Check for updates") get feedback; the automatic launch +
   // 3-hourly checks stay silent (manualCheck gates the extra dialogs).
   autoUpdater.on("update-available", (info) => {
+    // Start the tray progress readout for BOTH auto and manual checks.
+    updateDownload = { version: info.version, percent: 0, bps: 0 };
+    refreshTray();
     if (!manualCheck) return;
     manualCheck = false;
     dialog.showMessageBox({
       type: "info", title: "Update available",
       message: `SC Blueprint Tracker ${info.version} is available.`,
-      detail: "Downloading now — you'll be prompted to restart when it's ready.",
+      detail: "Downloading in the background — the tray menu shows live progress, and you'll be prompted to restart when it's ready.",
       buttons: ["OK"],
     });
+  });
+  // Live download progress → tray menu line + tray tooltip. Menu rebuilds are
+  // throttled to whole-percent changes (an open menu is a snapshot; the next
+  // open shows the current number).
+  autoUpdater.on("download-progress", (p) => {
+    if (!updateDownload) updateDownload = { version: "", percent: 0, bps: 0 };
+    const pct = Math.floor(p.percent);
+    updateDownload.bps = p.bytesPerSecond;
+    if (tray) tray.setToolTip(`SC Blueprint Tracker — downloading update ${pct}%`);
+    if (pct !== updateDownload.percent) {
+      updateDownload.percent = pct;
+      refreshTray();
+    }
   });
   autoUpdater.on("update-not-available", () => {
     if (!manualCheck) return;
@@ -244,6 +266,9 @@ function setupUpdater() {
   });
   autoUpdater.on("error", (e) => {
     console.error("[updater]", String(e));
+    updateDownload = null;
+    refreshTray();
+    if (tray) tray.setToolTip("SC Blueprint Tracker");
     if (!manualCheck) return;
     manualCheck = false;
     dialog.showMessageBox({
@@ -295,7 +320,13 @@ function refreshTray() {
       { label: "Verify from logs", click: verifyFromLogs },
       { label: "Open config…", click: openConfig },
       { type: "separator" },
-      { label: "Check for updates…", click: checkForUpdatesManual },
+      ...(updateDownload
+        ? [{
+            label: `Downloading ${updateDownload.version ? "v" + updateDownload.version : "update"} — ${updateDownload.percent}%` +
+              (updateDownload.bps ? ` (${(updateDownload.bps / 1048576).toFixed(1)} MB/s)` : ""),
+            enabled: false,
+          }]
+        : [{ label: "Check for updates…", click: checkForUpdatesManual }]),
       { label: `Version ${app.getVersion()}`, enabled: false },
       { type: "separator" },
       { label: "Quit", click: () => app.quit() },
