@@ -98,11 +98,13 @@ export interface TrackedView {
   totals: { owned: number; total: number };
   /** Lifetime collected count across all observed + overridden blueprints. */
   collectedTotal: number;
-  /** Present for ~30s after the on-screen mission completes: a summary card
-   *  (payout, duration, blueprints received) shown before moving to the next
-   *  mission. null the rest of the time. */
+  /** Present for ~30s after the on-screen mission completes (~8s for an abandon):
+   *  a summary card (payout, duration, blueprints received — or just "abandoned")
+   *  shown before moving to the next mission. null the rest of the time. */
   completion: {
     title: string | null;
+    /** How the mission ended — an abandoned card renders without stats. */
+    kind: "completed" | "abandoned";
     /** aUEC awarded, or null if none correlated. */
     aUEC: number | null;
     /** Accept→complete duration in ms, or null if the accept wasn't seen. */
@@ -182,6 +184,8 @@ export function detectChangelist(rawLine: string): string | null {
 
 /** How long to keep a just-completed mission's summary card up before moving on. */
 const COMPLETION_HOLD_MS = 30_000;
+/** Abandoned missions get a shorter hold — just enough to explain the vanishing pool. */
+const ABANDON_HOLD_MS = 8_000;
 /** An "Awarded N aUEC" counts as a mission's payout if it fired within this of the
  *  completion (the award's own missionId is null, so we correlate by log time). */
 const REWARD_WINDOW_MS = 6_000;
@@ -240,7 +244,7 @@ export class MissionTracker extends EventEmitter {
    *  mission for COMPLETION_HOLD_MS before the overlay moves to the next mission.
    *  Only set for real-time completions (see beginCompletion). */
   private completion:
-    | { missionId: string; title: string | null; completedAtMs: number; acceptedAtMs: number | null; aUEC: number | null; until: number }
+    | { missionId: string; title: string | null; kind: "completed" | "abandoned"; completedAtMs: number; acceptedAtMs: number | null; aUEC: number | null; until: number }
     | null = null;
   private completionTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last "Awarded N aUEC" seen (log time), to attach to the completion near it. */
@@ -372,9 +376,14 @@ export class MissionTracker extends EventEmitter {
         // Any ended mission (complete/fail/abandon) leaves the active set, so the
         // picker matches what you actually have. COMPLETED also flags the badge.
         this.endedMissionIds.add(ev.missionId);
+        // An ended mission can't stay pinned — the pin would keep its pool on screen.
+        if (ev.missionId === this.selectedMissionId) this.selectedMissionId = null;
         if (ev.state.includes("COMPLETED")) {
           this.completedMissionIds.add(ev.missionId);
           if (wasDisplayed) this.beginCompletion(ev.missionId, this.missions.get(ev.missionId)?.title ?? null, ev.ts);
+        } else if (ev.state.includes("ABANDON") && wasDisplayed) {
+          // Brief "abandoned" card so the pool doesn't just vanish unexplained.
+          this.beginCompletion(ev.missionId, this.missions.get(ev.missionId)?.title ?? null, ev.ts, "abandoned");
         }
         this.emit("change");
         break;
@@ -447,7 +456,12 @@ export class MissionTracker extends EventEmitter {
    *  Idempotent (the same completion arrives via contractComplete AND MissionEnded)
    *  and gated to real-time completions so seeding from the log on startup doesn't
    *  pop a stale card. Correlates the aUEC award by log-time proximity. */
-  private beginCompletion(missionId: string, title: string | null, ts: string | null): void {
+  private beginCompletion(
+    missionId: string,
+    title: string | null,
+    ts: string | null,
+    kind: "completed" | "abandoned" = "completed",
+  ): void {
     const completedAtMs = ts ? Date.parse(ts) : Date.now();
     if (!Number.isFinite(completedAtMs)) return;
     if (Date.now() - completedAtMs > COMPLETION_FRESH_MS) return; // historical replay — no card
@@ -457,21 +471,25 @@ export class MissionTracker extends EventEmitter {
     }
     const info = this.missions.get(missionId);
     const aUEC =
-      this.lastReward && Math.abs(this.lastReward.atMs - completedAtMs) <= REWARD_WINDOW_MS ? this.lastReward.amount : null;
+      kind === "completed" && this.lastReward && Math.abs(this.lastReward.atMs - completedAtMs) <= REWARD_WINDOW_MS
+        ? this.lastReward.amount
+        : null;
+    const holdMs = kind === "abandoned" ? ABANDON_HOLD_MS : COMPLETION_HOLD_MS;
     this.completion = {
       missionId,
       title: title ?? info?.title ?? null,
+      kind,
       completedAtMs,
       acceptedAtMs: info?.acceptedAt ?? null,
       aUEC,
-      until: Date.now() + COMPLETION_HOLD_MS,
+      until: Date.now() + holdMs,
     };
     if (this.completionTimer) clearTimeout(this.completionTimer);
     this.completionTimer = setTimeout(() => {
       this.completion = null;
       this.completionTimer = null;
       this.emit("change"); // hold expired → overlay moves to the next mission
-    }, COMPLETION_HOLD_MS);
+    }, holdMs);
     this.emit("change");
   }
 
@@ -625,11 +643,13 @@ export class MissionTracker extends EventEmitter {
    *  accepted mission that has a pool (so a cargo haul accepted after a blueprint
    *  mission doesn't hide it); falling back to the newest of all. */
   private effectiveMissionId(): string | null {
-    if (this.selectedMissionId && this.missions.has(this.selectedMissionId)) return this.selectedMissionId;
+    const active = (id: string) => !this.endedMissionIds.has(id);
+    if (this.selectedMissionId && this.missions.has(this.selectedMissionId) && active(this.selectedMissionId)) {
+      return this.selectedMissionId;
+    }
     // After a fresh PU entry with no marker yet, show nothing rather than a mission
     // carried over from the previous shard. The picker still lets you choose one.
     if (!this.markerSinceJoin) return null;
-    const active = (id: string) => !this.endedMissionIds.has(id);
     if (this.trackedMissionId && active(this.trackedMissionId) && this.missionHasContent(this.trackedMissionId)) {
       return this.trackedMissionId;
     }
@@ -639,7 +659,10 @@ export class MissionTracker extends EventEmitter {
     for (let i = this.markerSeq.length - 1; i >= 0; i--) {
       if (active(this.markerSeq[i])) return this.markerSeq[i];
     }
-    return this.trackedMissionId;
+    // Nothing active — e.g. the LAST mission was just abandoned/completed. Show
+    // nothing rather than the tracked-but-ended mission (which used to stick on
+    // screen forever after abandoning your only mission).
+    return this.trackedMissionId && active(this.trackedMissionId) ? this.trackedMissionId : null;
   }
 
   /** Active missions (ended ones excluded), newest first — for the overlay picker. */
@@ -826,16 +849,19 @@ export class MissionTracker extends EventEmitter {
       payout: mission?.payout ?? null,
       itemRewards: (mission?.items ?? []).map((i) => ({ name: i.name, amount: Number(i.amount) || 1 })),
       eventTrack,
-      completed: holdActive || (effectiveId ? this.completedMissionIds.has(effectiveId) : false),
+      completed:
+        (holdActive && this.completion!.kind === "completed") ||
+        (effectiveId ? this.completedMissionIds.has(effectiveId) : false),
       pools,
       totals: { owned, total },
       collectedTotal: this.observed.size + [...this.overrides.values()].filter(Boolean).length,
       completion: holdActive
         ? {
             title: this.completion!.title ?? mission?.title ?? tracked?.title ?? null,
+            kind: this.completion!.kind,
             aUEC: this.completion!.aUEC,
             durationMs: this.completion!.acceptedAtMs != null ? this.completion!.completedAtMs - this.completion!.acceptedAtMs : null,
-            blueprints: this.completionBlueprints(),
+            blueprints: this.completion!.kind === "completed" ? this.completionBlueprints() : [],
           }
         : null,
       selectedId: this.selectedMissionId,

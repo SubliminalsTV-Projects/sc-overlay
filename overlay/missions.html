@@ -131,6 +131,12 @@
     letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); }
   .cc-check { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px;
     border-radius: 50%; background: var(--green); color: #062018; font-size: 10px; font-weight: 800; }
+  /* Abandoned variant: amber/red, no stats — just explains why the pool vanished. */
+  .cc.abn { border-color: rgba(255, 132, 120, 0.5);
+    background: linear-gradient(180deg, rgba(255, 132, 120, 0.12), rgba(255, 132, 120, 0.04));
+    box-shadow: 0 0 18px rgba(255, 132, 120, 0.12) inset; }
+  .cc.abn .cc-head { color: var(--amber); }
+  .cc-check.abn { background: var(--red); color: #200a08; }
   .cc-stats { display: flex; gap: 16px; margin-top: 8px; }
   .cc-stat { display: flex; flex-direction: column; line-height: 1.05; }
   .cc-val { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 18px; font-weight: 700; color: var(--gold); }
@@ -503,6 +509,9 @@
   // for ~30s over the completed mission, then the overlay moves to the next one.
   function fmtDur(ms){ if(ms==null) return null; const s=Math.max(0,Math.round(ms/1000)); const m=Math.floor(s/60); return m+":"+String(s%60).padStart(2,"0"); }
   function completionCard(c){
+    if (c.kind === "abandoned") {
+      return '<div class="cc abn"><div class="cc-head"><span class="cc-check abn">✕</span> Mission Abandoned</div></div>';
+    }
     const stats = [];
     if (c.aUEC != null) stats.push('<div class="cc-stat"><span class="cc-val">+' + c.aUEC.toLocaleString() + '</span><span class="cc-lbl">aUEC</span></div>');
     const dur = fmtDur(c.durationMs);

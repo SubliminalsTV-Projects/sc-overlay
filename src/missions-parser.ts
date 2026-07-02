@@ -146,10 +146,16 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
     }
 
     // Fires on ANY mission end incl. ABANDON (which emits no MissionEnded+state).
-    // Format: "Ending mission for player. MissionId[<uuid>] Player[...]".
+    // Format: "Ending mission for player. MissionId[<uuid>] Player[...]
+    //          CompletionType[Abandon] Reason[Player left]".
+    // CompletionType is normalized onto the MissionEnded state vocabulary so the
+    // tracker can tell an abandon from a completion from this line alone.
     case "EndMission": {
       const mid = m.match(new RegExp(`MissionId\\[(${UUID})\\]`));
-      return mid ? { kind: "end", ts: e.timestamp, missionId: mid[1], state: "ENDED" } : null;
+      if (!mid) return null;
+      const ct = (m.match(/CompletionType\[(\w+)\]/)?.[1] ?? "").toUpperCase();
+      const state = ct.startsWith("ABANDON") ? "ABANDONED" : ct.startsWith("COMPLETE") ? "COMPLETED" : ct || "ENDED";
+      return { kind: "end", ts: e.timestamp, missionId: mid[1], state };
     }
 
     // PU context (re)established — login or server/shard change. map="megamap" =
