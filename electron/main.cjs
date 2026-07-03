@@ -17,6 +17,13 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { autoUpdater } = require("electron-updater");
 
+// Render the HUD in SOFTWARE, not on the GPU. This is a transparent, always-on-top
+// window composited over a fullscreen Vulkan game (Star Citizen); GPU compositing here
+// contends with the game and crashes AMD drivers (device-lost / TDR — overlay ON = CTD,
+// OFF = fine). The HUD is just text panels, so CPU rendering costs nothing. Must run
+// before app "ready". See the AMD-crash reports.
+app.disableHardwareAcceleration();
+
 const ROOT = path.join(__dirname, "..");
 const PORT = 8778;
 const HUD_URL = `http://localhost:${PORT}/missions.html`;
