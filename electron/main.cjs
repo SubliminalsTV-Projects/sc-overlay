@@ -17,12 +17,21 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { autoUpdater } = require("electron-updater");
 
-// Render the HUD in SOFTWARE, not on the GPU. This is a transparent, always-on-top
-// window composited over a fullscreen Vulkan game (Star Citizen); GPU compositing here
-// contends with the game and crashes AMD drivers (device-lost / TDR — overlay ON = CTD,
-// OFF = fine). The HUD is just text panels, so CPU rendering costs nothing. Must run
-// before app "ready". See the AMD-crash reports.
-app.disableHardwareAcceleration();
+// GPU hardware acceleration is OFF by default: the HUD is a transparent, always-on-top
+// window composited over a fullscreen Vulkan game (Star Citizen), and GPU-compositing it
+// crashes AMD drivers (device-lost / TDR — overlay ON = CTD, OFF = fine). Software
+// rendering is safe for a text HUD. Users with GPU headroom can turn it back on in
+// settings (SC is CPU-bound, so this trades a little CPU either way). Read from the
+// server's config.json here because it must run BEFORE app "ready".
+function hwAccelEnabled() {
+  try {
+    const p = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", "config.json");
+    return JSON.parse(fs.readFileSync(p, "utf8")).hwAccel === true;
+  } catch {
+    return false; // default OFF (crash-safe)
+  }
+}
+if (!hwAccelEnabled()) app.disableHardwareAcceleration();
 
 const ROOT = path.join(__dirname, "..");
 const PORT = 8778;
@@ -152,6 +161,34 @@ function applyMouse() {
   overlay.setIgnoreMouseEvents(moveMode ? false : locked ? true : !hovering, { forward: true });
 }
 
+// ── binding-chart PNG overlay ─────────────────────────────────────────────────
+// A separate full-screen, transparent, always-click-through window that shows a
+// user-chosen PNG (e.g. a joystick binding chart), toggled by a global hotkey. It's
+// reference-only, so it never takes focus or eats clicks.
+let bindingWin = null;
+function createBinding() {
+  const { bounds } = screen.getPrimaryDisplay(); // full display, covers the whole screen
+  bindingWin = new BrowserWindow({
+    x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+    frame: false, transparent: true, resizable: false, movable: false, skipTaskbar: true,
+    alwaysOnTop: true, hasShadow: false, fullscreenable: false, focusable: false, show: false,
+    webPreferences: { contextIsolation: true },
+  });
+  bindingWin.setAlwaysOnTop(true, "screen-saver");
+  bindingWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  bindingWin.setIgnoreMouseEvents(true, { forward: true }); // always click-through
+  bindingWin.loadURL(`http://localhost:${PORT}/binding.html`);
+  bindingWin.on("closed", () => { bindingWin = null; });
+}
+function toggleBinding() {
+  if (!bindingWin) createBinding();
+  if (bindingWin.isVisible()) { bindingWin.hide(); return; }
+  // Bump the page hash so it re-fetches the image (picks up a changed PNG), then show
+  // WITHOUT stealing focus from the game.
+  bindingWin.webContents.executeJavaScript(`location.hash = "s" + Date.now();`).catch(() => {});
+  bindingWin.showInactive();
+}
+
 // ── actions ─────────────────────────────────────────────────────────────────
 function toggleLock() {
   locked = !locked;
@@ -186,7 +223,7 @@ function openConfig() {
     height: 820,
     title: "SC Blueprint Tracker — Config",
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true },
+    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "config-preload.cjs") },
   });
   configWin.loadURL(`${CONFIG_URL}?v=${Date.now()}`);
   configWin.on("closed", () => {
@@ -376,6 +413,24 @@ if (!app.requestSingleInstanceLock()) {
     globalShortcut.register("Control+Alt+L", toggleLock); // lock/unlock click-through
     globalShortcut.register("Control+Alt+H", toggleShow); // show/hide
     globalShortcut.register("Control+Alt+M", toggleMove); // move/reposition mode
+    // Binding-chart PNG overlay — hotkey from config (change needs a restart).
+    let bindKey = "CommandOrControl+Alt+K";
+    try {
+      const p = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", "config.json");
+      const c = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (c.bindingHotkey) bindKey = c.bindingHotkey;
+    } catch { /* default */ }
+    try { globalShortcut.register(bindKey, toggleBinding); } catch { /* bad accelerator */ }
+  });
+
+  // Native PNG picker for the config window (renderers can't open OS dialogs).
+  ipcMain.handle("pick-png", async () => {
+    const r = await dialog.showOpenDialog(configWin ?? undefined, {
+      title: "Choose a PNG to overlay",
+      filters: [{ name: "PNG image", extensions: ["png"] }],
+      properties: ["openFile"],
+    });
+    return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
   });
 
   // The HUD page reports hover enter/leave → become clickable only while hovered.

@@ -1,6 +1,6 @@
 import { createServer, type ServerResponse } from "node:http";
 import { writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, readFile, readdirSync, mkdirSync, copyFileSync } from "node:fs";
+import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync } from "node:fs";
 import { extname, join, dirname } from "node:path";
 
 import { resolveLoadout, type Build } from "./erkul.js";
@@ -36,6 +36,16 @@ interface Config {
   syncToken: string;
   /** Whether to push collected blueprints + tracked mission to subliminal.gg. */
   syncEnabled: boolean;
+  /** GPU hardware acceleration for the Electron overlay. OFF by default — it composites
+   *  a transparent window over a Vulkan game and crashes AMD drivers; software rendering
+   *  is safe. Read by electron/main.cjs at startup (needs an app restart to change). */
+  hwAccel: boolean;
+  /** Absolute path to a PNG (with transparency) to show as a toggleable full-screen
+   *  reference overlay — e.g. your joystick binding chart. Empty = feature off. */
+  bindingPng: string;
+  /** Global hotkey that shows/hides the binding-chart overlay (Electron accelerator
+   *  syntax). Read by main.cjs at startup. */
+  bindingHotkey: string;
 }
 
 const DEFAULTS: Config = {
@@ -45,6 +55,9 @@ const DEFAULTS: Config = {
   autoSwitch: true,
   syncToken: "",
   syncEnabled: false,
+  hwAccel: false,
+  bindingPng: "",
+  bindingHotkey: "CommandOrControl+Alt+K",
 };
 
 function loadConfig(): Config {
@@ -60,6 +73,42 @@ function loadConfig(): Config {
 }
 let config: Config = loadConfig();
 
+/** Scan common Star Citizen install locations for per-channel game.log files, newest
+ *  first. SC installs as <root>\StarCitizen\<CHANNEL>\game.log (LIVE, PTU, EPTU,
+ *  TECH-PREVIEW, HOTFIX, GAME, …). The channel whose log was written most recently is
+ *  the one the player actually plays, so that's the recommended pick. */
+function detectGameLogs(): { path: string; channel: string; mtimeMs: number }[] {
+  const bases: string[] = [];
+  for (const d of ["C", "D", "E", "F", "G", "H"])
+    for (const sub of [
+      "Program Files\\Roberts Space Industries\\StarCitizen",
+      "Roberts Space Industries\\StarCitizen",
+      "Games\\Roberts Space Industries\\StarCitizen",
+      "Games\\StarCitizen",
+      "StarCitizen",
+    ])
+      bases.push(`${d}:\\${sub}`);
+  // Also scan the parent of the currently-configured path (its siblings = channels).
+  try { bases.push(dirname(dirname(config.logPath))); } catch { /* ignore */ }
+
+  const found: { path: string; channel: string; mtimeMs: number }[] = [];
+  const seen = new Set<string>();
+  for (const base of bases) {
+    let channels: string[];
+    try { channels = readdirSync(base); } catch { continue; }
+    for (const ch of channels) {
+      const p = join(base, ch, "game.log");
+      const key = p.toLowerCase();
+      if (seen.has(key)) continue;
+      try {
+        const st = statSync(p);
+        if (st.isFile()) { found.push({ path: p, channel: ch, mtimeMs: st.mtimeMs }); seen.add(key); }
+      } catch { /* no game.log in this channel */ }
+    }
+  }
+  return found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
 // Save to the writable user dir; a write failure must never crash the server
 // (an EPERM writing under Program Files is exactly what took it down before).
 const saveConfig = async (): Promise<void> => {
@@ -70,6 +119,17 @@ const saveConfig = async (): Promise<void> => {
     console.error("[config] save failed:", String(e));
   }
 };
+
+// First run / wrong channel: if the configured game.log doesn't exist, auto-detect the
+// most recently played channel so the app works without the user hunting for the path.
+if (!existsSync(config.logPath)) {
+  const found = detectGameLogs();
+  if (found.length) {
+    config.logPath = found[0].path;
+    void saveConfig();
+    console.log(`[detect] auto-selected game.log: ${config.logPath} (channel ${found[0].channel})`);
+  }
+}
 
 // Seed the writable data dir from the bundled pools. Bundled files are refreshed
 // each start (an app update ships newer pools); runtime-fetched patch datasets are
@@ -349,6 +409,30 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Detect installed SC channels' game.log files (for the config "Detect" button).
+  if (url === "/api/detect-log" && req.method === "GET") {
+    const found = detectGameLogs();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ recommended: found[0]?.path ?? null, candidates: found }));
+    return;
+  }
+
+  // Serve the user's chosen binding-chart PNG (for binding.html). 404 when unset/missing.
+  if ((url === "/api/binding-image" || url?.startsWith("/api/binding-image?")) && req.method === "GET") {
+    try {
+      if (config.bindingPng && existsSync(config.bindingPng)) {
+        res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" });
+        res.end(readFileSync(config.bindingPng));
+        return;
+      }
+    } catch {
+      /* fall through to 404 */
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "no_binding_image" }));
+    return;
+  }
+
   // Config write.
   if (url === "/api/config" && req.method === "POST") {
     const body = await readBody(req);
@@ -360,6 +444,10 @@ const server = createServer(async (req, res) => {
     if (typeof body.syncToken === "string" && body.syncToken.trim()) config.syncToken = body.syncToken.trim();
     if (body.clearToken === true) config.syncToken = "";
     if (typeof body.syncEnabled === "boolean") config.syncEnabled = body.syncEnabled;
+    // GPU accel is read by electron/main.cjs at startup; persist here, restart applies it.
+    if (typeof body.hwAccel === "boolean") config.hwAccel = body.hwAccel;
+    if (typeof body.bindingPng === "string") config.bindingPng = body.bindingPng;
+    if (typeof body.bindingHotkey === "string" && body.bindingHotkey.trim()) config.bindingHotkey = body.bindingHotkey.trim();
     await saveConfig();
     await reindex();
     startWatcher();

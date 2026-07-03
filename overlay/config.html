@@ -51,9 +51,13 @@
 
   <div class="card">
     <div class="label">Game Log + Auto-Switch</div>
-    <input type="text" id="logPath" placeholder="path to game.log" />
+    <div class="add">
+      <input type="text" id="logPath" placeholder="path to game.log" />
+      <button onclick="detectLog()">Detect</button>
+    </div>
+    <div id="detected" class="hint"></div>
     <label class="opt"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
-    <div class="hint">Only <em>your</em> ship triggers a switch (the log marks it <code>by player 0</code>). Leave the path as the default unless your install differs.</div>
+    <div class="hint">Click <strong>Detect</strong> to find your Star Citizen install and pick the channel you play (LIVE / PTU / EPTU / etc.). It auto-selects the one you played most recently; click another below to switch.</div>
   </div>
 
   <div class="card">
@@ -62,6 +66,23 @@
     <label class="opt"><input type="checkbox" id="syncEnabled" /> Sync my collection to my subliminal.gg account</label>
     <div class="hint" id="syncStatus"></div>
     <div class="hint">Get a token at <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg/blueprints</a> → “Connect the desktop tracker”. Received blueprints and the mission you're tracking sync to your account automatically — leave the field blank to keep the saved token.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Binding Chart Overlay</div>
+    <div class="add">
+      <input type="text" id="bindingPng" placeholder="no PNG chosen — pick one to enable" readonly />
+      <button onclick="chooseBinding()">Choose PNG…</button>
+      <button class="danger" onclick="clearBinding()" title="Remove">✕</button>
+    </div>
+    <label class="opt" style="margin-top:12px;">Hotkey <input type="text" id="bindingHotkey" style="max-width:220px" placeholder="CommandOrControl+Alt+K" /></label>
+    <div class="hint">Pick a PNG (transparency supported — e.g. your joystick binding chart) and press the hotkey in-game to toggle it full-screen over gameplay. It's click-through, so it won't interfere. <em>Changing the hotkey requires restarting the app.</em></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Overlay Performance</div>
+    <label class="opt"><input type="checkbox" id="hwAccel" /> Use GPU hardware acceleration</label>
+    <div class="hint"><strong>Off by default.</strong> The overlay renders on the CPU, which avoids crashes some GPUs (especially AMD) hit when the overlay runs over the game. Turn this on only if you have GPU headroom and don't get crashes. <em>Changing this requires restarting the app.</em></div>
   </div>
 
   <div style="margin-top:20px; display:flex; align-items:center;">
@@ -79,6 +100,9 @@
     cfg = await (await fetch("/api/config")).json();
     document.getElementById("logPath").value = cfg.logPath || "";
     document.getElementById("autoSwitch").checked = !!cfg.autoSwitch;
+    document.getElementById("hwAccel").checked = !!cfg.hwAccel;
+    document.getElementById("bindingPng").value = cfg.bindingPng || "";
+    document.getElementById("bindingHotkey").value = cfg.bindingHotkey || "CommandOrControl+Alt+K";
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("syncStatus").textContent = cfg.hasSyncToken
       ? "Token saved. Leave the field blank to keep it."
@@ -128,6 +152,9 @@
       urls: cfg.urls,
       logPath: cfg.logPath,
       autoSwitch: cfg.autoSwitch,
+      hwAccel: document.getElementById("hwAccel").checked,
+      bindingPng: document.getElementById("bindingPng").value,
+      bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "CommandOrControl+Alt+K",
       syncEnabled: document.getElementById("syncEnabled").checked,
     };
     const token = document.getElementById("syncToken").value.trim();
@@ -137,6 +164,28 @@
     const s = document.getElementById("saved"); s.classList.add("show"); setTimeout(() => s.classList.remove("show"), 1400);
     await loadCfg();
   }
+
+  async function detectLog() {
+    const d = document.getElementById("detected");
+    d.textContent = "Scanning for your Star Citizen install…";
+    let r;
+    try { r = await (await fetch("/api/detect-log")).json(); } catch { d.textContent = "Scan failed."; return; }
+    if (!r.candidates || !r.candidates.length) { d.textContent = "No install found — enter the path to game.log manually."; return; }
+    document.getElementById("logPath").value = r.recommended;
+    window.__detected = r.candidates;
+    d.innerHTML = "Found channels: " + r.candidates.map((c, i) =>
+      '<a href="#" onclick="pickLog(' + i + ');return false;">' + c.channel + (i === 0 ? " ✓" : "") + "</a>"
+    ).join(" &nbsp;·&nbsp; ");
+    save();
+  }
+  function pickLog(i) { document.getElementById("logPath").value = window.__detected[i].path; save(); }
+
+  async function chooseBinding() {
+    if (!window.overlayConfig) { alert("File picker unavailable — update the app."); return; }
+    const p = await window.overlayConfig.pickPng();
+    if (p) { document.getElementById("bindingPng").value = p; save(); }
+  }
+  function clearBinding() { document.getElementById("bindingPng").value = ""; save(); }
 
   loadCfg();
 </script>
