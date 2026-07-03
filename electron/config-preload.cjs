@@ -5,4 +5,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("overlayConfig", {
   pickPng: () => ipcRenderer.invoke("pick-png"),
+  // Master overlay switch (crash workaround) — controlled live via the shell, not the
+  // sidecar config, so toggling destroys/creates the HUD window immediately.
+  getOverlayEnabled: () => ipcRenderer.invoke("overlay:get-enabled"),
+  setOverlayEnabled: (on) => ipcRenderer.invoke("overlay:set-enabled", on),
+  onOverlayEnabledChanged: (cb) =>
+    ipcRenderer.on("overlay:enabled-changed", (_e, on) => cb(on)),
 });

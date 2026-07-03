@@ -33,6 +33,27 @@ function hwAccelEnabled() {
 }
 if (!hwAccelEnabled()) app.disableHardwareAcceleration();
 
+// Master overlay switch, persisted in its OWN file (the sidecar owns config.json and
+// rewrites it on unrelated changes, which would clobber a flag stored there). Default ON.
+function overlayStateFile() {
+  return path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", "overlay-state.json");
+}
+function readOverlayEnabled() {
+  try {
+    return JSON.parse(fs.readFileSync(overlayStateFile(), "utf8")).enabled !== false;
+  } catch {
+    return true; // default ON
+  }
+}
+function writeOverlayEnabled(on) {
+  try {
+    fs.mkdirSync(path.dirname(overlayStateFile()), { recursive: true });
+    fs.writeFileSync(overlayStateFile(), JSON.stringify({ enabled: on }));
+  } catch (e) {
+    console.error("[electron] overlay-state write failed", String(e));
+  }
+}
+
 const ROOT = path.join(__dirname, "..");
 const PORT = 8778;
 const HUD_URL = `http://localhost:${PORT}/missions.html`;
@@ -45,6 +66,7 @@ let tray = null;
 let hovering = false; // pointer is over the HUD (reported by the page)
 let locked = false; // force click-through always (ignore hover), for uninterrupted play
 let moveMode = false; // reposition mode: fully interactive + drag banner, hover suspended
+let overlayEnabled = true; // master switch — false = HUD window destroyed, tracking still runs
 let manualCheck = false; // true while a tray-triggered update check is in flight (gates dialogs)
 // Background update download in flight: { version, percent, bps } — drives the live
 // progress line in the tray menu + the tray tooltip. null when idle.
@@ -209,11 +231,28 @@ function toggleMove() {
   setMoveMode(!moveMode);
 }
 
-function toggleShow() {
-  if (!overlay) return createOverlay();
-  if (overlay.isVisible()) overlay.hide();
-  else overlay.show();
+// Master overlay switch (persisted). OFF fully DESTROYS the transparent always-on-top HUD
+// window — not just hides it — so it can't composite over the game (the AMD device-lost /
+// TDR trigger), while the sidecar server + game.log watcher keep running so blueprint
+// tracking + sync are unaffected. This is both the crash workaround and the "is it the
+// overlay?" diagnostic. Reflected live in the tray + any open config window.
+function setOverlayEnabled(on) {
+  overlayEnabled = on;
+  writeOverlayEnabled(on);
+  if (on) {
+    if (!overlay) createOverlay();
+  } else {
+    moveMode = false;
+    if (overlay) {
+      overlay.destroy();
+      overlay = null;
+    }
+  }
+  configWin?.webContents.send("overlay:enabled-changed", on);
   refreshTray();
+}
+function toggleShow() {
+  setOverlayEnabled(!overlayEnabled);
 }
 
 function openConfig() {
@@ -348,17 +387,23 @@ function refreshTray() {
   if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: overlay && overlay.isVisible() ? "Hide overlay" : "Show overlay", click: toggleShow },
       {
-        label: moveMode ? "Done moving" : "Move overlay…",
-        click: toggleMove,
-      },
-      {
-        label: "Lock (always click-through)",
+        label: "Show in-game overlay",
         type: "checkbox",
-        checked: locked,
-        click: toggleLock,
+        checked: overlayEnabled,
+        click: () => setOverlayEnabled(!overlayEnabled),
       },
+      ...(overlayEnabled
+        ? [
+            { label: moveMode ? "Done moving" : "Move overlay…", click: toggleMove },
+            {
+              label: "Lock (always click-through)",
+              type: "checkbox",
+              checked: locked,
+              click: toggleLock,
+            },
+          ]
+        : [{ label: "Overlay off — tracking still running", enabled: false }]),
       { type: "separator" },
       { label: "Refresh missions (re-read log)", click: refreshMissions },
       { label: "Verify from logs", click: verifyFromLogs },
@@ -407,7 +452,8 @@ if (!app.requestSingleInstanceLock()) {
     startServer();
     const up = await waitForServer();
     if (!up) console.error("[electron] server did not come up on :" + PORT);
-    createOverlay();
+    overlayEnabled = readOverlayEnabled();
+    if (overlayEnabled) createOverlay();
     createTray();
     setupUpdater();
     globalShortcut.register("Control+Alt+L", toggleLock); // lock/unlock click-through
@@ -431,6 +477,14 @@ if (!app.requestSingleInstanceLock()) {
       properties: ["openFile"],
     });
     return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+  });
+
+  // Config window's "Show in-game overlay" toggle (crash workaround). Owned here, not by
+  // the sidecar config, so destroy/create is immediate.
+  ipcMain.handle("overlay:get-enabled", () => overlayEnabled);
+  ipcMain.handle("overlay:set-enabled", (_e, on) => {
+    setOverlayEnabled(!!on);
+    return overlayEnabled;
   });
 
   // The HUD page reports hover enter/leave → become clickable only while hovered.

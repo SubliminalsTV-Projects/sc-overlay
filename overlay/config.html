@@ -81,6 +81,8 @@
 
   <div class="card">
     <div class="label">Overlay Performance</div>
+    <label class="opt" id="overlayShowRow" style="display:none"><input type="checkbox" id="overlayShow" /> Show the in-game overlay</label>
+    <div class="hint" id="overlayShowHint" style="display:none">Turn this <strong>off</strong> if the overlay crashes your game. Blueprint tracking and collection sync keep running without it — you just lose the on-screen panel. Takes effect immediately, no restart. <em>Tip: the binding-chart hotkey (Ctrl+Alt+K) opens another overlay window, so leave that off too while testing.</em></div>
     <label class="opt"><input type="checkbox" id="hwAccel" /> Use GPU hardware acceleration</label>
     <div class="hint"><strong>Off by default.</strong> The overlay renders on the CPU, which avoids crashes some GPUs (especially AMD) hit when the overlay runs over the game. Turn this on only if you have GPU headroom and don't get crashes. <em>Changing this requires restarting the app.</em></div>
   </div>
@@ -187,7 +189,22 @@
   }
   function clearBinding() { document.getElementById("bindingPng").value = ""; save(); }
 
+  // In-game overlay master switch — app-only (controlled live via the shell over IPC,
+  // separate from the server config + Save button). Hidden when opened in a plain browser.
+  function initOverlayToggle() {
+    const oc = window.overlayConfig;
+    if (!oc || !oc.getOverlayEnabled) return;
+    const row = document.getElementById("overlayShowRow");
+    const hint = document.getElementById("overlayShowHint");
+    const box = document.getElementById("overlayShow");
+    row.style.display = ""; hint.style.display = "";
+    oc.getOverlayEnabled().then((on) => { box.checked = on !== false; });
+    box.addEventListener("change", () => oc.setOverlayEnabled(box.checked));
+    oc.onOverlayEnabledChanged && oc.onOverlayEnabledChanged((on) => { box.checked = !!on; });
+  }
+
   loadCfg();
+  initOverlayToggle();
 </script>
 </body>
 </html>

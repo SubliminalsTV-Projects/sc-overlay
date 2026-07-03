@@ -1,6 +1,6 @@
 {
   "name": "sc-log-watcher",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "SubliminalsTV SC Blueprint Tracker — game.log watcher + overlay.",
   "type": "module",
   "main": "electron/main.cjs",
