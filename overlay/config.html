@@ -10,6 +10,13 @@
   :root { --cyan: #36e0ff; --amber: #ffb23e; --muted: #8ba6b6; --bg: #070e14; --card: #0d1822; --line: rgba(54,224,255,.22); }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: "Rajdhani", system-ui, sans-serif; background: radial-gradient(circle at 20% 0%, #112030, #04070b 70%); color: #eaf6fb; min-height: 100vh; padding: 32px; }
+  /* themed scrollbar (cyan on dark) — matches the overlay HUD */
+  * { scrollbar-width: thin; scrollbar-color: rgba(54,224,255,.35) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #04090d; }
+  ::-webkit-scrollbar-thumb { background: rgba(54,224,255,.3); border-radius: 5px; border: 2px solid #04090d; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(54,224,255,.55); }
+  ::-webkit-scrollbar-corner { background: transparent; }
   .wrap { max-width: 720px; margin: 0 auto; }
   h1 { font-family: "Orbitron", sans-serif; font-size: 22px; color: #fff; text-shadow: 0 0 14px rgba(54,224,255,.4); }
   h1 small { display:block; font-family:"Rajdhani"; font-size:13px; letter-spacing:2px; color: var(--cyan); text-transform:uppercase; margin-top:4px; font-weight:600; }
