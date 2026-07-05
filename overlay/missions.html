@@ -239,6 +239,31 @@
   .rrow .ramt { font-family: var(--mono); font-size: 11px; color: var(--gold); font-variant-numeric: tabular-nums; }
   .rewnote { margin-top: 7px; padding: 0 3px; font-size: 10.5px; color: var(--faint); }
 
+  /* Collapsible "Mission Info" drawer: faction/giver, mission type, reputation.
+     Collapsed by default on a pooled mission (tap the header to expand); forced open
+     when the mission has no blueprint pool so there's still something on screen. */
+  .mi { margin: 0 0 7px; }
+  .mi-head { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan-dim);
+    border: 1px solid var(--divider); border-radius: 3px; background: rgba(69, 208, 224, 0.04);
+    user-select: none; transition: background .12s, border-color .12s; }
+  .mi-head:hover { background: rgba(69, 208, 224, 0.1); border-color: var(--cyan); color: var(--cyan-text); }
+  .mi-head.static { cursor: default; }
+  .mi-head.static:hover { background: rgba(69, 208, 224, 0.04); border-color: var(--divider); color: var(--cyan-dim); }
+  .mi-head .car { color: var(--cyan); font-size: 9px; }
+  .mi-body { padding: 8px 9px 4px; }
+  .mi-row { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
+  .mi-row .mi-k { min-width: 72px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--cyan-dim); }
+  .mi-row .mi-v { flex: 1; font-size: 13px; color: var(--cyan-text); }
+  .mi-sec { margin: 8px 0 2px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--cyan-dim); }
+  .mi-rep { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
+  .mi-rep .mi-fac { flex: 1; font-size: 12.5px; color: var(--cyan-text); }
+  .mi-rep .mi-amt { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .mi-rep .mi-amt.pos { color: var(--gold); }
+  .mi-rep .mi-amt.neg { color: var(--red); }
+
   /* Collapsed "Collected" group: owned blueprints tuck under this toggle so the
      list leads with what you can still GET. Click to expand/collapse. */
   .grphead { display: flex; align-items: center; gap: 8px; margin-top: 9px; padding: 6px 9px; cursor: pointer;
@@ -301,6 +326,9 @@
   // Whether the collapsed "Collected" (owned) group at the bottom of the pool is
   // expanded. Collapsed by default so the list leads with what you still need.
   let ownedOpen = false;
+  // Whether the "Mission Info" drawer (faction/type/rep) is expanded. Collapsed by
+  // default on a pooled mission; forced open when the mission has no pool.
+  let infoOpen = false;
   // Event-ladder tier expand/collapse overrides, keyed by tier pct. Default (no
   // entry): fully-collected tiers collapse, incomplete tiers stay open.
   const evOpen = {};
@@ -353,15 +381,17 @@
       // Dynamic-event mission (e.g. Return of XenoThreat): show the personal reward
       // ladder instead of "no reward" — what unlocks at each contribution %.
       if (v.eventTrack) { progress.style.display = ""; renderEventTrack(v.eventTrack); return; }
-      // No blueprints, but the mission pays a known amount and/or hands out ITEMS
-      // (Wikelo ships, armor, scrip): show that instead of a bare "no reward".
+      // No blueprint pool: lead with the mission info we DO have (faction, type, rep) —
+      // auto-expanded since there's nothing else on screen — plus any static payout
+      // and/or ITEM rewards (Wikelo ships, armor, scrip). Bare message only if truly empty.
+      const info = missionInfoHtml(v, true);
       const rew = rewardsHtml(v);
-      if (rew) {
+      if (info || rew) {
         panel.classList.remove("empty");
         $("msg").innerHTML = "";
         $("catbar").innerHTML = "";
         progress.style.display = "none"; // no blueprint progress to count
-        $("pool").innerHTML = rew + '<div class="rewnote">This mission doesn’t drop blueprints.</div>';
+        $("pool").innerHTML = info + rew + '<div class="rewnote">This mission doesn’t drop blueprints.</div>';
         return;
       }
       panel.classList.add("empty");
@@ -411,7 +441,7 @@
     // A pooled mission with a known payout / item rewards shows those up top.
     const need = ordered.filter((it) => !it.owned);
     const have = ordered.filter((it) => it.owned);
-    let html = rewardsHtml(v) + need.map(rowHtml).join("");
+    let html = missionInfoHtml(v) + rewardsHtml(v) + need.map(rowHtml).join("");
     if (have.length) {
       html += '<div class="grphead" id="ownedHead" title="' + (ownedOpen ? "Hide" : "Show") + ' the blueprints you already own">' +
         '<span class="car">' + (ownedOpen ? "▾" : "▸") + "</span>Collected" +
@@ -502,6 +532,38 @@
     return n(p.max) + " " + cur;
   }
 
+  // Collapsible "Mission Info" drawer: faction/giver, mission type, and reputation
+  // gained/lost. Collapsed by default on a pooled mission (tap to expand); forced
+  // open when the mission has no pool (forceOpen) so the panel isn't bare. Returns ""
+  // when there's nothing to show. Payout is deliberately NOT here — it's only known
+  // for sure after completion, shown by the mission-complete card.
+  function repRows(list, neg) {
+    return list.map((r) => {
+      const amt = (neg ? "−" : "+") + Number(r.amount || 0).toLocaleString();
+      return '<div class="mi-rep"><span class="mi-fac">' + escapeHtml(r.faction || "—") + "</span>" +
+        '<span class="mi-amt ' + (neg ? "neg" : "pos") + '">' + amt + " rep</span></div>";
+    }).join("");
+  }
+  function missionInfoHtml(v, forceOpen) {
+    const giver = v.giver, type = v.missionType;
+    const rg = v.reputationGained || [], rl = v.reputationLost || [];
+    if (!giver && !type && !rg.length && !rl.length) return "";
+    const open = !!forceOpen || infoOpen;
+    let body = "";
+    if (open) {
+      const rows = [];
+      if (giver) rows.push('<div class="mi-row"><span class="mi-k">Faction</span><span class="mi-v">' + escapeHtml(giver) + "</span></div>");
+      if (type) rows.push('<div class="mi-row"><span class="mi-k">Type</span><span class="mi-v">' + escapeHtml(type) + "</span></div>");
+      if (rg.length) rows.push('<div class="mi-sec">Reputation gained</div>' + repRows(rg, false));
+      if (rl.length) rows.push('<div class="mi-sec">Reputation lost</div>' + repRows(rl, true));
+      body = '<div class="mi-body">' + rows.join("") + "</div>";
+    }
+    const car = forceOpen ? "" : '<span class="car">' + (open ? "▾" : "▸") + "</span>";
+    const title = forceOpen ? "" : ' title="' + (open ? "Hide" : "Show") + ' mission details"';
+    return '<div class="mi"><div class="mi-head' + (forceOpen ? " static" : "") + '" id="miHead"' + title + ">" +
+      car + "Mission Info</div>" + body + "</div>";
+  }
+
   // Payout line + ITEM rewards (actual items — not blueprints; display-only).
   function rewardsHtml(v) {
     const parts = [];
@@ -582,6 +644,12 @@
   // Marking owned is one click; UN-marking asks first, so an accidental click while
   // looking at an item can't silently wipe a blueprint you actually own.
   $("pool").addEventListener("click", (e) => {
+    // The "Mission Info" drawer header toggles its details. Only collapsible on a
+    // pooled mission — pool-less missions force it open, so a click there is a no-op.
+    if (e.target.closest("#miHead")) {
+      if (current && current.hasPool) { infoOpen = !infoOpen; render(current); }
+      return;
+    }
     // The "Collected" group header toggles the owned rows open/closed.
     if (e.target.closest("#ownedHead")) {
       ownedOpen = !ownedOpen;

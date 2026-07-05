@@ -237,6 +237,28 @@ function toggleBinding() {
 // Live-rebindable global shortcut for the binding-chart overlay — swap it WITHOUT a restart.
 // Returns {ok:true} or {ok:false,error} so the config window can warn (invalid combo, or the
 // combo is already claimed by another app).
+// Live-rebindable global shortcut for showing/hiding the overlay HUD. Same shape as
+// registerBindingHotkey so the config window can warn on an invalid / in-use combo.
+let overlayAccel = null;
+function registerOverlayHotkey(accel) {
+  try {
+    if (overlayAccel) globalShortcut.unregister(overlayAccel);
+  } catch {
+    /* ignore */
+  }
+  overlayAccel = null;
+  if (!accel || typeof accel !== "string") return { ok: true };
+  try {
+    if (globalShortcut.register(accel, toggleShow)) {
+      overlayAccel = accel;
+      return { ok: true };
+    }
+    return { ok: false, error: "in_use" };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 let bindingAccel = null;
 function registerBindingHotkey(accel) {
   try {
@@ -503,15 +525,18 @@ if (!app.requestSingleInstanceLock()) {
     createTray();
     setupUpdater();
     globalShortcut.register("Control+Alt+L", toggleLock); // lock/unlock click-through
-    globalShortcut.register("Control+Alt+H", toggleShow); // show/hide
     globalShortcut.register("Control+Alt+M", toggleMove); // move/reposition mode
-    // Binding-chart PNG overlay hotkey — from config, live-rebindable from the config window.
-    let bindKey = "Control+Alt+Shift+K";
+    // Configurable global hotkeys (live-rebindable from the config window), read from the
+    // persisted config: overlay show/hide (default F3) + binding-chart PNG (default Alt+F3).
+    let overlayKey = "F3";
+    let bindKey = "Alt+F3";
     try {
       const p = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", "config.json");
       const c = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (c.overlayHotkey) overlayKey = c.overlayHotkey;
       if (c.bindingHotkey) bindKey = c.bindingHotkey;
-    } catch { /* default */ }
+    } catch { /* defaults */ }
+    registerOverlayHotkey(overlayKey);
     registerBindingHotkey(bindKey);
   });
 
@@ -548,8 +573,10 @@ if (!app.requestSingleInstanceLock()) {
     return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
   });
 
-  // Live-apply a captured binding-chart hotkey (config window), no restart. Persistence is
-  // handled separately by the config save; this just (re)registers the global shortcut.
+  // Live-apply a captured hotkey (config window), no restart. Persistence is handled
+  // separately by the config save; these just (re)register the global shortcut.
+  ipcMain.handle("set-overlay-hotkey", (_e, accel) =>
+    registerOverlayHotkey(typeof accel === "string" ? accel : ""));
   ipcMain.handle("set-binding-hotkey", (_e, accel) =>
     registerBindingHotkey(typeof accel === "string" ? accel : ""));
 

@@ -87,16 +87,21 @@
       <button class="danger" onclick="clearBinding()" title="Remove">✕</button>
     </div>
     <label class="opt" style="margin-top:12px;">Hotkey
-      <button type="button" id="hotkeyBtn" class="hkbtn" onclick="startCaptureHotkey()">Ctrl + Alt + Shift + K</button>
+      <button type="button" id="bindingHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('binding')">Alt + F3</button>
       <input type="hidden" id="bindingHotkey" />
     </label>
-    <div class="hint" id="hotkeyHint">Pick a PNG (transparency supported — e.g. your joystick binding chart) and press the hotkey in-game to toggle it full-screen over gameplay (click-through, won't interfere). To change the hotkey, click the button and press your combination — include Ctrl, Alt, or Shift. <strong>Applies immediately, no restart.</strong> Avoid a combo Star Citizen already uses.</div>
+    <div class="hint" id="bindingHotkeyHint">Pick a PNG (transparency supported — e.g. your joystick binding chart) and press the hotkey in-game to toggle it full-screen over gameplay (click-through, won't interfere). To change the hotkey, click the button and press your combination — include Ctrl, Alt, or Shift, <strong>or a single F3 / F13–F24 key on its own</strong> (these are free in Star Citizen; F4–F12 are already bound). Default is <strong>Alt+F3</strong>. <strong>Applies immediately, no restart.</strong></div>
   </div>
 
   <div class="card">
     <div class="label">Overlay Performance</div>
+    <label class="opt" style="margin-top:2px;">Show / hide hotkey
+      <button type="button" id="overlayHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('overlay')">F3</button>
+      <input type="hidden" id="overlayHotkey" />
+    </label>
+    <div class="hint" id="overlayHotkeyHint">Press this key in-game to toggle the whole blueprint overlay on/off. Click the button and press a new key to change it — a single <strong>F3 / F13–F24</strong>, or any combo with Ctrl / Alt / Shift. Default is <strong>F3</strong>. <strong>Applies immediately, no restart.</strong></div>
     <label class="opt" id="overlayShowRow" style="display:none"><input type="checkbox" id="overlayShow" /> Show the in-game overlay</label>
-    <div class="hint" id="overlayShowHint" style="display:none">Turn this <strong>off</strong> if the overlay crashes your game. Blueprint tracking and collection sync keep running without it — you just lose the on-screen panel. Takes effect immediately, no restart. <em>Tip: the binding-chart hotkey (Ctrl+Alt+K) opens another overlay window, so leave that off too while testing.</em></div>
+    <div class="hint" id="overlayShowHint" style="display:none">Turn this <strong>off</strong> if the overlay crashes your game. Blueprint tracking and collection sync keep running without it — you just lose the on-screen panel. Takes effect immediately, no restart. <em>Tip: the binding-chart hotkey (Alt+F3) opens another overlay window, so leave that off too while testing.</em></div>
     <label class="opt"><input type="checkbox" id="amdCompat" /> AMD compatibility mode</label>
     <div class="hint">On an <strong>AMD</strong> GPU and the game crashes (Vulkan "device lost") when the overlay is up? Turn this on. It forces the overlay fully off the GPU and switches to a simplified, no-blur panel — which stops that crash while keeping the overlay visible. Slightly plainer look, a little more CPU. <em>Requires restarting the app.</em></div>
     <label class="opt"><input type="checkbox" id="hwAccel" /> Use GPU hardware acceleration</label>
@@ -122,7 +127,8 @@
     document.getElementById("hwAccel").checked = !!cfg.hwAccel;
     document.getElementById("amdCompat").checked = !!cfg.amdCompat;
     document.getElementById("bindingPng").value = cfg.bindingPng || "";
-    setHotkeyDisplay(cfg.bindingHotkey || "Control+Alt+Shift+K");
+    setHotkeyDisplay("overlay", cfg.overlayHotkey || "F3");
+    setHotkeyDisplay("binding", cfg.bindingHotkey || "Alt+F3");
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("syncStatus").textContent = cfg.hasSyncToken
       ? "Token saved. Leave the field blank to keep it."
@@ -175,7 +181,8 @@
       hwAccel: document.getElementById("hwAccel").checked,
       amdCompat: document.getElementById("amdCompat").checked,
       bindingPng: document.getElementById("bindingPng").value,
-      bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "Control+Alt+Shift+K",
+      overlayHotkey: document.getElementById("overlayHotkey").value.trim() || "F3",
+      bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "Alt+F3",
       syncEnabled: document.getElementById("syncEnabled").checked,
     };
     const token = document.getElementById("syncToken").value.trim();
@@ -208,18 +215,27 @@
   }
   function clearBinding() { document.getElementById("bindingPng").value = ""; save(); }
 
-  // ── binding-chart hotkey: click-to-capture, live-applied ─────────────────
-  let capturingHotkey = false;
+  // ── configurable hotkeys: click-to-capture, live-applied ─────────────────
+  // Two hotkeys share one capture flow: the overlay show/hide toggle and the
+  // binding-chart PNG toggle. Each names its input/button/hint els + live-apply fn.
+  const HOTKEYS = {
+    overlay: { input: "overlayHotkey", btn: "overlayHotkeyBtn", hint: "overlayHotkeyHint", def: "F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setOverlayHotkey && window.overlayConfig.setOverlayHotkey(a) },
+    binding: { input: "bindingHotkey", btn: "bindingHotkeyBtn", hint: "bindingHotkeyHint", def: "Alt+F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setBindingHotkey && window.overlayConfig.setBindingHotkey(a) },
+  };
+  let capturing = null; // which HOTKEYS key is mid-capture, or null
   function prettyHotkey(accel) {
     return (accel || "").split("+").map(p => p === "Control" ? "Ctrl" : p === "Super" ? "Win" : p).join(" + ");
   }
-  function setHotkeyDisplay(accel) {
-    document.getElementById("bindingHotkey").value = accel;
-    document.getElementById("hotkeyBtn").textContent = prettyHotkey(accel);
+  function setHotkeyDisplay(which, accel) {
+    const h = HOTKEYS[which];
+    document.getElementById(h.input).value = accel;
+    document.getElementById(h.btn).textContent = prettyHotkey(accel);
   }
-  function startCaptureHotkey() {
-    capturingHotkey = true;
-    const btn = document.getElementById("hotkeyBtn");
+  function startCaptureHotkey(which) {
+    capturing = which;
+    const btn = document.getElementById(HOTKEYS[which].btn);
     btn.textContent = "Press keys…  (Esc cancels)";
     btn.classList.add("capturing");
   }
@@ -228,19 +244,21 @@
     let m;
     if ((m = /^Key([A-Z])$/.exec(code))) return m[1];
     if ((m = /^Digit([0-9])$/.exec(code))) return m[1];
-    if (/^F([0-9]{1,2})$/.test(code)) return code;
+    if ((m = /^F([0-9]{1,2})$/.exec(code))) return (+m[1] >= 1 && +m[1] <= 24) ? code : null; // F1–F24 (Electron's max)
     return ({ Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/", Backslash: "\\",
       BracketLeft: "[", BracketRight: "]", Minus: "-", Equal: "=", Backquote: "`",
       Space: "Space", Tab: "Tab", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right" })[code] || null;
   }
   window.addEventListener("keydown", async (e) => {
-    if (!capturingHotkey) return;
+    if (!capturing) return;
+    const which = capturing;
+    const h = HOTKEYS[which];
     e.preventDefault(); e.stopPropagation();
-    const btn = document.getElementById("hotkeyBtn");
-    const hint = document.getElementById("hotkeyHint");
+    const btn = document.getElementById(h.btn);
+    const hint = document.getElementById(h.hint);
     if (e.key === "Escape") {
-      capturingHotkey = false; btn.classList.remove("capturing");
-      setHotkeyDisplay(document.getElementById("bindingHotkey").value);
+      capturing = null; btn.classList.remove("capturing");
+      setHotkeyDisplay(which, document.getElementById(h.input).value);
       return;
     }
     if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return; // wait for the non-modifier key
@@ -250,16 +268,19 @@
     if (e.shiftKey) mods.push("Shift");
     if (e.metaKey) mods.push("Super");
     const key = hkKeyName(e.code);
-    capturingHotkey = false; btn.classList.remove("capturing");
-    if (!key || !mods.length) {
-      setHotkeyDisplay(document.getElementById("bindingHotkey").value);
-      hint.innerHTML = "⚠ Use at least one modifier (Ctrl / Alt / Shift) plus a key. Try again.";
+    // F3 and F13–F24 are free in Star Citizen (F4–F12 are taken), so allow them bare —
+    // that's the whole point of a dedicated overlay key. Everything else needs a modifier.
+    const bareOk = /^F(3|1[3-9]|2[0-4])$/.test(key || "");
+    capturing = null; btn.classList.remove("capturing");
+    if (!key || (!mods.length && !bareOk)) {
+      setHotkeyDisplay(which, document.getElementById(h.input).value);
+      hint.innerHTML = "⚠ Use at least one modifier (Ctrl / Alt / Shift) plus a key — or a bare F3 / F13–F24. Try again.";
       return;
     }
     const accel = [...mods, key].join("+");
-    setHotkeyDisplay(accel);
+    setHotkeyDisplay(which, accel);
     let res = { ok: true };
-    if (window.overlayConfig && window.overlayConfig.setBindingHotkey) res = await window.overlayConfig.setBindingHotkey(accel);
+    if (h.apply) res = (await h.apply(accel)) || { ok: true };
     if (res && res.ok === false) {
       hint.innerHTML = "⚠ Couldn't register <b>" + prettyHotkey(accel) + "</b> — " +
         (res.error === "in_use" ? "another app is already using it." : "invalid combo.") + " Pick another.";

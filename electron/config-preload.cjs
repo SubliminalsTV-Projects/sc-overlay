@@ -7,7 +7,8 @@ contextBridge.exposeInMainWorld("overlayConfig", {
   pickPng: () => ipcRenderer.invoke("pick-png"),
   // Native open-FILE dialog for the game.log path (passes the current value as the start dir).
   pickLog: (current) => ipcRenderer.invoke("pick-log", current),
-  // Live-apply a captured binding-chart hotkey (no restart). Returns {ok} / {ok:false,error}.
+  // Live-apply a captured hotkey (no restart). Returns {ok} / {ok:false,error}.
+  setOverlayHotkey: (accel) => ipcRenderer.invoke("set-overlay-hotkey", accel),
   setBindingHotkey: (accel) => ipcRenderer.invoke("set-binding-hotkey", accel),
   // Master overlay switch (crash workaround) — controlled live via the shell, not the
   // sidecar config, so toggling destroys/creates the HUD window immediately.

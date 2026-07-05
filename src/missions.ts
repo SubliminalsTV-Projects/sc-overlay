@@ -28,10 +28,21 @@ export interface PoolEntry {
   subType?: string | null;
   classification?: string | null;
 }
+/** A reputation change a mission applies on completion (schema/2). faction = the org
+ *  affected; scope is e.g. "FactionReputation"; amount is the raw game value. */
+export interface RepEntry {
+  faction: string;
+  scope: string;
+  amount: number;
+}
 export interface DatasetMission {
   title: string;
   generatorClass: string;
   missionKey: string;
+  /** Mission-giving org / faction (schema/2), e.g. "Hockrow Agency". Display-only. */
+  giver?: string | null;
+  /** Mission type (schema/2), e.g. "Investigation", "Salvage". Display-only. */
+  missionType?: string | null;
   pools: Record<string, PoolEntry[]>;
   /** Static aUEC payout (schema/2). Most missions are runtime-calculated → null.
    *  min is often 0, meaning "up to max". Currency is UEC or MER (prison merits). */
@@ -39,6 +50,10 @@ export interface DatasetMission {
   /** ITEM rewards the mission hands out (schema/2) — actual items (Wikelo ships,
    *  armor, scrip), NOT blueprints. No ownership tracking; display-only. */
   items?: { name: string; item: string | null; amount: number }[] | null;
+  /** Reputation gained (+) / lost (−) on completion, biggest first (schema/2).
+   *  Empty/absent for the many missions the game data carries no rep for. */
+  reputationGained?: RepEntry[];
+  reputationLost?: RepEntry[];
 }
 export interface Dataset {
   schema: string;
@@ -92,6 +107,12 @@ export interface TrackedView {
   payout: { min: number | null; max: number; currency: string | null } | null;
   /** ITEM rewards (not blueprints) the shown mission hands out. Display-only. */
   itemRewards: { name: string; amount: number }[];
+  /** Mission-giving faction/org and mission type for the shown mission (display-only). */
+  giver: string | null;
+  missionType: string | null;
+  /** Reputation gained (+) / lost (−) on completion, biggest first (may be empty). */
+  reputationGained: RepEntry[];
+  reputationLost: RepEntry[];
   /** True once the tracked mission has logged a COMPLETED end. */
   completed: boolean;
   pools: { poolUuid: string; blueprints: BlueprintStatus[] }[];
@@ -188,7 +209,11 @@ function matchesPoolName(poolName: string, owned: Iterable<string>): boolean {
   const p = norm(poolName);
   for (const o of owned) {
     const n = norm(o);
-    if (n === p || n.startsWith(p + " ") || p.startsWith(n + " ")) return true;
+    // Owned satisfies the pool entry only if it IS that entry, or a longer variant
+    // of it ("Geist Armor Arms Whiteout" owns pool "Geist Armor Arms"). NOT the reverse:
+    // owning the base "Geist Armor Arms" must not claim a more-specific pool entry like
+    // "Geist Armor Arms ASD Edition" — those are distinct blueprints. Mirrors resolveName.
+    if (n === p || n.startsWith(p + " ")) return true;
     // Component designation → bare model (pool carries the bare model name).
     const model = componentModel(o);
     if (model && norm(model) === p) return true;
@@ -873,6 +898,10 @@ export class MissionTracker extends EventEmitter {
       hasPool: pools.length > 0,
       payout: mission?.payout ?? null,
       itemRewards: (mission?.items ?? []).map((i) => ({ name: i.name, amount: Number(i.amount) || 1 })),
+      giver: mission?.giver ?? null,
+      missionType: mission?.missionType ?? null,
+      reputationGained: mission?.reputationGained ?? [],
+      reputationLost: mission?.reputationLost ?? [],
       eventTrack,
       completed:
         (holdActive && this.completion!.kind === "completed") ||

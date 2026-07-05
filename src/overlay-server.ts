@@ -50,6 +50,9 @@ interface Config {
   /** Global hotkey that shows/hides the binding-chart overlay (Electron accelerator
    *  syntax). Read by main.cjs at startup. */
   bindingHotkey: string;
+  /** Global hotkey that shows/hides the whole overlay HUD (Electron accelerator
+   *  syntax). Read by main.cjs at startup. */
+  overlayHotkey: string;
 }
 
 const DEFAULTS: Config = {
@@ -62,7 +65,8 @@ const DEFAULTS: Config = {
   hwAccel: false,
   amdCompat: false,
   bindingPng: "",
-  bindingHotkey: "Control+Alt+Shift+K",
+  bindingHotkey: "Alt+F3",
+  overlayHotkey: "F3",
 };
 
 function loadConfig(): Config {
@@ -454,6 +458,7 @@ const server = createServer(async (req, res) => {
     if (typeof body.amdCompat === "boolean") config.amdCompat = body.amdCompat;
     if (typeof body.bindingPng === "string") config.bindingPng = body.bindingPng;
     if (typeof body.bindingHotkey === "string" && body.bindingHotkey.trim()) config.bindingHotkey = body.bindingHotkey.trim();
+    if (typeof body.overlayHotkey === "string" && body.overlayHotkey.trim()) config.overlayHotkey = body.overlayHotkey.trim();
     await saveConfig();
     await reindex();
     startWatcher();
