@@ -239,6 +239,20 @@
   .rrow .ramt { font-family: var(--mono); font-size: 11px; color: var(--gold); font-variant-numeric: tabular-nums; }
   .rewnote { margin-top: 7px; padding: 0 3px; font-size: 10.5px; color: var(--faint); }
 
+  /* Idle recent-activity: last completed missions + received blueprints (with times). */
+  .recent { display: flex; flex-direction: column; gap: 11px; padding: 2px 1px; position: relative; z-index: 2; }
+  .ra-h { font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--cyan-dim); margin: 0 0 5px; padding-bottom: 3px;
+    border-bottom: 1px solid var(--border); }
+  .ra-list { list-style: none; margin: 0; padding: 0; }
+  .ra-list li { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 12px; }
+  .ra-glyph { flex: none; color: var(--cyan); font-size: 8px; transform: translateY(-1px); }
+  .ra-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cyan-text); }
+  .ra-val { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--gold); }
+  .ra-when { flex: none; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
+  .ra-date { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); }
+  .ra-rel { font-size: 8px; letter-spacing: 0.04em; color: var(--faint); }
+
   /* Collapsible "Mission Info" drawer: faction/giver, mission type, reputation.
      Collapsed by default on a pooled mission (tap the header to expand); forced open
      when the mission has no blueprint pool so there's still something on screen. */
@@ -349,6 +363,52 @@
     { key: "missions", label: "Missions", icon: "cat-missions.svg" },
   ];
 
+  // Time label parts from an ISO stamp: absolute date+clock (the "date and timestamp")
+  // plus a relative "2h ago" hint.
+  function fmtWhen(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    const clock = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
+    const min = Math.floor((Date.now() - d.getTime()) / 60000);
+    let rel;
+    if (min < 1) rel = "just now";
+    else if (min < 60) rel = min + "m ago";
+    else if (min < 1440) rel = Math.floor(min / 60) + "h ago";
+    else rel = Math.floor(min / 1440) + "d ago";
+    return { date: date + " " + clock, rel };
+  }
+
+  // Idle recent-activity block: last few completed missions + received blueprints.
+  function recentActivityHtml(v) {
+    const missions = v.recentMissions || [];
+    const blueprints = v.recentBlueprints || [];
+    if (!missions.length && !blueprints.length) return "";
+    function whenCell(iso) {
+      const w = fmtWhen(iso);
+      if (!w) return '<span class="ra-when"></span>';
+      return '<span class="ra-when"><span class="ra-date">' + w.date + '</span><span class="ra-rel">' + w.rel + "</span></span>";
+    }
+    let html = '<div class="recent">';
+    if (missions.length) {
+      html += '<div class="ra-sec"><div class="ra-h">Recent Missions</div><ul class="ra-list">';
+      for (const m of missions) {
+        const val = m.aUEC != null ? '<span class="ra-val">' + m.aUEC.toLocaleString() + " aUEC</span>" : "";
+        html += '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(m.title || "Mission") + "</span>" + val + whenCell(m.at) + "</li>";
+      }
+      html += "</ul></div>";
+    }
+    if (blueprints.length) {
+      html += '<div class="ra-sec"><div class="ra-h">Recent Blueprints</div><ul class="ra-list">';
+      for (const b of blueprints) {
+        html += '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(b.name) + "</span>" + whenCell(b.at) + "</li>";
+      }
+      html += "</ul></div>";
+    }
+    return html + "</div>";
+  }
+
   function render(v) {
     current = v;
     const panel = $("panel");
@@ -363,14 +423,24 @@
     renderPicker(v);
 
     if (!v.contractKey) {
-      panel.classList.add("empty");
       $("title").textContent = "No mission tracked";
       $("sub").textContent = "";
-      $("pool").innerHTML = "";
-      const hasList = v.missions && v.missions.length;
-      $("msg").innerHTML = '<div class="msg">' +
-        (hasList ? "Pick one from the dropdown above, or track a mission in-game." :
-                   "Track a mission in-game to see its blueprint pool.") + "</div>";
+      document.querySelector(".progress").style.display = "none";
+      $("catbar").innerHTML = "";
+      const recent = recentActivityHtml(v);
+      if (recent) {
+        // Idle state: show your last few completed missions + received blueprints.
+        panel.classList.remove("empty");
+        $("msg").innerHTML = "";
+        $("pool").innerHTML = recent;
+      } else {
+        panel.classList.add("empty");
+        $("pool").innerHTML = "";
+        const hasList = v.missions && v.missions.length;
+        $("msg").innerHTML = '<div class="msg">' +
+          (hasList ? "Pick one from the dropdown above, or track a mission in-game." :
+                     "Track a mission in-game to see its blueprint pool.") + "</div>";
+      }
       return;
     }
     $("title").textContent = v.title || v.contractKey;

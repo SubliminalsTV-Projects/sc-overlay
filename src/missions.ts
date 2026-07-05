@@ -92,6 +92,20 @@ export interface BlueprintStatus {
   tab: TabKey;
   sub: string;
 }
+/** A completed mission in the recent-activity list (idle overlay state). */
+export interface RecentMission {
+  title: string | null;
+  aUEC: number | null;
+  /** ISO-8601 completion time from the log (null if unparseable). */
+  at: string | null;
+}
+/** A received blueprint in the recent-activity list. */
+export interface RecentBlueprint {
+  name: string;
+  /** ISO-8601 receipt time from the log. */
+  at: string | null;
+}
+
 export interface TrackedView {
   /** The loaded dataset's version (the pools being shown). */
   patch: string | null;
@@ -119,6 +133,10 @@ export interface TrackedView {
   totals: { owned: number; total: number };
   /** Lifetime collected count across all observed + overridden blueprints. */
   collectedTotal: number;
+  /** Last few completed missions + received blueprints (newest first), shown on the
+   *  overlay's idle state when no mission is tracked. Backfilled from the logs. */
+  recentMissions: RecentMission[];
+  recentBlueprints: RecentBlueprint[];
   /** Present for ~30s after the on-screen mission completes (~8s for an abandon):
    *  a summary card (payout, duration, blueprints received — or just "abandoned")
    *  shown before moving to the next mission. null the rest of the time. */
@@ -181,6 +199,17 @@ interface Persisted {
   /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log).
    *  Optional: older state files predate it; a "Verify from logs" run backfills it. */
   observedAt?: Record<string, string>;
+  /** Recently completed missions (newest first), for the idle recent-activity list.
+   *  Optional: older state files predate it; a "Verify from logs" run backfills it. */
+  missionHistory?: MissionHistoryEntry[];
+}
+
+/** Stored completed-mission record (newest first, capped). Deduped by missionId+at. */
+interface MissionHistoryEntry {
+  missionId: string | null;
+  title: string | null;
+  aUEC: number | null;
+  at: string;
 }
 
 /** "Geist Armor Arms" matches an observed "Geist Armor Arms Whiteout" (variant suffix). */
@@ -238,6 +267,8 @@ const REWARD_WINDOW_MS = 6_000;
 /** Only show the completion card for a real-time completion — not the historical
  *  ones replayed when the app seeds from the log on startup. */
 const COMPLETION_FRESH_MS = 90_000;
+/** How many completed missions to retain for the idle recent-activity list. */
+const MISSION_HISTORY_MAX = 20;
 
 export interface MissionTrackerOptions {
   /** Directory holding blueprints.<changelist>.json (+ blueprints.latest.json). */
@@ -295,6 +326,8 @@ export class MissionTracker extends EventEmitter {
   private completionTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last "Awarded N aUEC" seen (log time), to attach to the completion near it. */
   private lastReward: { amount: number; atMs: number } | null = null;
+  /** Completed missions, newest first, capped — persisted for the idle recent list. */
+  private missionHistory: MissionHistoryEntry[] = [];
 
   constructor(opts: MissionTrackerOptions) {
     super();
@@ -510,16 +543,21 @@ export class MissionTracker extends EventEmitter {
   ): void {
     const completedAtMs = ts ? Date.parse(ts) : Date.now();
     if (!Number.isFinite(completedAtMs)) return;
-    if (Date.now() - completedAtMs > COMPLETION_FRESH_MS) return; // historical replay — no card
-    if (this.completion && this.completion.missionId === missionId) {
-      if (title && !this.completion.title) this.completion.title = title;
-      return;
-    }
     const info = this.missions.get(missionId);
     const aUEC =
       kind === "completed" && this.lastReward && Math.abs(this.lastReward.atMs - completedAtMs) <= REWARD_WINDOW_MS
         ? this.lastReward.amount
         : null;
+    // Record to the persisted recent-mission history for BOTH real-time and
+    // startup-replayed completions (the summary card below stays gated to real-time).
+    if (kind === "completed") {
+      this.recordMissionComplete(missionId, title ?? info?.title ?? null, ts, aUEC);
+    }
+    if (Date.now() - completedAtMs > COMPLETION_FRESH_MS) return; // historical replay — no card
+    if (this.completion && this.completion.missionId === missionId) {
+      if (title && !this.completion.title) this.completion.title = title;
+      return;
+    }
     const holdMs = kind === "abandoned" ? ABANDON_HOLD_MS : COMPLETION_HOLD_MS;
     this.completion = {
       missionId,
@@ -536,6 +574,7 @@ export class MissionTracker extends EventEmitter {
       this.completionTimer = null;
       this.emit("change"); // hold expired → overlay moves to the next mission
     }, holdMs);
+    if (kind === "completed") this.saveState(); // persist the new recent-mission entry
     this.emit("change");
   }
 
@@ -554,6 +593,38 @@ export class MissionTracker extends EventEmitter {
     return out;
   }
 
+  /** Record a completed mission into the capped, newest-first history (deduped by
+   *  missionId + completion time). Used by BOTH live completions and log backfill,
+   *  so it must be independent of the freshness gate that governs the on-screen card. */
+  private recordMissionComplete(missionId: string | null, title: string | null, ts: string | null, aUEC: number | null): void {
+    if (!ts) return;
+    const parsed = Date.parse(ts);
+    if (!Number.isFinite(parsed)) return;
+    const at = new Date(parsed).toISOString();
+    const dupe = this.missionHistory.find((m) => m.at === at && (m.missionId ?? null) === (missionId ?? null));
+    if (dupe) {
+      // A second source (contractComplete vs reward correlation) may enrich a partial.
+      if (title && !dupe.title) dupe.title = title;
+      if (aUEC != null && dupe.aUEC == null) dupe.aUEC = aUEC;
+      return;
+    }
+    this.missionHistory.push({ missionId: missionId ?? null, title: title ?? null, aUEC, at });
+    this.missionHistory.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    if (this.missionHistory.length > MISSION_HISTORY_MAX) this.missionHistory.length = MISSION_HISTORY_MAX;
+  }
+
+  private recentMissions(n = 5): RecentMission[] {
+    return this.missionHistory.slice(0, n).map((m) => ({ title: m.title, aUEC: m.aUEC, at: m.at }));
+  }
+
+  private recentBlueprints(n = 5): RecentBlueprint[] {
+    return [...this.observedAt.entries()]
+      .filter(([, ts]) => Number.isFinite(Date.parse(ts)))
+      .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
+      .slice(0, n)
+      .map(([name, at]) => ({ name, at }));
+  }
+
   /** Re-scan a set of log files for `Received Blueprint` receipts and fold them into
    *  the collected set. Recovers history from rotated logbackups AND undoes accidental
    *  un-ticks (a not-owned override is cleared when the logs prove the blueprint was
@@ -566,6 +637,11 @@ export class MissionTracker extends EventEmitter {
     // real historical unlock times, so this also backfills dates for names already
     // observed without one).
     const receiptTimes = new Map<string, string | null>();
+    // Completed missions + aUEC awards harvested for the recent-mission backfill,
+    // correlated by log-time proximity after the scan (a "reward" line's own
+    // MissionId is all-zeros, same as the live path).
+    const completions: { missionId: string | null; title: string | null; ts: string; tsMs: number }[] = [];
+    const rewards: { tsMs: number; amount: number }[] = [];
     let files = 0;
     let receipts = 0;
     let skipped = 0;
@@ -586,9 +662,11 @@ export class MissionTracker extends EventEmitter {
       }
       files++;
       for (const line of text.split(/\r?\n/)) {
-        if (!line.includes("Received Blueprint:")) continue; // cheap prefilter
+        // Cheap prefilter: only blueprint receipts, contract completions, and awards.
+        if (!line.includes("Received Blueprint:") && !line.includes("Contract Complete:") && !line.includes("Awarded ")) continue;
         const ev = parseMissionEvent(parseLine(line));
-        if (ev && ev.kind === "blueprintReceived") {
+        if (!ev) continue;
+        if (ev.kind === "blueprintReceived") {
           receipts++;
           const prev = receiptTimes.get(ev.name);
           // Keep the earliest parseable stamp; ensure the name is present even if the
@@ -598,6 +676,10 @@ export class MissionTracker extends EventEmitter {
           } else if (!receiptTimes.has(ev.name)) {
             receiptTimes.set(ev.name, ev.ts ?? null);
           }
+        } else if (ev.kind === "contractComplete" && ev.ts && Number.isFinite(Date.parse(ev.ts))) {
+          completions.push({ missionId: ev.missionId, title: ev.title, ts: ev.ts, tsMs: Date.parse(ev.ts) });
+        } else if (ev.kind === "reward" && ev.ts && Number.isFinite(Date.parse(ev.ts))) {
+          rewards.push({ tsMs: Date.parse(ev.ts), amount: ev.amount });
         }
       }
     }
@@ -616,6 +698,17 @@ export class MissionTracker extends EventEmitter {
         this.overrides.delete(name);
         restored++;
       }
+    }
+    // Fold harvested completions into the recent-mission history, each correlated to
+    // the nearest aUEC award within the reward window (like the live path).
+    for (const c of completions) {
+      let amount: number | null = null;
+      let bestDist = REWARD_WINDOW_MS;
+      for (const r of rewards) {
+        const d = Math.abs(r.tsMs - c.tsMs);
+        if (d <= bestDist) { bestDist = d; amount = r.amount; }
+      }
+      this.recordMissionComplete(c.missionId, c.title, c.ts, amount);
     }
     this.saveState();
     this.emit("change");
@@ -909,6 +1002,8 @@ export class MissionTracker extends EventEmitter {
       pools,
       totals: { owned, total },
       collectedTotal: this.observed.size + [...this.overrides.values()].filter(Boolean).length,
+      recentMissions: this.recentMissions(),
+      recentBlueprints: this.recentBlueprints(),
       completion: holdActive
         ? {
             title: this.completion!.title ?? mission?.title ?? tracked?.title ?? null,
@@ -931,6 +1026,7 @@ export class MissionTracker extends EventEmitter {
       this.observed = new Set(data.observed ?? []);
       this.observedAt = new Map(Object.entries(data.observedAt ?? {}));
       this.overrides = new Map(Object.entries(data.overrides ?? {}));
+      this.missionHistory = (data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
     } catch {
       /* first run */
     }
@@ -941,6 +1037,7 @@ export class MissionTracker extends EventEmitter {
       observed: [...this.observed],
       overrides: Object.fromEntries(this.overrides),
       observedAt: Object.fromEntries(this.observedAt),
+      missionHistory: this.missionHistory,
     };
     try {
       if (!existsSync(this.stateDir)) mkdirSync(this.stateDir, { recursive: true });
