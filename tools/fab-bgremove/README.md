@@ -44,3 +44,26 @@ ssh vps "docker exec -i te7082rmeabjlnwzimhtdg9h psql -U tsadmin -d subliminal \
 ```
 
 (Timescale container / creds per the dev-subliminal-gg skill.)
+
+## Automation — VPS sweep service (`sweep.py` + `Dockerfile`)
+
+New tracker captures land as teal `image/jpeg`. The sweep daemon runs on the VPS, finds those
+rows, and UPDATEs each to a transparent `image/webp` via `core.process` (pad 6%, WebP q95). The
+`content_type` is the processed-flag (`jpeg` = todo, `webp` = done) — idempotent, no schema change.
+
+Deploy on the VPS (container on the Coolify network, next to the Timescale DB):
+
+```
+# copy this dir to the VPS, then:
+docker build -t fab-bgremove .
+PW=$(docker inspect te7082rmeabjlnwzimhtdg9h \
+      --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^POSTGRES_PASSWORD=//p')
+docker run -d --name fab-bgremove-sweep --restart=always --network coolify \
+  -e DATABASE_URL="postgresql://tsadmin:$PW@te7082rmeabjlnwzimhtdg9h:5432/subliminal" \
+  -e SWEEP_INTERVAL=120 fab-bgremove
+```
+
+Logs: `docker logs -f fab-bgremove-sweep`. This container is standalone (`docker run`, not tracked
+in the Coolify UI); `--restart=always` survives reboots. `core.py`/`sweep.py`/`bgremove.py` share
+one processing path, so the automated output is identical to a manual CLI run.
+
