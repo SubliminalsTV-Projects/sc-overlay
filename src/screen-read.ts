@@ -152,7 +152,14 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
   if (FAB_ANCHOR.test(joined)) {
     // The item name is the line(s) directly above the "<Category> ... Tier" line,
     // sharing its left edge. The render sits above the name, in the kiosk's right half.
-    const cat = lines.find((l) => CATEGORY_LINE.test(l.text) && /Tier/i.test(l.text));
+    // "· Tier" can be OCR-split onto a separate fragment at the same row (a wide "·" gap),
+    // so accept "Tier" on the category line itself OR on any fragment sharing its y.
+    const cat = lines.find(
+      (l) =>
+        CATEGORY_LINE.test(l.text) &&
+        (/Tier/i.test(l.text) ||
+          lines.some((o) => o !== l && Math.abs(o.y - l.y) < 20 && /Tier/i.test(o.text))),
+    );
     if (cat) {
       const nameLines = lines
         .filter((l) => Math.abs(l.x - cat.x) < 60 && cat.y - l.y > 0 && cat.y - l.y < 130)
