@@ -71,6 +71,7 @@ function startFabCapture({ port, configDir }) {
   const tmpShot = path.join(os.tmpdir(), "sc-fab-shot.png");
   let busy = false;
   let lastMission = "";       // last mission title sent (throttle screen-read posts)
+  let pendingItem = null;     // item seen last tick, awaiting a settle poll before capture
   const uploaded = new Set(); // items pushed to the site this session
   let remoteHave = null;      // set of items the site already has (dedup); fetched once
 
@@ -118,12 +119,20 @@ function startFabCapture({ port, configDir }) {
       if (read.kind === "fabricator" && read.item) {
         const item = read.item;
         // Dedup: already uploaded this session, or the site already has it.
-        if (uploaded.has(item) || have.has(item)) return;
+        if (uploaded.has(item) || have.has(item)) { pendingItem = null; return; }
+        // Settle: the kiosk's 3D render fades in over ~1-2s, so a first-glimpse capture
+        // can come out half-loaded / see-through. Require the item to still be on screen
+        // a poll later (this shot) before capturing, giving the render time to finish.
+        if (pendingItem !== item) {
+          pendingItem = item;
+          console.log(`[fab-capture] ${read.name}: waiting for render to settle`);
+          return;
+        }
         const c = read.crop;
         const cropped = shot.crop({ x: c.x, y: c.y, width: c.w, height: c.h });
         if (!hasRender(cropped)) {
           console.log(`[fab-capture] ${read.name}: render not loaded yet, will retry`);
-          return;
+          return; // keep pendingItem so the next poll retries
         }
         // Opaque teal kiosk background -> JPEG (small, fits the ingest cap).
         const jpeg = cropped.toJPEG(82);
