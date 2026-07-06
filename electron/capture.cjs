@@ -60,33 +60,40 @@ function hasRender(image) {
 
 const SITE = "https://subliminal.gg";
 
-// Trim dead teal padding off the LEFT/RIGHT of a crop so the item fills the frame.
-// Color-agnostic: a background column is smooth (few horizontal luminance edges), an
-// item column has many (surface detail) — so it survives teal items and the gradient.
-function trimSides(image) {
+// Tighten the L/R padding while KEEPING THE SUBJECT CENTERED. The render already sits
+// centered in the anchor crop, so we center on the crop's midline and shrink symmetrically
+// to the item's widest extent from center. Item pixels = far from the sampled teal bg;
+// a column only counts if it's item in >10% of rows, so thin kiosk UI ticks are ignored
+// (and even if one weren't, it can only reduce tightening — never shift the centre).
+function centerTighten(image, margin = 20, tol = 48) {
   const { width: w, height: h } = image.getSize();
   if (w < 40 || h < 40) return image;
   const bmp = image.getBitmap(); // BGRA
-  const lum = (i) => 0.114 * bmp[i] + 0.587 * bmp[i + 1] + 0.299 * bmp[i + 2];
-  const colEdges = new Array(w).fill(0);
-  for (let y = 0; y < h; y++) {
-    let prev = lum(y * w * 4);
-    for (let x = 1; x < w; x++) {
-      const cur = lum((y * w + x) * 4);
-      if (Math.abs(cur - prev) > 18) colEdges[x]++;
-      prev = cur;
+  const med = (a) => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
+  const sb = [], sg = [], sr = [];
+  for (const [cx, cy] of [[4, 4], [w - 9, 4], [4, h - 9], [w - 9, h - 9]]) {
+    for (let dy = 0; dy < 8; dy++) for (let dx = 0; dx < 8; dx++) {
+      const i = ((cy + dy) * w + (cx + dx)) * 4;
+      sb.push(bmp[i]); sg.push(bmp[i + 1]); sr.push(bmp[i + 2]);
     }
   }
-  const minEdges = Math.max(3, Math.floor(h * 0.02)); // content column = edges in >=2% of rows
-  let left = 0, right = w - 1;
-  while (left < w && colEdges[left] < minEdges) left++;
-  while (right > left && colEdges[right] < minEdges) right--;
-  const margin = 16;
-  left = Math.max(0, left - margin);
-  right = Math.min(w - 1, right + margin);
-  const nw = right - left + 1;
-  // Only tighten (never widen); guard against a bad detection swallowing the item.
-  if (nw < w && nw > w * 0.3) return image.crop({ x: left, y: 0, width: nw, height: h });
+  const bg = { b: med(sb), g: med(sg), r: med(sr) };
+  const center = w / 2;
+  const rowThresh = h * 0.10;
+  let maxExt = 0;
+  for (let x = 0; x < w; x++) {
+    let cnt = 0;
+    for (let y = 0; y < h; y++) {
+      const i = (y * w + x) * 4;
+      if (Math.abs(bmp[i] - bg.b) + Math.abs(bmp[i + 1] - bg.g) + Math.abs(bmp[i + 2] - bg.r) > tol) cnt++;
+    }
+    if (cnt > rowThresh) { const e = Math.abs(x - center); if (e > maxExt) maxExt = e; }
+  }
+  if (maxExt < 20) return image;
+  const half = Math.min(maxExt + margin, center);
+  const nl = Math.round(center - half), nr = Math.round(center + half);
+  const nw = nr - nl;
+  if (nw > 40 && nw < w) return image.crop({ x: nl, y: 0, width: nw, height: h });
   return image;
 }
 
@@ -160,7 +167,7 @@ function startFabCapture({ port, configDir }) {
           return;
         }
         const c = read.crop;
-        const cropped = trimSides(shot.crop({ x: c.x, y: c.y, width: c.w, height: c.h }));
+        const cropped = centerTighten(shot.crop({ x: c.x, y: c.y, width: c.w, height: c.h }));
         if (!hasRender(cropped)) {
           console.log(`[fab-capture] ${read.name}: render not loaded yet, will retry`);
           return; // keep pendingItem so the next poll retries
