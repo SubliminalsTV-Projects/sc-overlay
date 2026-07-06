@@ -70,6 +70,7 @@ function startFabCapture({ port, configDir }) {
   const captureDir = path.join(configDir, "fab-captures");
   const tmpShot = path.join(os.tmpdir(), "sc-fab-shot.png");
   let busy = false;
+  let lastMission = "";       // last mission title sent (throttle screen-read posts)
   const uploaded = new Set(); // items pushed to the site this session
   let remoteHave = null;      // set of items the site already has (dedup); fetched once
 
@@ -134,8 +135,16 @@ function startFabCapture({ port, configDir }) {
         } else {
           console.log(`[fab-capture] saved ${read.name} (${item}) — no sync token, not uploaded`);
         }
-      } else if (read.kind === "mission") {
-        console.log(`[fab-capture] mission on screen: ${read.titleRaw}`);
+      } else if (read.kind === "mission" && read.titleRaw && read.titleRaw !== lastMission) {
+        // Tell the tracker which mission is pinned in-game (ground truth the log lacks).
+        lastMission = read.titleRaw;
+        try {
+          await fetch(`http://localhost:${port}/api/missions/screen`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: read.titleRaw }),
+          });
+        } catch { /* best effort */ }
       }
     } catch (e) {
       console.error("[fab-capture] tick error:", e && e.message);

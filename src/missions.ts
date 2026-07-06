@@ -309,6 +309,9 @@ export class MissionTracker extends EventEmitter {
   private markerSeq: string[] = [];
   /** Manual override from the overlay picker; null = auto-follow. */
   private selectedMissionId: string | null = null;
+  /** The mission the screen OCR sees PINNED in-game (ground truth the log lacks).
+   *  Improves auto-follow; a manual pick still wins. Set via setScreenMission(). */
+  private screenMissionId: string | null = null;
   /** Has a CreateMarker fired since the last PU (re)entry? If not, don't auto-show
    *  a stale mission from a previous shard — wait for a marker or a manual pick. */
   private markerSinceJoin = false;
@@ -755,6 +758,26 @@ export class MissionTracker extends EventEmitter {
     this.emit("change");
   }
 
+  /** Feed the mission title the screen OCR reads as PINNED in-game. Matched (normalized,
+   *  exact) against known accepted missions; on a match it becomes the auto-follow target
+   *  (a manual pick still wins). Returns whether it matched something. No-op on no match,
+   *  so a misread never clears a good state. */
+  setScreenMission(title: string): boolean {
+    const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    const want = norm(title);
+    if (!want) return false;
+    let matched: string | null = null;
+    for (const [id, info] of this.missions) {
+      if (info.title && norm(info.title) === want && !this.endedMissionIds.has(id)) { matched = id; break; }
+    }
+    if (!matched) return false;
+    if (this.screenMissionId !== matched) {
+      this.screenMissionId = matched;
+      this.emit("change");
+    }
+    return true;
+  }
+
   /** Dataset entry for a mission id, or undefined. Since schema/2 the missions map
    *  also holds pool-LESS missions that carry a payout or item rewards. */
   private datasetMission(missionId: string): DatasetMission | undefined {
@@ -789,6 +812,12 @@ export class MissionTracker extends EventEmitter {
     // After a fresh PU entry with no marker yet, show nothing rather than a mission
     // carried over from the previous shard. The picker still lets you choose one.
     if (!this.markerSinceJoin) return null;
+    // Ground truth from the screen OCR: the mission the player has PINNED in-game (the
+    // log can't say which accepted mission is tracked). Beats the marker-order guess
+    // below, but never a manual pick above.
+    if (this.screenMissionId && this.missions.has(this.screenMissionId) && active(this.screenMissionId) && this.missionHasContent(this.screenMissionId)) {
+      return this.screenMissionId;
+    }
     if (this.trackedMissionId && active(this.trackedMissionId) && this.missionHasContent(this.trackedMissionId)) {
       return this.trackedMissionId;
     }

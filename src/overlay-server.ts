@@ -388,6 +388,16 @@ const server = createServer(async (req, res) => {
   }
 
   // Manual owned/not-owned override: { name, owned }.
+  // The screen OCR read of the mission pinned in-game (from the capture loop) — sets
+  // the auto-follow target to ground truth. No-op if the title matches no known mission.
+  if (url === "/api/missions/screen" && req.method === "POST") {
+    const body = await readBody(req);
+    const matched = typeof body.title === "string" ? tracker.setScreenMission(body.title) : false;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, matched }));
+    return;
+  }
+
   if (url === "/api/missions/own" && req.method === "POST") {
     const body = await readBody(req);
     if (typeof body.name === "string" && typeof body.owned === "boolean") {
