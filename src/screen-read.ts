@@ -96,13 +96,25 @@ export function ocrImage(imagePath: string): Promise<OcrResult> {
 
 // ---- Name resolution ----------------------------------------------------------
 
+// OCR renders roman numerals (III / IV / VI) with I↔l↔| swaps, e.g. "III" -> "Ill".
+// Within a short, all-roman-confusable token, map those back to I so the numeral matches.
+// Excludes the digit 1 (keeps "11-Series", "S1" intact) and single letters ("I"/"V"/"L").
+function romanNorm(t: string): string {
+  if (t.length < 2 || !/^[ILV|X]+$/.test(t)) return t;
+  const m = t.replace(/[L|]/g, "I");
+  return /^(?:I{2,3}|IV|VI{0,3}|IX)$/.test(m) ? m : t;
+}
+
 export function normName(s: string): string {
   return s
     .toUpperCase()
     .replace(/[→*]/g, " ")            // arrow artifacts
     .replace(/[“”•'`.,\-()"]/g, " ") // quotes + punctuation
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .split(" ")
+    .map(romanNorm)
+    .join(" ");
 }
 
 export interface CatalogEntry { name: string; item: string; }
