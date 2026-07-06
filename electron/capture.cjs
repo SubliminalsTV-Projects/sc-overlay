@@ -125,16 +125,22 @@ function startFabCapture({ port, configDir }) {
   let lastMission = "";       // last mission title sent (throttle screen-read posts)
   let pendingItem = null;     // item seen last tick, awaiting a settle poll before capture
   const uploaded = new Set(); // items pushed to the site this session
-  let remoteHave = null;      // set of items the site already has (dedup); fetched once
+  let remoteHave = null;      // set of items the site already has (dedup)
+  let remoteHaveAt = 0;       // when remoteHave was last fetched
+  const REMOTE_TTL_MS = 3 * 60_000; // re-fetch the site's have-list this often
 
-  // What does the site already have? Skip capturing those. Fetched lazily, best-effort.
+  // What does the site already have? Skip capturing those. Re-fetched every REMOTE_TTL_MS so a
+  // server-side delete/replace (or a failed upload) becomes capturable again WITHOUT restarting.
   async function ensureRemoteHave() {
-    if (remoteHave) return remoteHave;
+    if (remoteHave && Date.now() - remoteHaveAt < REMOTE_TTL_MS) return remoteHave;
     try {
       const r = await fetch(`${SITE}/api/sc/fab-needed`);
       const j = await r.json();
       remoteHave = new Set(Array.isArray(j.have) ? j.have : []);
-    } catch { remoteHave = new Set(); }
+      remoteHaveAt = Date.now();
+      // Forget session-uploads the server no longer has (deleted or upload failed) so they retry.
+      for (const it of uploaded) if (!remoteHave.has(it)) uploaded.delete(it);
+    } catch { if (!remoteHave) remoteHave = new Set(); }
     return remoteHave;
   }
 
