@@ -57,6 +57,9 @@ interface Config {
   /** Global hotkey that shows/hides the whole overlay HUD (Electron accelerator
    *  syntax). Read by main.cjs at startup. */
   overlayHotkey: string;
+  /** Recent-activity timestamps: relative ("2h ago") when true, absolute date+clock
+   *  when false. Read by the overlay via the mission view's `prefs`. */
+  timeRelative: boolean;
 }
 
 const DEFAULTS: Config = {
@@ -72,6 +75,7 @@ const DEFAULTS: Config = {
   bindingPng: "",
   bindingHotkey: "Alt+F3",
   overlayHotkey: "F3",
+  timeRelative: true,
 };
 
 function loadConfig(): Config {
@@ -218,8 +222,14 @@ const tracker = new MissionTracker({ dataDir, remoteBaseUrl: "https://subliminal
 // Name->UUID catalog for the screen-read OCR endpoint; loaded lazily on first use.
 let screenCatalog: CatalogEntry[] | null = null;
 const missionClients = new Set<ServerResponse>();
+// The overlay view plus user prefs the overlay needs (kept out of the tracker, which
+// doesn't know about config). Sent on every mission broadcast so a config change (e.g.
+// the time-format toggle) reaches the overlay live via broadcastMissions().
+function missionsPayload(): string {
+  return JSON.stringify({ ...tracker.view(), prefs: { timeRelative: config.timeRelative } });
+}
 function broadcastMissions(): void {
-  const data = `data: ${JSON.stringify(tracker.view())}\n\n`;
+  const data = `data: ${missionsPayload()}\n\n`;
   for (const res of missionClients) res.write(data);
 }
 tracker.on("change", broadcastMissions);
@@ -336,7 +346,7 @@ const server = createServer(async (req, res) => {
     });
     res.write("\n");
     missionClients.add(res);
-    res.write(`data: ${JSON.stringify(tracker.view())}\n\n`);
+    res.write(`data: ${missionsPayload()}\n\n`);
     req.on("close", () => missionClients.delete(res));
     return;
   }
@@ -344,7 +354,7 @@ const server = createServer(async (req, res) => {
   // Current mission/blueprint view (snapshot).
   if (url === "/api/missions" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(tracker.view()));
+    res.end(missionsPayload());
     return;
   }
 
@@ -492,11 +502,14 @@ const server = createServer(async (req, res) => {
     if (typeof body.bindingPng === "string") config.bindingPng = body.bindingPng;
     if (typeof body.bindingHotkey === "string" && body.bindingHotkey.trim()) config.bindingHotkey = body.bindingHotkey.trim();
     if (typeof body.overlayHotkey === "string" && body.overlayHotkey.trim()) config.overlayHotkey = body.overlayHotkey.trim();
+    if (typeof body.timeRelative === "boolean") config.timeRelative = body.timeRelative;
     await saveConfig();
     await reindex();
     startWatcher();
     // Re-arm sync with the new settings and reconcile the full collection.
     if (sync.configure(config.syncToken, config.syncEnabled)) syncFull();
+    // Push prefs (e.g. the time-format toggle) to any open overlay immediately.
+    broadcastMissions();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
     return;

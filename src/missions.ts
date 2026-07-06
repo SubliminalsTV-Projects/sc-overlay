@@ -105,6 +105,14 @@ export interface RecentBlueprint {
   /** ISO-8601 receipt time from the log. */
   at: string | null;
 }
+/** A blueprint unlocked during a mission — the completion card shows its item image. */
+export interface BlueprintReward {
+  name: string;
+  /** Resolved item UUID (the image key), or null if the name couldn't be resolved. */
+  item: string | null;
+  /** Full item-render URL on the site, or null when there's no UUID. */
+  image: string | null;
+}
 
 export interface TrackedView {
   /** The loaded dataset's version (the pools being shown). */
@@ -148,8 +156,8 @@ export interface TrackedView {
     aUEC: number | null;
     /** Accept→complete duration in ms, or null if the accept wasn't seen. */
     durationMs: number | null;
-    /** Blueprint names received during the mission. */
-    blueprints: string[];
+    /** Blueprints received during the mission (name + item image for the card). */
+    blueprints: BlueprintReward[];
   } | null;
   /** The manually-pinned missionId, or null when auto-following. */
   selectedId: string | null;
@@ -583,17 +591,24 @@ export class MissionTracker extends EventEmitter {
 
   /** Blueprint names received during the completed mission (receipt time between its
    *  accept and completion) — the "+N blueprints" line on the completion card. */
-  private completionBlueprints(): string[] {
+  private completionBlueprints(): BlueprintReward[] {
     const c = this.completion;
     if (!c) return [];
     const lo = c.acceptedAtMs ?? -Infinity;
     const hi = c.completedAtMs + REWARD_WINDOW_MS;
-    const out: string[] = [];
+    const out: BlueprintReward[] = [];
     for (const [name, ts] of this.observedAt) {
       const t = Date.parse(ts);
-      if (Number.isFinite(t) && t >= lo && t <= hi) out.push(name);
+      if (Number.isFinite(t) && t >= lo && t <= hi) out.push(this.blueprintReward(name));
     }
     return out;
+  }
+
+  /** Resolve a received blueprint name to its item UUID + site render URL for display. */
+  private blueprintReward(name: string): BlueprintReward {
+    const item = this.itemUuidsForName(name)[0] ?? null;
+    const base = this.remoteBaseUrl ?? "https://subliminal.gg/sc";
+    return { name, item, image: item ? `${base}/items/${item}.webp` : null };
   }
 
   /** Record a completed mission into the capped, newest-first history (deduped by

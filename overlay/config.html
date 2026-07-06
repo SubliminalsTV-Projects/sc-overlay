@@ -110,6 +110,12 @@
     <div class="hint"><strong>Off by default.</strong> The overlay renders on the CPU, which avoids crashes some GPUs (especially AMD) hit when the overlay runs over the game. Turn this on only if you have GPU headroom and don't get crashes. <em>Changing this requires restarting the app.</em></div>
   </div>
 
+  <div class="card">
+    <div class="label">Recent Activity</div>
+    <label class="opt"><input type="checkbox" id="timeRelative" /> Show times as &ldquo;2h ago&rdquo; instead of the date &amp; clock</label>
+    <div class="hint">Controls the timestamps in the overlay's <strong>Recent Missions</strong> and <strong>Recent Blueprints</strong> lists (shown when no mission is tracked). On = relative (&ldquo;just now&rdquo;, &ldquo;3h ago&rdquo;, &ldquo;2d ago&rdquo;); off = the actual date and clock. <strong>Applies immediately, no restart.</strong></div>
+  </div>
+
   <div style="margin-top:20px; display:flex; align-items:center;">
     <button class="amber" onclick="save()">Save</button>
     <span class="saved" id="saved">Saved ✓</span>
@@ -133,6 +139,7 @@
     setHotkeyDisplay("binding", cfg.bindingHotkey || "Alt+F3");
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
+    document.getElementById("timeRelative").checked = cfg.timeRelative !== false;
     document.getElementById("syncStatus").textContent = cfg.hasSyncToken
       ? "Token saved. Leave the field blank to keep it."
       : "No token yet — paste one to connect.";
@@ -188,6 +195,7 @@
       bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "Alt+F3",
       syncEnabled: document.getElementById("syncEnabled").checked,
       fabCapture: document.getElementById("fabCapture").checked,
+      timeRelative: document.getElementById("timeRelative").checked,
     };
     const token = document.getElementById("syncToken").value.trim();
     if (token) body.syncToken = token; // only send when typed; blank keeps the saved one
