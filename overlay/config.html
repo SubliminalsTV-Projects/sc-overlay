@@ -77,6 +77,8 @@
     <label class="opt"><input type="checkbox" id="syncEnabled" /> Sync my collection to my subliminal.gg account</label>
     <div class="hint" id="syncStatus"></div>
     <div class="hint">Get a token at <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg/blueprints</a> → “Connect the desktop tracker”. Received blueprints and the mission you're tracking sync to your account automatically — leave the field blank to keep the saved token.</div>
+    <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
+    <div class="hint">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's blueprint catalog — only ever while Star Citizen is focused, only items we don't have yet, nothing else on your screen. You're credited on the contributor leaderboard. Needs a sync token above.</div>
   </div>
 
   <div class="card">
@@ -130,6 +132,7 @@
     setHotkeyDisplay("overlay", cfg.overlayHotkey || "F3");
     setHotkeyDisplay("binding", cfg.bindingHotkey || "Alt+F3");
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
+    document.getElementById("fabCapture").checked = !!cfg.fabCapture;
     document.getElementById("syncStatus").textContent = cfg.hasSyncToken
       ? "Token saved. Leave the field blank to keep it."
       : "No token yet — paste one to connect.";
@@ -184,6 +187,7 @@
       overlayHotkey: document.getElementById("overlayHotkey").value.trim() || "F3",
       bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "Alt+F3",
       syncEnabled: document.getElementById("syncEnabled").checked,
+      fabCapture: document.getElementById("fabCapture").checked,
     };
     const token = document.getElementById("syncToken").value.trim();
     if (token) body.syncToken = token; // only send when typed; blank keeps the saved one

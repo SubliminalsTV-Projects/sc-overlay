@@ -37,6 +37,9 @@ interface Config {
   syncToken: string;
   /** Whether to push collected blueprints + tracked mission to subliminal.gg. */
   syncEnabled: boolean;
+  /** Opt-in: capture item renders from the in-game Fabrication Kiosk and contribute
+   *  them to subliminal.gg's blueprint catalog. Read by electron/capture.cjs each poll. */
+  fabCapture: boolean;
   /** GPU hardware acceleration for the Electron overlay. OFF by default — it composites
    *  a transparent window over a Vulkan game and crashes AMD drivers; software rendering
    *  is safe. Read by electron/main.cjs at startup (needs an app restart to change). */
@@ -63,6 +66,7 @@ const DEFAULTS: Config = {
   autoSwitch: true,
   syncToken: "",
   syncEnabled: false,
+  fabCapture: false,
   hwAccel: false,
   amdCompat: false,
   bindingPng: "",
@@ -471,6 +475,7 @@ const server = createServer(async (req, res) => {
     if (typeof body.syncToken === "string" && body.syncToken.trim()) config.syncToken = body.syncToken.trim();
     if (body.clearToken === true) config.syncToken = "";
     if (typeof body.syncEnabled === "boolean") config.syncEnabled = body.syncEnabled;
+    if (typeof body.fabCapture === "boolean") config.fabCapture = body.fabCapture;
     // GPU accel is read by electron/main.cjs at startup; persist here, restart applies it.
     if (typeof body.hwAccel === "boolean") config.hwAccel = body.hwAccel;
     if (typeof body.amdCompat === "boolean") config.amdCompat = body.amdCompat;
