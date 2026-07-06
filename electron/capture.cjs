@@ -14,7 +14,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 
-const POLL_MS = 5000;
+const POLL_MS = 3000;
 
 // Return the foreground window's process name (e.g. "StarCitizen"), or "" on failure.
 function foregroundProcess() {
@@ -60,11 +60,13 @@ function hasRender(image) {
 
 const SITE = "https://subliminal.gg";
 
-// Tighten the L/R padding while KEEPING THE SUBJECT CENTERED. The render already sits
-// centered in the anchor crop, so we center on the crop's midline and shrink symmetrically
-// to the item's widest extent from center. Item pixels = far from the sampled teal bg;
-// a column only counts if it's item in >10% of rows, so thin kiosk UI ticks are ignored
-// (and even if one weren't, it can only reduce tightening — never shift the centre).
+// Crop tight around the SUBJECT and re-centre on it. The anchor crop's x-span runs
+// name-left..X-close, which is NOT centred on the 3D render, so a symmetric trim around the
+// frame midline would preserve any lean (dead space on the opposite side) and keep the kiosk's
+// category-tab sliver stuck at the far-left edge. Instead we find the item's own L/R extent
+// and crop to it with equal margins. Item pixels = far from the sampled teal bg; a column
+// counts if item in >10% of rows — then we keep only the DOMINANT contiguous block, so the
+// tab rail (thin, at the edge, gap-separated from the render) is excluded, not just un-stretched.
 function centerTighten(image, margin = 20, tol = 48) {
   const { width: w, height: h } = image.getSize();
   if (w < 40 || h < 40) return image;
@@ -78,20 +80,32 @@ function centerTighten(image, margin = 20, tol = 48) {
     }
   }
   const bg = { b: med(sb), g: med(sg), r: med(sr) };
-  const center = w / 2;
   const rowThresh = h * 0.10;
-  let maxExt = 0;
+  const isItem = new Array(w);
   for (let x = 0; x < w; x++) {
     let cnt = 0;
     for (let y = 0; y < h; y++) {
       const i = (y * w + x) * 4;
       if (Math.abs(bmp[i] - bg.b) + Math.abs(bmp[i + 1] - bg.g) + Math.abs(bmp[i + 2] - bg.r) > tol) cnt++;
     }
-    if (cnt > rowThresh) { const e = Math.abs(x - center); if (e > maxExt) maxExt = e; }
+    isItem[x] = cnt > rowThresh;
   }
-  if (maxExt < 20) return image;
-  const half = Math.min(maxExt + margin, center);
-  const nl = Math.round(center - half), nr = Math.round(center + half);
+  // Dominant contiguous block, bridging gaps <= maxGap (a render's internal background
+  // shouldn't split it). The tab rail is a thin far-edge cluster separated by a wide gap,
+  // so it becomes its own tiny segment and loses to the render.
+  const maxGap = Math.round(w * 0.06);
+  let left = -1, right = -1, best = 0;
+  for (let x = 0; x < w; ) {
+    if (!isItem[x]) { x++; continue; }
+    let segL = x, segR = x, cnt = 0, gap = 0;
+    while (x < w && gap <= maxGap) {
+      if (isItem[x]) { segR = x; cnt++; gap = 0; } else { gap++; }
+      x++;
+    }
+    if (cnt > best) { best = cnt; left = segL; right = segR; }
+  }
+  if (left < 0 || right - left < 20) return image;
+  const nl = Math.max(0, left - margin), nr = Math.min(w, right + margin);
   const nw = nr - nl;
   if (nw > 40 && nw < w) return image.crop({ x: nl, y: 0, width: nw, height: h });
   return image;
@@ -210,4 +224,4 @@ function startFabCapture({ port, configDir }) {
   return () => clearInterval(timer);
 }
 
-module.exports = { startFabCapture };
+module.exports = { startFabCapture, centerTighten };
