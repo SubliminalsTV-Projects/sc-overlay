@@ -60,6 +60,36 @@ function hasRender(image) {
 
 const SITE = "https://subliminal.gg";
 
+// Trim dead teal padding off the LEFT/RIGHT of a crop so the item fills the frame.
+// Color-agnostic: a background column is smooth (few horizontal luminance edges), an
+// item column has many (surface detail) — so it survives teal items and the gradient.
+function trimSides(image) {
+  const { width: w, height: h } = image.getSize();
+  if (w < 40 || h < 40) return image;
+  const bmp = image.getBitmap(); // BGRA
+  const lum = (i) => 0.114 * bmp[i] + 0.587 * bmp[i + 1] + 0.299 * bmp[i + 2];
+  const colEdges = new Array(w).fill(0);
+  for (let y = 0; y < h; y++) {
+    let prev = lum(y * w * 4);
+    for (let x = 1; x < w; x++) {
+      const cur = lum((y * w + x) * 4);
+      if (Math.abs(cur - prev) > 18) colEdges[x]++;
+      prev = cur;
+    }
+  }
+  const minEdges = Math.max(3, Math.floor(h * 0.02)); // content column = edges in >=2% of rows
+  let left = 0, right = w - 1;
+  while (left < w && colEdges[left] < minEdges) left++;
+  while (right > left && colEdges[right] < minEdges) right--;
+  const margin = 16;
+  left = Math.max(0, left - margin);
+  right = Math.min(w - 1, right + margin);
+  const nw = right - left + 1;
+  // Only tighten (never widen); guard against a bad detection swallowing the item.
+  if (nw < w && nw > w * 0.3) return image.crop({ x: left, y: 0, width: nw, height: h });
+  return image;
+}
+
 function readConfig(configDir) {
   try { return JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8")); }
   catch { return {}; }
@@ -68,6 +98,7 @@ function readConfig(configDir) {
 /** Start the opt-in capture loop. `configDir` = the %APPDATA%/sc-blueprint-tracker dir. */
 function startFabCapture({ port, configDir }) {
   const captureDir = path.join(configDir, "fab-captures");
+  const shotsDir = path.join(configDir, "fab-shots"); // full uncropped frames (mineable)
   const tmpShot = path.join(os.tmpdir(), "sc-fab-shot.png");
   let busy = false;
   let lastMission = "";       // last mission title sent (throttle screen-read posts)
@@ -129,7 +160,7 @@ function startFabCapture({ port, configDir }) {
           return;
         }
         const c = read.crop;
-        const cropped = shot.crop({ x: c.x, y: c.y, width: c.w, height: c.h });
+        const cropped = trimSides(shot.crop({ x: c.x, y: c.y, width: c.w, height: c.h }));
         if (!hasRender(cropped)) {
           console.log(`[fab-capture] ${read.name}: render not loaded yet, will retry`);
           return; // keep pendingItem so the next poll retries
@@ -138,6 +169,10 @@ function startFabCapture({ port, configDir }) {
         const jpeg = cropped.toJPEG(82);
         fs.mkdirSync(captureDir, { recursive: true });
         fs.writeFileSync(path.join(captureDir, `${item}.jpg`), jpeg);
+        // Keep the FULL uncropped frame too — it carries the materials list, stats,
+        // fabrication time + recipe we may mine later. One per item.
+        fs.mkdirSync(shotsDir, { recursive: true });
+        fs.writeFileSync(path.join(shotsDir, `${item}.jpg`), shot.toJPEG(85));
         if (cfg.syncToken) {
           const ok = await upload(item, jpeg, cfg.syncToken);
           console.log(`[fab-capture] ${ok ? "uploaded" : "saved (upload failed)"} ${read.name} (${item})`);
