@@ -291,6 +291,58 @@ export interface MissionTrackerOptions {
   remoteBaseUrl?: string;
 }
 
+/** Normalize a mission title for screen-OCR matching: uppercase, strip everything but
+ *  letters/digits/spaces (so quotes, colons, punctuation drop out), collapse spaces. */
+function normScreenTitle(s: string): string {
+  return s.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Match an OCR-read mission title against the accepted missions, tolerant of the ways
+ * the read differs from the log's title, but tie-safe (an ambiguous read returns null,
+ * never a guess). In order, each step accepts only a UNIQUE candidate:
+ *   1. exact (normalized) equality;
+ *   2. prefix either direction — the in-game tracked-mission panel truncates long titles
+ *      ("Terrorist Shigemori \"Jester\" Amsden to be" vs "…to be Neutralized");
+ *   3. containment either direction — a leading/trailing OCR fragment;
+ *   4. token overlap allowing ONE mismatched word — a mid-title OCR glitch
+ *      (e.g. "Dropshot" misread "Oropshot").
+ * Returns the matched mission id, or null.
+ */
+export function matchScreenTitle(
+  rawTitle: string,
+  candidates: { id: string; title: string }[],
+): string | null {
+  const want = normScreenTitle(rawTitle);
+  if (!want) return null;
+  const wantTokens = want.split(" ");
+  const cs = candidates
+    .map((c) => ({ id: c.id, t: normScreenTitle(c.title) }))
+    .filter((c) => c.t);
+  if (!cs.length) return null;
+
+  let hits = cs.filter((c) => c.t === want);
+  if (hits.length === 1) return hits[0].id;
+
+  if (wantTokens.length >= 2) {
+    hits = cs.filter((c) => c.t.startsWith(want) || want.startsWith(c.t));
+    if (hits.length === 1) return hits[0].id;
+    hits = cs.filter((c) => c.t.includes(want) || want.includes(c.t));
+    if (hits.length === 1) return hits[0].id;
+  }
+
+  if (wantTokens.length >= 3) {
+    hits = cs.filter((c) => {
+      const ct = new Set(c.t.split(" "));
+      const inter = wantTokens.filter((w) => ct.has(w)).length;
+      return inter >= wantTokens.length - 1 && inter >= 3;
+    });
+    if (hits.length === 1) return hits[0].id;
+  }
+
+  return null;
+}
+
 export class MissionTracker extends EventEmitter {
   private dataDir: string;
   private stateDir: string;
@@ -778,13 +830,12 @@ export class MissionTracker extends EventEmitter {
    *  (a manual pick still wins). Returns whether it matched something. No-op on no match,
    *  so a misread never clears a good state. */
   setScreenMission(title: string): boolean {
-    const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-    const want = norm(title);
-    if (!want) return false;
-    let matched: string | null = null;
-    for (const [id, info] of this.missions) {
-      if (info.title && norm(info.title) === want && !this.endedMissionIds.has(id)) { matched = id; break; }
-    }
+    // Match tolerantly (truncation / OCR glitches) but tie-safe — a misread that doesn't
+    // uniquely resolve is a no-op, so it can never clobber a good state. See matchScreenTitle.
+    const candidates = [...this.missions]
+      .filter(([id, info]) => info.title && !this.endedMissionIds.has(id))
+      .map(([id, info]) => ({ id, title: info.title! }));
+    const matched = matchScreenTitle(title, candidates);
     if (!matched) return false;
     if (this.screenMissionId !== matched) {
       this.screenMissionId = matched;
