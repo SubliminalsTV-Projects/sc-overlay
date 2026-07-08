@@ -500,16 +500,16 @@ const server = createServer(async (req, res) => {
   // "What's new" card: notes for the running version + whether it's already been seen.
   // The version comes from the Electron shell (app.getVersion, authoritative — the
   // bun-compiled sidecar can't read package.json), falling back to APP_VERSION in dev.
-  if (url?.startsWith("/api/changelog") && !url.includes("-seen") && req.method === "GET") {
-    const ver = new URL(url, "http://x").searchParams.get("v")?.trim() || APP_VERSION;
+  if (url === "/api/changelog" && req.method === "GET") {
+    const ver = new URL(req.url ?? "", "http://x").searchParams.get("v")?.trim() || APP_VERSION;
     const notes = ver ? loadChangelog()[ver] ?? [] : [];
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ version: ver, notes, seen: config.seenChangelog === ver }));
     return;
   }
   // Dismiss the "what's new" card — don't show it again until the next version.
-  if (url?.startsWith("/api/changelog-seen") && req.method === "POST") {
-    const ver = new URL(url, "http://x").searchParams.get("v")?.trim() || APP_VERSION;
+  if (url === "/api/changelog-seen" && req.method === "POST") {
+    const ver = new URL(req.url ?? "", "http://x").searchParams.get("v")?.trim() || APP_VERSION;
     config.seenChangelog = ver;
     await saveConfig();
     res.writeHead(200, { "Content-Type": "application/json" });
