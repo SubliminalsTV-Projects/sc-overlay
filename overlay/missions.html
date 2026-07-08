@@ -308,7 +308,7 @@
   .mi-row { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
   .mi-row .mi-k { min-width: 72px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--cyan-dim); }
-  .mi-row .mi-v { flex: 1; font-size: 13px; color: var(--cyan-text); }
+  .mi-row .mi-v { flex: 1; font-size: 13px; color: var(--cyan-text); text-align: right; }
   .mi-sec { margin: 8px 0 2px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--cyan-dim); }
   .mi-rep { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
@@ -391,9 +391,11 @@
   // Whether the collapsed "Collected" (owned) group at the bottom of the pool is
   // expanded. Collapsed by default so the list leads with what you still need.
   let ownedOpen = false;
-  // Whether the "Mission Info" drawer (faction/type/rep) is expanded. Collapsed by
-  // default on a pooled mission; forced open when the mission has no pool.
-  let infoOpen = false;
+  // Whether the "Mission Info" drawer (faction/type/rep) is expanded. Open by default
+  // (still collapsible via the header) so it's never hidden — most useful when the
+  // mission has no pool or you've already collected everything. Forced open (static)
+  // when there's no pool at all.
+  let infoOpen = true;
   // Event-ladder tier expand/collapse overrides, keyed by tier pct. Default (no
   // entry): fully-collected tiers collapse, incomplete tiers stay open.
   const evOpen = {};
