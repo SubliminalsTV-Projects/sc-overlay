@@ -1,4 +1,12 @@
 {
+  "0.1.22": [
+    "New: a settings ⚙ on the overlay itself — tuck away the odds toggle, the “Verify from logs” button, and the category filter bar for a cleaner look.",
+    "The overlay now shows what the item-image scanner is doing — a quick toast when it reads your pinned mission or captures a fabricator item, plus a live status in the ⚙ menu.",
+    "New: toggle mission-name scanning on/off from the overlay ⚙ menu (reads the mission you have pinned in-game — off by default).",
+    "Fixed: the pinned-mission reader now recognizes missions whose names are cut off on-screen or contain quotes (e.g. Terrorist Shigemori \"Jester\" Amsden…).",
+    "Mission Info (faction / type / reputation) now opens by default.",
+    "Settings tidied up for the blueprint tracker."
+  ],
   "0.1.21": [
     "Mission-Complete card now shows the actual item render for each blueprint you unlock — one big image for a single drop, a grid for more.",
     "New: opt-in log sharing (Settings) — help improve mission & blueprint detection. Your handle, account, IP and chat are stripped before anything is sent. Off by default.",
