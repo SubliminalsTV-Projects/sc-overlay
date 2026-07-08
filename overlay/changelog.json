@@ -1,0 +1,9 @@
+{
+  "0.1.21": [
+    "Mission-Complete card now shows the actual item render for each blueprint you unlock — one big image for a single drop, a grid for more.",
+    "New: opt-in log sharing (Settings) — help improve mission & blueprint detection. Your handle, account, IP and chat are stripped before anything is sent. Off by default.",
+    "Recent lists can now show relative time (\"2h ago\") or the exact date & clock — toggle in Settings.",
+    "Settings window restyled to match subliminal.gg.",
+    "The tracker's source code is now public on GitHub."
+  ]
+}

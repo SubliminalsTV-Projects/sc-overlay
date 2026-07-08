@@ -28,6 +28,20 @@ try {
 // last tick before the app closes captures the fullest session; opt-in + no-op when off.
 const LOG_SHARE_INTERVAL_MS = 20 * 60 * 1000;
 setInterval(() => void maybeShareLog(config, APP_VERSION), LOG_SHARE_INTERVAL_MS);
+
+// "What's new" notes per version (overlay/changelog.json), cached after first read.
+let changelogCache: Record<string, string[]> | null = null;
+function loadChangelog(): Record<string, string[]> {
+  if (changelogCache) return changelogCache;
+  let parsed: Record<string, string[]> = {};
+  try {
+    parsed = JSON.parse(readFileSync(join(overlayDir, "changelog.json"), "utf8"));
+  } catch {
+    /* no bundled changelog */
+  }
+  changelogCache = parsed;
+  return parsed;
+}
 const PORT = Number(process.env.PORT) || 8778;
 
 // Persist runtime state in a per-user writable dir — NEVER next to the binary.
@@ -78,6 +92,9 @@ interface Config {
    *  account id, geid, IP, and session (chat dropped) — to subliminal.gg so mission and
    *  blueprint parsing can be improved against real logs. Needs a sync token. */
   shareLogs: boolean;
+  /** App version whose "what's new" card the user has dismissed. The card shows once per
+   *  new version (when this !== the running version) and this is set on dismiss. */
+  seenChangelog: string;
 }
 
 const DEFAULTS: Config = {
@@ -95,6 +112,7 @@ const DEFAULTS: Config = {
   overlayHotkey: "F3",
   timeRelative: true,
   shareLogs: false,
+  seenChangelog: "",
 };
 
 function loadConfig(): Config {
@@ -476,6 +494,26 @@ const server = createServer(async (req, res) => {
     const { syncToken, ...rest } = config;
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ...rest, hasSyncToken: !!syncToken, resolved: urls }));
+    return;
+  }
+
+  // "What's new" card: notes for the running version + whether it's already been seen.
+  // The version comes from the Electron shell (app.getVersion, authoritative — the
+  // bun-compiled sidecar can't read package.json), falling back to APP_VERSION in dev.
+  if (url?.startsWith("/api/changelog") && !url.includes("-seen") && req.method === "GET") {
+    const ver = new URL(url, "http://x").searchParams.get("v")?.trim() || APP_VERSION;
+    const notes = ver ? loadChangelog()[ver] ?? [] : [];
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ version: ver, notes, seen: config.seenChangelog === ver }));
+    return;
+  }
+  // Dismiss the "what's new" card — don't show it again until the next version.
+  if (url?.startsWith("/api/changelog-seen") && req.method === "POST") {
+    const ver = new URL(url, "http://x").searchParams.get("v")?.trim() || APP_VERSION;
+    config.seenChangelog = ver;
+    await saveConfig();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 

@@ -269,6 +269,29 @@
   .ra-date { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); }
   .ra-rel { font-size: 8px; letter-spacing: 0.04em; color: var(--faint); }
 
+  /* "What's new" card — shown once per new version at the top of the HUD. Hover-
+     interactive (like the panel) + flagged as a modal so it's closeable even under lock. */
+  #whatsnew { display: none; margin: 0 0 11px; border: 1px solid var(--cyan); border-radius: 8px;
+    background: linear-gradient(180deg, rgba(69, 208, 224, 0.13), rgba(8, 17, 26, 0.55));
+    box-shadow: 0 0 22px rgba(69, 208, 224, 0.14) inset; padding: 11px 12px 12px; position: relative; z-index: 6; }
+  #whatsnew.show { display: block; }
+  #whatsnew .wn-head { display: flex; align-items: center; gap: 8px; }
+  #whatsnew .wn-title { flex: 1; font-family: var(--sans); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--cyan); }
+  #whatsnew .wn-ver { font-family: var(--mono); font-size: 11px; color: var(--gold); }
+  #whatsnew .wn-x { flex: none; width: 21px; height: 21px; display: grid; place-items: center; cursor: pointer;
+    border: 1px solid var(--divider); border-radius: 4px; color: var(--cyan-dim); font-size: 12px; background: rgba(69, 208, 224, 0.06); }
+  #whatsnew .wn-x:hover { color: var(--cyan); border-color: var(--cyan); background: rgba(69, 208, 224, 0.16); }
+  #whatsnew ul { list-style: none; margin: 9px 0 0; padding: 0; }
+  #whatsnew li { display: flex; gap: 8px; padding: 4px 0; font-size: 12px; line-height: 1.4; color: var(--cyan-text); }
+  #whatsnew li::before { content: "◆"; color: var(--cyan); font-size: 7px; flex: none; transform: translateY(4px); }
+  #whatsnew .wn-foot { display: flex; align-items: center; gap: 10px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border); }
+  #whatsnew .wn-dismiss { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--cyan-dim); cursor: pointer; user-select: none; }
+  #whatsnew .wn-dismiss input { width: 15px; height: 15px; accent-color: var(--cyan); }
+  #whatsnew .wn-close { margin-left: auto; font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 6px 15px; cursor: pointer; border: 1px solid var(--cyan); border-radius: 5px; color: #06121a; background: var(--cyan); }
+  #whatsnew .wn-close:hover { background: var(--cyan-bright); }
+
   /* Collapsible "Mission Info" drawer: faction/giver, mission type, reputation.
      Collapsed by default on a pooled mission (tap the header to expand); forced open
      when the mission has no blueprint pool so there's still something on screen. */
@@ -317,6 +340,18 @@
 <body>
   <div id="panel" class="empty">
     <div id="moveBanner"><div class="movebox">⠿ Drag anywhere to move<button id="moveDone">Done</button></div></div>
+    <div id="whatsnew">
+      <div class="wn-head">
+        <span class="wn-title">What's New</span>
+        <span class="wn-ver" id="wnVer"></span>
+        <span class="wn-x" id="wnX" title="Close">✕</span>
+      </div>
+      <ul id="wnList"></ul>
+      <div class="wn-foot">
+        <label class="wn-dismiss"><input type="checkbox" id="wnDontShow" checked /> Don't show this again</label>
+        <button class="wn-close" id="wnCloseBtn">Got it</button>
+      </div>
+    </div>
     <div class="head">
       <div id="grip" title="Move overlay"><span class="dots">⠿</span>Move</div>
       <div class="eyebrow"><span class="dot"></span> Blueprint Pool</div>
@@ -823,6 +858,35 @@
     window.overlayApi.onMoveMode?.((on) => panel.classList.toggle("moving", on));
     $("grip").addEventListener("click", () => window.overlayApi.beginMove?.());
     $("moveDone").addEventListener("click", () => window.overlayApi.endMove());
+
+    // "What's new" card — show once per new version. Hover-interactive (like the panel)
+    // and flagged as a modal so it stays clickable to close even when the HUD is locked.
+    (async () => {
+      try {
+        const version = await window.overlayApi.getVersion?.();
+        if (!version) return;
+        const data = await (await fetch("/api/changelog?v=" + encodeURIComponent(version))).json();
+        if (data.seen || !Array.isArray(data.notes) || !data.notes.length) return;
+        const card = $("whatsnew");
+        $("wnVer").textContent = "v" + version;
+        $("wnList").innerHTML = data.notes.map((n) => "<li>" + escapeHtml(n) + "</li>").join("");
+        card.classList.add("show");
+        window.overlayApi.setModal?.(true);
+        let wnLeaveT;
+        card.addEventListener("mouseenter", () => { clearTimeout(wnLeaveT); window.overlayApi.hover(true); });
+        card.addEventListener("mouseleave", () => { wnLeaveT = setTimeout(() => window.overlayApi.hover(false), 150); });
+        const close = async () => {
+          if ($("wnDontShow").checked) {
+            try { await fetch("/api/changelog-seen?v=" + encodeURIComponent(version), { method: "POST" }); } catch { /* best-effort */ }
+          }
+          card.classList.remove("show");
+          window.overlayApi.setModal?.(false);
+          window.overlayApi.hover(false);
+        };
+        $("wnX").addEventListener("click", close);
+        $("wnCloseBtn").addEventListener("click", close);
+      } catch { /* changelog is best-effort */ }
+    })();
   }
 
   // Filter bar: click a lit tab to filter the pool to that category; click it again

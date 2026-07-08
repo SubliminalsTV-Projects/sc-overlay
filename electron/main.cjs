@@ -89,6 +89,7 @@ let tray = null;
 let hovering = false; // pointer is over the HUD (reported by the page)
 let locked = false; // force click-through always (ignore hover), for uninterrupted play
 let moveMode = false; // reposition mode: fully interactive + drag banner, hover suspended
+let modalOpen = false; // a HUD modal (what's-new card) is up — stay hover-interactive even if locked
 let overlayEnabled = true; // master switch — false = HUD window destroyed, tracking still runs
 let manualCheck = false; // true while a tray-triggered update check is in flight (gates dialogs)
 // Background update download in flight: { version, percent, bps } — drives the live
@@ -202,9 +203,10 @@ function createOverlay() {
 function applyMouse() {
   if (!overlay) return;
   // Move mode = fully interactive (so a drag can't be dropped by hover-toggling).
-  // Otherwise click-through unless the pointer is over the HUD (and not locked).
+  // Otherwise click-through unless the pointer is over the HUD (and not locked). A
+  // modal (what's-new card) overrides lock so it can always be closed.
   // forward:true keeps mousemove flowing so the page can detect enter/leave.
-  overlay.setIgnoreMouseEvents(moveMode ? false : locked ? true : !hovering, { forward: true });
+  overlay.setIgnoreMouseEvents(moveMode ? false : (locked && !modalOpen) ? true : !hovering, { forward: true });
 }
 
 // ── binding-chart PNG overlay ─────────────────────────────────────────────────
@@ -559,6 +561,7 @@ if (!app.requestSingleInstanceLock()) {
 
   // Config window's "Show in-game overlay" toggle (crash workaround). Owned here, not by
   // the sidecar config, so destroy/create is immediate.
+  ipcMain.handle("app:version", () => app.getVersion());
   ipcMain.handle("overlay:get-enabled", () => overlayEnabled);
   ipcMain.handle("overlay:set-enabled", (_e, on) => {
     setOverlayEnabled(!!on);
@@ -590,6 +593,11 @@ if (!app.requestSingleInstanceLock()) {
   // The HUD page reports hover enter/leave → become clickable only while hovered.
   ipcMain.on("overlay:hover", (_e, on) => {
     hovering = !!on;
+    applyMouse();
+  });
+  // A HUD modal (what's-new card) opened/closed → keep it clickable even under lock.
+  ipcMain.on("overlay:modal", (_e, on) => {
+    modalOpen = !!on;
     applyMouse();
   });
   // The page's grab handle enters move mode; the "Done" button leaves it.

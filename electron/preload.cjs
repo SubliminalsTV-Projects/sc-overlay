@@ -10,4 +10,9 @@ contextBridge.exposeInMainWorld("overlayApi", {
   beginMove: () => ipcRenderer.send("overlay:begin-move"),
   endMove: () => ipcRenderer.send("overlay:end-move"),
   onMoveMode: (cb) => ipcRenderer.on("overlay:move-mode", (_e, on) => cb(!!on)),
+  // The app version (authoritative), for the "what's new" card.
+  getVersion: () => ipcRenderer.invoke("app:version"),
+  // While a modal (what's-new card) is open, keep the HUD hover-interactive even when
+  // "locked" — so the card is always closeable while the game runs.
+  setModal: (on) => ipcRenderer.send("overlay:modal", !!on),
 });
