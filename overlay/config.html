@@ -58,13 +58,17 @@
   .saved.show { opacity: 1; }
   .hkbtn { min-width: 170px; }
   .hkbtn.capturing { border-color: var(--amber); color: var(--amber); background: rgba(255,178,49,.12); }
+  /* Loadout-overlay settings (erkul URLs + ship auto-switch) are hidden for normal users —
+     they're Sub's stream-overlay feature. Revealed by the hidden unlock (title ×5). */
+  body:not(.show-loadout) .loadout-only { display: none; }
+  h1 { cursor: default; user-select: none; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>SC Blueprint Tracker<small>Settings</small></h1>
+  <h1 id="appTitle">SC Blueprint Tracker<small>Settings</small></h1>
 
-  <div class="card">
+  <div class="card loadout-only">
     <div class="label">Erkul Loadout URLs</div>
     <div id="list"></div>
     <div class="add">
@@ -75,7 +79,7 @@
   </div>
 
   <div class="card">
-    <div class="label">Game Log + Auto-Switch</div>
+    <div class="label">Game Log</div>
     <div class="add">
       <input type="text" id="logPath" placeholder="…\StarCitizen\LIVE\game.log" />
       <button onclick="chooseLog()">Browse…</button>
@@ -83,7 +87,7 @@
     </div>
     <div id="logWarn" class="hint" style="display:none; color:#ffb4a8"></div>
     <div id="detected" class="hint"></div>
-    <label class="opt"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
+    <label class="opt loadout-only"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
     <div class="hint">Pick the <strong>game.log file itself</strong> — the actual file, <em>not</em> the folder it's in. It lives inside your channel folder, e.g. <code>…\StarCitizen\LIVE\game.log</code>. Click <strong>Browse…</strong> to select the file, or <strong>Detect</strong> to auto-find your install and choose your channel (LIVE / PTU / EPTU / …).</div>
   </div>
 
@@ -160,6 +164,7 @@
     document.getElementById("bindingPng").value = cfg.bindingPng || "";
     setHotkeyDisplay("overlay", cfg.overlayHotkey || "F3");
     setHotkeyDisplay("binding", cfg.bindingHotkey || "Alt+F3");
+    document.body.classList.toggle("show-loadout", !!cfg.showLoadout);
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
     document.getElementById("shareLogs").checked = !!cfg.shareLogs;
@@ -357,6 +362,22 @@
     box.addEventListener("change", () => oc.setOverlayEnabled(box.checked));
     oc.onOverlayEnabledChanged && oc.onOverlayEnabledChanged((on) => { box.checked = !!on; });
   }
+
+  // Hidden unlock: tap the title 5× to reveal/hide the loadout-overlay settings.
+  // (They're Sub's erkul stream feature — off by default so normal users aren't confused.)
+  let titleTaps = 0, titleTapTimer = null;
+  document.getElementById("appTitle").addEventListener("click", async () => {
+    clearTimeout(titleTapTimer);
+    titleTapTimer = setTimeout(() => { titleTaps = 0; }, 1500);
+    if (++titleTaps < 5) return;
+    titleTaps = 0;
+    const next = !cfg.showLoadout;
+    await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ showLoadout: next }) });
+    await loadCfg();
+    const s = document.getElementById("saved");
+    s.textContent = next ? "Loadout settings shown" : "Loadout settings hidden";
+    s.classList.add("show"); setTimeout(() => { s.classList.remove("show"); s.textContent = "Saved ✓"; }, 1600);
+  });
 
   document.getElementById("logPath").addEventListener("input", checkLogPath);
   loadCfg();
