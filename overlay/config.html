@@ -95,6 +95,8 @@
     <div class="hint">Get a token at <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg/blueprints</a> → “Connect the desktop tracker”. Received blueprints and the mission you're tracking sync to your account automatically — leave the field blank to keep the saved token.</div>
     <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
     <div class="hint">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's blueprint catalog — only ever while Star Citizen is focused, only items we don't have yet, nothing else on your screen. You're credited on the contributor leaderboard. Needs a sync token above.</div>
+    <label class="opt"><input type="checkbox" id="shareLogs" /> Share anonymized logs to improve the tracker</label>
+    <div class="hint">When on, the app sends your Star Citizen <code>Game.log</code> to SubliminalsTV so we can find missions and blueprint drops the tracker gets wrong. Before it leaves your PC, your <strong>handle, account ID, IP address, and login session are stripped out, and chat is removed entirely</strong> — only mission and blueprint events remain. It's only ever used to improve the app. Needs a sync token above. <strong>Off by default.</strong></div>
   </div>
 
   <div class="card">
@@ -160,6 +162,7 @@
     setHotkeyDisplay("binding", cfg.bindingHotkey || "Alt+F3");
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
+    document.getElementById("shareLogs").checked = !!cfg.shareLogs;
     document.getElementById("timeRelative").checked = cfg.timeRelative !== false;
     document.getElementById("syncStatus").textContent = cfg.hasSyncToken
       ? "Token saved. Leave the field blank to keep it."
@@ -216,6 +219,7 @@
       bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "Alt+F3",
       syncEnabled: document.getElementById("syncEnabled").checked,
       fabCapture: document.getElementById("fabCapture").checked,
+      shareLogs: document.getElementById("shareLogs").checked,
       timeRelative: document.getElementById("timeRelative").checked,
     };
     const token = document.getElementById("syncToken").value.trim();

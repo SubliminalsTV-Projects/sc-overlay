@@ -11,9 +11,23 @@ import { MissionTracker } from "./missions.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
 import { loadCatalog, readScreenshot, type CatalogEntry } from "./screen-read.js";
+import { maybeShareLog } from "./log-share.js";
 
 const overlayDir = assetDir(import.meta.url, "overlay");
 const bundledDataDir = assetDir(import.meta.url, "data");
+
+// Best-effort app version for the shared-log upload metadata (?v=). Reads package.json
+// when present (dev + asar); empty in the bun-compiled sidecar, which is fine.
+let APP_VERSION = "";
+try {
+  APP_VERSION = JSON.parse(readFileSync(assetDir(import.meta.url, "package.json"), "utf8")).version ?? "";
+} catch {
+  /* version is optional metadata */
+}
+// Periodically share the current session's scrubbed log (dedup by content hash). The
+// last tick before the app closes captures the fullest session; opt-in + no-op when off.
+const LOG_SHARE_INTERVAL_MS = 20 * 60 * 1000;
+setInterval(() => void maybeShareLog(config, APP_VERSION), LOG_SHARE_INTERVAL_MS);
 const PORT = Number(process.env.PORT) || 8778;
 
 // Persist runtime state in a per-user writable dir — NEVER next to the binary.
@@ -60,6 +74,10 @@ interface Config {
   /** Recent-activity timestamps: relative ("2h ago") when true, absolute date+clock
    *  when false. Read by the overlay via the mission view's `prefs`. */
   timeRelative: boolean;
+  /** Opt-in: after each session, upload this player's Game.log — scrubbed of handle,
+   *  account id, geid, IP, and session (chat dropped) — to subliminal.gg so mission and
+   *  blueprint parsing can be improved against real logs. Needs a sync token. */
+  shareLogs: boolean;
 }
 
 const DEFAULTS: Config = {
@@ -76,6 +94,7 @@ const DEFAULTS: Config = {
   bindingHotkey: "Alt+F3",
   overlayHotkey: "F3",
   timeRelative: true,
+  shareLogs: false,
 };
 
 function loadConfig(): Config {
@@ -503,11 +522,14 @@ const server = createServer(async (req, res) => {
     if (typeof body.bindingHotkey === "string" && body.bindingHotkey.trim()) config.bindingHotkey = body.bindingHotkey.trim();
     if (typeof body.overlayHotkey === "string" && body.overlayHotkey.trim()) config.overlayHotkey = body.overlayHotkey.trim();
     if (typeof body.timeRelative === "boolean") config.timeRelative = body.timeRelative;
+    if (typeof body.shareLogs === "boolean") config.shareLogs = body.shareLogs;
     await saveConfig();
     await reindex();
     startWatcher();
     // Re-arm sync with the new settings and reconcile the full collection.
     if (sync.configure(config.syncToken, config.syncEnabled)) syncFull();
+    // If log-sharing was just turned on, upload the current session now.
+    void maybeShareLog(config, APP_VERSION);
     // Push prefs (e.g. the time-format toggle) to any open overlay immediately.
     broadcastMissions();
     res.writeHead(200, { "Content-Type": "application/json" });
