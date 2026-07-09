@@ -124,10 +124,12 @@ function startFabCapture({ port, configDir, onStatus }) {
   const shotsDir = path.join(configDir, "fab-shots"); // full uncropped frames (mineable)
   const tmpShot = path.join(os.tmpdir(), "sc-fab-shot.png");
   let busy = false;
-  let lastState = "";
-  // Steady states (off/idle/watching) only report on change; discrete events always fire.
-  const emitState = (state) => { if (state !== lastState) { lastState = state; onStatus?.({ state }); } };
-  const emitEvent = (s) => { lastState = s.state; onStatus?.(s); };
+  let lastContext = "";
+  // Context = the steady on-screen state (off/idle/watching/fabricator); reported only on change,
+  // drives the overlay diamond (fabricator -> gold). Events (settling/captured/mission) are discrete
+  // and fire every time without disturbing the context.
+  const emitContext = (state) => { if (state !== lastContext) { lastContext = state; onStatus?.({ state }); } };
+  const emitEvent = (s) => { onStatus?.(s); };
   let lastMission = "";       // last mission title sent (throttle screen-read posts)
   let pendingItem = null;     // item seen last tick, awaiting a settle poll before capture
   const uploaded = new Set(); // items pushed to the site this session
@@ -169,11 +171,10 @@ function startFabCapture({ port, configDir, onStatus }) {
     // Either one arms the loop; each read is then gated by its own flag below.
     const fab = cfg.fabCapture === true;
     const miss = cfg.missionOcr === true;
-    if (!fab && !miss) { emitState("off"); return; }
+    if (!fab && !miss) { emitContext("off"); return; }
     if (busy) return;
     const proc = await foregroundProcess();
-    if (!/^StarCitizen$/i.test(proc)) { emitState("idle"); return; } // only ever look at SC
-    emitState("watching");
+    if (!/^StarCitizen$/i.test(proc)) { emitContext("idle"); return; } // only ever look at SC
     busy = true;
     try {
       const have = fab ? await ensureRemoteHave() : null; // dedup set only needed for capture
@@ -186,6 +187,9 @@ function startFabCapture({ port, configDir, onStatus }) {
         body: JSON.stringify({ path: tmpShot }),
       });
       const read = await resp.json();
+      // A kiosk on screen -> "fabricator" context (gold diamond) even if image capture is off;
+      // anything else while watching -> "watching".
+      emitContext(read.kind === "fabricator" ? "fabricator" : "watching");
       if (read.kind === "fabricator" && read.item) {
         if (!fab) { pendingItem = null; return; } // image capture disabled — ignore kiosk frames
         const item = read.item;

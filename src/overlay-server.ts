@@ -18,11 +18,15 @@ const bundledDataDir = assetDir(import.meta.url, "data");
 
 // Best-effort app version for the shared-log upload metadata (?v=). Reads package.json
 // when present (dev + asar); empty in the bun-compiled sidecar, which is fine.
-let APP_VERSION = "";
-try {
-  APP_VERSION = JSON.parse(readFileSync(assetDir(import.meta.url, "package.json"), "utf8")).version ?? "";
-} catch {
-  /* version is optional metadata */
+// Prefer the version the Electron shell injects at spawn (authoritative for the packaged
+// app, whose bun sidecar can't read package.json); fall back to package.json in dev.
+let APP_VERSION = process.env.APP_VERSION || "";
+if (!APP_VERSION) {
+  try {
+    APP_VERSION = JSON.parse(readFileSync(assetDir(import.meta.url, "package.json"), "utf8")).version ?? "";
+  } catch {
+    /* version is optional metadata */
+  }
 }
 // Periodically share the current session's scrubbed log (dedup by content hash). The
 // last tick before the app closes captures the fullest session; opt-in + no-op when off.
@@ -103,11 +107,9 @@ interface Config {
    *  Off by default — those are Sub's erkul stream-overlay feature, meaningless to normal
    *  blueprint-tracker users. Unlocked by a hidden gesture (click the Settings title 5×). */
   showLoadout: boolean;
-  /** Overlay HUD declutter toggles (set from the overlay's settings cog). Hide the
-   *  footer base/mine odds button, the "Verify from logs" button, and the fabricator
-   *  category filter bar respectively. Sent to the overlay via the mission view prefs. */
-  hideOdds: boolean;
-  hideVerify: boolean;
+  /** Overlay HUD declutter toggle (set from the overlay's settings cog): hide the
+   *  fabricator category filter bar. Sent to the overlay via the mission view prefs.
+   *  (Odds mode + Verify now live inside the cog itself, so the footer has no buttons.) */
   hideCatbar: boolean;
 }
 
@@ -129,8 +131,6 @@ const DEFAULTS: Config = {
   shareLogs: false,
   seenChangelog: "",
   showLoadout: false,
-  hideOdds: true,
-  hideVerify: true,
   hideCatbar: false,
 };
 
@@ -284,12 +284,13 @@ const missionClients = new Set<ServerResponse>();
 function missionsPayload(): string {
   return JSON.stringify({
     ...tracker.view(),
+    appVersion: APP_VERSION,
+    live: twitchLive,
     prefs: {
       timeRelative: config.timeRelative,
-      hideOdds: config.hideOdds,
-      hideVerify: config.hideVerify,
       hideCatbar: config.hideCatbar,
       missionOcr: config.missionOcr,
+      fabCapture: config.fabCapture,
     },
   });
 }
@@ -298,6 +299,31 @@ function broadcastMissions(): void {
   for (const res of missionClients) res.write(data);
 }
 tracker.on("change", broadcastMissions);
+
+// Is SubliminalsTV live on Twitch? Polled via sc-feed's public twitch proxy (which holds the
+// Twitch credentials) so the distributed app never embeds secrets. Drives the overlay diamond
+// going purple + inviting viewers to the stream. Same channel/source as subliminal.gg.
+let twitchLive = false;
+const TWITCH_POLL_MS = 3 * 60 * 1000;
+async function pollTwitchLive(): Promise<void> {
+  try {
+    const r = await fetch(
+      "https://sc-feed.subliminal.gg/api/sc-feed/twitch-proxy?logins=subliminalstv",
+      { signal: AbortSignal.timeout(6000) },
+    );
+    if (!r.ok) return;
+    const j = (await r.json()) as { states?: Record<string, { live?: boolean }> };
+    const live = !!j.states?.subliminalstv?.live;
+    if (live !== twitchLive) {
+      twitchLive = live;
+      broadcastMissions();
+    }
+  } catch {
+    /* network hiccup — keep last known state */
+  }
+}
+void pollTwitchLive();
+setInterval(() => void pollTwitchLive(), TWITCH_POLL_MS).unref?.();
 
 // ── subliminal.gg collection sync ────────────────────────────────────────────
 // Pushes received blueprints (resolved name→UUID) + the tracked mission to the
@@ -518,10 +544,12 @@ const server = createServer(async (req, res) => {
         }
       }),
     );
-    // Never echo the raw token back to the page — only whether one is set.
+    // Never echo the raw token back to the page — only a truncated preview so the settings
+    // page can show "the key is in" (scbp_1a2b…wxyz) without exposing the full secret.
     const { syncToken, ...rest } = config;
+    const syncTokenPreview = syncToken ? `${syncToken.slice(0, 9)}…${syncToken.slice(-4)}` : "";
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ...rest, hasSyncToken: !!syncToken, resolved: urls }));
+    res.end(JSON.stringify({ ...rest, hasSyncToken: !!syncToken, syncTokenPreview, resolved: urls }));
     return;
   }
 
@@ -575,11 +603,16 @@ const server = createServer(async (req, res) => {
     if (Array.isArray(body.urls)) config.urls = body.urls.filter((u: unknown) => typeof u === "string" && u);
     if (typeof body.logPath === "string") config.logPath = body.logPath;
     if (typeof body.autoSwitch === "boolean") config.autoSwitch = body.autoSwitch;
-    // Only overwrite the token when a non-empty one is sent (the page leaves the
-    // field blank to keep the saved token); an explicit "" via clearToken wipes it.
-    if (typeof body.syncToken === "string" && body.syncToken.trim()) config.syncToken = body.syncToken.trim();
-    if (body.clearToken === true) config.syncToken = "";
+    // Apply the checkbox first, then let a freshly-pasted token force sync ON — pasting a
+    // token IS the intent to sync, so it can't be left silently disabled. The token is only
+    // overwritten when a non-empty one is sent (the page leaves the field blank/masked to keep
+    // the saved token); an explicit "" via clearToken wipes it.
     if (typeof body.syncEnabled === "boolean") config.syncEnabled = body.syncEnabled;
+    if (typeof body.syncToken === "string" && body.syncToken.trim()) {
+      config.syncToken = body.syncToken.trim();
+      config.syncEnabled = true;
+    }
+    if (body.clearToken === true) config.syncToken = "";
     if (typeof body.fabCapture === "boolean") config.fabCapture = body.fabCapture;
     if (typeof body.missionOcr === "boolean") config.missionOcr = body.missionOcr;
     // GPU accel is read by electron/main.cjs at startup; persist here, restart applies it.
@@ -591,8 +624,6 @@ const server = createServer(async (req, res) => {
     if (typeof body.timeRelative === "boolean") config.timeRelative = body.timeRelative;
     if (typeof body.shareLogs === "boolean") config.shareLogs = body.shareLogs;
     if (typeof body.showLoadout === "boolean") config.showLoadout = body.showLoadout;
-    if (typeof body.hideOdds === "boolean") config.hideOdds = body.hideOdds;
-    if (typeof body.hideVerify === "boolean") config.hideVerify = body.hideVerify;
     if (typeof body.hideCatbar === "boolean") config.hideCatbar = body.hideCatbar;
     await saveConfig();
     // Push the new prefs to every open overlay (incl. OBS browser-source) live.

@@ -17,4 +17,8 @@ contextBridge.exposeInMainWorld("overlayApi", {
   setModal: (on) => ipcRenderer.send("overlay:modal", !!on),
   // OCR activity from the fabricator/mission capture loop → the cog's status readout + toasts.
   onOcr: (cb) => ipcRenderer.on("overlay:ocr", (_e, s) => cb(s)),
+  // Open the full settings window (from the cog's "Open settings…").
+  openSettings: () => ipcRenderer.send("overlay:open-settings"),
+  // Open an external URL in the default browser (e.g. the live-on-Twitch diamond).
+  openUrl: (url) => ipcRenderer.send("overlay:open-url", url),
 });

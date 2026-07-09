@@ -78,6 +78,13 @@ function writeOverlayEnabled(on) {
 }
 
 const ROOT = path.join(__dirname, "..");
+// The app version from package.json (works packaged + in dev). app.getVersion() returns
+// Electron's own version when launched on a script rather than a packaged app, so read the
+// manifest directly and fall back only if that fails.
+const APP_VERSION = (() => {
+  try { const v = require(path.join(ROOT, "package.json")).version; if (v) return v; } catch { /* fall through */ }
+  return app.getVersion();
+})();
 const PORT = 8778;
 const HUD_URL = `http://localhost:${PORT}/missions.html`;
 const CONFIG_URL = `http://localhost:${PORT}/config.html`;
@@ -102,13 +109,14 @@ function startServer() {
     // Prod: the bun-compiled server binary shipped as an extraResource (no Node/tsx
     // on the user's machine). cwd = its dir so assetDir finds overlay/ + data/.
     const exe = path.join(process.resourcesPath, "server", "sc-overlay-server.exe");
-    server = spawn(exe, { cwd: path.dirname(exe), env: { ...process.env }, stdio: "ignore" });
+    // Inject the authoritative app version — the bun sidecar can't read package.json.
+    server = spawn(exe, { cwd: path.dirname(exe), env: { ...process.env, APP_VERSION }, stdio: "ignore" });
   } else {
     // Dev: run the TS server via tsx.
     server = spawn("npx tsx src/overlay-server.ts", {
       cwd: ROOT,
       shell: true,
-      env: { ...process.env },
+      env: { ...process.env, APP_VERSION },
       stdio: "ignore",
     });
   }
@@ -603,6 +611,12 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("overlay:modal", (_e, on) => {
     modalOpen = !!on;
     applyMouse();
+  });
+  // The cog's "Open settings…" opens the full config window.
+  ipcMain.on("overlay:open-settings", () => openConfig());
+  // The live-on-Twitch diamond opens the stream in the default browser (https only).
+  ipcMain.on("overlay:open-url", (_e, url) => {
+    if (typeof url === "string" && /^https:\/\//i.test(url)) shell.openExternal(url);
   });
   // The page's grab handle enters move mode; the "Done" button leaves it.
   ipcMain.on("overlay:begin-move", () => {
