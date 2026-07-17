@@ -509,6 +509,18 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Guaranteed ITEM rewards (jumpsuit/hat/etc.) — manual tick only; the log never
+  // reports item awards. Tracked apart from blueprints (no collected-count / no sync).
+  if (url === "/api/missions/own-item" && req.method === "POST") {
+    const body = await readBody(req);
+    if (typeof body.name === "string" && typeof body.owned === "boolean") {
+      tracker.setGuaranteedOwned(body.name, body.owned);
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // Screen OCR — Electron main captures a full screenshot to a temp file and posts its
   // path here; we OCR it and report whether the fabricator (which item) or a tracked
   // mission is on screen. Main then crops+uploads the item render / follows the mission.

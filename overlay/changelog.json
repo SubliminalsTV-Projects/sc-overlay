@@ -1,4 +1,13 @@
 {
+  "0.1.23": [
+    "Fixed: missions that don't place a map marker — mining, ore scanning and friends — used to show nothing at all. They now resolve their blueprint pool and appear in the mission picker like everything else.",
+    "New: your rank with each mission giver, worked out from the highest-rank mission you've been offered. Hit “Verify from logs” in the ⚙ to backfill it from your play history.",
+    "The guaranteed rewards and the random blueprint pool are now clearly separated — the pool says “1 random blueprint per completion”, because that's what it is.",
+    "Guaranteed item rewards now have their own tick box, so you can check off the ones you've picked up (kept separate from your blueprint count).",
+    "The owned count moved up next to the mission name — the ⚙ and move handle were sitting on top of it.",
+    "A long blueprint pool no longer pushes the panel sideways into a horizontal scrollbar.",
+    "The header now reads “Active Mission” instead of a second “Blueprint Pool”."
+  ],
   "0.1.22": [
     "New: the overlay diamond glows purple when SubliminalsTV is live on Twitch — hover it and click to jump into the stream.",
     "In the Fabricator, the diamond glows gold so you can tell the tracker sees the kiosk.",

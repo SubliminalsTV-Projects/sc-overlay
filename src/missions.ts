@@ -54,6 +54,10 @@ export interface DatasetMission {
    *  Empty/absent for the many missions the game data carries no rep for. */
   reputationGained?: RepEntry[];
   reputationLost?: RepEntry[];
+  /** Reputation RANK this mission requires (0,1,2…); null/absent = no rank gate (intro
+   *  + story missions). The game only offers it once you've reached that rank, so
+   *  accepting it proves you're at least there — that's how we infer standing. */
+  rank?: number | null;
 }
 export interface Dataset {
   schema: string;
@@ -128,9 +132,15 @@ export interface TrackedView {
    *  runtime-calculated and unknown statically). min 0/null = "up to max". */
   payout: { min: number | null; max: number; currency: string | null } | null;
   /** ITEM rewards (not blueprints) the shown mission hands out. Display-only. */
-  itemRewards: { name: string; amount: number }[];
+  /** Guaranteed ITEM rewards (not blueprints). `owned` is a manual, local-only tick —
+   *  item awards never appear in the log, so it's never auto-set and never synced. */
+  itemRewards: { name: string; amount: number; owned: boolean }[];
   /** Mission-giving faction/org and mission type for the shown mission (display-only). */
   giver: string | null;
+  /** Inferred rank with this mission's giver: the highest-rank mission we've seen
+   *  accepted from them. A LOWER BOUND (actual rep is server-side, never logged), and
+   *  null until they accept a rank-gated mission from that giver. */
+  inferredRank: number | null;
   missionType: string | null;
   /** Reputation gained (+) / lost (−) on completion, biggest first (may be empty). */
   reputationGained: RepEntry[];
@@ -169,6 +179,10 @@ export interface TrackedView {
    *  of XenoThreat): the event's reward ladder to show instead of "no reward". The
    *  points are INDIVIDUAL — every event mission you run raises YOUR own %. */
   eventTrack: EventTrack | null;
+  /** True when the tracked mission was resolved from a title that maps to several
+   *  variants with DIFFERENT pools (marker-less missions only) — the pool shown is the
+   *  UNION of all candidates, so odds are approximate. Overlay shows a caveat banner. */
+  ambiguous?: boolean;
 }
 
 /** A dynamic-event reward ladder — rewards unlock at personal contribution %. */
@@ -210,6 +224,14 @@ interface Persisted {
   /** Recently completed missions (newest first), for the idle recent-activity list.
    *  Optional: older state files predate it; a "Verify from logs" run backfills it. */
   missionHistory?: MissionHistoryEntry[];
+  /** Guaranteed ITEM rewards (jumpsuits, hats — not blueprints) the user ticked off by
+   *  hand. The log never reports these, so they're manual-only. Kept separate from
+   *  `overrides` so they never inflate the blueprint collected count or the site sync. */
+  guaranteedOwned?: string[];
+  /** Inferred reputation standing: mission giver -> highest rank we've seen them
+   *  accept a mission at. Rep is server-side (never in the log), so this is the best
+   *  available signal — a lower bound that only improves as they rank up. */
+  inferredRank?: Record<string, number>;
 }
 
 /** Stored completed-mission record (newest first, capped). Deduped by missionId+at. */
@@ -356,17 +378,32 @@ export class MissionTracker extends EventEmitter {
    *  dataset when the exact build isn't bundled. See detectPatch / loadDataset. */
   private detectedFamily: string | null = null;
 
+  /** Guaranteed ITEM rewards ticked by hand (manual-only — the log never reports item
+   *  awards). Deliberately NOT part of `observed`/`overrides`, so these never count
+   *  toward the blueprint total nor sync to the site. */
+  private guaranteedOwned = new Set<string>();
+  /** giver -> highest mission `rank` we've seen accepted. Inferred standing (rep is
+   *  server-side and never logged). Persisted, so it survives across sessions. */
+  private inferredRank = new Map<string, number>();
   private observed = new Set<string>();
   /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log). */
   private observedAt = new Map<string, string>();
   private overrides = new Map<string, boolean>();
 
   /** missionId -> info, built from accept + marker events. `acceptedAt` (log time,
-   *  ms) powers the mission-duration readout on the completion card. */
-  private missions = new Map<string, { title?: string; contractKey?: string; generator?: string; acceptedAt?: number }>();
+   *  ms) powers the mission-duration readout on the completion card. `acceptKeys`/
+   *  `ambiguous` are set when a marker-LESS mission (mining/scan never emits a
+   *  CreateMarker) was resolved from its accept TITLE instead of a debug_name. */
+  private missions = new Map<string, { title?: string; contractKey?: string; generator?: string; acceptedAt?: number; acceptKeys?: string[]; ambiguous?: boolean }>();
   private trackedMissionId: string | null = null;
   /** missionIds in CreateMarker order, most recent last (deduped move-to-end). */
   private markerSeq: string[] = [];
+  /** missionIds resolved from an accept TITLE (no marker), in accept order. Feeds the
+   *  picker + auto-display so mining/scan missions — which never marker — still show. */
+  private acceptedSeq: string[] = [];
+  /** normScreenTitle(title) -> debug_names of pooled missions with that title. Built
+   *  from the dataset on load; lets a marker-less accept resolve its pool by title. */
+  private titleIndex = new Map<string, string[]>();
   /** Manual override from the overlay picker; null = auto-follow. */
   private selectedMissionId: string | null = null;
   /** The mission the screen OCR sees PINNED in-game (ground truth the log lacks).
@@ -455,6 +492,8 @@ export class MissionTracker extends EventEmitter {
       try {
         this.dataset = JSON.parse(readFileSync(p, "utf8")) as Dataset;
         this.patch = this.dataset.version;
+        this.buildTitleIndex();
+        this.reresolveAccepts();
         this.emit("change");
         return;
       } catch {
@@ -494,14 +533,40 @@ export class MissionTracker extends EventEmitter {
           const t = Date.parse(ev.ts);
           if (Number.isFinite(t)) info.acceptedAt = t; // first accept = mission start
         }
+        // Marker-less missions (mining/scan) never emit a CreateMarker, so the log
+        // gives only the friendly title — resolve it to the dataset so the mission
+        // still shows a pool. A real marker (contractKey) always wins; this only fills
+        // the gap. Runtime MissionId can't be used — it's an instance GUID, not the
+        // definition UUID — so the title is the sole identifier we get.
+        if (!info.contractKey) {
+          const res = this.dataset && ev.title ? this.resolveAcceptTitle(ev.title) : null;
+          if (res) {
+            info.contractKey = res.keys[0]; // representative — drives pool/content lookups
+            info.acceptKeys = res.keys;
+            info.ambiguous = res.ambiguous;
+            if (!this.acceptedSeq.includes(ev.missionId)) this.acceptedSeq.push(ev.missionId);
+            this.markerSinceJoin = true; // a current, resolved mission is available to show
+          } else if (!this.dataset && ev.title) {
+            // Dataset not loaded yet (async fetch on a cold start replays the log first)
+            // — register tentatively; reresolveAccepts() resolves or drops it on load.
+            if (!this.acceptedSeq.includes(ev.missionId)) this.acceptedSeq.push(ev.missionId);
+          }
+        }
         this.missions.set(ev.missionId, info);
+        this.noteRank(ev.missionId);
+        this.emit("change");
         break;
       }
       case "marker": {
         const info = this.missions.get(ev.missionId) ?? {};
         info.contractKey = ev.contractKey;
         info.generator = ev.generator;
+        // A marker is authoritative: the exact debug_name supersedes any title-guess.
+        info.acceptKeys = undefined;
+        info.ambiguous = false;
+        this.acceptedSeq = this.acceptedSeq.filter((id) => id !== ev.missionId);
         this.missions.set(ev.missionId, info);
+        this.noteRank(ev.missionId);
         // The most recent objective marker = the newest accepted mission.
         this.trackedMissionId = ev.missionId;
         this.markerSinceJoin = true;
@@ -732,10 +797,27 @@ export class MissionTracker extends EventEmitter {
       }
       files++;
       for (const line of text.split(/\r?\n/)) {
-        // Cheap prefilter: only blueprint receipts, contract completions, and awards.
-        if (!line.includes("Received Blueprint:") && !line.includes("Contract Complete:") && !line.includes("Awarded ")) continue;
+        // Cheap prefilter: blueprint receipts, contract completions, awards — plus the
+        // mission markers/accepts we mine for rank inference.
+        if (!line.includes("Received Blueprint:") && !line.includes("Contract Complete:") && !line.includes("Awarded ")
+          && !line.includes("CreateMarker") && !line.includes("Contract Accepted:")) continue;
         const ev = parseMissionEvent(parseLine(line));
         if (!ev) continue;
+        // Rank backfill: being OFFERED a rank-N mission proves standing >= N with its
+        // giver. Nearly all that history is in the BACKUPS — the live log only covers
+        // today's session — so this scan is the only way to learn a rank you earned
+        // before the tracker was watching. (Actual rep is server-side, never logged.)
+        // Deliberately does NOT touch this.missions: historical missions must not leak
+        // into the picker or the tracked-mission state.
+        if (ev.kind === "marker") {
+          this.noteRankForKey(ev.contractKey);
+          continue;
+        }
+        if (ev.kind === "accept") {
+          const res = ev.title ? this.resolveAcceptTitle(ev.title) : null;
+          if (res) this.noteRankForKey(res.keys[0]);
+          continue;
+        }
         if (ev.kind === "blueprintReceived") {
           receipts++;
           const prev = receiptTimes.get(ev.name);
@@ -802,11 +884,22 @@ export class MissionTracker extends EventEmitter {
     this.emit("change");
   }
 
+  /** Tick a guaranteed ITEM reward (jumpsuit/hat/etc.) as acquired. Manual-only — item
+   *  awards never appear in the log — and tracked apart from blueprints so it can't
+   *  affect the collected count or the site sync. */
+  setGuaranteedOwned(itemName: string, owned: boolean): void {
+    if (owned) this.guaranteedOwned.add(itemName);
+    else this.guaranteedOwned.delete(itemName);
+    this.saveState();
+    this.emit("change");
+  }
+
   /** Clear the per-shard active-mission state (markers, ended/completed flags, the
    *  tracked/selected pointers). Keeps the collected blueprints — those are account-
    *  wide. Used on PU (re)entry and the manual "Refresh from log". */
   resetSession(): void {
     this.markerSeq = [];
+    this.acceptedSeq = [];
     this.trackedMissionId = null;
     this.selectedMissionId = null;
     this.markerSinceJoin = false;
@@ -851,6 +944,104 @@ export class MissionTracker extends EventEmitter {
     return key ? this.dataset?.missions[key] : undefined;
   }
 
+  /** Infer standing with a giver from a resolved mission: the game only OFFERS a ranked
+   *  mission once you've reached that rank, so accepting one proves you're at least
+   *  there. Keeps the highest ever seen — a lower bound, since actual rep is a
+   *  server-side service the log never carries. Rank-less (intro/story) missions prove
+   *  nothing and are ignored. */
+  private noteRank(missionId: string): void {
+    const key = this.missions.get(missionId)?.contractKey;
+    if (key && this.noteRankForKey(key)) {
+      this.saveState();
+      this.emit("change");
+    }
+  }
+
+  /** Raise a giver's inferred rank from a dataset mission key. Returns true when it
+   *  actually moved, so a batch scan (verifyFromLogs over hundreds of backups) can
+   *  persist/emit once at the end instead of per line. */
+  private noteRankForKey(debugName: string): boolean {
+    const m = this.dataset?.missions[debugName];
+    const giver = m?.giver;
+    const rank = m?.rank;
+    if (!giver || typeof rank !== "number") return false;
+    const prev = this.inferredRank.get(giver);
+    if (prev != null && prev >= rank) return false;
+    this.inferredRank.set(giver, rank);
+    return true;
+  }
+
+  /** Index pooled, titled missions by normalized title so a marker-less accept can
+   *  resolve its pool from the friendly title alone. Pool-less/untitled missions are
+   *  skipped (a title with no pool can't help, and would only add noise). */
+  private buildTitleIndex(): void {
+    this.titleIndex.clear();
+    if (!this.dataset) return;
+    for (const [debugName, m] of Object.entries(this.dataset.missions)) {
+      if (!m.title || Object.keys(m.pools ?? {}).length === 0) continue;
+      const k = normScreenTitle(m.title);
+      if (!k) continue;
+      const arr = this.titleIndex.get(k);
+      if (arr) arr.push(debugName);
+      else this.titleIndex.set(k, [debugName]);
+    }
+  }
+
+  /** Resolve an accept-notification title to the dataset debug_name(s) that share it.
+   *  `ambiguous` is true when those missions have DIFFERENT pools (e.g. "Ore Scan
+   *  Needed" has two tiers with distinct rewards) — the caller merges + labels them.
+   *  Same-title-same-pool variants resolve to an equivalent representative. */
+  private resolveAcceptTitle(title: string): { keys: string[]; ambiguous: boolean } | null {
+    const k = normScreenTitle(title);
+    if (!k || !this.dataset) return null;
+    const keys = this.titleIndex.get(k);
+    if (!keys || keys.length === 0) return null;
+    const poolSig = (dn: string) => Object.keys(this.dataset!.missions[dn]?.pools ?? {}).sort().join(",");
+    const distinct = new Set(keys.map(poolSig));
+    return { keys, ambiguous: distinct.size > 1 };
+  }
+
+  /** Resolve accepts that were registered before the dataset was ready (cold start
+   *  replays the log before the async dataset fetch lands). Keeps only accepts whose
+   *  title maps to a pool; drops pool-less/unknown ones. acceptedSeq is shard-scoped
+   *  (resetSession clears it), so this only ever touches the current shard's missions. */
+  private reresolveAccepts(): void {
+    if (!this.dataset) return;
+    const keep: string[] = [];
+    for (const missionId of this.acceptedSeq) {
+      const info = this.missions.get(missionId);
+      if (!info) continue;
+      if (info.acceptKeys || info.contractKey) { keep.push(missionId); continue; } // already resolved
+      const res = info.title ? this.resolveAcceptTitle(info.title) : null;
+      if (res) {
+        info.contractKey = res.keys[0];
+        info.acceptKeys = res.keys;
+        info.ambiguous = res.ambiguous;
+        this.markerSinceJoin = true;
+        this.noteRank(missionId);
+        keep.push(missionId);
+      }
+    }
+    this.acceptedSeq = keep;
+  }
+
+  /** Union the pools of several missions (dedup blueprints within a pool by name) —
+   *  used only for an ambiguous marker-less mission so the player sees every possible
+   *  drop. Odds are approximate (the real instance draws from one tier). */
+  private mergePools(keys: string[]): Record<string, PoolEntry[]> {
+    const out: Record<string, PoolEntry[]> = {};
+    if (!this.dataset) return out;
+    for (const dn of keys) {
+      const m = this.dataset.missions[dn];
+      for (const [poolUuid, entries] of Object.entries(m?.pools ?? {})) {
+        const existing = out[poolUuid] ?? (out[poolUuid] = []);
+        const seen = new Set(existing.map((e) => e.blueprint));
+        for (const e of entries) if (!seen.has(e.blueprint)) existing.push(e);
+      }
+    }
+    return out;
+  }
+
   private missionHasPool(missionId: string): boolean {
     const m = this.datasetMission(missionId);
     return !!m && Object.keys(m.pools ?? {}).length > 0;
@@ -893,6 +1084,11 @@ export class MissionTracker extends EventEmitter {
     for (let i = this.markerSeq.length - 1; i >= 0; i--) {
       if (active(this.markerSeq[i])) return this.markerSeq[i];
     }
+    // No marker-based mission to show — fall back to the newest marker-LESS mission we
+    // resolved from its accept title (mining/scan). Markered missions always win above.
+    for (let i = this.acceptedSeq.length - 1; i >= 0; i--) {
+      if (active(this.acceptedSeq[i]) && this.missionHasContent(this.acceptedSeq[i])) return this.acceptedSeq[i];
+    }
     // Nothing active — e.g. the LAST mission was just abandoned/completed. Show
     // nothing rather than the tracked-but-ended mission (which used to stick on
     // screen forever after abandoning your only mission).
@@ -901,7 +1097,10 @@ export class MissionTracker extends EventEmitter {
 
   /** Active missions (ended ones excluded), newest first — for the overlay picker. */
   private knownMissions(): TrackedView["missions"] {
-    return [...this.markerSeq].reverse().filter((id) => !this.endedMissionIds.has(id)).map((id) => {
+    // Marker-based AND accept-resolved (marker-less) missions, deduped, newest first.
+    const ids = [...new Set([...this.markerSeq, ...this.acceptedSeq])].filter((id) => !this.endedMissionIds.has(id));
+    ids.sort((a, b) => (this.missions.get(b)?.acceptedAt ?? 0) - (this.missions.get(a)?.acceptedAt ?? 0));
+    return ids.map((id) => {
       const info = this.missions.get(id);
       const key = info?.contractKey ?? null;
       const title = info?.title || (key && this.dataset?.missions[key]?.title) || key || id;
@@ -1041,12 +1240,17 @@ export class MissionTracker extends EventEmitter {
     const tracked = effectiveId ? this.missions.get(effectiveId) : undefined;
     const key = tracked?.contractKey ?? null;
     const mission = key && this.dataset ? this.dataset.missions[key] : undefined;
+    // Ambiguous marker-less mission (title maps to variants with different pools):
+    // show the union of every candidate's pools so no possible drop is hidden. Odds are
+    // approximate — the real instance draws one tier — hence the `ambiguous` banner.
+    const ambiguous = !!tracked?.ambiguous && !!tracked?.acceptKeys;
+    const effectivePools = ambiguous ? this.mergePools(tracked!.acceptKeys!) : (mission?.pools ?? {});
 
     const pools: TrackedView["pools"] = [];
     let owned = 0;
     let total = 0;
-    if (mission) {
-      for (const [poolUuid, entries] of Object.entries(mission.pools ?? {})) {
+    if (mission || ambiguous) {
+      for (const [poolUuid, entries] of Object.entries(effectivePools)) {
         const blueprints: BlueprintStatus[] = entries.map((e) => {
           const o = this.isOwned(e.blueprint);
           if (o.owned) owned++;
@@ -1084,9 +1288,15 @@ export class MissionTracker extends EventEmitter {
       title: mission?.title ?? tracked?.title ?? null,
       generator: tracked?.generator ?? mission?.generatorClass ?? null,
       hasPool: pools.length > 0,
+      ambiguous,
       payout: mission?.payout ?? null,
-      itemRewards: (mission?.items ?? []).map((i) => ({ name: i.name, amount: Number(i.amount) || 1 })),
+      itemRewards: (mission?.items ?? []).map((i) => ({
+        name: i.name,
+        amount: Number(i.amount) || 1,
+        owned: this.guaranteedOwned.has(i.name),
+      })),
       giver: mission?.giver ?? null,
+      inferredRank: mission?.giver ? this.inferredRank.get(mission.giver) ?? null : null,
       missionType: mission?.missionType ?? null,
       reputationGained: mission?.reputationGained ?? [],
       reputationLost: mission?.reputationLost ?? [],
@@ -1121,6 +1331,8 @@ export class MissionTracker extends EventEmitter {
       this.observed = new Set(data.observed ?? []);
       this.observedAt = new Map(Object.entries(data.observedAt ?? {}));
       this.overrides = new Map(Object.entries(data.overrides ?? {}));
+      this.guaranteedOwned = new Set(data.guaranteedOwned ?? []);
+      this.inferredRank = new Map(Object.entries(data.inferredRank ?? {}));
       this.missionHistory = (data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
     } catch {
       /* first run */
@@ -1131,6 +1343,8 @@ export class MissionTracker extends EventEmitter {
     const data: Persisted = {
       observed: [...this.observed],
       overrides: Object.fromEntries(this.overrides),
+      guaranteedOwned: [...this.guaranteedOwned],
+      inferredRank: Object.fromEntries(this.inferredRank),
       observedAt: Object.fromEntries(this.observedAt),
       missionHistory: this.missionHistory,
     };

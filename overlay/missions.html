@@ -38,8 +38,12 @@
     border: 1px solid var(--border);
     box-shadow: inset 0 0 0 1px rgba(92, 198, 224, 0.08), 0 8px 34px rgba(0, 0, 0, 0.45), 0 0 30px rgba(69, 208, 224, 0.16);
     -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
-    /* subtle helmet-projection tilt (matches the stream overlays) */
-    transform: perspective(1700px) rotateY(4deg) rotateX(1.4deg) skewY(-0.4deg);
+    /* Subtle helmet-projection tilt (matches the stream overlays). Y-axis ONLY: rotateX
+       tilts around the horizontal axis, so with perspective the horizontal scale varies
+       down the panel — a tall pool projected wider at the bottom, overflowing the
+       viewport into a horizontal scrollbar. rotateY displaces X by X (never by Y), so
+       the horizontal extent stays constant however tall the content grows. */
+    transform: perspective(1700px) rotateY(4deg);
     transform-origin: 60% center;
   }
   /* CRT scanlines */
@@ -160,8 +164,11 @@
   #liveTip b { color: #b98bff; }
   #liveTip.show { display: block; }
 
-  .title { font-size: 19px; font-weight: 600; line-height: 1.12; letter-spacing: 0.02em;
-    text-transform: uppercase; margin-top: 9px; color: #eaf6fb; text-shadow: 0 0 14px rgba(69, 208, 224, 0.35); }
+  /* Title + owned count share one row so the count sits beside the mission name
+     instead of pinned top-right under the cog/grip buttons. */
+  .titlerow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 9px; }
+  .title { flex: 1; min-width: 0; font-size: 19px; font-weight: 600; line-height: 1.12; letter-spacing: 0.02em;
+    text-transform: uppercase; color: #eaf6fb; text-shadow: 0 0 14px rgba(69, 208, 224, 0.35); }
   .sub { margin-top: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--cyan-dim); }
 
@@ -183,7 +190,7 @@
   #missionMenu .opt:hover { background: rgba(69, 208, 224, 0.14); }
   #missionMenu .opt.active { color: var(--cyan-bright); font-weight: 600; }
 
-  .progress { position: absolute; top: 15px; right: 17px; text-align: right; }
+  .progress { flex: none; text-align: right; align-self: center; }
   .progress .frac { font-family: var(--mono); font-weight: 500; font-size: 18px; color: var(--gold);
     font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(255, 210, 122, 0.35); }
   .progress .lbl { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
@@ -299,19 +306,21 @@
     display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
 
   /* Mission rewards readout (schema/2): static aUEC payout + ITEM rewards (actual
-     items — Wikelo ships, armor, scrip — not blueprints; display-only, no toggle). */
+     items — Wikelo ships, armor, scrip — not blueprints). Items render with the same
+     divider + row/tick-box treatment as the pool, but their tick is manual-only. */
   .rew { margin: 0 0 4px; }
   .rewpay { display: flex; align-items: baseline; gap: 10px; padding: 7px 9px; margin-top: 3px;
     border: 1px solid rgba(255, 210, 122, 0.35); border-radius: 3px; background: rgba(255, 210, 122, 0.07); }
   .rewpay .rp-lbl { font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); }
   .rewpay .rp-val { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--gold);
     font-variant-numeric: tabular-nums; text-shadow: 0 0 10px rgba(255, 210, 122, 0.3); }
-  .rewhead { margin: 8px 3px 1px; font-size: 9.5px; font-weight: 600; letter-spacing: 0.16em;
-    text-transform: uppercase; color: var(--cyan-dim); }
-  .rrow { display: flex; align-items: center; gap: 10px; padding: 6px 9px; margin-top: 3px; border-radius: 3px;
-    background: rgba(255, 255, 255, 0.02); }
-  .rrow .rname { flex: 1; font-size: 13px; font-weight: 500; color: var(--cyan-text); }
-  .rrow .ramt { font-family: var(--mono); font-size: 11px; color: var(--gold); font-variant-numeric: tabular-nums; }
+  .poolhead { display: flex; align-items: baseline; gap: 8px; margin: 11px 3px 3px; padding-top: 9px;
+    border-top: 1px solid var(--divider); font-size: 9.5px; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--cyan); }
+  .poolhead .ph-sub { font-size: 8.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: none;
+    color: var(--cyan-dim); }
+  .ambig { margin: 8px 3px 2px; padding: 6px 9px; border-radius: 3px; font-size: 10px; line-height: 1.35;
+    color: var(--gold); border: 1px solid rgba(255, 210, 122, 0.35); background: rgba(255, 210, 122, 0.08); }
   .rewnote { margin-top: 7px; padding: 0 3px; font-size: 10.5px; color: var(--faint); }
 
   /* Idle recent-activity: last completed missions + received blueprints (with times). */
@@ -368,6 +377,9 @@
   .mi-row .mi-k { min-width: 72px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--cyan-dim); }
   .mi-row .mi-v { flex: 1; font-size: 13px; color: var(--cyan-text); text-align: right; }
+  /* "inferred" qualifier on the rank readout — it's a lower bound, not exact rep. */
+  .mi-row .mi-hint { font-size: 8.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--cyan-dim); }
   .mi-sec { margin: 8px 0 2px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--cyan-dim); }
   .mi-rep { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
@@ -428,14 +440,16 @@
         <div class="cog-status" id="vstatus"></div>
         <button type="button" id="openSettings" class="cog-btn" title="Open the full settings window">⚙ Open full settings…</button>
       </div>
-      <div class="eyebrow"><span class="dot" id="liveDot"></span> Blueprint Pool<span id="liveTip">SubliminalsTV is <b>live</b>. Click if you want to hang out ↗</span></div>
-      <div class="title" id="title">No mission tracked</div>
+      <div class="eyebrow"><span class="dot" id="liveDot"></span> Active Mission<span id="liveTip">SubliminalsTV is <b>live</b>. Click if you want to hang out ↗</span></div>
+      <div class="titlerow">
+        <div class="title" id="title">No mission tracked</div>
+        <div class="progress"><span class="frac" id="frac">0/0</span><div class="lbl">owned</div></div>
+      </div>
       <div class="sub" id="sub"></div>
       <div id="missionPick">
         <button id="missionBtn" type="button"><span id="missionBtnLabel">No mission tracked</span><span class="caret">▾</span></button>
         <div id="missionMenu"></div>
       </div>
-      <div class="progress"><span class="frac" id="frac">0/0</span><div class="lbl">owned</div></div>
       <div id="completed"></div>
     </div>
     <div class="catbar" id="catbar"></div>
@@ -443,7 +457,7 @@
     <div id="msg"></div>
     <div class="foot">
       <div class="foot-col-collected">
-        <span class="fc-label">Collected</span>
+        <span class="fc-label">Total collected</span>
         <span class="fc-num" id="collected">0</span>
       </div>
       <div class="foot-col-ver">
@@ -651,7 +665,13 @@
     // A pooled mission with a known payout / item rewards shows those up top.
     const need = ordered.filter((it) => !it.owned);
     const have = ordered.filter((it) => it.owned);
-    let html = missionInfoHtml(v) + rewardsHtml(v) + need.map(rowHtml).join("");
+    // A labeled divider separates the GUARANTEED item rewards (no checkbox) above from the
+    // collectible blueprint POOL (checkboxes) below — otherwise the two read as one list and
+    // the reward rows look like pool items that are "missing" their checkmark.
+    let html = missionInfoHtml(v) + rewardsHtml(v);
+    if (v.ambiguous) html += '<div class="ambig">⚠ Multiple mission tiers share this name — showing all possible drops. Your actual mission draws from one tier, so odds are approximate.</div>';
+    if (need.length || have.length) html += '<div class="poolhead">Blueprint pool<span class="ph-sub">1 random blueprint per completion</span></div>';
+    html += need.map(rowHtml).join("");
     if (have.length) {
       html += '<div class="grphead" id="ownedHead" title="' + (ownedOpen ? "Hide" : "Show") + ' the blueprints you already own">' +
         '<span class="car">' + (ownedOpen ? "▾" : "▸") + "</span>Collected" +
@@ -763,6 +783,15 @@
     if (open) {
       const rows = [];
       if (giver) rows.push('<div class="mi-row"><span class="mi-k">Faction</span><span class="mi-v">' + escapeHtml(giver) + "</span></div>");
+      // Inferred standing: the highest rank we've seen you accept a mission at. The game
+      // only offers a ranked mission once you've earned it, so it's a lower bound — the
+      // real rep number lives server-side and never reaches the log.
+      if (v.inferredRank != null) {
+        rows.push('<div class="mi-row" title="Lowest rank you must be — the game only offers this giver&#39;s rank-' +
+          v.inferredRank + ' missions at that standing. Your exact rep isn&#39;t in the game log.">' +
+          '<span class="mi-k">Your rank</span><span class="mi-v">' + v.inferredRank +
+          '+ <span class="mi-hint">inferred</span></span></div>');
+      }
       if (type) rows.push('<div class="mi-row"><span class="mi-k">Type</span><span class="mi-v">' + escapeHtml(type) + "</span></div>");
       if (rg.length) rows.push('<div class="mi-sec">Reputation gained</div>' + repRows(rg, false));
       if (rl.length) rows.push('<div class="mi-sec">Reputation lost</div>' + repRows(rl, true));
@@ -781,10 +810,16 @@
     if (pay) parts.push('<div class="rewpay"><span class="rp-lbl">Payout</span><span class="rp-val">' + escapeHtml(pay) + "</span></div>");
     const items = v.itemRewards || [];
     if (items.length) {
-      parts.push('<div class="rewhead">Item rewards</div>');
+      // Same divider + row treatment as the blueprint pool — these are things you
+      // acquire too, so they get a tick box. Ticking is MANUAL and local-only: the log
+      // never reports item awards, and these never touch the blueprint count or sync.
+      parts.push('<div class="poolhead">Guaranteed rewards<span class="ph-sub">always awarded</span></div>');
       for (const it of items) {
-        parts.push('<div class="rrow"><span class="rname">' + escapeHtml(it.name) + "</span>" +
-          (it.amount > 1 ? '<span class="ramt">×' + it.amount + "</span>" : "") + "</div>");
+        parts.push('<div class="row ' + (it.owned ? "owned" : "") + '" data-item="' + escapeAttr(it.name) + '" title="Click to tick off (manual)">' +
+          '<span class="mark">' + (it.owned ? "✔" : "") + "</span>" +
+          '<span class="name">' + escapeHtml(it.name) + "</span>" +
+          (it.amount > 1 ? '<span class="chance">×' + it.amount + "</span>" : "") +
+          "</div>");
       }
     }
     return parts.length ? '<div class="rew">' + parts.join("") + "</div>" : "";
@@ -864,6 +899,14 @@
     });
   }
 
+  // Guaranteed ITEM rewards — manual, local-only tick (never counted/synced).
+  function setGuaranteedOwned(name, owned) {
+    fetch("/api/missions/own-item", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, owned }),
+    });
+  }
+
   // Click a blueprint to manually toggle owned (seeds pre-existing inventory).
   // Marking owned is one click; UN-marking asks first, so an accidental click while
   // looking at an item can't silently wipe a blueprint you actually own.
@@ -887,6 +930,14 @@
       if (current) render(current);
       return;
     }
+    // Guaranteed ITEM reward rows tick off in one click. Manual-only + low stakes, so
+    // no un-tick confirm (blueprints get one because they guard real collection data).
+    const itemRow = e.target.closest(".row[data-item]");
+    if (itemRow) {
+      setGuaranteedOwned(itemRow.getAttribute("data-item"), !itemRow.classList.contains("owned"));
+      return;
+    }
+
     const row = e.target.closest(".row");
     if (!row || !current) return;
     const name = row.getAttribute("data-name");
