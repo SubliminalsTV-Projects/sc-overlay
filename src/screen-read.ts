@@ -32,9 +32,10 @@ export interface FabricatorRead {
 export interface MissionRead { kind: "mission"; titleRaw: string; }
 /** One active refinery job read off the Refinement Center's PROCESSING panel. */
 export interface RefineryJobRead {
+  order: number;            // work-order slot (1,2,3… left-to-right) — the STABLE identity
   remainingSec: number;     // parsed from "TIME REMAINING 41m 35s"
   remainingRaw: string;     // "41m 35s"
-  material: string | null;  // yielded material label, e.g. "IRON"
+  material: string | null;  // yielded material label (a multi-material order shows its top yield)
   yieldScu: number | null;  // yield in cSCU, e.g. 898.65
 }
 export interface RefineryRead {
@@ -308,9 +309,9 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
     const station = anchor
       ? lines.filter((l) => Math.abs(l.y - anchor.y) < 26 && l.x < anchor.x - 80).sort((a, b) => a.x - b.x).pop()?.text.trim() ?? null
       : null;
-    const jobs: RefineryJobRead[] = [];
     const matchMaterial = (t: string) =>
       t.trim().toUpperCase().split(/[^A-Z]+/).find((w) => REFINERY_MATERIALS.has(w)) ?? null;
+    const raw: (RefineryJobRead & { _x: number })[] = [];
     for (const tr of lines.filter((l) => /time\s+remaining/i.test(l.text))) {
       // The value is the leftmost same-row line to the right that actually PARSES as a
       // duration (skips the other panel's "TIME REMAINING" label + noise), kept within
@@ -331,8 +332,13 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
       const yl = lines.find(
         (l) => /^\d{1,4}\.\d+$/.test(l.text.trim()) && Math.abs(l.x - tr.x) < 420 && l.y < tr.y && l.y > tr.y - 150,
       );
-      jobs.push({ remainingSec: sec, remainingRaw: valLine!.text.trim(), material, yieldScu: yl ? Number(yl.text) : null });
+      raw.push({ order: 0, remainingSec: sec, remainingRaw: valLine!.text.trim(), material, yieldScu: yl ? Number(yl.text) : null, _x: tr.x });
     }
+    // Number the jobs by left-to-right panel position (Work Order 1, 2, …) — a stable
+    // identity per station, so a multi-material order's varying label can't split it into
+    // duplicates. All active orders show side-by-side, so position == work-order slot.
+    raw.sort((a, b) => a._x - b._x).forEach((j, i) => (j.order = i + 1));
+    const jobs: RefineryJobRead[] = raw.map(({ _x, ...j }) => j);
     if (jobs.length) return { kind: "refinery", station: station ?? null, jobs };
   }
 

@@ -22,7 +22,9 @@ interface MineablesData {
  *  countdown is correct across app restarts. */
 export interface RefineryJob {
   id: string;
+  key: string;           // station#order — the STABLE dedup identity (not the material)
   station: string | null;
+  order: number;
   material: string | null;
   yieldScu: number | null;
   endAt: number;         // epoch ms when the refine finishes
@@ -102,21 +104,17 @@ export class MiningTracker extends EventEmitter {
     for (const j of read.jobs) {
       if (j.remainingSec <= 0) continue;
       const endAt = now + j.remainingSec * 1000;
-      let match: RefineryJob | undefined;
-      for (const ex of this.jobs.values()) {
-        if (ex.station !== read.station || ex.material !== j.material) continue;
-        const sameYield = j.yieldScu != null && ex.yieldScu != null && Math.abs(ex.yieldScu - j.yieldScu) < 0.01;
-        const exRemain = Math.max(0, (ex.endAt - now) / 1000);
-        if (sameYield || Math.abs(exRemain - j.remainingSec) <= 150) { match = ex; break; }
-      }
-      if (match) {
-        match.endAt = endAt;
-        match.readAt = now;
-        match.doneNotified = false;
-        if (j.yieldScu != null) match.yieldScu = j.yieldScu;
+      const key = `${read.station ?? ""}#${j.order}`; // stable per work-order slot
+      const ex = [...this.jobs.values()].find((e) => e.key === key);
+      if (ex) {
+        ex.endAt = endAt;
+        ex.readAt = now;
+        ex.doneNotified = false;
+        if (j.material) ex.material = j.material;
+        if (j.yieldScu != null) ex.yieldScu = j.yieldScu;
       } else {
         const id = `job${++this.seq}`;
-        this.jobs.set(id, { id, station: read.station, material: j.material, yieldScu: j.yieldScu, endAt, readAt: now, doneNotified: false });
+        this.jobs.set(id, { id, key, station: read.station, order: j.order, material: j.material, yieldScu: j.yieldScu, endAt, readAt: now, doneNotified: false });
       }
       changed = true;
     }
@@ -160,7 +158,9 @@ export class MiningTracker extends EventEmitter {
     try {
       const d = JSON.parse(readFileSync(this.statePath, "utf8"));
       this.targets = new Set(d.targets ?? []);
-      for (const j of d.jobs ?? []) this.jobs.set(j.id, j);
+      // Drop pre-fix stale jobs (they lack the work-order `key`) so old wrong timers with
+      // dropped hours / duplicate materials clear themselves out on the next launch.
+      for (const j of d.jobs ?? []) if (j.key) this.jobs.set(j.id, j);
       this.seq = d.seq ?? this.jobs.size;
     } catch {
       /* first run */
