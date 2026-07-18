@@ -35,6 +35,44 @@ export interface RepEntry {
   scope: string;
   amount: number;
 }
+/** One rank on a reputation scope's ladder: the rep floor to reach it + its name. */
+export interface RepLadderRank {
+  minRep: number;
+  name: string;
+}
+/** A reputation scope (e.g. "FactionReputation") and its ordered rank ladder, from
+ *  data/rep-scopes.json (extracted from the p4k datacore — sc-api doesn't carry it).
+ *  Ranks are in the game's ORIGINAL list order; some scopes (Wikelo) list best-first,
+ *  so consumers sort by minRep for display. */
+export interface RepScope {
+  displayName: string | null;
+  ranks: RepLadderRank[];
+}
+export interface RepScopes {
+  schema: string;
+  source?: string;
+  scopes: Record<string, RepScope>;
+}
+/** Reputation progress-bar state for the tracked mission's giver (see computeRepBar). */
+export interface RepBar {
+  /** The rep scope driving the ladder, e.g. "FactionReputation". */
+  scope: string;
+  /** The org/faction this standing belongs to (the mission's giver). */
+  faction: string;
+  /** Current standing NAME (e.g. "Veteran Contractor"). */
+  standing: string;
+  /** Estimated rep total (lower bound). */
+  estimate: number;
+  /** Rep floor of the current rank + the next rank's floor/name (null at max rank). */
+  curMin: number;
+  nextMin: number | null;
+  nextName: string | null;
+  /** True at the top of the ladder (no next rank). */
+  max: boolean;
+  /** No completions witnessed yet for this giver (run Verify from logs) — the UI shows an
+   *  empty "estimate unavailable" state instead of a misleading zero-progress bar. */
+  noData: boolean;
+}
 export interface DatasetMission {
   title: string;
   generatorClass: string;
@@ -141,6 +179,11 @@ export interface TrackedView {
    *  accepted from them. A LOWER BOUND (actual rep is server-side, never logged), and
    *  null until they accept a rank-gated mission from that giver. */
   inferredRank: number | null;
+  /** Live "how close am I to ranking up" estimate for the tracked mission's giver, or
+   *  null when there's no rep ladder for them. A LOWER BOUND: the sum of rep from
+   *  completions witnessed since the 4.8 wipe (pre-tracker + non-pool history is
+   *  unrecoverable, so it reads low, never high). `noData` until a completion is seen. */
+  repBar: RepBar | null;
   missionType: string | null;
   /** Reputation gained (+) / lost (−) on completion, biggest first (may be empty). */
   reputationGained: RepEntry[];
@@ -232,6 +275,9 @@ interface Persisted {
    *  accept a mission at. Rep is server-side (never in the log), so this is the best
    *  available signal — a lower bound that only improves as they rank up. */
   inferredRank?: Record<string, number>;
+  /** giver -> witnessed reputation total on their primary org scope (post-4.8 completions).
+   *  A lower bound rebuilt by "Verify from logs"; older state files predate it. */
+  repWitnessed?: Record<string, { scope: string; sum: number }>;
 }
 
 /** Stored completed-mission record (newest first, capped). Deduped by missionId+at. */
@@ -285,6 +331,64 @@ const CHANGELIST_RE = /build_version\[(\d+)\]|Changelist:\s*(\d+)/;
 export function detectChangelist(rawLine: string): string | null {
   const m = rawLine.match(CHANGELIST_RE);
   return m ? (m[1] ?? m[2]) : null;
+}
+
+/** The 4.8 patch wiped reputation, so only completions from 4.8+ logs count toward the
+ *  rep bar. Version family is "major.minor". Unknown/unparseable → excluded (conservative:
+ *  avoids counting pre-wipe rep we can't date). */
+export function familyAtLeast48(family: string | null): boolean {
+  if (!family) return false;
+  const [maj, min] = family.split(".").map(Number);
+  if (!Number.isFinite(maj) || !Number.isFinite(min)) return false;
+  return maj > 4 || (maj === 4 && min >= 8);
+}
+
+/** Which rep scope is a giver's PRIMARY, mobiGlas-facing standing when a mission grants
+ *  several (a Foxwell mission gives FactionReputation AND Security — the org rank is the
+ *  former). Earlier = higher priority; anything not listed sorts last. */
+const REP_SCOPE_PRIORITY = [
+  "FactionReputation",
+  "MissionProviderReputation_Battaglia",
+  "Wikelo",
+  "BountyHunter_BountyHuntersGuild",
+  "Hauling",
+  "Salvaging",
+  "Security",
+  "BountyHunter",
+];
+/** Internal / non-standing rep modifiers that never get their own progress bar even
+ *  when a mission grants them (combat affinity, racing, worker/theft counters). The
+ *  bundled rep-scopes.json already drops the placeholder ladders (Affinity, NPC_*). */
+const REP_SCOPE_DENY = /^(ShipCombat_|FPS_Combat|Racing|Worker|Theft|Assassination|HiredMuscle|.*TimeTrial)/;
+
+/** Place a witnessed-rep estimate on a scope's ladder. estimate = sum of rep earned
+ *  from completed missions since the 4.8 wipe — the only signal we trust. (Mission
+ *  `rank_index` is a difficulty TIER, not a standing gate — grabbing a "rank-4" bounty
+ *  doesn't prove rank 4 — so it is deliberately NOT used here.) Ranks are placed by
+ *  minRep, so a best-first ladder (Wikelo) works too. `noData` flags "no completions
+ *  witnessed yet" (run Verify from logs). Pure + exported so it's unit-testable. */
+export function repLadderPosition(
+  scope: RepScope | undefined,
+  witnessed: number,
+): Omit<RepBar, "scope" | "faction"> | null {
+  if (!scope || scope.ranks.length < 2) return null;
+  const asc = [...scope.ranks].sort((a, b) => a.minRep - b.minRep);
+  const estimate = Math.max(0, witnessed);
+  let cur = asc[0];
+  let next: RepLadderRank | null = null;
+  for (const r of asc) {
+    if (r.minRep <= estimate) cur = r;
+    else { next = r; break; }
+  }
+  return {
+    standing: cur.name,
+    estimate,
+    curMin: cur.minRep,
+    nextMin: next?.minRep ?? null,
+    nextName: next?.name ?? null,
+    max: next == null,
+    noData: witnessed <= 0,
+  };
 }
 
 /** How long to keep a just-completed mission's summary card up before moving on. */
@@ -385,6 +489,20 @@ export class MissionTracker extends EventEmitter {
   /** giver -> highest mission `rank` we've seen accepted. Inferred standing (rep is
    *  server-side and never logged). Persisted, so it survives across sessions. */
   private inferredRank = new Map<string, number>();
+  /** Reputation scope ladders (thresholds + rank names), loaded once from the bundled
+   *  data/rep-scopes.json. Patch-independent (ladders change rarely); powers the rep bar. */
+  private repScopes: Record<string, RepScope> = {};
+  /** giver -> witnessed reputation on their primary org scope. `sum` accumulates the rep
+   *  amount of each post-4.8 completion (a LOWER BOUND — pre-tracker history is gone).
+   *  Live real-time completions add to it; verifyFromLogs rebuilds it authoritatively
+   *  from every logbackup. See accrueRep / computeRepBar. */
+  private repWitnessed = new Map<string, { scope: string; sum: number }>();
+  /** normScreenTitle(mission title) -> the primary rep gain to credit when a mission with
+   *  that title completes, or null when the title is ambiguous across givers/scopes. Built
+   *  over ALL dataset missions (not just pooled ones), so combat/patrol/delivery missions
+   *  with no blueprint reward still feed the rep bar. Same-org titles that differ only in
+   *  amount (difficulty tiers) collapse to the MIN — a deliberate under-count. */
+  private repTitleIndex = new Map<string, { giver: string; scope: string; amount: number } | null>();
   private observed = new Set<string>();
   /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log). */
   private observedAt = new Map<string, string>();
@@ -438,6 +556,18 @@ export class MissionTracker extends EventEmitter {
       join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");
     this.statePath = join(this.stateDir, "collected.json");
     this.loadState();
+    this.loadRepScopes();
+  }
+
+  /** Load the reputation rank ladders once from the bundled dataset. Optional — the rep
+   *  bar just stays hidden if the file is missing (older bundles predate it). */
+  private loadRepScopes(): void {
+    try {
+      const p = join(this.dataDir, "rep-scopes.json");
+      this.repScopes = (JSON.parse(readFileSync(p, "utf8")) as RepScopes).scopes ?? {};
+    } catch {
+      this.repScopes = {};
+    }
   }
 
   // ---- dataset / patch ----
@@ -493,6 +623,7 @@ export class MissionTracker extends EventEmitter {
         this.dataset = JSON.parse(readFileSync(p, "utf8")) as Dataset;
         this.patch = this.dataset.version;
         this.buildTitleIndex();
+        this.buildRepTitleIndex();
         this.reresolveAccepts();
         this.emit("change");
         return;
@@ -686,6 +817,10 @@ export class MissionTracker extends EventEmitter {
       if (title && !this.completion.title) this.completion.title = title;
       return;
     }
+    // Real-time completion (not startup replay, and past the idempotency guard so it
+    // runs once): fold its rep gain into the giver's witnessed total for the rep bar.
+    // The current session is always the current patch (post-4.8-wipe), so no window check.
+    if (kind === "completed") this.accrueFromTitle(title ?? info?.title ?? null);
     const holdMs = kind === "abandoned" ? ABANDON_HOLD_MS : COMPLETION_HOLD_MS;
     this.completion = {
       missionId,
@@ -775,7 +910,7 @@ export class MissionTracker extends EventEmitter {
     // Completed missions + aUEC awards harvested for the recent-mission backfill,
     // correlated by log-time proximity after the scan (a "reward" line's own
     // MissionId is all-zeros, same as the live path).
-    const completions: { missionId: string | null; title: string | null; ts: string; tsMs: number }[] = [];
+    const completions: { missionId: string | null; title: string | null; ts: string; tsMs: number; inWindow: boolean }[] = [];
     const rewards: { tsMs: number; amount: number }[] = [];
     let files = 0;
     let receipts = 0;
@@ -795,6 +930,11 @@ export class MissionTracker extends EventEmitter {
         skipped++;
         continue;
       }
+      // Version family (major.minor) from the header — the 4.8 wipe means only 4.8+
+      // completions count toward the rep bar (blueprints are unaffected, so they still
+      // count from every PUB log regardless of family).
+      const famM = /(?:Product|File)Version:\s*(\d+\.\d+)/.exec(text.slice(0, 4000));
+      const inWindow = familyAtLeast48(famM?.[1] ?? null);
       files++;
       for (const line of text.split(/\r?\n/)) {
         // Cheap prefilter: blueprint receipts, contract completions, awards — plus the
@@ -829,7 +969,7 @@ export class MissionTracker extends EventEmitter {
             receiptTimes.set(ev.name, ev.ts ?? null);
           }
         } else if (ev.kind === "contractComplete" && ev.ts && Number.isFinite(Date.parse(ev.ts))) {
-          completions.push({ missionId: ev.missionId, title: ev.title, ts: ev.ts, tsMs: Date.parse(ev.ts) });
+          completions.push({ missionId: ev.missionId, title: ev.title, ts: ev.ts, tsMs: Date.parse(ev.ts), inWindow });
         } else if (ev.kind === "reward" && ev.ts && Number.isFinite(Date.parse(ev.ts))) {
           rewards.push({ tsMs: Date.parse(ev.ts), amount: ev.amount });
         }
@@ -861,6 +1001,14 @@ export class MissionTracker extends EventEmitter {
         if (d <= bestDist) { bestDist = d; amount = r.amount; }
       }
       this.recordMissionComplete(c.missionId, c.title, c.ts, amount);
+    }
+    // Rebuild the witnessed-rep totals authoritatively from every in-window completion.
+    // Rebuilt (not incremented) so a re-verify can't double-count; only 4.8+ completions
+    // count (the wipe reset earlier rep). Resolves each completion by title via the
+    // comprehensive rep-title index (covers non-pool missions too).
+    this.repWitnessed.clear();
+    for (const c of completions) {
+      if (c.inWindow) this.accrueFromTitle(c.title);
     }
     this.saveState();
     this.emit("change");
@@ -928,12 +1076,34 @@ export class MissionTracker extends EventEmitter {
     const candidates = [...this.missions]
       .filter(([id, info]) => info.title && !this.endedMissionIds.has(id))
       .map(([id, info]) => ({ id, title: info.title! }));
-    const matched = matchScreenTitle(title, candidates);
+    let matched = matchScreenTitle(title, candidates);
+    // Recovery: if the pinned mission isn't among known missions — Alt-F4 → relaunch
+    // rotates game.log so the accept is gone, and a session reset cleared the picker —
+    // resolve the OCR'd title straight from the dataset and re-register it. OCR reads the
+    // CURRENT screen, so this can only ever surface a mission you're actually on now.
+    if (!matched) {
+      const res = this.resolveAcceptTitle(title);
+      const key = res?.keys[0];
+      if (key) {
+        const existing = [...this.missions].find(([id, info]) => info.contractKey === key && !this.endedMissionIds.has(id));
+        if (existing) matched = existing[0];
+        else {
+          matched = "ocr:" + key;
+          this.missions.set(matched, { title, contractKey: key, acceptKeys: res!.keys, ambiguous: res!.ambiguous, acceptedAt: Date.now() });
+        }
+      }
+    }
     if (!matched) return false;
+    // A confirmed on-screen mission is as strong a "current mission exists" signal as a
+    // marker — clear the post-reset suppression so effectiveMissionId can surface it, and
+    // put it back in the picker.
+    this.endedMissionIds.delete(matched);
+    if (!this.acceptedSeq.includes(matched) && !this.markerSeq.includes(matched)) this.acceptedSeq.push(matched);
+    this.markerSinceJoin = true;
     if (this.screenMissionId !== matched) {
       this.screenMissionId = matched;
-      this.emit("change");
     }
+    this.emit("change");
     return true;
   }
 
@@ -969,6 +1139,74 @@ export class MissionTracker extends EventEmitter {
     if (prev != null && prev >= rank) return false;
     this.inferredRank.set(giver, rank);
     return true;
+  }
+
+  // ---- reputation progress bar ----
+
+  /** The primary, mobiGlas-facing rep entry a mission grants: an org-scope gain (in
+   *  rep-scopes.json, not an internal modifier), picked by scope priority then amount.
+   *  null when the mission grants no rankable rep (intro/story/pure-item missions). */
+  private primaryRep(m: DatasetMission | undefined): { scope: string; faction: string; amount: number } | null {
+    const rankOf = (s: string) => {
+      const i = REP_SCOPE_PRIORITY.indexOf(s);
+      return i < 0 ? REP_SCOPE_PRIORITY.length : i;
+    };
+    const entries = (m?.reputationGained ?? []).filter(
+      (r) => r.amount > 0 && this.repScopes[r.scope] && !REP_SCOPE_DENY.test(r.scope),
+    );
+    if (entries.length === 0) return null;
+    entries.sort((a, b) => rankOf(a.scope) - rankOf(b.scope) || b.amount - a.amount);
+    const e = entries[0];
+    return { scope: e.scope, faction: e.faction, amount: e.amount };
+  }
+
+  /** Index EVERY dataset mission's title -> the primary rep gain to credit on completion,
+   *  so combat/patrol/delivery completions (no blueprint pool) still feed the rep bar.
+   *  Ambiguous titles (same title, different giver/scope) map to null and are skipped;
+   *  same-org difficulty tiers collapse to the MIN amount (conservative under-count). */
+  private buildRepTitleIndex(): void {
+    this.repTitleIndex.clear();
+    if (!this.dataset) return;
+    for (const m of Object.values(this.dataset.missions)) {
+      if (!m.title || !m.giver) continue;
+      const pr = this.primaryRep(m);
+      if (!pr) continue;
+      const k = normScreenTitle(m.title);
+      if (!k) continue;
+      const entry = { giver: m.giver, scope: pr.scope, amount: pr.amount };
+      if (!this.repTitleIndex.has(k)) { this.repTitleIndex.set(k, entry); continue; }
+      const cur = this.repTitleIndex.get(k);
+      if (cur == null) continue; // already flagged ambiguous
+      if (cur.giver !== entry.giver || cur.scope !== entry.scope) this.repTitleIndex.set(k, null);
+      else if (entry.amount < cur.amount) cur.amount = entry.amount;
+    }
+  }
+
+  /** Credit a completed mission's rep to its giver's witnessed total, resolved from the
+   *  completion TITLE via the comprehensive rep-title index. Keyed by GIVER (matching how
+   *  computeRepBar looks it up). NOT idempotent — callers gate to genuinely-new completions
+   *  (a real-time completion, or a from-scratch verifyFromLogs rebuild) so nothing is
+   *  double-counted. Unknown/ambiguous titles are skipped. */
+  private accrueFromTitle(title: string | null | undefined): void {
+    if (!title) return;
+    const e = this.repTitleIndex.get(normScreenTitle(title));
+    if (!e) return;
+    const cur = this.repWitnessed.get(e.giver);
+    if (cur && cur.scope === e.scope) cur.sum += e.amount;
+    else this.repWitnessed.set(e.giver, { scope: e.scope, sum: (cur?.sum ?? 0) + e.amount });
+  }
+
+  /** Build the rep progress bar for the tracked mission's giver: estimate = max(inferred-
+   *  rank floor, witnessed post-4.8 gains), placed on the scope's ladder. A lower bound —
+   *  reads low until a higher-rank mission is offered (raising the floor) and re-anchors. */
+  private computeRepBar(m: DatasetMission | undefined): RepBar | null {
+    const giver = m?.giver;
+    if (!giver) return null;
+    const primary = this.primaryRep(m);
+    if (!primary) return null;
+    const pos = repLadderPosition(this.repScopes[primary.scope], this.repWitnessed.get(giver)?.sum ?? 0);
+    if (!pos) return null;
+    return { scope: primary.scope, faction: giver, ...pos };
   }
 
   /** Index pooled, titled missions by normalized title so a marker-less accept can
@@ -1297,6 +1535,7 @@ export class MissionTracker extends EventEmitter {
       })),
       giver: mission?.giver ?? null,
       inferredRank: mission?.giver ? this.inferredRank.get(mission.giver) ?? null : null,
+      repBar: this.computeRepBar(mission),
       missionType: mission?.missionType ?? null,
       reputationGained: mission?.reputationGained ?? [],
       reputationLost: mission?.reputationLost ?? [],
@@ -1333,6 +1572,7 @@ export class MissionTracker extends EventEmitter {
       this.overrides = new Map(Object.entries(data.overrides ?? {}));
       this.guaranteedOwned = new Set(data.guaranteedOwned ?? []);
       this.inferredRank = new Map(Object.entries(data.inferredRank ?? {}));
+      this.repWitnessed = new Map(Object.entries(data.repWitnessed ?? {}));
       this.missionHistory = (data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
     } catch {
       /* first run */
@@ -1345,6 +1585,7 @@ export class MissionTracker extends EventEmitter {
       overrides: Object.fromEntries(this.overrides),
       guaranteedOwned: [...this.guaranteedOwned],
       inferredRank: Object.fromEntries(this.inferredRank),
+      repWitnessed: Object.fromEntries(this.repWitnessed),
       observedAt: Object.fromEntries(this.observedAt),
       missionHistory: this.missionHistory,
     };

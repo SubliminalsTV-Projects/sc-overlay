@@ -1,0 +1,997 @@
+{
+  "schema": "sc-rep-scopes/1",
+  "source": "Star Citizen 4.9.0-LIVE.12248363 datacore (Game2.dcb)",
+  "scopes": {
+    "FactionReputation": {
+      "displayName": "Standing",
+      "ranks": [
+        {
+          "minRep": 0,
+          "name": "Neutral"
+        },
+        {
+          "minRep": 800,
+          "name": "Jr. Contractor"
+        },
+        {
+          "minRep": 2200,
+          "name": "Contractor"
+        },
+        {
+          "minRep": 5800,
+          "name": "Sr. Contractor"
+        },
+        {
+          "minRep": 15000,
+          "name": "Veteran Contractor"
+        },
+        {
+          "minRep": 38000,
+          "name": "Head Contractor"
+        },
+        {
+          "minRep": 95250,
+          "name": "Elite Contractor"
+        }
+      ]
+    },
+    "MissionProviderReputation_Battaglia": {
+      "displayName": "Standing",
+      "ranks": [
+        {
+          "minRep": 0,
+          "name": "Prospective Associate"
+        },
+        {
+          "minRep": 2400,
+          "name": "Associate"
+        },
+        {
+          "minRep": 6000,
+          "name": "Trusted Associate"
+        },
+        {
+          "minRep": 10800,
+          "name": "Prestige 1"
+        },
+        {
+          "minRep": 30000,
+          "name": "Prestige 2"
+        },
+        {
+          "minRep": 69600,
+          "name": "Prestige 3"
+        }
+      ]
+    },
+    "Assassination": {
+      "displayName": "Assassination",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Under Review"
+        },
+        {
+          "minRep": 1,
+          "name": "Assassin In Training"
+        },
+        {
+          "minRep": 3000,
+          "name": "Low Level Assassin"
+        },
+        {
+          "minRep": 8000,
+          "name": "Assassin"
+        },
+        {
+          "minRep": 24000,
+          "name": "High Value Assassin"
+        },
+        {
+          "minRep": 56000,
+          "name": "Elite Assassin"
+        },
+        {
+          "minRep": 112000,
+          "name": "Master Assassin"
+        }
+      ]
+    },
+    "BountyHunter": {
+      "displayName": "Bounty Hunting",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Tracker Trainee"
+        },
+        {
+          "minRep": 5000,
+          "name": "Associate Tracker"
+        },
+        {
+          "minRep": 30000,
+          "name": "Tracker"
+        },
+        {
+          "minRep": 120000,
+          "name": "Advanced Tracker"
+        },
+        {
+          "minRep": 480000,
+          "name": "Senior Tracker"
+        },
+        {
+          "minRep": 1600000,
+          "name": "Master Tracker"
+        }
+      ]
+    },
+    "BountyHunter_BountyHuntersGuild": {
+      "displayName": "Bounty Hunting",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Probationary Guild Member"
+        },
+        {
+          "minRep": 3000,
+          "name": "Junior Guild Member"
+        },
+        {
+          "minRep": 10000,
+          "name": "Guild Member"
+        },
+        {
+          "minRep": 40000,
+          "name": "Senior Guild Member"
+        },
+        {
+          "minRep": 200000,
+          "name": "Veteran Guild Member"
+        },
+        {
+          "minRep": 480000,
+          "name": "Guild Steward"
+        }
+      ]
+    },
+    "Courier": {
+      "displayName": "Courier",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Jr. Runner"
+        },
+        {
+          "minRep": 2500,
+          "name": "Runner"
+        }
+      ]
+    },
+    "Courier_TransportGuild": {
+      "displayName": "Courier",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Jr. Runner"
+        },
+        {
+          "minRep": 2500,
+          "name": "Runner"
+        }
+      ]
+    },
+    "Delivery_CitizensForPyro": {
+      "displayName": "Courier",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Trainee"
+        },
+        {
+          "minRep": 50,
+          "name": "Rookie"
+        },
+        {
+          "minRep": 250,
+          "name": "Junior"
+        },
+        {
+          "minRep": 5250,
+          "name": "Member"
+        },
+        {
+          "minRep": 27750,
+          "name": "Experienced"
+        },
+        {
+          "minRep": 77750,
+          "name": "Senior"
+        },
+        {
+          "minRep": 237750,
+          "name": "Master"
+        }
+      ]
+    },
+    "Delivery_RoughAndReady": {
+      "displayName": "Courier",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Trainee"
+        },
+        {
+          "minRep": 50,
+          "name": "Rookie"
+        },
+        {
+          "minRep": 250,
+          "name": "Junior"
+        },
+        {
+          "minRep": 5250,
+          "name": "Member"
+        },
+        {
+          "minRep": 27750,
+          "name": "Experienced"
+        },
+        {
+          "minRep": 77750,
+          "name": "Senior"
+        },
+        {
+          "minRep": 237750,
+          "name": "Master"
+        }
+      ]
+    },
+    "Emergency": {
+      "displayName": "Emergency Support",
+      "ranks": [
+        {
+          "minRep": -320000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 5000,
+          "name": "First Responder Trainee"
+        },
+        {
+          "minRep": 20000,
+          "name": "First Responder"
+        },
+        {
+          "minRep": 80000,
+          "name": "Veteran First Responder"
+        }
+      ]
+    },
+    "FPS_Combat": {
+      "displayName": "RepScope_FPSCombat_Name",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "FPS_Combat_CitizensForPyro": {
+      "displayName": "Mercenary",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "FPS_Combat_HeadHunter": {
+      "displayName": "Mercenary",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "FPS_Combat_RoughAndReady": {
+      "displayName": "Mercenary",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "FPS_Combat_XenoThreat": {
+      "displayName": "Mercenary",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "HandyMan": {
+      "displayName": "Salvage",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "HandyMan_CitizensForPyro": {
+      "displayName": "Hired Muscle",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "Hauling": {
+      "displayName": "Hauling",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Trainee"
+        },
+        {
+          "minRep": 50,
+          "name": "Rookie"
+        },
+        {
+          "minRep": 250,
+          "name": "Junior"
+        },
+        {
+          "minRep": 5250,
+          "name": "Member"
+        },
+        {
+          "minRep": 27750,
+          "name": "Experienced"
+        },
+        {
+          "minRep": 77750,
+          "name": "Senior"
+        },
+        {
+          "minRep": 237750,
+          "name": "Master"
+        }
+      ]
+    },
+    "HiredMuscle": {
+      "displayName": "Hired Muscle",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Rank I"
+        },
+        {
+          "minRep": 5000,
+          "name": "Rank II"
+        },
+        {
+          "minRep": 30000,
+          "name": "Rank III"
+        },
+        {
+          "minRep": 120000,
+          "name": "Rank IV"
+        },
+        {
+          "minRep": 480000,
+          "name": "Rank V"
+        },
+        {
+          "minRep": 1600000,
+          "name": "Rank VI"
+        }
+      ]
+    },
+    "Maintenance": {
+      "displayName": "Maintenance",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Apprentice"
+        },
+        {
+          "minRep": 1,
+          "name": "Mechanic-in-Training"
+        },
+        {
+          "minRep": 3000,
+          "name": "Jr. Mechanic"
+        },
+        {
+          "minRep": 10000,
+          "name": "Mechanic"
+        },
+        {
+          "minRep": 40000,
+          "name": "Sr. Mechanic"
+        },
+        {
+          "minRep": 200000,
+          "name": "Master Mechanic"
+        }
+      ]
+    },
+    "Racing_HeadHunter": {
+      "displayName": "RepScope_Racing_HeadHunters_Name",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "RacingShip": {
+      "displayName": "Spaceship",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Racing Enthusiast"
+        },
+        {
+          "minRep": 1,
+          "name": "Novice Racer"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rookie Racer"
+        },
+        {
+          "minRep": 2000,
+          "name": "Racer"
+        },
+        {
+          "minRep": 4000,
+          "name": "Practiced Racer"
+        },
+        {
+          "minRep": 8000,
+          "name": "Dedicated Racer"
+        },
+        {
+          "minRep": 16000,
+          "name": "Experienced Racer"
+        },
+        {
+          "minRep": 32000,
+          "name": "Skilled Racer"
+        }
+      ]
+    },
+    "Salvaging": {
+      "displayName": "Salvaging",
+      "ranks": [
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Apprentice Salvager"
+        },
+        {
+          "minRep": 100,
+          "name": "Associate Salvager"
+        },
+        {
+          "minRep": 500,
+          "name": "Salvager"
+        },
+        {
+          "minRep": 1500,
+          "name": "Senior Salvager"
+        },
+        {
+          "minRep": 5000,
+          "name": "Master Salvager"
+        }
+      ]
+    },
+    "Security": {
+      "displayName": "Security",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Security Trainee"
+        },
+        {
+          "minRep": 5000,
+          "name": "Jr. Security Contractor"
+        },
+        {
+          "minRep": 30000,
+          "name": "Security Contractor"
+        },
+        {
+          "minRep": 120000,
+          "name": "Sr. Security Contractor"
+        },
+        {
+          "minRep": 480000,
+          "name": "Lead Security Contractor"
+        },
+        {
+          "minRep": 1600000,
+          "name": "Elite Security Contractor"
+        }
+      ]
+    },
+    "Security_MercenaryGuild": {
+      "displayName": "Security",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Security Trainee"
+        },
+        {
+          "minRep": 5000,
+          "name": "Jr. Security Contractor"
+        },
+        {
+          "minRep": 30000,
+          "name": "Security Contractor"
+        },
+        {
+          "minRep": 120000,
+          "name": "Sr. Security Contractor"
+        },
+        {
+          "minRep": 480000,
+          "name": "Lead Security Contractor"
+        },
+        {
+          "minRep": 1600000,
+          "name": "Elite Security Contractor"
+        }
+      ]
+    },
+    "ShipCombat": {
+      "displayName": "RepScope_ShipCombat_Name",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Rank I"
+        },
+        {
+          "minRep": 5000,
+          "name": "Rank II"
+        },
+        {
+          "minRep": 30000,
+          "name": "Rank III"
+        },
+        {
+          "minRep": 120000,
+          "name": "Rank IV"
+        },
+        {
+          "minRep": 480000,
+          "name": "Rank V"
+        },
+        {
+          "minRep": 1600000,
+          "name": "Rank VI"
+        }
+      ]
+    },
+    "ShipCombat_HeadHunters": {
+      "displayName": "RepScope_ShipCombat_HeadHunters_Name",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Rank I"
+        },
+        {
+          "minRep": 3000,
+          "name": "Rank II"
+        },
+        {
+          "minRep": 10000,
+          "name": "Rank III"
+        },
+        {
+          "minRep": 40000,
+          "name": "Rank IV"
+        },
+        {
+          "minRep": 200000,
+          "name": "Rank V"
+        },
+        {
+          "minRep": 480000,
+          "name": "Rank VI"
+        }
+      ]
+    },
+    "ShipCombat_RoughAndReady": {
+      "displayName": "RepScope_ShipCombat_RoughAndReady_Name",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Rank I"
+        },
+        {
+          "minRep": 5000,
+          "name": "Rank II"
+        },
+        {
+          "minRep": 30000,
+          "name": "Rank III"
+        },
+        {
+          "minRep": 120000,
+          "name": "Rank IV"
+        },
+        {
+          "minRep": 480000,
+          "name": "Rank V"
+        },
+        {
+          "minRep": 1600000,
+          "name": "Rank VI"
+        }
+      ]
+    },
+    "ShipCombat_XenoThreat": {
+      "displayName": "RepScope_ShipCombat_XenoThreat_Name",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Rank I"
+        },
+        {
+          "minRep": 5000,
+          "name": "Rank II"
+        },
+        {
+          "minRep": 30000,
+          "name": "Rank III"
+        },
+        {
+          "minRep": 120000,
+          "name": "Rank IV"
+        },
+        {
+          "minRep": 480000,
+          "name": "Rank V"
+        },
+        {
+          "minRep": 1600000,
+          "name": "Rank VI"
+        }
+      ]
+    },
+    "Smuggling": {
+      "displayName": "Hired Muscle",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        },
+        {
+          "minRep": 2000,
+          "name": "Rank II"
+        },
+        {
+          "minRep": 3000,
+          "name": "Rank III"
+        },
+        {
+          "minRep": 4000,
+          "name": "Rank IV"
+        }
+      ]
+    },
+    "Technician": {
+      "displayName": "Technician",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1,
+          "name": "Technician-in-Training"
+        },
+        {
+          "minRep": 3000,
+          "name": "Jr. Technician"
+        },
+        {
+          "minRep": 9000,
+          "name": "Technician"
+        },
+        {
+          "minRep": 27000,
+          "name": "Sr. Technician"
+        },
+        {
+          "minRep": 81000,
+          "name": "Master Technician"
+        }
+      ]
+    },
+    "Theft": {
+      "displayName": "Theft",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 3000,
+          "name": "Rank I"
+        },
+        {
+          "minRep": 17000,
+          "name": "Rank II"
+        },
+        {
+          "minRep": 40000,
+          "name": "Rank III"
+        },
+        {
+          "minRep": 100000,
+          "name": "Rank IV"
+        }
+      ]
+    },
+    "Wikelo": {
+      "displayName": "Barter & Trade",
+      "ranks": [
+        {
+          "minRep": 999,
+          "name": "Very Best Customer"
+        },
+        {
+          "minRep": 340,
+          "name": "Very Good Customer"
+        },
+        {
+          "minRep": 0,
+          "name": "New Customer"
+        }
+      ]
+    },
+    "Worker": {
+      "displayName": "RepScope_Worker_Name",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    },
+    "Worker_RoughAndReady": {
+      "displayName": "Hired Muscle",
+      "ranks": [
+        {
+          "minRep": -1000,
+          "name": "Not Eligible"
+        },
+        {
+          "minRep": 0,
+          "name": "Applicant"
+        },
+        {
+          "minRep": 1000,
+          "name": "Rank I"
+        }
+      ]
+    }
+  }
+}

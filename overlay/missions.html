@@ -388,6 +388,20 @@
   .mi-rep .mi-amt.pos { color: var(--gold); }
   .mi-rep .mi-amt.neg { color: var(--red); }
 
+  /* Reputation progress bar — "how close am I to ranking up" for the tracked giver.
+     A lower-bound estimate (max of the inferred-rank floor + witnessed post-4.8 gains). */
+  .rb { padding: 4px 0 2px; }
+  .rb-track { position: relative; height: 7px; margin: 6px 0 4px; border-radius: 4px;
+    background: rgba(90, 180, 210, 0.14); box-shadow: inset 0 0 0 1px rgba(120, 210, 235, 0.18); overflow: hidden; }
+  .rb-fill { height: 100%; border-radius: 4px; transition: width 0.35s ease;
+    background: linear-gradient(90deg, var(--cyan-text), var(--gold)); box-shadow: 0 0 6px rgba(255, 210, 122, 0.35); }
+  /* Floor-anchored state: we know the rank but haven't summed gains within it. */
+  .rb.floor .rb-fill { background: repeating-linear-gradient(90deg,
+    rgba(120, 210, 235, 0.55) 0 4px, rgba(120, 210, 235, 0.15) 4px 8px); box-shadow: none; }
+  .rb-cap { font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em;
+    color: var(--cyan-text); opacity: 0.85; font-variant-numeric: tabular-nums; }
+  .rb-cap .nx { color: var(--gold); }
+
   /* Collapsed "Collected" group: owned blueprints tuck under this toggle so the
      list leads with what you can still GET. Click to expand/collapse. */
   .grphead { display: flex; align-items: center; gap: 8px; margin-top: 9px; padding: 6px 9px; cursor: pointer;
@@ -774,6 +788,33 @@
         '<span class="mi-amt ' + (neg ? "neg" : "pos") + '">' + amt + " rep</span></div>";
     }).join("");
   }
+  // Reputation progress bar for the tracked mission's giver: current standing NAME + a
+  // fill toward the next rank. A LOWER-BOUND estimate (server-side rep is never logged),
+  // so the readout is qualified "est." and the caption uses "~".
+  function repBarHtml(rb) {
+    const num = (x) => Number(x || 0).toLocaleString();
+    let pct, cap, empty = false;
+    if (rb.noData) {
+      // No completions summed for this giver yet — don't fake a standing, prompt a verify.
+      pct = 0; empty = true;
+      cap = "no completions tracked yet · run Verify from logs";
+    } else if (rb.max) {
+      pct = 100;
+      cap = "Top standing reached";
+    } else {
+      const span = (rb.nextMin - rb.curMin) || 1;
+      pct = Math.max(0, Math.min(100, ((rb.estimate - rb.curMin) / span) * 100));
+      cap = "~" + num(rb.estimate) + " / " + num(rb.nextMin) +
+        ' <span class="nx">→ ' + escapeHtml(rb.nextName || "") + "</span>";
+    }
+    const standing = rb.noData ? "—" : escapeHtml(rb.standing);
+    return '<div class="mi-row" title="Estimated standing with ' + escapeAttr(rb.faction) +
+      ". Your exact rep isn't in the game log, so this is a lower bound summed from missions you've completed since the 4.8 wipe.\">" +
+      '<span class="mi-k">Standing</span><span class="mi-v">' + standing +
+      ' <span class="mi-hint">' + (rb.noData ? "no data" : "est.") + '</span></span></div>' +
+      '<div class="rb' + (empty ? " floor" : "") + '"><div class="rb-track"><div class="rb-fill" style="width:' +
+      pct.toFixed(1) + '%"></div></div><div class="rb-cap">' + cap + "</div></div>";
+  }
   function missionInfoHtml(v, forceOpen) {
     const giver = v.giver, type = v.missionType;
     const rg = v.reputationGained || [], rl = v.reputationLost || [];
@@ -783,10 +824,12 @@
     if (open) {
       const rows = [];
       if (giver) rows.push('<div class="mi-row"><span class="mi-k">Faction</span><span class="mi-v">' + escapeHtml(giver) + "</span></div>");
-      // Inferred standing: the highest rank we've seen you accept a mission at. The game
-      // only offers a ranked mission once you've earned it, so it's a lower bound — the
-      // real rep number lives server-side and never reaches the log.
-      if (v.inferredRank != null) {
+      // Reputation progress: current standing NAME + a bar toward the next rank when we
+      // have the giver's ladder (repBar). Falls back to the bare inferred-rank number for
+      // givers with no rankable rep scope. Both are lower bounds — rep is server-side.
+      if (v.repBar) {
+        rows.push(repBarHtml(v.repBar));
+      } else if (v.inferredRank != null) {
         rows.push('<div class="mi-row" title="Lowest rank you must be — the game only offers this giver&#39;s rank-' +
           v.inferredRank + ' missions at that standing. Your exact rep isn&#39;t in the game log.">' +
           '<span class="mi-k">Your rank</span><span class="mi-v">' + v.inferredRank +

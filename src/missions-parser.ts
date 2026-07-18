@@ -158,10 +158,15 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
       return { kind: "end", ts: e.timestamp, missionId: mid[1], state };
     }
 
-    // PU context (re)established — login or server/shard change. map="megamap" =
-    // the persistent universe (ignore Arena Commander / other game modes).
+    // Context (re)established. map="megamap" = the persistent universe (ignore Arena
+    // Commander / other modes). Only the FRONTEND establish (gamerules="SC_Frontend" —
+    // you're at the main menu, prior missions are stale) counts as a session reset. The
+    // PU establish (gamerules="SC_Default") fires ~2s AFTER the game re-emits your
+    // accepted contracts on spawn-in, so resetting there wipes the missions that just
+    // loaded — which broke every login and Alt-F4 relaunch for marker-less missions.
     case "Context Establisher Done": {
-      return /map="?megamap"?/i.test(m) ? { kind: "sessionStart", ts: e.timestamp } : null;
+      if (!/map="?megamap"?/i.test(m)) return null;
+      return /gamerules="?SC_Frontend"?/i.test(m) ? { kind: "sessionStart", ts: e.timestamp } : null;
     }
 
     // Left the PU shard — quit to menu, disconnect, or full client quit
