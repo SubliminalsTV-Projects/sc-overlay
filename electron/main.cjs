@@ -444,12 +444,25 @@ function restartAsAdmin() {
   try {
     const exe = process.execPath;
     const args = app.isPackaged ? [] : [path.join(__dirname, "main.cjs")]; // dev: pass the entry script (absolute)
+    // 🔑 -WorkingDirectory must be a REAL directory. ROOT is `<install>\resources\app.asar`
+    // when packaged (a FILE, not a dir) → Start-Process fails ("directory name is invalid")
+    // and the elevated instance never launches. Use the exe's own dir when packaged.
+    const wd = app.isPackaged ? path.dirname(exe) : ROOT;
     const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
     const argList = args.length ? ` -ArgumentList @(${args.map(q).join(",")})` : "";
-    const cmd = `Start-Process -FilePath ${q(exe)}${argList} -WorkingDirectory ${q(ROOT)} -Verb RunAs`;
-    spawn("powershell", ["-NoProfile", "-Command", cmd], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    // Detached helper owns the handoff: wait for THIS instance to fully exit, then sweep any
+    // leftover sidecar, THEN launch elevated. Without the wait, the new instance races the dying
+    // old one and bounces off the single-instance lock / held :8778 — leaving nothing running and
+    // orphaned processes to kill by hand. (Name sweep covers the packaged sidecar; dev's tsx child
+    // is handled by before-quit's server.kill.)
+    const ps = [
+      `Wait-Process -Id ${process.pid} -Timeout 10 -ErrorAction SilentlyContinue`,
+      `Get-Process -Name 'sc-overlay-server' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
+      `Start-Process -FilePath ${q(exe)}${argList} -WorkingDirectory ${q(wd)} -Verb RunAs`,
+    ].join("; ");
+    spawn("powershell", ["-NoProfile", "-Command", ps], { detached: true, stdio: "ignore", windowsHide: true }).unref();
     app.isQuitting = true;
-    setTimeout(() => app.quit(), 400); // let PowerShell detach + pop UAC before we go
+    setTimeout(() => app.quit(), 300); // begin our own shutdown; the helper waits for us to exit
   } catch (e) {
     console.error("[restart-as-admin]", String(e));
   }

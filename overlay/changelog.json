@@ -1,4 +1,7 @@
 {
+  "0.1.26": [
+    "Fixed: “Restart as administrator” now actually relaunches the app elevated. It was closing the tracker and never reopening it, leaving stray processes you had to kill by hand — that's sorted."
+  ],
   "0.1.25": [
     "New: the Mining Assistant — a second overlay window (tray → Mining Assistant, or press Shift+F3) that names rocks from the mining scanner's signature, counts down your refinery jobs and alarms when they finish, and calls out your target rocks in the HAL voice. It matches the main overlay's look and stays click-through until you hover it, so you won't nudge it mid-flight.",
     "Fixed: your hotkeys now work while Star Citizen is focused, not just when you alt-tab to the desktop. If they still don't fire in-game, open Settings → In-Game Hotkeys and hit “Restart as administrator”.",
