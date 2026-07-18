@@ -633,16 +633,25 @@ export class MissionTracker extends EventEmitter {
     }
   }
 
-  /** Path to the bundled dataset whose version matches `family` ("4.8" → 4.8.2-…). */
+  /** Path to the NEWEST bundled dataset in a version family ("4.9" → the highest 4.9.x
+   *  changelist, not just the first one on disk). Within a family, changelists ARE
+   *  monotonic, so the max changelist is the newest build — picking the first match
+   *  instead served stale data (e.g. an old 4.9.0 with duplicate-ridden pools over the
+   *  finalized 4.9.0). */
   private datasetPathForFamily(family: string | null): string | null {
     if (!family) return null;
+    let best: { cl: number; path: string } | null = null;
     try {
       for (const f of readdirSync(this.dataDir)) {
-        if (!/^blueprints\.\d+\.json$/.test(f)) continue;
+        const mm = /^blueprints\.(\d+)\.json$/.exec(f);
+        if (!mm) continue;
         const p = join(this.dataDir, f);
         try {
           const v = (JSON.parse(readFileSync(p, "utf8")) as Dataset).version;
-          if (v && v.startsWith(family + ".")) return p;
+          if (v && v.startsWith(family + ".")) {
+            const cl = Number(mm[1]);
+            if (!best || cl > best.cl) best = { cl, path: p };
+          }
         } catch {
           /* skip unreadable */
         }
@@ -650,7 +659,7 @@ export class MissionTracker extends EventEmitter {
     } catch {
       /* no data dir */
     }
-    return null;
+    return best?.path ?? null;
   }
 
   // ---- event ingestion ----
