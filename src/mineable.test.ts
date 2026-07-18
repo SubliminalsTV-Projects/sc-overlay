@@ -27,6 +27,8 @@ check("too small '900'", parseSignature("900"), null);
 check("41m 35s", parseDuration("41m 35s"), 41 * 60 + 35);
 check("14h 53m", parseDuration("14h 53m"), 14 * 3600 + 53 * 60);
 check("spaced '1 h 5 m'", parseDuration("1 h 5 m"), 3600 + 5 * 60);
+check("OCR '11h'->'Ilh 10m'", parseDuration("Ilh 10m"), 11 * 3600 + 10 * 60);
+check("OCR 'Ilh 47m'", parseDuration("Ilh 47m"), 11 * 3600 + 47 * 60);
 check("no duration", parseDuration("PROCESSING"), null);
 
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");

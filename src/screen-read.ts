@@ -78,11 +78,14 @@ export function parseSignature(text: string): number | null {
   return null;
 }
 
-/** Parse an SC duration string ("41m 35s", "14h 53m", "1 h 5 m") to seconds, or null. */
+/** Parse an SC duration string ("41m 35s", "14h 53m", "1 h 5 m") to seconds, or null.
+ *  Normalizes the digit/letter OCR slips FIRST — critically "11h" reads as "Ilh" (the two
+ *  1s become I and l), which otherwise drops the whole hours field. */
 export function parseDuration(text: string): number | null {
-  const h = /(\d+)\s*h/i.exec(text)?.[1];
-  const m = /(\d+)\s*m(?![a-z])/i.exec(text)?.[1];
-  const s = /(\d+)\s*s(?![a-z])/i.exec(text)?.[1];
+  const t = text.replace(/[Il|]/g, "1").replace(/[Oo]/g, "0");
+  const h = /(\d+)\s*h/i.exec(t)?.[1];
+  const m = /(\d+)\s*m(?![a-z])/i.exec(t)?.[1];
+  const s = /(\d+)\s*s(?![a-z])/i.exec(t)?.[1];
   if (h == null && m == null && s == null) return null;
   return (Number(h ?? 0) * 3600) + (Number(m ?? 0) * 60) + Number(s ?? 0);
 }
@@ -306,25 +309,29 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
       ? lines.filter((l) => Math.abs(l.y - anchor.y) < 26 && l.x < anchor.x - 80).sort((a, b) => a.x - b.x).pop()?.text.trim() ?? null
       : null;
     const jobs: RefineryJobRead[] = [];
+    const matchMaterial = (t: string) =>
+      t.trim().toUpperCase().split(/[^A-Z]+/).find((w) => REFINERY_MATERIALS.has(w)) ?? null;
     for (const tr of lines.filter((l) => /time\s+remaining/i.test(l.text))) {
-      const valLine = lines.filter((l) => Math.abs(l.y - tr.y) < 24 && l.x > tr.x).sort((a, b) => a.x - b.x)[0];
+      // The value is the leftmost same-row line to the right that actually PARSES as a
+      // duration (skips the other panel's "TIME REMAINING" label + noise), kept within
+      // this panel's width so a second job's timer can't be grabbed.
+      const valLine = lines
+        .filter((l) => Math.abs(l.y - tr.y) < 24 && l.x > tr.x && l.x - tr.x < 560 && parseDuration(l.text) != null)
+        .sort((a, b) => a.x - b.x)[0];
       const sec = valLine ? parseDuration(valLine.text) : null;
       if (sec == null || sec <= 0) continue;
-      // Material = the nearest known refinery material above the timer in this panel.
-      // Matching a fixed vocabulary (not "any all-caps line") keeps a garbled column
-      // header like "QUALITY"->"OUAUTY" from winning.
-      const mat = lines
-        .filter((l) => Math.abs(l.x - tr.x) < 360 && l.y < tr.y && REFINERY_MATERIALS.has(l.text.trim().toUpperCase().replace(/[^A-Z]/g, "")))
-        .sort((a, b) => b.y - a.y)[0];
+      // Material = the topmost YIELDED material in this panel (its primary product), matched
+      // by word so "PRESSURIZED ICE" -> Ice; a fixed vocabulary keeps a garbled column
+      // header ("QUALITY"->"OUAUTY") from winning.
+      const matWord = lines
+        .filter((l) => Math.abs(l.x - tr.x) < 380 && l.y < tr.y && matchMaterial(l.text))
+        .sort((a, b) => a.y - b.y)
+        .map((l) => matchMaterial(l.text))[0];
+      const material = matWord ? matWord.charAt(0) + matWord.slice(1).toLowerCase() : null;
       const yl = lines.find(
         (l) => /^\d{1,4}\.\d+$/.test(l.text.trim()) && Math.abs(l.x - tr.x) < 420 && l.y < tr.y && l.y > tr.y - 150,
       );
-      jobs.push({
-        remainingSec: sec,
-        remainingRaw: valLine!.text.trim(),
-        material: mat?.text.trim() ?? null,
-        yieldScu: yl ? Number(yl.text) : null,
-      });
+      jobs.push({ remainingSec: sec, remainingRaw: valLine!.text.trim(), material, yieldScu: yl ? Number(yl.text) : null });
     }
     if (jobs.length) return { kind: "refinery", station: station ?? null, jobs };
   }
