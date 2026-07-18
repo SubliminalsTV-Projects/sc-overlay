@@ -241,12 +241,31 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
     }
   }
 
-  // Tracked-mission marker: the objective line ("Go to <place>") anchors the panel;
-  // the mission title is the line(s) directly above it, sharing its left edge.
-  const goto = lines.find((l) => /\bgo to\b/i.test(l.text));
-  if (goto) {
+  // Tracked-mission read: an OBJECTIVE line anchors the panel; the mission TITLE is the
+  // ALL-CAPS line(s) directly above it at the same left edge. SC objectives use many
+  // phrasings ("Go to …", "Mine … 5/6", "Scan …", a progress counter), not just "Go to" —
+  // the old "Go to"-only anchor silently failed on mining/scan/most missions. The title is
+  // rendered in caps while objectives are sentence-case, which cleanly separates them (and
+  // lets a verb-containing title like "ORE SCAN NEEDED" still be found). Section headers
+  // ("PRIMARY OBJECTIVES") are excluded so they can't be mistaken for the title.
+  const HEADER = /^\s*(primary|secondary|optional|bonus|side)?\s*objectives?\s*$/i;
+  const OBJECTIVE =
+    /\bgo to\b|\b\d+\s*\/\s*\d+\b|\b(mine|scan|extract|collect|retrieve|deliver|reach|travel|destroy|eliminate|defeat|investigate|defend|clear|hack|acquire|locate|escort|salvage|transport|kill|steal|recover|analyze|repair|refuel|hold|capture|activate|place|plant|download|upload|board|neutralize|assist|rescue)\b/i;
+  const isUpper = (t: string) => {
+    const L = t.replace(/[^A-Za-z]/g, "");
+    return L.length >= 4 && L === L.toUpperCase();
+  };
+  // Topmost objective = the actively-tracked mission (SC lists it first). Objectives are
+  // sentence-case, so exclude ALL-CAPS lines (those are titles/HUD headers).
+  const obj = lines
+    .filter((l) => OBJECTIVE.test(l.text) && !HEADER.test(l.text) && !isUpper(l.text))
+    .sort((a, b) => a.y - b.y)[0];
+  if (obj) {
     const titleLines = lines
-      .filter((l) => Math.abs(l.x - goto.x) < 120 && goto.y - l.y > 0 && goto.y - l.y < 110)
+      .filter(
+        (l) =>
+          isUpper(l.text) && !HEADER.test(l.text) && Math.abs(l.x - obj.x) < 150 && obj.y - l.y > 0 && obj.y - l.y < 95,
+      )
       .sort((a, b) => a.y - b.y);
     if (titleLines.length) return { kind: "mission", titleRaw: titleLines.map((l) => l.text).join(" ") };
   }
