@@ -10,12 +10,15 @@
 // game; toggle "Interactive" (tray or Ctrl+Alt+B) to click the picker/buttons.
 // Requires SC in BORDERLESS WINDOWED — overlays can't draw over exclusive fullscreen.
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, nativeImage, screen, shell, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, screen, shell, ipcMain, dialog } = require("electron");
 const { spawn } = require("node:child_process");
 const http = require("node:http");
 const path = require("node:path");
 const fs = require("node:fs");
 const { autoUpdater } = require("electron-updater");
+// Hotkeys go through a low-level keyboard hook (see hotkeys.cjs) instead of Electron's
+// globalShortcut, so they fire while Star Citizen has focus (RegisterHotKey does not).
+const hotkeys = require("./hotkeys.cjs");
 const { startFabCapture } = require("./capture.cjs");
 
 // GPU hardware acceleration is OFF by default: the HUD is a transparent, always-on-top
@@ -97,6 +100,12 @@ let hovering = false; // pointer is over the HUD (reported by the page)
 let locked = false; // force click-through always (ignore hover), for uninterrupted play
 let moveMode = false; // reposition mode: fully interactive + drag banner, hover suspended
 let modalOpen = false; // a HUD modal (what's-new card) is up — stay hover-interactive even if locked
+// Mining Assistant window — mirrors the HUD's hover-to-click shell so it behaves identically
+// (click-through until the pointer is over it, hover-suspended move mode, cog stays clickable).
+let miningHovering = false; // pointer is over the mining window (reported by the page)
+let miningMoveMode = false; // reposition mode for the mining window
+let miningModalOpen = false; // the mining cog menu is open — keep it clickable
+let miningAutoSuppress = 0; // auto-show is suppressed until this timestamp (set on a manual hide)
 let overlayEnabled = true; // master switch — false = HUD window destroyed, tracking still runs
 let manualCheck = false; // true while a tray-triggered update check is in flight (gates dialogs)
 // Background update download in flight: { version, percent, bps } — drives the live
@@ -255,30 +264,56 @@ async function postConfig(patch) {
 }
 
 // ── Mining Assistant window ───────────────────────────────────────────────────
-// A separate, INTERACTIVE always-on-top tool window (signature scanner + refinery
-// timers). Unlike the HUD it takes focus and clicks (target picker, remove buttons),
-// and the ✕ hides it rather than destroying it so countdowns + state persist.
+// A separate always-on-top tool window (signature scanner + refinery timers). It shares
+// the HUD's shell model: click-through until the pointer is over it (so it can't be clicked
+// by accident in-game), a hover-suspended move mode, and a ⚙ cog for its settings. Hiding
+// (tray / hotkey) hides rather than destroys it so countdowns + state persist.
 let miningWin = null;
 function createMining() {
   const { workArea } = screen.getPrimaryDisplay();
   miningWin = new BrowserWindow({
-    width: 360, height: 600,
-    x: workArea.x + workArea.width - 384, y: workArea.y + 60,
+    width: 392, height: 620,
+    x: workArea.x + workArea.width - 416, y: workArea.y + 60,
     frame: false, transparent: true, resizable: true, skipTaskbar: true,
     alwaysOnTop: true, hasShadow: false, fullscreenable: false, focusable: true, show: false,
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, "mining-preload.cjs"), autoplayPolicy: "no-user-gesture-required" },
   });
   miningWin.setAlwaysOnTop(true, "screen-saver");
   miningWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  miningWin.loadURL(`http://localhost:${PORT}/mining.html?v=${Date.now()}`);
-  miningWin.on("close", (e) => { e.preventDefault(); miningWin.hide(); });
+  miningWin.loadURL(`http://localhost:${PORT}/mining.html?v=${Date.now()}${AMD_COMPAT ? "&lite=1" : ""}`);
+  applyMiningMouse();
+  miningWin.on("close", (e) => { e.preventDefault(); hideMining(); });
+}
+// Click-through unless the pointer is over the window, its cog menu is open, or it's in
+// move mode — same rule as the HUD's applyMouse (minus the lock, which the tool has no need
+// for). forward:true keeps mousemove flowing so the page can detect hover enter/leave.
+function applyMiningMouse() {
+  if (!miningWin) return;
+  miningWin.setIgnoreMouseEvents(!(miningMoveMode || miningModalOpen || miningHovering), { forward: true });
+}
+// Reposition mode for the mining window (grab handle / "Done" in the page). Hover-toggling
+// is suspended so the window can't slip out from under the cursor mid-drag.
+function setMiningMoveMode(on) {
+  miningMoveMode = on;
+  applyMiningMouse();
+  if (on && miningWin) miningWin.focus();
+  miningWin?.webContents.send("mining:move-mode", on);
+}
+// Hiding via tray/hotkey/close suppresses the auto-show pop-up briefly, so it doesn't
+// immediately re-appear on the next scan/refinery read the player didn't ask to see.
+function hideMining() {
+  if (!miningWin) return;
+  miningMoveMode = false;
+  miningAutoSuppress = Date.now() + 90000;
+  miningWin.hide();
 }
 function toggleMining() {
   if (!miningWin) createMining();
-  if (miningWin.isVisible()) { miningWin.hide(); return; }
-  miningWin.show();
+  if (miningWin.isVisible()) { hideMining(); return; }
+  miningWin.showInactive(); // never steal focus from the game
+  applyMiningMouse();
 }
-ipcMain.on("mining:hide", () => { if (miningWin) miningWin.hide(); });
+ipcMain.on("mining:hide", hideMining);
 
 // Live-rebindable global shortcut for the binding-chart overlay — swap it WITHOUT a restart.
 // Returns {ok:true} or {ok:false,error} so the config window can warn (invalid combo, or the
@@ -287,42 +322,34 @@ ipcMain.on("mining:hide", () => { if (miningWin) miningWin.hide(); });
 // registerBindingHotkey so the config window can warn on an invalid / in-use combo.
 let overlayAccel = null;
 function registerOverlayHotkey(accel) {
-  try {
-    if (overlayAccel) globalShortcut.unregister(overlayAccel);
-  } catch {
-    /* ignore */
-  }
+  if (overlayAccel) hotkeys.unregister(overlayAccel);
   overlayAccel = null;
   if (!accel || typeof accel !== "string") return { ok: true };
-  try {
-    if (globalShortcut.register(accel, toggleShow)) {
-      overlayAccel = accel;
-      return { ok: true };
-    }
-    return { ok: false, error: "in_use" };
-  } catch (e) {
-    return { ok: false, error: String((e && e.message) || e) };
-  }
+  const r = hotkeys.register(accel, toggleShow);
+  if (r.ok) overlayAccel = accel;
+  return r;
 }
 
 let bindingAccel = null;
 function registerBindingHotkey(accel) {
-  try {
-    if (bindingAccel) globalShortcut.unregister(bindingAccel);
-  } catch {
-    /* ignore */
-  }
+  if (bindingAccel) hotkeys.unregister(bindingAccel);
   bindingAccel = null;
   if (!accel || typeof accel !== "string") return { ok: true };
-  try {
-    if (globalShortcut.register(accel, toggleBinding)) {
-      bindingAccel = accel;
-      return { ok: true };
-    }
-    return { ok: false, error: "in_use" };
-  } catch (e) {
-    return { ok: false, error: String((e && e.message) || e) };
-  }
+  const r = hotkeys.register(accel, toggleBinding);
+  if (r.ok) bindingAccel = accel;
+  return r;
+}
+
+// Live-rebindable hotkey for showing/hiding the Mining Assistant window. Same shape as the
+// overlay/binding registrations so the config window can warn on an invalid / in-use combo.
+let miningAccel = null;
+function registerMiningHotkey(accel) {
+  if (miningAccel) hotkeys.unregister(miningAccel);
+  miningAccel = null;
+  if (!accel || typeof accel !== "string") return { ok: true };
+  const r = hotkeys.register(accel, toggleMining);
+  if (r.ok) miningAccel = accel;
+  return r;
 }
 
 // ── actions ─────────────────────────────────────────────────────────────────
@@ -370,18 +397,62 @@ function toggleShow() {
 }
 
 function openConfig() {
-  if (configWin) return configWin.focus();
+  if (configWin) { configWin.show(); configWin.focus(); return; }
   configWin = new BrowserWindow({
     width: 780,
     height: 820,
     title: "SC Blueprint Tracker — Config",
     autoHideMenuBar: true,
+    alwaysOnTop: true,
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, "config-preload.cjs") },
   });
+  // The overlays float at the highest ("screen-saver") always-on-top level so they clear a
+  // fullscreen game. Put the settings window at the SAME level so it's never buried under the
+  // binding-chart / HUD overlay — otherwise you can't get back to settings once one is up.
+  configWin.setAlwaysOnTop(true, "screen-saver");
   configWin.loadURL(`${CONFIG_URL}?v=${Date.now()}`);
   configWin.on("closed", () => {
     configWin = null;
   });
+}
+
+// ── run-as-administrator (for in-game hotkeys) ────────────────────────────────
+// Star Citizen runs elevated (Easy Anti-Cheat), and Windows UIPI won't let a normal-privilege
+// app's low-level keyboard hook see keystrokes while an elevated window is focused. So the
+// hotkeys only work in-game if THIS app is elevated too. We don't force it (no UAC nag for
+// casual users) — the config window offers an opt-in "Restart as administrator".
+let cachedElevated = null; // null=unknown, true/false once checked (doesn't change per run)
+function checkElevated() {
+  return new Promise((resolve) => {
+    if (cachedElevated !== null) return resolve(cachedElevated);
+    if (process.platform !== "win32") { cachedElevated = false; return resolve(false); }
+    try {
+      const { execFile } = require("node:child_process");
+      execFile("powershell", ["-NoProfile", "-Command",
+        "[bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)"],
+        { windowsHide: true, timeout: 4000 }, (err, stdout) => {
+          cachedElevated = !err && /true/i.test(String(stdout));
+          resolve(cachedElevated);
+        });
+    } catch { cachedElevated = false; resolve(false); }
+  });
+}
+// Relaunch the app elevated via ShellExecute "runas" (UAC prompt), then quit this instance so
+// the elevated one can take the single-instance lock + the sidecar port. Detached PowerShell
+// so the elevation survives our exit.
+function restartAsAdmin() {
+  try {
+    const exe = process.execPath;
+    const args = app.isPackaged ? [] : [path.join(__dirname, "main.cjs")]; // dev: pass the entry script (absolute)
+    const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+    const argList = args.length ? ` -ArgumentList @(${args.map(q).join(",")})` : "";
+    const cmd = `Start-Process -FilePath ${q(exe)}${argList} -WorkingDirectory ${q(ROOT)} -Verb RunAs`;
+    spawn("powershell", ["-NoProfile", "-Command", cmd], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    app.isQuitting = true;
+    setTimeout(() => app.quit(), 400); // let PowerShell detach + pop UAC before we go
+  } catch (e) {
+    console.error("[restart-as-admin]", String(e));
+  }
 }
 
 function postApi(p) {
@@ -520,9 +591,18 @@ function refreshTray() {
         : [{ label: "Overlay off — tracking still running", enabled: false }]),
       { type: "separator" },
       { label: "Mining Assistant", click: toggleMining },
+      {
+        label: "Binding chart overlay",
+        type: "checkbox",
+        checked: !!(bindingWin && bindingWin.isVisible()),
+        click: () => { toggleBinding(); refreshTray(); },
+      },
       { label: "Refresh missions (re-read log)", click: refreshMissions },
       { label: "Verify from logs", click: verifyFromLogs },
       { label: "Open config…", click: openConfig },
+      ...(cachedElevated === false
+        ? [{ label: "Restart as administrator (for in-game hotkeys)", click: restartAsAdmin }]
+        : []),
       { type: "separator" },
       ...(updateDownload
         ? [{
@@ -575,20 +655,26 @@ if (!app.requestSingleInstanceLock()) {
     if (overlayEnabled) createOverlay();
     createTray();
     setupUpdater();
-    globalShortcut.register("Control+Alt+L", toggleLock); // lock/unlock click-through
-    globalShortcut.register("Control+Alt+M", toggleMove); // move/reposition mode
+    hotkeys.register("Control+Alt+L", toggleLock); // lock/unlock click-through
+    hotkeys.register("Control+Alt+M", toggleMove); // move/reposition mode
     // Configurable global hotkeys (live-rebindable from the config window), read from the
     // persisted config: overlay show/hide (default F3) + binding-chart PNG (default Alt+F3).
     let overlayKey = "F3";
     let bindKey = "Alt+F3";
+    let miningKey = "Shift+F3";
     try {
       const p = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", "config.json");
       const c = JSON.parse(fs.readFileSync(p, "utf8"));
       if (c.overlayHotkey) overlayKey = c.overlayHotkey;
       if (c.bindingHotkey) bindKey = c.bindingHotkey;
+      if (c.miningHotkey) miningKey = c.miningHotkey;
     } catch { /* defaults */ }
     registerOverlayHotkey(overlayKey);
     registerBindingHotkey(bindKey);
+    registerMiningHotkey(miningKey);
+    // Learn our elevation state (async) so the tray can offer "Restart as administrator" when
+    // we're NOT elevated — the state hotkeys-over-a-focused-game depend on.
+    checkElevated().then(() => refreshTray());
     // Auto-show: pre-create the (hidden) Mining Assistant window so it's listening on the
     // event stream and can pop itself when the scanner/refinery screen is detected.
     try {
@@ -626,11 +712,19 @@ if (!app.requestSingleInstanceLock()) {
     return true;
   });
   ipcMain.handle("mining:clear-tone", async () => { await postConfig({ miningTone: "" }); return true; });
-  ipcMain.on("mining:show", () => { if (!miningWin) createMining(); miningWin.showInactive(); });
+  // Auto-show from the page (a new scan / refinery read). Gated by the suppress window so a
+  // manual hide keeps it out of the way for a bit. Never steals focus from the game.
+  ipcMain.on("mining:show", () => {
+    if (Date.now() < miningAutoSuppress) return;
+    if (!miningWin) createMining();
+    if (!miningWin.isVisible()) { miningWin.showInactive(); applyMiningMouse(); }
+  });
 
   // Config window's "Show in-game overlay" toggle (crash workaround). Owned here, not by
   // the sidecar config, so destroy/create is immediate.
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("app:is-elevated", () => checkElevated());
+  ipcMain.handle("app:restart-as-admin", () => { restartAsAdmin(); return true; });
   ipcMain.handle("overlay:get-enabled", () => overlayEnabled);
   ipcMain.handle("overlay:set-enabled", (_e, on) => {
     setOverlayEnabled(!!on);
@@ -658,6 +752,8 @@ if (!app.requestSingleInstanceLock()) {
     registerOverlayHotkey(typeof accel === "string" ? accel : ""));
   ipcMain.handle("set-binding-hotkey", (_e, accel) =>
     registerBindingHotkey(typeof accel === "string" ? accel : ""));
+  ipcMain.handle("set-mining-hotkey", (_e, accel) =>
+    registerMiningHotkey(typeof accel === "string" ? accel : ""));
 
   // The HUD page reports hover enter/leave → become clickable only while hovered.
   ipcMain.on("overlay:hover", (_e, on) => {
@@ -683,6 +779,22 @@ if (!app.requestSingleInstanceLock()) {
     if (moveMode) setMoveMode(false);
   });
 
+  // Mining Assistant window: same hover-to-click + move-mode + cog-modal bridge as the HUD.
+  ipcMain.on("mining:hover", (_e, on) => {
+    miningHovering = !!on;
+    applyMiningMouse();
+  });
+  ipcMain.on("mining:modal", (_e, on) => {
+    miningModalOpen = !!on;
+    applyMiningMouse();
+  });
+  ipcMain.on("mining:begin-move", () => {
+    if (!miningMoveMode) setMiningMoveMode(true);
+  });
+  ipcMain.on("mining:end-move", () => {
+    if (miningMoveMode) setMiningMoveMode(false);
+  });
+
   // Tray app — keep running when the overlay window is closed.
   app.on("window-all-closed", (e) => {
     e.preventDefault?.();
@@ -690,7 +802,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("before-quit", () => {
     app.isQuitting = true;
-    globalShortcut.unregisterAll();
+    hotkeys.unregisterAll();
     if (server) server.kill();
     if (tray) tray.destroy();
   });

@@ -101,6 +101,9 @@ interface Config {
   /** Global hotkey that shows/hides the whole overlay HUD (Electron accelerator
    *  syntax). Read by main.cjs at startup. */
   overlayHotkey: string;
+  /** Global hotkey that shows/hides the Mining Assistant window (Electron accelerator
+   *  syntax). Read by main.cjs at startup. */
+  miningHotkey: string;
   /** Recent-activity timestamps: relative ("2h ago") when true, absolute date+clock
    *  when false. Read by the overlay via the mission view's `prefs`. */
   timeRelative: boolean;
@@ -138,6 +141,7 @@ const DEFAULTS: Config = {
   bindingPng: "",
   bindingHotkey: "Alt+F3",
   overlayHotkey: "F3",
+  miningHotkey: "Shift+F3",
   timeRelative: true,
   shareLogs: false,
   seenChangelog: "",
@@ -706,6 +710,7 @@ const server = createServer(async (req, res) => {
     if (typeof body.bindingPng === "string") config.bindingPng = body.bindingPng;
     if (typeof body.bindingHotkey === "string" && body.bindingHotkey.trim()) config.bindingHotkey = body.bindingHotkey.trim();
     if (typeof body.overlayHotkey === "string" && body.overlayHotkey.trim()) config.overlayHotkey = body.overlayHotkey.trim();
+    if (typeof body.miningHotkey === "string" && body.miningHotkey.trim()) config.miningHotkey = body.miningHotkey.trim();
     if (typeof body.timeRelative === "boolean") config.timeRelative = body.timeRelative;
     if (typeof body.shareLogs === "boolean") config.shareLogs = body.shareLogs;
     if (typeof body.showLoadout === "boolean") config.showLoadout = body.showLoadout;

@@ -169,9 +169,22 @@
 
   <div class="card">
     <div class="label">Mining Assistant</div>
-    <div class="hint" style="margin-top:0">A separate overlay window (tray → Mining Assistant) that reads the mining scanner's signature to name rocks, and the Refinement Center to alarm when a refine finishes. Voice, volume and alert-tone controls live in that window's ⚙.</div>
+    <div class="hint" style="margin-top:0">A separate overlay window (tray → Mining Assistant) that reads the mining scanner's signature to name rocks, and the Refinement Center to alarm when a refine finishes. It's click-through until you hover it — just like the main overlay — so you won't click it by accident in-game. Voice, volume, alert-tone and announce controls all live in that window's ⚙.</div>
     <label class="opt"><input type="checkbox" id="miningAutoShow" /> Pop it open automatically when I'm scanning or refining</label>
     <div class="hint">Shows the window on its own when the scanner or Refinement Center screen is detected. If you close it, it stays out of the way for a bit before it can pop again.</div>
+    <label class="opt" style="margin-top:12px;">Show / hide hotkey
+      <button type="button" id="miningHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('mining')">Shift + F3</button>
+      <input type="hidden" id="miningHotkey" />
+    </label>
+    <div class="hint" id="miningHotkeyHint">Press this key in-game to show or hide the Mining Assistant window. Click the button and press a new key to change it — a single <strong>F3 / F13–F24</strong>, or any combo with Ctrl / Alt / Shift. Default is <strong>Shift+F3</strong>. <strong>Applies immediately, no restart.</strong></div>
+  </div>
+
+  <div class="card">
+    <div class="label">In-Game Hotkeys</div>
+    <div class="hint" style="margin-top:0">Do your hotkeys work when you alt-tab to the desktop, but do nothing while Star Citizen is focused? Windows is the reason: the game runs as administrator (Easy Anti-Cheat requires it), and another app's hotkeys can only reach it while it's focused if that app is <strong>also</strong> running as administrator.</div>
+    <div class="hint" id="adminOk" style="display:none; margin-top:10px; color:#63d6a0; opacity:1">✓ Running as administrator — your hotkeys work while the game is focused.</div>
+    <button type="button" id="adminBtn" class="amber" style="display:none; margin-top:12px" onclick="restartAsAdmin()">Restart as administrator</button>
+    <div class="hint" id="adminHint" style="display:none">Relaunches the app with elevated permissions — you'll get a Windows UAC prompt, just click <strong>Yes</strong>. Nothing else changes; this only affects hotkeys while the game has focus. <em>To skip this every launch, right-click the app's shortcut → Properties → Compatibility → “Run this program as an administrator.”</em></div>
   </div>
 
   <div class="card">
@@ -227,6 +240,7 @@
     document.getElementById("bindingPng").value = cfg.bindingPng || "";
     setHotkeyDisplay("overlay", cfg.overlayHotkey || "F3");
     setHotkeyDisplay("binding", cfg.bindingHotkey || "Alt+F3");
+    setHotkeyDisplay("mining", cfg.miningHotkey || "Shift+F3");
     document.body.classList.toggle("show-loadout", !!cfg.showLoadout);
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
@@ -239,6 +253,20 @@
     tokenEl.value = cfg.hasSyncToken ? cfg.syncTokenPreview : "";
     document.getElementById("syncStatus").textContent = cfg.hasSyncToken ? "" : "No token yet — paste one to connect.";
     renderList();
+    refreshAdmin();
+  }
+
+  // Elevation state: show "running as admin" or the opt-in "Restart as administrator" button.
+  async function refreshAdmin() {
+    if (!(window.overlayConfig && window.overlayConfig.isElevated)) return;
+    let el = false;
+    try { el = await window.overlayConfig.isElevated(); } catch { /* older shell */ }
+    document.getElementById("adminOk").style.display = el ? "" : "none";
+    document.getElementById("adminBtn").style.display = el ? "none" : "";
+    document.getElementById("adminHint").style.display = el ? "none" : "";
+  }
+  function restartAsAdmin() {
+    if (window.overlayConfig && window.overlayConfig.restartAsAdmin) window.overlayConfig.restartAsAdmin();
   }
 
   function renderList() {
@@ -288,6 +316,7 @@
       bindingPng: document.getElementById("bindingPng").value,
       overlayHotkey: document.getElementById("overlayHotkey").value.trim() || "F3",
       bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "Alt+F3",
+      miningHotkey: document.getElementById("miningHotkey").value.trim() || "Shift+F3",
       syncEnabled: document.getElementById("syncEnabled").checked,
       fabCapture: document.getElementById("fabCapture").checked,
       missionOcr: document.getElementById("missionOcr").checked,
@@ -338,6 +367,8 @@
                apply: (a) => window.overlayConfig && window.overlayConfig.setOverlayHotkey && window.overlayConfig.setOverlayHotkey(a) },
     binding: { input: "bindingHotkey", btn: "bindingHotkeyBtn", hint: "bindingHotkeyHint", def: "Alt+F3",
                apply: (a) => window.overlayConfig && window.overlayConfig.setBindingHotkey && window.overlayConfig.setBindingHotkey(a) },
+    mining: { input: "miningHotkey", btn: "miningHotkeyBtn", hint: "miningHotkeyHint", def: "Shift+F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setMiningHotkey && window.overlayConfig.setMiningHotkey(a) },
   };
   let capturing = null; // which HOTKEYS key is mid-capture, or null
   function prettyHotkey(accel) {
