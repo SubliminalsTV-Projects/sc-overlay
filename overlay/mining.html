@@ -4,110 +4,227 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Mining Assistant</title>
+<script>/* AMD compatibility: apply the lite skin BEFORE first paint (no flash) when the shell asks for it. */
+  if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");</script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
+  /* Shares the Mission Control stream-overlay design language with the main HUD
+     (missions.html): navy-teal translucent glass, cyan chrome, gold value accents,
+     cyan diamond glyph, CRT scanlines + visor sheen, subtle helmet-projection tilt,
+     Inter (uppercase) labels + monospace numbers. Kept deliberately identical so the
+     two windows read as one product. */
   :root {
     --cyan: #45D0E0; --cyan-bright: #7fe3ef; --cyan-text: #c4dbe6; --cyan-dim: #7fa7bb; --faint: #5d7e90;
     --gold: #FFD27A; --amber: #F5A623; --green: #2ee6a0; --red: #ff8478;
-    --divider: rgba(92, 198, 224, 0.22);
-    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
-    --ui: Inter, "Segoe UI", system-ui, sans-serif;
+    --border: rgba(92, 198, 224, 0.38); --divider: rgba(92, 198, 224, 0.16); --track: #0c1a26;
+    --sans: "Inter", system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", monospace;
     --leg: #ff9d5c; --epic: #c98bff; --rare: #5aa9ff; --unc: #4fd6a0; --common: #9fb4c0;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: transparent; font-family: var(--ui); color: var(--cyan-text); overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
+
+  /* Thin, themed scrollbars (matches the HUD). */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(92, 198, 224, 0.28); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(92, 198, 224, 0.5); }
+  * { scrollbar-width: thin; scrollbar-color: rgba(92, 198, 224, 0.28) transparent; }
+
   #panel {
-    width: 340px; margin: 6px auto; padding: 0 0 8px;
-    background: linear-gradient(180deg, rgba(13,27,40,.82), rgba(8,17,26,.9));
-    border: 1px solid var(--divider); border-radius: 9px; backdrop-filter: blur(7px);
-    box-shadow: 0 10px 34px rgba(0,0,0,.5); overflow: hidden;
+    position: relative; width: 360px; margin: 14px auto 16px; border-radius: 12px;
+    background: linear-gradient(180deg, rgba(13, 27, 40, 0.72), rgba(8, 17, 26, 0.8));
+    border: 1px solid var(--border);
+    box-shadow: inset 0 0 0 1px rgba(92, 198, 224, 0.08), 0 8px 34px rgba(0, 0, 0, 0.45), 0 0 30px rgba(69, 208, 224, 0.16);
+    -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+    /* Subtle helmet-projection tilt (matches the HUD). rotateY keeps the horizontal
+       extent constant as content grows, so no horizontal scrollbar. */
+    transform: perspective(1700px) rotateY(4deg);
+    transform-origin: 60% center;
+    overflow: hidden;
   }
-  .head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; -webkit-app-region: drag;
-    border-bottom: 1px solid var(--divider); background: rgba(69,208,224,.05); }
-  .head .diamond { width: 9px; height: 9px; background: var(--cyan); transform: rotate(45deg); box-shadow: 0 0 8px var(--cyan); }
-  .head h1 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--cyan-text); flex: 1; }
-  .head .x { -webkit-app-region: no-drag; cursor: pointer; color: var(--cyan-dim); font-size: 14px; padding: 2px 5px; border-radius: 3px; }
-  .head .x:hover { color: var(--red); background: rgba(255,132,120,.1); }
-  .setpanel { padding: 8px 12px; border-bottom: 1px solid var(--divider); background: rgba(69,208,224,.04); }
-  .setrow { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 11.5px; color: var(--cyan-dim); }
-  .setrow .k { min-width: 74px; }
-  .setrow input[type=range] { flex: 1; accent-color: var(--gold); height: 4px; }
-  .seg2 { padding: 2px 12px; border: 1px solid var(--divider); border-radius: 9px; cursor: pointer; color: var(--green); font-weight: 700; text-transform: uppercase; font-size: 9.5px; letter-spacing: .08em; }
-  .seg2.off { color: var(--faint); }
-  .seg2:hover { border-color: var(--cyan); }
-  .lnk { cursor: pointer; color: var(--cyan-text); text-decoration: underline dotted; font-size: 11px; }
-  .lnk:hover { color: var(--gold); }
-  .lnk.clr { color: var(--faint); }
-  .sec { padding: 8px 12px 4px; }
+  /* CRT scanlines */
+  #panel::before { content: ""; position: absolute; inset: 0; border-radius: 12px; pointer-events: none; z-index: 3;
+    background: repeating-linear-gradient(0deg, rgba(150, 225, 245, 0.06) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
+  /* visor sheen */
+  #panel::after { content: ""; position: absolute; inset: 0; border-radius: 12px; pointer-events: none; z-index: 3;
+    background: linear-gradient(180deg, rgba(180, 235, 250, 0.09), transparent 36%); }
+
+  /* AMD compatibility "lite" skin (added on <html> via ?lite): strip everything that forces
+     continuous GPU recompositing over the game's Vulkan surface — backdrop blur, the blend-mode
+     scanlines/sheen, the 3D tilt, and all animations. Panel bg goes near-opaque for legibility. */
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+    background: rgba(8, 17, 26, 0.95) !important; transform: none !important; }
+  html.amd-lite #panel::before, html.amd-lite #panel::after { display: none !important; }
+  html.amd-lite #moveBanner { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  html.amd-lite *, html.amd-lite *::before, html.amd-lite *::after { animation: none !important; transition: none !important; }
+
+  /* Move/reposition mode: whole panel becomes a drag surface with a banner (identical to
+     the HUD — dragging by a click-through window fights hover, so move mode suspends it). */
+  #moveBanner { display: none; position: absolute; inset: 0; z-index: 50; -webkit-app-region: drag; cursor: move;
+    background: rgba(69, 208, 224, 0.12); -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); }
+  #panel.moving #moveBanner { display: flex; align-items: center; justify-content: center; }
+  .movebox { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 4px;
+    border: 1px solid var(--cyan); background: rgba(8, 17, 26, 0.92); color: var(--cyan-text);
+    font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  #moveDone { -webkit-app-region: no-drag; cursor: pointer; font-family: var(--sans); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 12px; border-radius: 3px;
+    border: 1px solid var(--cyan); background: rgba(69, 208, 224, 0.15); color: var(--cyan); }
+  #moveDone:hover { background: rgba(69, 208, 224, 0.3); }
+
+  /* Grab handle: the discoverable "move" affordance (Electron only). Clicking it drops
+     into move mode — the reliable, hover-suspended drag. */
+  #grip { display: none; position: absolute; top: 8px; right: 44px; z-index: 20;
+    width: 25px; height: 25px; place-items: center; -webkit-app-region: no-drag;
+    cursor: grab; user-select: none; border: 1px solid var(--border); border-radius: 4px;
+    background: rgba(8, 17, 26, 0.72); color: var(--cyan); opacity: 0.85; transition: opacity 0.15s ease; }
+  #grip svg { width: 14px; height: 14px; display: block; }
+  #panel.electron #grip { display: grid; }
+  #grip:hover { opacity: 1 !important; background: rgba(69, 208, 224, 0.2); }
+  #panel.moving #grip { display: none; }
+
+  /* Settings cog (top-right) — same chrome as the HUD. Opens the settings menu (audio,
+     announce mode, tools). */
+  #cog { position: absolute; top: 8px; right: 11px; z-index: 22; -webkit-app-region: no-drag;
+    width: 25px; height: 25px; display: grid; place-items: center; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 4px; background: rgba(8, 17, 26, 0.72);
+    color: var(--cyan); font-size: 14px; line-height: 1; opacity: 0.85; transition: opacity 0.15s ease; }
+  #cog.open { opacity: 1; }
+  #cog:hover { opacity: 1; background: rgba(69, 208, 224, 0.2); }
+  #panel.moving #cog { display: none; }
+  #cogMenu { display: none; position: absolute; top: 37px; right: 11px; z-index: 31; width: 244px;
+    -webkit-app-region: no-drag; background: #0a1822; border: 1px solid var(--border); border-radius: 4px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6); padding: 6px 0 8px; }
+  #cogMenu.open { display: block; }
+  #cogMenu .cog-sec { font-family: var(--sans); font-size: 8.5px; font-weight: 700; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--cyan-dim); padding: 8px 12px 4px; }
+  #cogMenu .cog-opt { display: flex; align-items: center; gap: 9px; padding: 6px 12px; cursor: pointer;
+    font-family: var(--sans); font-size: 12px; color: var(--cyan-text); }
+  #cogMenu .cog-opt:hover { background: rgba(69, 208, 224, 0.12); }
+  #cogMenu .cog-opt input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--cyan); cursor: pointer; }
+  /* Volume row: a labelled slider that fills the menu width. */
+  #cogMenu .cog-slider { display: flex; align-items: center; gap: 10px; padding: 5px 12px 7px;
+    font-family: var(--sans); font-size: 12px; color: var(--cyan-text); }
+  #cogMenu .cog-slider input[type=range] { flex: 1; accent-color: var(--gold); height: 4px; cursor: pointer; }
+  /* Alert-tone row: choose/clear a custom WAV. */
+  #cogMenu .cog-tone { display: flex; align-items: center; gap: 8px; padding: 4px 12px 7px; font-size: 11.5px; color: var(--cyan-dim); }
+  #cogMenu .cog-tone .lnk { cursor: pointer; color: var(--cyan-text); text-decoration: underline dotted; }
+  #cogMenu .cog-tone .lnk:hover { color: var(--gold); }
+  #cogMenu .cog-tone .lnk.clr { color: var(--faint); text-decoration: none; }
+  #cogMenu .cog-tone .lnk.clr:hover { color: var(--red); }
+  /* Announce segmented control inside the cog. */
+  #cogMenu .cog-seg { display: flex; gap: 6px; padding: 4px 12px 8px; }
+  #cogMenu .cog-seg .seg { flex: 1; text-align: center; padding: 5px 0; border: 1px solid var(--divider);
+    border-radius: 4px; cursor: pointer; font-family: var(--sans); font-size: 11px; font-weight: 600;
+    color: var(--cyan-dim); }
+  #cogMenu .cog-seg .seg.on { background: rgba(255, 210, 122, 0.16); border-color: var(--gold); color: var(--gold); }
+  #cogMenu .cog-seg .seg:hover { border-color: var(--cyan); }
+  /* Cog action buttons (Test sound / Open settings). */
+  #cogMenu .cog-btn { display: block; width: calc(100% - 24px); margin: 5px 12px 2px; padding: 7px 10px;
+    text-align: center; font-family: var(--sans); font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em;
+    cursor: pointer; color: var(--cyan-text); background: rgba(69, 208, 224, 0.1);
+    border: 1px solid var(--border); border-radius: 4px; }
+  #cogMenu .cog-btn:hover { background: rgba(69, 208, 224, 0.2); border-color: var(--cyan); }
+
+  /* Header: matches the HUD (drag region + tick-strip divider + eyebrow with diamond). */
+  .head { position: relative; padding: 15px 17px 13px; z-index: 10; border-bottom: 1px solid var(--divider);
+    -webkit-app-region: drag; cursor: grab; }
+  .head::after { content: ""; position: absolute; left: 17px; right: 17px; bottom: -1px; height: 2px;
+    background: repeating-linear-gradient(90deg, rgba(92, 198, 224, 0.32) 0 3px, transparent 3px 8px); opacity: 0.7; }
+  .eyebrow { position: relative; display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase; color: #eaf6fb; text-shadow: 0 0 14px rgba(69, 208, 224, 0.3); }
+  .eyebrow .dot { position: relative; width: 8px; height: 8px; background: var(--cyan-bright); transform: rotate(45deg);
+    box-shadow: 0 0 8px var(--cyan); animation: pulse 1.9s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .sub { margin-top: 5px; font-size: 9px; font-weight: 600; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--cyan-dim); }
+
+  /* Collapsible sections (Signature Scanner / Refinery Timers). */
+  .sec { padding: 8px 13px 4px; position: relative; z-index: 2; }
   .sec-h { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
-    font-size: 9.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--cyan-dim); padding: 4px 0; }
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan); padding: 4px 0; }
   .sec-h .car { color: var(--cyan); font-size: 9px; transition: transform .12s; }
-  .sec-h:hover { color: var(--cyan-text); }
+  .sec-h:hover { color: var(--cyan-bright); }
   .sec-h .badge { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--faint); }
 
   /* Scanner readout */
   .scan-now { margin: 4px 0 8px; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--divider);
-    background: rgba(69,208,224,.05); transition: background .2s, border-color .2s; }
+    background: rgba(69, 208, 224, 0.05); transition: background .2s, border-color .2s; }
   .scan-now.empty { color: var(--faint); font-size: 11.5px; text-align: center; padding: 14px 12px; }
-  .scan-now .rock { font-size: 18px; font-weight: 700; color: var(--gold); letter-spacing: .01em; }
+  .scan-now .rock { font-size: 18px; font-weight: 700; color: var(--gold); letter-spacing: .01em;
+    text-shadow: 0 0 12px rgba(255, 210, 122, 0.3); }
   .scan-now .meta { margin-top: 3px; font-size: 11px; color: var(--cyan-dim); }
   .scan-now .sig { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 4px; }
   .scan-now.hit { animation: flashhit 1.1s ease-out; border-color: var(--gold); }
-  @keyframes flashhit { 0% { background: rgba(255,210,122,.55); } 100% { background: rgba(69,208,224,.05); } }
+  @keyframes flashhit { 0% { background: rgba(255, 210, 122, 0.55); } 100% { background: rgba(69, 208, 224, 0.05); } }
   .rk-pill { display: inline-block; font-size: 8.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
     padding: 1px 6px; border-radius: 8px; margin-left: 6px; vertical-align: 1px; }
 
-  /* Target picker */
-  .targets { max-height: 210px; overflow-y: auto; margin: 2px 0 6px; padding-right: 2px; }
-  .targets::-webkit-scrollbar { width: 6px; } .targets::-webkit-scrollbar-thumb { background: rgba(120,210,235,.25); border-radius: 3px; }
-  .rar-h { font-size: 8.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin: 7px 0 2px; padding-left: 2px; }
-  .rk { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-  .rk:hover { background: rgba(69,208,224,.1); }
-  .rk .box { width: 13px; height: 13px; border: 1.5px solid var(--cyan-dim); border-radius: 3px; flex: none; display: grid; place-items: center; }
+  /* Target picker — two columns to keep the panel short. Rarity headers span both. */
+  .tgt-lbl { font-size: 8.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--faint); margin: 2px 0 4px; }
+  .targets { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 10px; align-content: start;
+    max-height: 236px; overflow-y: auto; margin: 2px 0 6px; padding-right: 2px; }
+  .rar-h { grid-column: 1 / -1; font-size: 8.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    margin: 7px 0 2px; padding-left: 2px; }
+  .rk { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 4px; cursor: pointer;
+    font-size: 12px; min-width: 0; }
+  .rk:hover { background: rgba(69, 208, 224, 0.1); }
+  .rk .box { width: 13px; height: 13px; border: 1.5px solid var(--cyan-dim); border-radius: 3px; flex: none;
+    display: grid; place-items: center; }
   .rk.on .box { background: var(--gold); border-color: var(--gold); }
   .rk.on .box::after { content: "✓"; font-size: 10px; color: #14202b; font-weight: 800; }
   .rk.on { color: var(--gold); }
-  .rk .nm { flex: 1; }
-
-  /* Announce-mode toggle */
-  .announce { display: flex; align-items: center; gap: 6px; margin: 2px 0 5px; font-size: 10px; }
-  .announce .lbl { color: var(--faint); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; font-size: 8.5px; margin-right: 2px; }
-  .announce .seg { padding: 2px 9px; border: 1px solid var(--divider); border-radius: 9px; cursor: pointer; color: var(--cyan-dim); }
-  .announce .seg.on { background: var(--gold); border-color: var(--gold); color: #14202b; font-weight: 700; }
-  .announce .seg:hover { border-color: var(--cyan); }
+  .rk .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Refinery jobs */
   .jobs { margin: 4px 0 2px; }
   .job { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin-bottom: 6px; border-radius: 6px;
-    border: 1px solid var(--divider); background: rgba(69,208,224,.04); }
-  .job.done { border-color: var(--green); background: rgba(46,230,160,.12); animation: flashdone 1.2s ease-out; }
-  @keyframes flashdone { 0% { background: rgba(46,230,160,.5); } 100% { background: rgba(46,230,160,.12); } }
+    border: 1px solid var(--divider); background: rgba(69, 208, 224, 0.04); }
+  .job.done { border-color: var(--green); background: rgba(46, 230, 160, 0.12); animation: flashdone 1.2s ease-out; }
+  @keyframes flashdone { 0% { background: rgba(46, 230, 160, 0.5); } 100% { background: rgba(46, 230, 160, 0.12); } }
   .job .info { flex: 1; min-width: 0; }
   .job .mat { font-size: 13px; font-weight: 700; color: var(--cyan-text); }
   .job .sta { font-size: 10px; color: var(--cyan-dim); margin-top: 1px; }
   .job .time { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; color: var(--gold); text-align: right; }
   .job.done .time { color: var(--green); }
   .job .rm { cursor: pointer; color: var(--faint); font-size: 13px; padding: 2px 5px; border-radius: 3px; }
-  .job .rm:hover { color: var(--red); background: rgba(255,132,120,.12); }
+  .job .rm:hover { color: var(--red); background: rgba(255, 132, 120, 0.12); }
   .empty-j { color: var(--faint); font-size: 11px; text-align: center; padding: 12px 8px; }
-  .foot { padding: 6px 12px 2px; font-size: 9px; color: var(--faint); text-align: center; letter-spacing: .04em; }
+  .foot { padding: 8px 13px 11px; position: relative; z-index: 2; border-top: 1px solid var(--divider);
+    font-size: 9px; color: var(--faint); text-align: center; letter-spacing: .04em; }
   .hidden { display: none; }
 </style>
 </head>
 <body>
 <div id="panel">
-  <div class="head"><span class="diamond"></span><h1>Mining Assistant</h1><span class="x" id="setBtn" title="Audio settings" style="font-size:12px">⚙</span><span class="x" id="testBtn" title="Test alert sound" style="font-size:12px">🔊</span><span class="x" id="closeBtn" title="Hide (tray to reopen)">✕</span></div>
-  <div id="setPanel" class="setpanel hidden">
-    <div class="setrow"><span class="k">HAL voice</span><span class="seg2" id="voiceBtn">on</span></div>
-    <div class="setrow"><span class="k">Volume</span><input type="range" id="volSlider" min="0" max="100" step="1"></div>
-    <div class="setrow"><span class="k">Alert tone</span><span class="lnk" id="toneBtn">choose WAV…</span><span class="lnk clr hidden" id="toneClr">default</span></div>
+  <div id="moveBanner"><div class="movebox">⠿ Drag anywhere to move<button id="moveDone">Done</button></div></div>
+  <div class="head">
+    <div id="grip" title="Move window"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg></div>
+    <div id="cog" title="Mining settings">⚙</div>
+    <div id="cogMenu">
+      <div class="cog-sec">Audio</div>
+      <label class="cog-opt"><input type="checkbox" id="voiceChk" /> HAL voice announcements</label>
+      <div class="cog-slider"><span>Volume</span><input type="range" id="volSlider" min="0" max="100" step="1" /></div>
+      <div class="cog-tone">Alert tone <span class="lnk" id="toneBtn">choose WAV…</span><span class="lnk clr hidden" id="toneClr">reset</span></div>
+      <div class="cog-sec">Announce</div>
+      <div class="cog-seg"><span class="seg" id="segTarget" data-m="target">Targets only</span><span class="seg" id="segEvery" data-m="every">Every rock</span></div>
+      <div class="cog-sec">Tools</div>
+      <button type="button" id="testBtn" class="cog-btn">🔊 Test sound</button>
+      <button type="button" id="openSettings" class="cog-btn">⚙ Open full settings…</button>
+    </div>
+    <div class="eyebrow"><span class="dot"></span> Mining Assistant</div>
+    <div class="sub">Signature scanner · Refinery timers</div>
   </div>
 
   <div class="sec">
     <div class="sec-h" data-sec="scan"><span class="car">▾</span>Signature Scanner<span class="badge" id="scanBadge"></span></div>
     <div id="scanBody">
       <div class="scan-now empty" id="scanNow">Scan a rock — I'll name it here.</div>
-      <div class="announce"><span class="lbl">Announce</span><span class="seg" id="segTarget" data-m="target">Targets</span><span class="seg" id="segEvery" data-m="every">Every rock</span></div>
-      <div class="rar-h" style="color:var(--faint)">Hunting for <span id="tgtCount"></span></div>
+      <div class="tgt-lbl">Hunting for <span id="tgtCount"></span></div>
       <div class="targets" id="targets"></div>
     </div>
   </div>
@@ -296,10 +413,9 @@
     });
   }, 1000);
 
-  // ---- audio settings panel ----
-  $("setBtn").addEventListener("click", () => $("setPanel").classList.toggle("hidden"));
-  const renderVoice = () => { const on = voiceOn(); $("voiceBtn").textContent = on ? "on" : "off"; $("voiceBtn").classList.toggle("off", !on); };
-  $("voiceBtn").addEventListener("click", () => { localStorage.setItem("miningVoice", voiceOn() ? "off" : "on"); renderVoice(); });
+  // ---- settings (all in the cog) ----
+  const renderVoice = () => { $("voiceChk").checked = voiceOn(); };
+  $("voiceChk").addEventListener("change", () => { localStorage.setItem("miningVoice", $("voiceChk").checked ? "on" : "off"); });
   $("volSlider").value = Math.round(getVol() * 100);
   $("volSlider").addEventListener("input", () => { localStorage.setItem("miningVol", ($("volSlider").value / 100).toString()); if (master) master.gain.value = getVol(); });
   renderVoice();
@@ -316,13 +432,25 @@
     if (window.miningApi && window.miningApi.clearTone) await window.miningApi.clearTone();
     toneBuf = null; loadCfg();
   });
+  $("testBtn").addEventListener("click", () => { ensureActx(); chime(); speakClips(["c_thatlookslike", "n_gold"], "Mining assistant ready"); });
+  $("openSettings").addEventListener("click", (e) => { e.stopPropagation(); window.miningApi?.openSettings?.(); setCog(false); });
   loadCfg();
   window.addEventListener("focus", loadCfg); // pick up auto-show / tone changes from Settings
 
-  // Auto-show: pop the window when mining/scanning is detected, unless the user just hid it.
-  let autoSuppress = 0;
+  function renderSpeakMode() {
+    const m = localStorage.getItem("miningSpeakMode") || "target";
+    $("segTarget").classList.toggle("on", m === "target");
+    $("segEvery").classList.toggle("on", m === "every");
+  }
+  document.querySelectorAll(".cog-seg .seg").forEach((s) => s.addEventListener("click", () => {
+    localStorage.setItem("miningSpeakMode", s.getAttribute("data-m")); renderSpeakMode();
+  }));
+  renderSpeakMode();
+
+  // Auto-show: pop the window when mining/scanning is detected (the main process gates
+  // this against a short suppress window after a manual hide).
   function maybeAutoShow() {
-    if (cfg.miningAutoShow && Date.now() > autoSuppress && window.miningApi && window.miningApi.show) window.miningApi.show();
+    if (cfg.miningAutoShow && window.miningApi && window.miningApi.show) window.miningApi.show();
   }
 
   // ---- events ----
@@ -344,17 +472,6 @@
     const open = body.classList.toggle("hidden");
     h.querySelector(".car").style.transform = open ? "rotate(-90deg)" : "";
   }));
-  $("closeBtn").addEventListener("click", () => { autoSuppress = Date.now() + 90000; if (window.miningApi) window.miningApi.hide(); });
-  $("testBtn").addEventListener("click", () => { ensureActx(); chime(); speakClips(["c_thatlookslike", "n_gold"], "Mining assistant ready"); });
-  function renderSpeakMode() {
-    const m = localStorage.getItem("miningSpeakMode") || "target";
-    $("segTarget").classList.toggle("on", m === "target");
-    $("segEvery").classList.toggle("on", m === "every");
-  }
-  document.querySelectorAll(".announce .seg").forEach((s) => s.addEventListener("click", () => {
-    localStorage.setItem("miningSpeakMode", s.getAttribute("data-m")); renderSpeakMode();
-  }));
-  renderSpeakMode();
 
   let lastScanSig = null, lastJobCount = 0;
   function applyState(v) {
@@ -379,6 +496,29 @@
       speakClips(["c_thatlookslike", nameSlug(sc.matches[0].name)], "That looks like " + sc.matches[0].name);
     }
   }
+
+  // ---- Electron shell: hover-to-click + move mode + cog modal ----
+  // Report hover so the shell makes the window clickable only while the pointer is over
+  // it (clicks pass to the game everywhere else — so it can't be clicked by accident).
+  function setCog(open) {
+    $("cogMenu").classList.toggle("open", open);
+    $("cog").classList.toggle("open", open);
+    if (open) { window.miningApi?.setModal?.(true); window.miningApi?.hover?.(true); }
+    else { window.miningApi?.setModal?.(false); }
+  }
+  if (window.miningApi) {
+    const panel = $("panel");
+    panel.classList.add("electron"); // reveals the grab handle
+    let leaveT;
+    panel.addEventListener("mouseenter", () => { clearTimeout(leaveT); window.miningApi.hover(true); });
+    panel.addEventListener("mouseleave", () => { leaveT = setTimeout(() => window.miningApi.hover(false), 150); });
+    window.miningApi.onMoveMode?.((on) => panel.classList.toggle("moving", on));
+    $("grip").addEventListener("click", () => window.miningApi.beginMove?.());
+    $("moveDone").addEventListener("click", () => window.miningApi.endMove?.());
+  }
+  $("cog").addEventListener("click", (e) => { e.stopPropagation(); setCog(!$("cogMenu").classList.contains("open")); });
+  $("cogMenu").addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", () => { if ($("cogMenu").classList.contains("open")) setCog(false); });
 
   // ---- SSE ----
   function connect() {

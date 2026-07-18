@@ -10,10 +10,15 @@ contextBridge.exposeInMainWorld("overlayConfig", {
   // Live-apply a captured hotkey (no restart). Returns {ok} / {ok:false,error}.
   setOverlayHotkey: (accel) => ipcRenderer.invoke("set-overlay-hotkey", accel),
   setBindingHotkey: (accel) => ipcRenderer.invoke("set-binding-hotkey", accel),
+  setMiningHotkey: (accel) => ipcRenderer.invoke("set-mining-hotkey", accel),
   // Master overlay switch (crash workaround) — controlled live via the shell, not the
   // sidecar config, so toggling destroys/creates the HUD window immediately.
   getOverlayEnabled: () => ipcRenderer.invoke("overlay:get-enabled"),
   setOverlayEnabled: (on) => ipcRenderer.invoke("overlay:set-enabled", on),
+  // Elevation: whether we're running as admin (in-game hotkeys need it), and a one-click
+  // relaunch that requests elevation via UAC.
+  isElevated: () => ipcRenderer.invoke("app:is-elevated"),
+  restartAsAdmin: () => ipcRenderer.invoke("app:restart-as-admin"),
   onOverlayEnabledChanged: (cb) =>
     ipcRenderer.on("overlay:enabled-changed", (_e, on) => cb(on)),
 });

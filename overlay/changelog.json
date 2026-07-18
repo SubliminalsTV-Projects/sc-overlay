@@ -1,4 +1,10 @@
 {
+  "0.1.25": [
+    "New: the Mining Assistant — a second overlay window (tray → Mining Assistant, or press Shift+F3) that names rocks from the mining scanner's signature, counts down your refinery jobs and alarms when they finish, and calls out your target rocks in the HAL voice. It matches the main overlay's look and stays click-through until you hover it, so you won't nudge it mid-flight.",
+    "Fixed: your hotkeys now work while Star Citizen is focused, not just when you alt-tab to the desktop. If they still don't fire in-game, open Settings → In-Game Hotkeys and hit “Restart as administrator”.",
+    "Fixed: opening an overlay (like the binding chart) can no longer bury the Settings window — Settings now always stays on top.",
+    "Fixed: two features can no longer grab the same hotkey by accident."
+  ],
   "0.1.24": [
     "New: a reputation bar in Mission Info shows your current standing with each mission giver (e.g. Sr. Contractor) and how close you are to the next rank — worked out from the missions you've completed since the last wipe. Hit “Verify from logs” in the ⚙ to fill it in from your play history.",
     "Fixed: your tracked missions no longer disappear when you relaunch or Alt-F4 back into the game — they were getting wiped on every login.",
