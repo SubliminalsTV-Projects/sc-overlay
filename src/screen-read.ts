@@ -80,11 +80,14 @@ export function parseSignature(text: string): number | null {
 }
 
 /** Parse an SC duration string ("41m 35s", "14h 53m", "1 h 5 m") to seconds, or null.
- *  Normalizes the digit/letter OCR slips FIRST — critically "11h" reads as "Ilh" and "9h"
- *  reads as "gh", which otherwise drop the whole hours field. Only h/m/s are valid letters
- *  in a duration, so mapping the rest back to digits is safe. */
+ *  Normalizes the digit/letter OCR slips FIRST — the hours digit right before "h" is
+ *  routinely mangled into a look-alike letter (11h->"Ilh", 9h->"gh", 8h->"Bh"). Only h/m/s
+ *  are valid letters in a duration, so mapping the rest back to their digit is safe.
+ *  (S is left alone — it's the seconds unit; a "5h" mis-OCR is rare and would collide.) */
 export function parseDuration(text: string): number | null {
-  const t = text.replace(/[Il|]/g, "1").replace(/[Oo]/g, "0").replace(/[gq]/g, "9");
+  const t = text
+    .replace(/[Il|]/g, "1").replace(/[ODo]/g, "0").replace(/[Zz]/g, "2")
+    .replace(/[gq]/g, "9").replace(/B/g, "8");
   const h = /(\d+)\s*h/i.exec(t)?.[1];
   const m = /(\d+)\s*m(?![a-z])/i.exec(t)?.[1];
   const s = /(\d+)\s*s(?![a-z])/i.exec(t)?.[1];

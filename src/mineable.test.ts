@@ -31,6 +31,8 @@ check("OCR '11h'->'Ilh 10m'", parseDuration("Ilh 10m"), 11 * 3600 + 10 * 60);
 check("OCR 'Ilh 47m'", parseDuration("Ilh 47m"), 11 * 3600 + 47 * 60);
 check("OCR '9h'->'gh 20m'", parseDuration("gh 20m"), 9 * 3600 + 20 * 60);
 check("OCR 'IOh 4m'", parseDuration("IOh 4m"), 10 * 3600 + 4 * 60);
+check("OCR '8h'->'Bh 58m' (8h not dropped, 58 kept)", parseDuration("Bh 58m"), 8 * 3600 + 58 * 60);
+check("real '53m 52s' unaffected", parseDuration("53m 52s"), 53 * 60 + 52);
 check("no duration", parseDuration("PROCESSING"), null);
 
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
