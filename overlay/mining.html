@@ -58,6 +58,13 @@
   .rk.on { color: var(--gold); }
   .rk .nm { flex: 1; }
 
+  /* Announce-mode toggle */
+  .announce { display: flex; align-items: center; gap: 6px; margin: 2px 0 5px; font-size: 10px; }
+  .announce .lbl { color: var(--faint); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; font-size: 8.5px; margin-right: 2px; }
+  .announce .seg { padding: 2px 9px; border: 1px solid var(--divider); border-radius: 9px; cursor: pointer; color: var(--cyan-dim); }
+  .announce .seg.on { background: var(--gold); border-color: var(--gold); color: #14202b; font-weight: 700; }
+  .announce .seg:hover { border-color: var(--cyan); }
+
   /* Refinery jobs */
   .jobs { margin: 4px 0 2px; }
   .job { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin-bottom: 6px; border-radius: 6px;
@@ -84,6 +91,7 @@
     <div class="sec-h" data-sec="scan"><span class="car">▾</span>Signature Scanner<span class="badge" id="scanBadge"></span></div>
     <div id="scanBody">
       <div class="scan-now empty" id="scanNow">Scan a rock — I'll name it here.</div>
+      <div class="announce"><span class="lbl">Announce</span><span class="seg" id="segTarget" data-m="target">Targets</span><span class="seg" id="segEvery" data-m="every">Every rock</span></div>
       <div class="rar-h" style="color:var(--faint)">Hunting for <span id="tgtCount"></span></div>
       <div class="targets" id="targets"></div>
     </div>
@@ -132,6 +140,41 @@
   }
   const chime = () => { tone(880, 140, "triangle"); setTimeout(() => tone(1320, 220, "triangle"), 150); };
   const alarm = () => { let n = 0; const iv = setInterval(() => { tone(660, 180, "square"); if (++n >= 4) clearInterval(iv); }, 260); };
+
+  // HAL voice clips (concatenative). Decode each .ogg once, then schedule a sequence
+  // back-to-back for gapless playback. Falls back to Windows TTS if any clip is missing
+  // (a rock/station with no canned clip, or another user's build with no clips bundled).
+  const clipCache = {};
+  async function loadClip(slug) {
+    if (slug in clipCache) return clipCache[slug];
+    const ax = ensureActx();
+    try {
+      const buf = await fetch("tts/" + slug + ".ogg").then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()));
+      clipCache[slug] = await ax.decodeAudioData(buf);
+    } catch { clipCache[slug] = null; }
+    return clipCache[slug];
+  }
+  async function speakClips(slugs, fallbackText) {
+    const ax = ensureActx(); if (!ax) { speak(fallbackText); return; }
+    const bufs = await Promise.all(slugs.map(loadClip));
+    if (bufs.some((b) => !b)) { speak(fallbackText); return; }
+    let t = ax.currentTime + 0.04;
+    for (const b of bufs) { const s = ax.createBufferSource(); s.buffer = b; s.connect(ax.destination); s.start(t); t += b.duration; }
+  }
+  const nameSlug = (n) => "n_" + String(n || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const stationSlug = (s) => (s ? "st_" + String(s).toLowerCase().replace(/[^a-z0-9]/g, "") : null);
+  // "Your <material> is ready at <station>" — drops the station clip if we don't have one,
+  // full Windows-TTS fallback if the material clip is missing.
+  async function speakRefineryDone(mat, st) {
+    const matSlug = mat ? nameSlug(mat) : null;
+    const fb = (mat ? mat + " " : "") + "refine ready" + (st ? " at " + st : "");
+    if (!matSlug || !(await loadClip(matSlug))) { speak(fb); return; }
+    const slugs = ["c_your", matSlug];
+    const stSlug = stationSlug(st);
+    if (stSlug && (await loadClip(stSlug))) slugs.push("c_isreadyat", stSlug);
+    else slugs.push("c_isready");
+    speakClips(slugs, fb);
+  }
 
   // ---- render ----
   function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
@@ -226,12 +269,35 @@
     h.querySelector(".car").style.transform = open ? "rotate(-90deg)" : "";
   }));
   $("closeBtn").addEventListener("click", () => { if (window.miningApi) window.miningApi.hide(); });
-  $("testBtn").addEventListener("click", () => { ensureActx(); chime(); speak("Mining assistant ready"); });
+  $("testBtn").addEventListener("click", () => { ensureActx(); chime(); speakClips(["c_thatlookslike", "n_gold"], "Mining assistant ready"); });
+  function renderSpeakMode() {
+    const m = localStorage.getItem("miningSpeakMode") || "target";
+    $("segTarget").classList.toggle("on", m === "target");
+    $("segEvery").classList.toggle("on", m === "every");
+  }
+  document.querySelectorAll(".announce .seg").forEach((s) => s.addEventListener("click", () => {
+    localStorage.setItem("miningSpeakMode", s.getAttribute("data-m")); renderSpeakMode();
+  }));
+  renderSpeakMode();
 
+  let lastScanSig = null;
   function applyState(v) {
     view = v;
     targetSet.clear(); (v.targets || []).forEach(t => targetSet.add(t));
     renderAll();
+    const sc = v.scan;
+    if (sc && sc.signature !== lastScanSig) { lastScanSig = sc.signature; onNewScan(sc); }
+  }
+  // A newly-scanned rock: flash + chime + speak on a target (always), or on any rock in
+  // "every" announce mode. Debris (no table match) is visual-only.
+  function onNewScan(sc) {
+    if (!sc.matches.length) return;
+    const isTarget = sc.matches.some((m) => targetSet.has(m.name));
+    if (isTarget) { const el = $("scanNow"); el.classList.remove("hit"); void el.offsetWidth; el.classList.add("hit"); chime(); }
+    const mode = localStorage.getItem("miningSpeakMode") || "target";
+    if (mode === "every" || isTarget) {
+      speakClips(["c_thatlookslike", nameSlug(sc.matches[0].name)], "That looks like " + sc.matches[0].name);
+    }
   }
 
   // ---- SSE ----
@@ -240,14 +306,9 @@
     es.onmessage = (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.kind === "state") applyState(msg.view);
-      else if (msg.kind === "target-hit") {
-        const el = $("scanNow"); el.classList.remove("hit"); void el.offsetWidth; el.classList.add("hit");
-        chime(); speak(msg.hit.name);
-      } else if (msg.kind === "refinery-done") {
-        alarm();
-        const m = msg.job.material ? msg.job.material + " " : "";
-        speak(m + "refine ready" + (msg.job.station ? " at " + msg.job.station : ""));
-      }
+      else if (msg.kind === "refinery-done") { alarm(); speakRefineryDone(msg.job.material, msg.job.station); }
+      // scanner alerts (target-hit) are handled client-side in onNewScan so they respect
+      // the announce-mode toggle; the server still emits target-hit but we drive off state.
     };
     es.onerror = () => { es.close(); setTimeout(connect, 2000); };
   }
