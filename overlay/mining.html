@@ -78,7 +78,7 @@
 </head>
 <body>
 <div id="panel">
-  <div class="head"><span class="diamond"></span><h1>Mining Assistant</h1><span class="x" id="closeBtn" title="Hide (tray to reopen)">✕</span></div>
+  <div class="head"><span class="diamond"></span><h1>Mining Assistant</h1><span class="x" id="testBtn" title="Test alert sound" style="font-size:12px">🔊</span><span class="x" id="closeBtn" title="Hide (tray to reopen)">✕</span></div>
 
   <div class="sec">
     <div class="sec-h" data-sec="scan"><span class="car">▾</span>Signature Scanner<span class="badge" id="scanBadge"></span></div>
@@ -110,9 +110,17 @@
     try { const u = new SpeechSynthesisUtterance(text); u.rate = 1.02; u.volume = 1; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch {}
   }
   let actx = null;
+  // A Web-Audio context created outside a user gesture starts "suspended" (silent). Create
+  // it lazily and resume it here + on first interaction so alert tones always sound.
+  function ensureActx() {
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); } catch {}
+    if (actx && actx.state === "suspended") actx.resume().catch(() => {});
+    return actx;
+  }
+  ["pointerdown", "keydown"].forEach((ev) => window.addEventListener(ev, ensureActx));
   function tone(freq, ms, type) {
     try {
-      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (!ensureActx()) return;
       const o = actx.createOscillator(), g = actx.createGain();
       o.type = type || "sine"; o.frequency.value = freq;
       o.connect(g); g.connect(actx.destination);
@@ -218,6 +226,7 @@
     h.querySelector(".car").style.transform = open ? "rotate(-90deg)" : "";
   }));
   $("closeBtn").addEventListener("click", () => { if (window.miningApi) window.miningApi.hide(); });
+  $("testBtn").addEventListener("click", () => { ensureActx(); chime(); speak("Mining assistant ready"); });
 
   function applyState(v) {
     view = v;

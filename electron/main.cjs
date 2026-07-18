@@ -257,7 +257,7 @@ function createMining() {
     x: workArea.x + workArea.width - 384, y: workArea.y + 60,
     frame: false, transparent: true, resizable: true, skipTaskbar: true,
     alwaysOnTop: true, hasShadow: false, fullscreenable: false, focusable: true, show: false,
-    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "mining-preload.cjs") },
+    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "mining-preload.cjs"), autoplayPolicy: "no-user-gesture-required" },
   });
   miningWin.setAlwaysOnTop(true, "screen-saver");
   miningWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
