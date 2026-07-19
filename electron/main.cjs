@@ -98,13 +98,15 @@ let configWin = null;
 let tray = null;
 let hovering = false; // pointer is over the HUD (reported by the page)
 let locked = false; // force click-through always (ignore hover), for uninterrupted play
-let moveMode = false; // reposition mode: fully interactive + drag banner, hover suspended
-let modalOpen = false; // a HUD modal (what's-new card) is up — stay hover-interactive even if locked
+let moveMode = false; // arrange mode: show the drag banner/handles (VISUAL only — interactivity stays hover-based)
+let modalOpen = false; // a HUD modal (what's-new card / hub) is up — stay hover-interactive even if locked
+let dragging = false; // an active drag/resize gesture on THIS window — force it interactive so it can't drop
 // Mining Assistant window — mirrors the HUD's hover-to-click shell so it behaves identically
-// (click-through until the pointer is over it, hover-suspended move mode, cog stays clickable).
+// (click-through until the pointer is over it, cog stays clickable).
 let miningHovering = false; // pointer is over the mining window (reported by the page)
-let miningMoveMode = false; // reposition mode for the mining window
+let miningMoveMode = false; // arrange mode for the mining window (visual only)
 let miningModalOpen = false; // the mining cog menu is open — keep it clickable
+let miningDragging = false; // an active drag/resize gesture on the mining window
 let miningAutoSuppress = 0; // auto-show is suppressed until this timestamp (set on a manual hide)
 let overlayEnabled = true; // master switch — false = HUD window destroyed, tracking still runs
 let manualCheck = false; // true while a tray-triggered update check is in flight (gates dialogs)
@@ -151,59 +153,21 @@ function waitForServer(tries = 60) {
   });
 }
 
-// ── window bounds persistence (per window) ──────────────────────────────────
-// Position + size live in userData/<name>-bounds.json, which sits in %APPDATA% and so
-// survives app updates. Each window (overlay, mining) has its own file.
-function boundsFile(name) {
-  return path.join(app.getPath("userData"), (name || "overlay") + "-bounds.json");
-}
-function loadBounds(name) {
-  try {
-    const b = JSON.parse(fs.readFileSync(boundsFile(name), "utf8"));
-    // Only restore if it lands on a connected display (avoids off-screen windows).
-    const onScreen = screen.getAllDisplays().some((d) => {
-      const a = d.workArea;
-      return b.x >= a.x - 50 && b.y >= a.y - 50 && b.x < a.x + a.width && b.y < a.y + a.height;
-    });
-    if (onScreen && b.width && b.height) return b;
-  } catch {
-    /* none saved */
-  }
-  return null;
-}
-const saveTimers = {};
-function saveWinBounds(win, name) {
-  if (!win || win.isDestroyed()) return;
-  clearTimeout(saveTimers[name]);
-  const b = win.getBounds();
-  saveTimers[name] = setTimeout(() => {
-    try {
-      fs.writeFileSync(boundsFile(name), JSON.stringify(b));
-    } catch {
-      /* non-fatal */
-    }
-  }, 400);
-}
-function saveBounds() { saveWinBounds(overlay, "overlay"); }
-function saveMiningBounds() { saveWinBounds(miningWin, "mining"); }
-
-// Design size of the overlay window at 100% scale; the global-scale feature sizes the
-// window to OVERLAY_W/H × scale so the zoomed panel is never clipped.
-const OVERLAY_W = 400;
-const OVERLAY_H = 760;
+// The overlay is now a FULL-SCREEN transparent canvas that hosts free-floating widgets
+// (the Blueprint panel, later Mining) — like Streamlabs/OBS. It covers the whole primary
+// display (same precedent as bindingWin) so a widget's decorations (e.g. Drake's duct-tape
+// corners) can hang into open canvas instead of being clipped by a panel-sized window, and
+// so widgets can be dragged/scaled freely inside it. Per-widget position/size/visibility
+// live in widgets.json (see below), NOT in a window-bounds file — the window itself is fixed
+// full-screen. Click-through everywhere except the widget the pointer is over (see applyMouse).
 function createOverlay() {
-  const { workArea } = screen.getPrimaryDisplay();
-  const w = OVERLAY_W;
-  const h = OVERLAY_H;
-  const saved = loadBounds();
+  const { bounds } = screen.getPrimaryDisplay(); // full display — the widget canvas
   overlay = new BrowserWindow({
-    width: saved?.width ?? w,
-    height: saved?.height ?? h,
-    x: saved?.x ?? workArea.x + workArea.width - w - 24,
-    y: saved?.y ?? workArea.y + 40,
+    x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
     frame: false,
     transparent: true,
-    resizable: true,
+    resizable: false,
+    movable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
     hasShadow: false,
@@ -218,20 +182,48 @@ function createOverlay() {
   const hudUrl = `${HUD_URL}?v=${Date.now()}${AMD_COMPAT ? "&lite=1" : ""}`;
   overlay.webContents.session.clearCache().finally(() => overlay.loadURL(hudUrl));
   applyMouse();
-  overlay.on("moved", saveBounds);
-  overlay.on("resize", saveBounds);
   overlay.on("closed", () => {
     overlay = null;
   });
 }
 
+// ── per-widget layout persistence (canvas model) ─────────────────────────────
+// Each widget's {x, y, scale, visible} lives in userData/widgets.json (in %APPDATA%, so it
+// survives updates — same directory class as the *-bounds.json files). The page reads it on
+// load and writes it back (debounced) as the user drags/resizes in arrange mode.
+function widgetsFile() {
+  return path.join(app.getPath("userData"), "widgets.json");
+}
+let widgetCache = null;
+let widgetSaveTimer = null;
+function readWidgets() {
+  if (widgetCache) return widgetCache;
+  try { widgetCache = JSON.parse(fs.readFileSync(widgetsFile(), "utf8")) || {}; }
+  catch { widgetCache = {}; }
+  return widgetCache;
+}
+function saveWidget(id, layout) {
+  if (!id || !layout || typeof layout !== "object") return;
+  const all = readWidgets();
+  all[id] = { ...(all[id] || {}), ...layout };
+  clearTimeout(widgetSaveTimer);
+  widgetSaveTimer = setTimeout(() => {
+    try { fs.writeFileSync(widgetsFile(), JSON.stringify(all)); }
+    catch { /* non-fatal */ }
+  }, 400);
+}
+
 function applyMouse() {
   if (!overlay) return;
-  // Move mode = fully interactive (so a drag can't be dropped by hover-toggling).
-  // Otherwise click-through unless the pointer is over the HUD (and not locked). A
-  // modal (what's-new card) overrides lock so it can always be closed.
-  // forward:true keeps mousemove flowing so the page can detect enter/leave.
-  overlay.setIgnoreMouseEvents(moveMode ? false : (locked && !modalOpen) ? true : !hovering, { forward: true });
+  // The overlay is a full-screen canvas STACKED with the mining canvas, so it must stay
+  // click-through except where its own widget is — otherwise (as full-screen interactive) it
+  // would block the other window entirely. This is true even in arrange mode: interactivity
+  // stays hover-based so clicks route to whichever widget is under the cursor, regardless of
+  // which window is on top. Exceptions that force interactive: an active drag on THIS window
+  // (so a gesture can't drop), or an open modal (hub / what's-new — clickable even when locked).
+  // forward:true keeps mousemove flowing so the page can detect enter/leave even while ignored.
+  const interactive = dragging || modalOpen || (hovering && !locked);
+  overlay.setIgnoreMouseEvents(!interactive, { forward: true });
 }
 
 // ── binding-chart PNG overlay ─────────────────────────────────────────────────
@@ -272,20 +264,18 @@ async function postConfig(patch) {
 }
 
 // ── Mining Assistant window ───────────────────────────────────────────────────
-// A separate always-on-top tool window (signature scanner + refinery timers). It shares
-// the HUD's shell model: click-through until the pointer is over it (so it can't be clicked
-// by accident in-game), a hover-suspended move mode, and a ⚙ cog for its settings. Hiding
-// (tray / hotkey) hides rather than destroys it so countdowns + state persist.
-const MINING_W = 392;
-const MINING_H = 620;
+// A second full-screen transparent canvas (same model as the overlay) hosting the Mining
+// Assistant as its own free-floating, independently-scalable widget — so it can be dragged
+// and corner-resized like the Blueprint panel, without a panel-sized window clipping it or
+// anchoring it. Click-through everywhere except over the widget; the two canvases stack and
+// each becomes interactive only over its own widget. Hidden (not destroyed) on hide so
+// countdowns + state persist. Its position/size live in widgets.json (keyed "mining").
 let miningWin = null;
 function createMining() {
-  const { workArea } = screen.getPrimaryDisplay();
-  const saved = loadBounds("mining");
+  const { bounds } = screen.getPrimaryDisplay(); // full display — the widget canvas
   miningWin = new BrowserWindow({
-    width: saved?.width ?? MINING_W, height: saved?.height ?? MINING_H,
-    x: saved?.x ?? workArea.x + workArea.width - 416, y: saved?.y ?? workArea.y + 60,
-    frame: false, transparent: true, resizable: true, skipTaskbar: true,
+    x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+    frame: false, transparent: true, resizable: false, movable: false, skipTaskbar: true,
     alwaysOnTop: true, hasShadow: false, fullscreenable: false, focusable: true, show: false,
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, "mining-preload.cjs"), autoplayPolicy: "no-user-gesture-required" },
   });
@@ -293,16 +283,14 @@ function createMining() {
   miningWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   miningWin.loadURL(`http://localhost:${PORT}/mining.html?v=${Date.now()}${AMD_COMPAT ? "&lite=1" : ""}`);
   applyMiningMouse();
-  miningWin.on("moved", saveMiningBounds);
-  miningWin.on("resize", saveMiningBounds);
   miningWin.on("close", (e) => { e.preventDefault(); hideMining(); });
 }
-// Click-through unless the pointer is over the window, its cog menu is open, or it's in
-// move mode — same rule as the HUD's applyMouse (minus the lock, which the tool has no need
-// for). forward:true keeps mousemove flowing so the page can detect hover enter/leave.
+// Same hover-based rule as the HUD's applyMouse (this window has no lock): click-through
+// except over its own widget, an active drag, or an open cog menu — so it never blocks the
+// stacked HUD canvas. NOT forced interactive by arrange mode (that was the click-blocking bug).
 function applyMiningMouse() {
   if (!miningWin) return;
-  miningWin.setIgnoreMouseEvents(!(miningMoveMode || miningModalOpen || miningHovering), { forward: true });
+  miningWin.setIgnoreMouseEvents(!(miningDragging || miningModalOpen || miningHovering), { forward: true });
 }
 // Reposition mode for the mining window (grab handle / "Done" in the page). Hover-toggling
 // is suspended so the window can't slip out from under the cursor mid-drag.
@@ -381,8 +369,19 @@ function setMoveMode(on) {
   overlay?.webContents.send("overlay:move-mode", on);
   refreshTray();
 }
+// Global arrange: one cohesive overlay app, so entering "arrange" puts EVERY visible widget
+// (Blueprint canvas + Mining canvas) into move/resize at once, and either window's "Done"
+// exits for all. Triggered by any widget's grip, the global cog's Arrange button, the tray,
+// or Ctrl+Alt+M.
+let arrangeAll = false;
+function setArrangeAll(on) {
+  arrangeAll = on;
+  setMoveMode(on); // Blueprint widget (also refreshes the tray)
+  if (miningWin && !miningWin.isDestroyed() && miningWin.isVisible()) setMiningMoveMode(on);
+  else miningMoveMode = false;
+}
 function toggleMove() {
-  setMoveMode(!moveMode);
+  setArrangeAll(!arrangeAll);
 }
 
 // Master overlay switch (persisted). OFF fully DESTROYS the transparent always-on-top HUD
@@ -611,7 +610,7 @@ function refreshTray() {
       },
       ...(overlayEnabled
         ? [
-            { label: moveMode ? "Done moving" : "Move overlay…", click: toggleMove },
+            { label: moveMode ? "Done arranging" : "Arrange widgets…", click: toggleMove },
             {
               label: "Lock (always click-through)",
               type: "checkbox",
@@ -791,9 +790,16 @@ if (!app.requestSingleInstanceLock()) {
     hovering = !!on;
     applyMouse();
   });
-  // A HUD modal (what's-new card) opened/closed → keep it clickable even under lock.
+  // A HUD modal (what's-new card / hub) opened/closed → keep it clickable even under lock.
   ipcMain.on("overlay:modal", (_e, on) => {
     modalOpen = !!on;
+    applyMouse();
+  });
+  // An active drag/resize gesture on the HUD widget → force this window interactive for the
+  // gesture so a fast pointer can't slip off the widget and drop the drag (the window is
+  // otherwise click-through except over the widget, so the stacked mining canvas isn't blocked).
+  ipcMain.on("overlay:drag-lock", (_e, on) => {
+    dragging = !!on;
     applyMouse();
   });
   // The cog's "Open settings…" opens the full config window.
@@ -802,25 +808,29 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("overlay:open-url", (_e, url) => {
     if (typeof url === "string" && /^https:\/\//i.test(url)) shell.openExternal(url);
   });
-  // The page's grab handle enters move mode; the "Done" button leaves it.
-  ipcMain.on("overlay:begin-move", () => {
-    if (!moveMode) setMoveMode(true);
-  });
-  ipcMain.on("overlay:end-move", () => {
-    if (moveMode) setMoveMode(false);
-  });
-  // Global UI scale: the page zooms its content; resize the window to base × scale so a
-  // scaled-up panel isn't clipped. Position is preserved.
-  ipcMain.on("overlay:set-scale", (_e, pct) => {
-    if (!overlay) return;
-    const s = Math.max(50, Math.min(200, Number(pct) || 100)) / 100;
-    const width = Math.round(OVERLAY_W * s), height = Math.round(OVERLAY_H * s);
-    const b = overlay.getBounds();
-    const { workArea } = screen.getPrimaryDisplay();
-    // Keep it on-screen: if growing would run past the work-area edges, shift it back in.
-    const x = Math.max(workArea.x, Math.min(b.x, workArea.x + workArea.width - width));
-    const y = Math.max(workArea.y, Math.min(b.y, workArea.y + workArea.height - height));
-    overlay.setBounds({ x, y, width, height });
+  // Any widget's grab handle (or the global cog's Arrange button) enters GLOBAL arrange —
+  // all visible widgets become movable; either "Done" exits for all.
+  ipcMain.on("overlay:begin-move", () => setArrangeAll(true));
+  ipcMain.on("overlay:end-move", () => setArrangeAll(false));
+  // Per-widget layout (canvas model): the page fetches saved widget layouts on load and
+  // saves them back as the user drags/resizes. Scale is now a property of each widget inside
+  // the full-screen canvas, not a resize of the overlay window (which is fixed full-screen).
+  ipcMain.handle("overlay:get-widgets", () => readWidgets());
+  ipcMain.on("overlay:save-widget", (_e, id, layout) => saveWidget(id, layout));
+
+  // ── global widget on/off (from the in-overlay hub) ──────────────────────────
+  // Only the Mining Assistant is a hub toggle — the Blueprint widget hides in-page (it's in
+  // the shell window's own DOM) and the Binding chart is hotkey-only (never kept on). Widget
+  // state feeds the hub checkbox; a change is pushed back so it stays in sync with the tray.
+  function miningVisible() { return !!(miningWin && !miningWin.isDestroyed() && miningWin.isVisible()); }
+  function pushWidgetStates() {
+    try { overlay?.webContents.send("overlay:widget-states", { mining: miningVisible() }); } catch { /* window gone */ }
+  }
+  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible() }));
+  ipcMain.on("app:set-mining", (_e, on) => {
+    if (on) { if (!miningWin) createMining(); if (!miningWin.isVisible()) { miningAutoSuppress = 0; miningWin.showInactive(); applyMiningMouse(); } }
+    else hideMining();
+    pushWidgetStates();
   });
 
   // Mining Assistant window: same hover-to-click + move-mode + cog-modal bridge as the HUD.
@@ -832,23 +842,15 @@ if (!app.requestSingleInstanceLock()) {
     miningModalOpen = !!on;
     applyMiningMouse();
   });
-  ipcMain.on("mining:begin-move", () => {
-    if (!miningMoveMode) setMiningMoveMode(true);
+  ipcMain.on("mining:drag-lock", (_e, on) => {
+    miningDragging = !!on;
+    applyMiningMouse();
   });
-  ipcMain.on("mining:end-move", () => {
-    if (miningMoveMode) setMiningMoveMode(false);
-  });
-  // Global UI scale for the Mining Assistant window (same behavior as the HUD's).
-  ipcMain.on("mining:set-scale", (_e, pct) => {
-    if (!miningWin || miningWin.isDestroyed()) return;
-    const s = Math.max(50, Math.min(200, Number(pct) || 100)) / 100;
-    const width = Math.round(MINING_W * s), height = Math.round(MINING_H * s);
-    const b = miningWin.getBounds();
-    const { workArea } = screen.getPrimaryDisplay();
-    const x = Math.max(workArea.x, Math.min(b.x, workArea.x + workArea.width - width));
-    const y = Math.max(workArea.y, Math.min(b.y, workArea.y + workArea.height - height));
-    miningWin.setBounds({ x, y, width, height });
-  });
+  // Mining's cog was clicked → summon the global cog in the shell (HUD) window.
+  ipcMain.on("mining:summon-cog", () => { try { overlay?.webContents.send("overlay:summon-cog"); } catch { /* shell gone */ } });
+  // Mining's grip/Done also drives GLOBAL arrange (one cohesive overlay).
+  ipcMain.on("mining:begin-move", () => setArrangeAll(true));
+  ipcMain.on("mining:end-move", () => setArrangeAll(false));
 
   // Tray app — keep running when the overlay window is closed.
   app.on("window-all-closed", (e) => {

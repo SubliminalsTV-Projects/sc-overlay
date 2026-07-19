@@ -76,7 +76,7 @@
        down the panel — a tall pool projected wider at the bottom, overflowing the
        viewport into a horizontal scrollbar. rotateY displaces X by X (never by Y), so
        the horizontal extent stays constant however tall the content grows. */
-    transform: perspective(1700px) rotateY(var(--twist, 4deg));
+    transform: perspective(1700px) rotateY(var(--twist, 0deg));
     transform-origin: 60% center;
   }
   /* CRT scanlines */
@@ -97,6 +97,99 @@
   html.amd-lite #panel::before, html.amd-lite #panel::after { display: none !important; }
   html.amd-lite #moveBanner { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   html.amd-lite *, html.amd-lite *::before, html.amd-lite *::after { animation: none !important; transition: none !important; }
+
+  /* ── Canvas / widget mode (Electron overlay-app, or ?canvas=1 for testing) ──────
+     The window is a full-screen transparent canvas; the panel is a free-floating widget
+     positioned by --wx/--wy and sized by its own --wscale (independent of any global scale).
+     transform-origin stays 60% center so the helmet-tilt yaw is unchanged from the panel look;
+     drag tracks the pointer by delta so the transform never fights positioning. In OBS
+     browser-source mode (no .canvas class) the panel keeps its original relative/margin layout. */
+  body.canvas { overflow: hidden; }
+  #panel.canvas {
+    position: absolute; left: var(--wx, 0px); top: var(--wy, 0px); margin: 0;
+    /* Angle is PER-WIDGET (--wangle) in canvas mode, so a left + a right widget can each angle
+       inward independently. (The base #panel above keeps the global --twist for OBS sources.) */
+    transform: perspective(1700px) rotateY(var(--wangle, 0deg)) scale(var(--wscale, 1));
+  }
+  html.amd-lite #panel.canvas { transform: scale(var(--wscale, 1)) !important; } /* keep scale, drop tilt/blur */
+  /* In canvas mode the window is fixed full-screen, so OS window-drag regions do nothing —
+     dragging is done in JS during arrange mode. Neutralize the app-region drag handles. */
+  #panel.canvas .head { -webkit-app-region: no-drag; cursor: default; }
+  #panel.canvas #moveBanner { -webkit-app-region: no-drag; }
+  /* Resize handle (arrange mode only) — drag the bottom-right corner to scale the widget. */
+  #resizeHandle { display: none; position: absolute; right: -7px; bottom: -7px; width: 22px; height: 22px;
+    z-index: 51; cursor: nwse-resize; -webkit-app-region: no-drag; border-radius: 4px;
+    border: 1px solid var(--cyan); background: rgba(8, 17, 26, 0.92); color: var(--cyan);
+    display: none; place-items: center; }
+  #resizeHandle svg { width: 12px; height: 12px; display: block; }
+  #panel.moving #resizeHandle { display: grid; }
+
+  /* ── Global overlay-app chrome: a screen-anchored cog (top-right) that opens the in-overlay
+       settings hub — one place for widget on/off, global appearance, and arrange. Lives in the
+       shell (Blueprint canvas) so it stays even when the Blueprint panel itself is toggled off.
+       Canvas mode only (body.canvas); OBS browser-source never shows it. */
+  /* Summoned, not always-on: hidden until a widget cog is clicked, then fades in top-right and
+     fades back out when unused (see summonGlobalCog). */
+  #globalCog { display: none; position: fixed; top: 14px; right: 16px; z-index: 60;
+    width: 34px; height: 34px; place-items: center; cursor: pointer; -webkit-app-region: no-drag;
+    border: 1px solid var(--border); border-radius: 6px; background: rgba(8, 17, 26, 0.82);
+    color: var(--cyan); font-size: 18px; line-height: 1; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    opacity: 0; transition: opacity 0.2s ease; }
+  #globalCog.show { display: grid; opacity: 0.9; }
+  #globalCog.show:hover, #globalCog.open { opacity: 1; background: rgba(var(--accent-rgb), 0.2); }
+  #hub { display: none; position: fixed; top: 54px; right: 16px; z-index: 61; width: 268px;
+    -webkit-app-region: no-drag; border: 1px solid var(--border); border-radius: 8px;
+    background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 26px rgba(var(--accent-rgb), 0.14); padding: 4px 0 10px; }
+  html.amd-lite #hub { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; background: var(--panel-solid) !important; }
+  #hub.open { display: block; }
+  #hub .hub-title { display: flex; align-items: center; gap: 8px; font-family: var(--sans); font-size: 10px;
+    font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: var(--cyan); padding: 11px 14px 7px; }
+  #hub .hub-title .dia { width: 7px; height: 7px; background: var(--cyan-bright); transform: rotate(45deg); box-shadow: 0 0 8px var(--cyan); }
+  #hub .hub-sec { font-family: var(--sans); font-size: 8.5px; font-weight: 700; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--cyan-dim); padding: 9px 14px 4px; border-top: 1px solid var(--divider); margin-top: 3px; }
+  #hub .hub-row { display: flex; align-items: center; gap: 9px; padding: 6px 14px; font-family: var(--sans);
+    font-size: 12.5px; color: var(--cyan-text); }
+  #hub .hub-row.tog { cursor: pointer; }
+  #hub .hub-row.tog:hover { background: rgba(var(--accent-rgb), 0.1); }
+  #hub .hub-row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--cyan); cursor: pointer; }
+  #hub .hub-row.col { display: block; }
+  #hub .hub-row.col > label { display: block; font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--cyan-dim); margin-bottom: 6px; }
+  #hub .hub-val { float: right; color: var(--gold); font-family: var(--mono); font-size: 11px; letter-spacing: 0; }
+  #hub select { width: 100%; background: var(--menu-bg); color: var(--cyan-text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 7px; font-family: var(--sans); font-size: 12px; cursor: pointer; }
+  #hub input[type=range] { width: 100%; accent-color: var(--cyan); height: 4px; cursor: pointer; }
+  #hub .hub-btn { display: block; width: calc(100% - 28px); margin: 8px 14px 0; padding: 8px 10px; text-align: center;
+    font-family: var(--sans); font-size: 12px; font-weight: 600; letter-spacing: 0.05em; cursor: pointer;
+    color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.12); border: 1px solid var(--border); border-radius: 5px; }
+  #hub .hub-btn:hover { background: rgba(var(--accent-rgb), 0.22); border-color: var(--cyan); }
+  #hub .hub-btn.primary { background: rgba(var(--accent-rgb), 0.2); border-color: var(--cyan); color: var(--cyan-bright); }
+  /* Blueprint widget hidden via the hub toggle (shell window stays alive to host the chrome). */
+  body.bp-hidden #panel { display: none; }
+
+  /* Full-screen ARRANGE-MODE indicator (shell only): a dashed frame + a dim tint + a top
+     banner, so it's unmistakable the whole screen is in edit mode and clicks won't reach the
+     game. The scrim is click-through (pointer-events:none) so it never blocks widget dragging;
+     only its banner is interactive (reports hover like the global cog so its Done is clickable). */
+  #arrangeScrim { display: none; position: fixed; inset: 0; z-index: 58; pointer-events: none;
+    background: rgba(4, 10, 16, 0.12); }
+  body.arranging #arrangeScrim { display: block; }
+  #arrangeScrim::before { content: ""; position: absolute; inset: 7px; border-radius: 12px;
+    border: 2px dashed rgba(var(--accent-rgb), 0.5); }
+  #arrangeScrim .ab { pointer-events: auto; position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 13px; padding: 8px 9px 8px 15px; border-radius: 24px;
+    background: rgba(10, 24, 34, 0.96); border: 1px solid var(--cyan); color: var(--cyan-text);
+    font-family: var(--sans); font-size: 12px; letter-spacing: 0.02em; white-space: nowrap;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55), 0 0 22px rgba(var(--accent-rgb), 0.22); }
+  #arrangeScrim .ab .dia { width: 7px; height: 7px; background: var(--cyan-bright); transform: rotate(45deg);
+    box-shadow: 0 0 8px var(--cyan); animation: pulse 1.9s ease-in-out infinite; }
+  #arrangeScrim .ab b { color: var(--cyan); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  #arrangeDone { cursor: pointer; font-family: var(--sans); font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 6px 16px; border-radius: 20px; border: 1px solid var(--cyan);
+    background: rgba(var(--accent-rgb), 0.18); color: var(--cyan); }
+  #arrangeDone:hover { background: var(--cyan); color: #04141b; }
 
   /* Move/reposition mode: whole panel becomes a drag surface with a banner. */
   #moveBanner { display: none; position: absolute; inset: 0; z-index: 50; -webkit-app-region: drag; cursor: move;
@@ -156,6 +249,15 @@
   #cogMenu .cog-btn:hover { background: rgba(var(--accent-rgb), 0.2); border-color: var(--cyan); }
   #cogMenu .cog-btn:disabled { opacity: 0.6; cursor: default; }
   #cogMenu .cog-status { padding: 1px 12px 3px; font-size: 10px; color: var(--cyan-dim); min-height: 12px; }
+  /* Per-widget slider row (e.g. this widget's angle). */
+  #cogMenu .cog-slider { padding: 5px 12px 8px; font-family: var(--sans); }
+  #cogMenu .cog-slider label { display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cyan-dim); margin-bottom: 6px; }
+  #cogMenu .cog-slider label b { color: var(--gold); font-family: var(--mono); font-size: 11px; font-weight: 400; }
+  #cogMenu .cog-slider input[type=range] { width: 100%; accent-color: var(--cyan); height: 4px; cursor: pointer; }
+  /* Angle only applies to the free-floating canvas widget; hide it in OBS browser-source mode. */
+  #cogMenu .cog-canvas-only { display: none; }
+  body.canvas #cogMenu .cog-canvas-only { display: block; }
 
   /* Transient OCR activity toast (item captured / mission read). Never blocks clicks. */
   #ocrToast { position: absolute; left: 50%; bottom: 46px; transform: translateX(-50%) translateY(6px);
@@ -372,10 +474,17 @@
 
   /* "What's new" card — shown once per new version at the top of the HUD. Hover-
      interactive (like the panel) + flagged as a modal so it's closeable even under lock. */
-  #whatsnew { display: none; margin: 0 0 11px; border: 1px solid var(--cyan); border-radius: 8px;
-    background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.13), rgba(8, 17, 26, 0.55));
-    box-shadow: 0 0 22px rgba(var(--accent-rgb), 0.14) inset; padding: 11px 12px 12px; position: relative; z-index: 6; }
-  #whatsnew.show { display: block; }
+  /* Patch notes are a CENTER-SCREEN modal shown once per version on launch — the user must
+     close it (while open the shell stays fully interactive, so it blocks the game until closed). */
+  #whatsnew { display: none; position: fixed; inset: 0; z-index: 70; align-items: center; justify-content: center;
+    background: rgba(4, 10, 16, 0.5); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+  #whatsnew.show { display: flex; }
+  #whatsnew .wn-card { width: 400px; max-width: 88vw; max-height: 82vh; overflow-y: auto;
+    border: 1px solid var(--cyan); border-radius: 10px; padding: 16px 18px 18px;
+    background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 26px rgba(var(--accent-rgb), 0.18); }
+  html.amd-lite #whatsnew { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  html.amd-lite #whatsnew .wn-card { background: var(--panel-solid); }
   #whatsnew .wn-head { display: flex; align-items: center; gap: 8px; }
   #whatsnew .wn-title { flex: 1; font-family: var(--sans); font-size: 11px; font-weight: 700;
     letter-spacing: 0.16em; text-transform: uppercase; color: var(--cyan); }
@@ -459,23 +568,14 @@
   <div id="panel" class="empty">
     <img class="tape tl" alt="" src="tape-tl.webp">
     <img class="tape br" alt="" src="tape-br.webp">
-    <div id="moveBanner"><div class="movebox">⠿ Drag anywhere to move<button id="moveDone">Done</button></div></div>
-    <div id="whatsnew">
-      <div class="wn-head">
-        <span class="wn-title">What's New</span>
-        <span class="wn-ver" id="wnVer"></span>
-        <span class="wn-x" id="wnX" title="Close">✕</span>
-      </div>
-      <ul id="wnList"></ul>
-      <div class="wn-foot">
-        <label class="wn-dismiss"><input type="checkbox" id="wnDontShow" checked /> Don't show this again</label>
-        <button class="wn-close" id="wnCloseBtn">Got it</button>
-      </div>
-    </div>
+    <div id="moveBanner"><div class="movebox">⠿ Drag to move · corner to resize<button id="moveDone">Done</button></div></div>
+    <div id="resizeHandle" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
     <div class="head">
       <div id="grip" title="Move overlay"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg></div>
       <div id="cog" title="Overlay settings">⚙</div>
       <div id="cogMenu">
+        <div class="cog-sec cog-canvas-only">This widget</div>
+        <div class="cog-slider cog-canvas-only"><label>Angle <b id="cogAngleV">0°</b></label><input type="range" id="cogAngle" min="-35" max="35" step="1" value="0" /></div>
         <div class="cog-sec">Display</div>
         <label class="cog-opt"><input type="checkbox" id="tgCatbar" /> Show category filter bar</label>
         <label class="cog-opt"><input type="checkbox" id="tgOddsAdj" /> Show my real odds (only what I still need)</label>
@@ -517,9 +617,65 @@
     <div id="ocrToast"></div>
   </div>
 
+  <!-- Global overlay-app chrome (canvas shell only): screen-anchored cog + in-overlay hub. -->
+  <div id="globalCog" title="Overlay settings">⚙</div>
+  <div id="hub">
+    <div class="hub-title"><span class="dia"></span> Overlay App</div>
+    <div class="hub-sec">Widgets</div>
+    <label class="hub-row tog"><input type="checkbox" id="wgBlueprint" checked /> Blueprint tracker</label>
+    <label class="hub-row tog"><input type="checkbox" id="wgMining" /> Mining Assistant</label>
+    <div class="hub-sec">Global appearance</div>
+    <div class="hub-row col"><label>Theme</label>
+      <select id="hubTheme">
+        <option value="mobiglas">Mobiglas (default)</option>
+        <option value="drake">Drake</option>
+        <option value="auto">Auto (by ship)</option>
+      </select></div>
+    <div class="hub-sec">Layout</div>
+    <button type="button" id="hubArrange" class="hub-btn primary">⠿ Arrange widgets</button>
+    <button type="button" id="hubSettings" class="hub-btn">⚙ Open full settings…</button>
+  </div>
+
+  <!-- Full-screen arrange-mode indicator (shell only). Click-through except its banner. -->
+  <div id="arrangeScrim"><div class="ab"><span class="dia"></span><span><b>Arrange mode</b> · drag widgets to move · corners to resize</span><button type="button" id="arrangeDone">Done</button></div></div>
+
+  <!-- Patch notes: a center-screen modal shown once per version on launch (must be closed). -->
+  <div id="whatsnew">
+    <div class="wn-card">
+      <div class="wn-head">
+        <span class="wn-title">What's New</span>
+        <span class="wn-ver" id="wnVer"></span>
+        <span class="wn-x" id="wnX" title="Close">✕</span>
+      </div>
+      <ul id="wnList"></ul>
+      <div class="wn-foot">
+        <label class="wn-dismiss"><input type="checkbox" id="wnDontShow" checked /> Don't show this again</label>
+        <button class="wn-close" id="wnCloseBtn">Got it</button>
+      </div>
+    </div>
+  </div>
+
 <script>
   const $ = (id) => document.getElementById(id);
   let current = null;
+  // Canvas / widget mode: the Electron overlay-app is a full-screen transparent canvas that
+  // hosts the panel as a free-floating, draggable, independently-scalable widget. ?canvas=1
+  // forces it on for headless testing in a plain browser. OBS browser-source stays off (the
+  // panel keeps its original fixed layout there).
+  const CANVAS = !!window.overlayApi || new URLSearchParams(location.search).has("canvas");
+  // This widget's layout inside the canvas. null = unset (falls back to a default/baseline).
+  const WIDGET_ID = "blueprint";
+  const DEFAULT_ANGLE = 5; // this widget's resting skew until the user changes it (angles right-in)
+  let widget = { x: null, y: null, scale: null };
+  // Global cog is SUMMONED, not always-on: it appears when a widget's cog is clicked (this
+  // window's, or the Mining window's via IPC) and fades out again when unused, so it's only
+  // there when the person needs it. Shared state so the hub can keep it alive while open.
+  let cogHideT = null, cogHovered = false, hubOpen = false;
+  function rescheduleCogHide() {
+    clearTimeout(cogHideT);
+    cogHideT = setTimeout(() => { if (!hubOpen && !cogHovered) $("globalCog")?.classList.remove("show"); }, 4000);
+  }
+  function summonGlobalCog() { const gc = $("globalCog"); if (gc) { gc.classList.add("show"); rescheduleCogHide(); } }
   // "base" = odds out of the full pool; "adjusted" = your real odds counting only
   // the blueprints you still need (no duplicates), owned shown as —.
   let oddsMode = "base";
@@ -555,7 +711,7 @@
 
   // User prefs sent with the mission view (config-driven). Updated in render().
   // Defaults mirror the server so odds/verify start hidden (cleaner) with no first-paint flash.
-  let PREFS = { timeRelative: true, hideCatbar: false, missionOcr: false, theme: "mobiglas", overlayTwist: 4, overlayScale: 100 };
+  let PREFS = { timeRelative: true, hideCatbar: false, missionOcr: false, theme: "mobiglas", overlayTwist: 0, overlayScale: 100 };
   // Apply the category-bar visibility pref via a panel class (composes with the empty-state rule).
   function applyPrefs() {
     $("panel").classList.toggle("hide-catbar", !!PREFS.hideCatbar);
@@ -565,18 +721,16 @@
     const qTheme = new URLSearchParams(location.search).get("theme");
     root.setAttribute("data-theme", qTheme || PREFS.theme || "mobiglas");
     root.style.setProperty("--twist", (Number(PREFS.overlayTwist) || 0) + "deg");
-    // Global UI scale: zoom the content, and resize the window ONLY when the scale actually
-    // changes — never on a theme switch, which also fires prefs (that was resetting the
-    // window's size + position on every Mobiglas↔Drake flip). First prefs adopts the saved
-    // window size (no resize); later scale changes resize the window to match.
     const scale = Math.max(50, Math.min(200, Number(PREFS.overlayScale) || 100));
-    document.body.style.zoom = scale / 100;
-    if (lastScale !== null && scale !== lastScale && window.overlayApi && window.overlayApi.setScale) {
-      window.overlayApi.setScale(scale);
+    if (CANVAS) {
+      // Canvas mode: per-widget scale owns sizing. overlayScale is only the BASELINE used
+      // when this widget has no saved scale of its own, so it never overrides a resized widget.
+      applyWidget();
+    } else {
+      // OBS browser-source: keep the original content zoom so the source scales as before.
+      document.body.style.zoom = scale / 100;
     }
-    lastScale = scale;
   }
-  let lastScale = null;
 
   // Time label parts from an ISO stamp: absolute date+clock (the "date and timestamp")
   // plus a relative "2h ago" hint. The time-format setting picks which one to show.
@@ -1075,6 +1229,145 @@
     }
   });
 
+  // ── Canvas widget: free-floating position + independent scale + arrange drag/resize ──
+  // Only active in canvas mode (Electron overlay-app, or ?canvas=1). The panel is positioned
+  // by --wx/--wy and sized by --wscale; arrange mode (move mode) lets the user drag it and
+  // drag the corner to resize, persisting the layout to widgets.json via the shell.
+  function widgetScale() {
+    return widget.scale != null ? widget.scale : Math.max(50, Math.min(200, Number(PREFS.overlayScale) || 100)) / 100;
+  }
+  function applyWidget() {
+    if (!CANVAS) return;
+    const p = $("panel");
+    if (widget.x != null) p.style.setProperty("--wx", widget.x + "px");
+    if (widget.y != null) p.style.setProperty("--wy", widget.y + "px");
+    p.style.setProperty("--wscale", widgetScale());
+    p.style.setProperty("--wangle", (widget.angle != null ? widget.angle : DEFAULT_ANGLE) + "deg");
+  }
+  // Default resting spot: top-right of the canvas (mirrors where the old panel-sized window sat).
+  function defaultWidgetPos() {
+    const w = 380 * widgetScale();
+    widget.x = Math.max(8, Math.round(window.innerWidth - w - 40));
+    widget.y = 40;
+  }
+  function persistWidget() {
+    window.overlayApi?.saveWidget?.(WIDGET_ID, { x: widget.x, y: widget.y, scale: widget.scale, angle: widget.angle, visible: widget.visible });
+  }
+  // Blueprint widget on/off (from the hub). Hides only the panel — the shell window stays alive
+  // to host the global chrome. Persisted so it survives a restart.
+  let bpHidden = false;
+  function setBlueprintVisible(on) {
+    bpHidden = !on;
+    widget.visible = on;
+    document.body.classList.toggle("bp-hidden", bpHidden);
+    persistWidget();
+  }
+  // Pointer-drag helper: track by delta so the panel's transform (twist/scale) never fights it.
+  // Holds a shell "drag lock" for the gesture so the (otherwise hover-gated) window stays
+  // interactive even if the pointer briefly outruns the widget.
+  function dragPointer(onMove) {
+    window.overlayApi?.dragLock?.(true);
+    const move = (ev) => onMove(ev);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.overlayApi?.dragLock?.(false);
+      persistWidget();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  if (CANVAS) {
+    $("panel").classList.add("canvas");
+    document.body.classList.add("canvas");
+    (async () => {
+      let saved = null;
+      try { saved = (await window.overlayApi?.getWidgets?.())?.[WIDGET_ID] || null; } catch { /* none */ }
+      const q = new URLSearchParams(location.search); // test overrides
+      if (q.has("wx") || q.has("wy") || q.has("wscale") || q.has("wangle")) {
+        saved = { ...(saved || {}) };
+        if (q.has("wx")) saved.x = +q.get("wx");
+        if (q.has("wy")) saved.y = +q.get("wy");
+        if (q.has("wscale")) saved.scale = +q.get("wscale");
+        if (q.has("wangle")) saved.angle = +q.get("wangle");
+      }
+      if (saved) widget = { ...widget, ...saved };
+      if (widget.x == null || widget.y == null) defaultWidgetPos();
+      applyWidget();
+      if (widget.visible === false) { bpHidden = true; document.body.classList.add("bp-hidden"); } // restore hidden state
+      if (q.has("arrange")) { $("panel").classList.add("moving"); document.body.classList.add("arranging"); } // headless-test the arrange chrome
+      if (q.has("cogopen")) { $("cogMenu").classList.add("open"); $("cog").classList.add("open"); } // headless-test the widget cog
+      if (q.has("whatsnew")) { $("wnVer").textContent = "v0.1.27"; $("wnList").innerHTML = "<li>Sample patch note one</li><li>Sample patch note two</li>"; $("whatsnew").classList.add("show"); } // headless-test the patch-notes modal
+      if (q.has("cog")) $("globalCog").classList.add("show"); // headless-test the summoned cog
+      if (q.has("hub")) { $("globalCog").classList.add("show", "open"); $("hub").classList.add("open"); } // headless-test the hub
+    })();
+
+    // Move: drag anywhere on the banner (arrange mode) → shift the widget by pointer delta.
+    $("moveBanner").addEventListener("pointerdown", (e) => {
+      if (e.target.closest("#moveDone") || e.target.closest("#resizeHandle")) return;
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY, ox = widget.x, oy = widget.y;
+      dragPointer((ev) => { widget.x = ox + (ev.clientX - sx); widget.y = oy + (ev.clientY - sy); applyWidget(); });
+    });
+    // Resize: drag the corner handle → change this widget's scale (independent of any global).
+    $("resizeHandle").addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const sx = e.clientX, os = widgetScale();
+      dragPointer((ev) => {
+        widget.scale = Math.max(0.5, Math.min(2.5, os + (ev.clientX - sx) / 380));
+        applyWidget();
+      });
+    });
+  }
+
+  // ── Global overlay-app hub (canvas shell only) ────────────────────────────
+  // The screen-anchored cog opens an in-overlay menu governing the whole overlay app:
+  // widget on/off (Blueprint / Mining / Binding), global appearance, and arrange. It lives
+  // outside #panel so it persists when the Blueprint widget is hidden.
+  if (CANVAS && window.overlayApi) {
+    const gc = $("globalCog"), hub = $("hub");
+    let hubLeaveT;
+    // Summon the global cog when a widget cog is clicked (this window directly; the Mining
+    // window over IPC). It fades out again when unused.
+    window.overlayApi.onSummonCog?.(summonGlobalCog);
+    // While the hub is OPEN keep the window interactive (it's a corner menu off the panel, so
+    // moving off it must not make it click-through and un-closeable — an outside click closes it).
+    // Hovering the cog/hub also keeps the summoned cog from fading.
+    const hubEnter = () => { clearTimeout(hubLeaveT); cogHovered = true; clearTimeout(cogHideT); window.overlayApi.hover(true); };
+    const hubLeave = () => { cogHovered = false; rescheduleCogHide(); if (hubOpen) return; hubLeaveT = setTimeout(() => window.overlayApi.hover(false), 150); };
+    gc.addEventListener("mouseenter", hubEnter); gc.addEventListener("mouseleave", hubLeave);
+    hub.addEventListener("mouseenter", hubEnter); hub.addEventListener("mouseleave", hubLeave);
+    function setHub(open) {
+      hubOpen = open;
+      hub.classList.toggle("open", open);
+      gc.classList.toggle("open", open);
+      if (!open) { window.overlayApi.setModal?.(false); window.overlayApi.hover?.(false); rescheduleCogHide(); return; }
+      clearTimeout(cogHideT); // keep the cog shown while the hub is open
+      // Read the RAW config for appearance (theme may be "auto" — PREFS carries the resolved
+      // value, so read config directly to show the real setting).
+      fetch("/api/config").then((r) => r.json()).then((c) => {
+        $("hubTheme").value = c.theme || "mobiglas";
+      }).catch(() => { /* fall back to whatever's in the inputs */ });
+      $("wgBlueprint").checked = !bpHidden;
+      window.overlayApi.widgetStates?.().then((s) => { if (s) $("wgMining").checked = !!s.mining; });
+      window.overlayApi.setModal?.(true); window.overlayApi.hover?.(true);
+    }
+    gc.addEventListener("click", (e) => { e.stopPropagation(); setHub(!hub.classList.contains("open")); });
+    hub.addEventListener("click", (e) => e.stopPropagation());
+    document.addEventListener("click", () => { if (hub.classList.contains("open")) setHub(false); });
+    // Widget on/off. Blueprint hides in-page; Mining is a separate window (via the shell). The
+    // Binding chart is hotkey-only (nobody keeps it visible), so it's not a hub toggle.
+    $("wgBlueprint").addEventListener("change", () => setBlueprintVisible($("wgBlueprint").checked));
+    $("wgMining").addEventListener("change", () => window.overlayApi.setMining($("wgMining").checked));
+    // Stay in sync if Mining is toggled elsewhere (tray) while the hub is open.
+    window.overlayApi.onWidgetStates?.((s) => { if (s) $("wgMining").checked = !!s.mining; });
+    // Global appearance — persisted config (also broadcasts to OBS sources).
+    $("hubTheme").addEventListener("change", () => setPref({ theme: $("hubTheme").value }));
+    // Layout
+    $("hubArrange").addEventListener("click", (e) => { e.stopPropagation(); window.overlayApi.arrange(true); setHub(false); });
+    $("hubSettings").addEventListener("click", (e) => { e.stopPropagation(); window.overlayApi.openSettings(); setHub(false); });
+  }
+
   // Electron overlay: report hover so the shell makes the HUD clickable only while
   // the pointer is over it (clicks pass to the game everywhere else). No-op in OBS.
   if (window.overlayApi) {
@@ -1083,10 +1376,25 @@
     let leaveT;
     panel.addEventListener("mouseenter", () => { clearTimeout(leaveT); window.overlayApi.hover(true); });
     panel.addEventListener("mouseleave", () => { leaveT = setTimeout(() => window.overlayApi.hover(false), 150); });
-    // Move mode (grab handle / tray "Move overlay…" / Ctrl+Alt+M): show the drag banner.
-    window.overlayApi.onMoveMode?.((on) => panel.classList.toggle("moving", on));
+    // Any interaction with the widget (clicking the cog, the mission picker, a row, the grip…)
+    // summons the global cog — it should be reachable whenever the user is engaging the overlay.
+    panel.addEventListener("pointerdown", () => summonGlobalCog());
+    // Arrange mode (grip / hub / tray / Ctrl+Alt+M): show this widget's drag banner AND the
+    // full-screen arrange indicator (so it's clear the whole screen is in edit mode).
+    window.overlayApi.onMoveMode?.((on) => {
+      if (on) summonGlobalCog(); // arranging is an interaction too
+      panel.classList.toggle("moving", on);
+      document.body.classList.toggle("arranging", on);
+    });
     $("grip").addEventListener("click", () => window.overlayApi.beginMove?.());
     $("moveDone").addEventListener("click", () => window.overlayApi.endMove());
+    // The full-screen banner's Done exits arrange for ALL widgets. It's off the panel, so it
+    // reports hover (like the global cog) to make itself clickable.
+    const ab = document.querySelector("#arrangeScrim .ab");
+    let abLeaveT;
+    ab.addEventListener("mouseenter", () => { clearTimeout(abLeaveT); window.overlayApi.hover(true); });
+    ab.addEventListener("mouseleave", () => { abLeaveT = setTimeout(() => window.overlayApi.hover(false), 150); });
+    $("arrangeDone").addEventListener("click", () => window.overlayApi.endMove());
 
     // "What's new" card — show once per new version. Hover-interactive (like the panel)
     // and flagged as a modal so it stays clickable to close even when the HUD is locked.
@@ -1138,7 +1446,10 @@
       $("tgTimeRel").checked = PREFS.timeRelative !== false;
       $("tgMissionOcr").checked = !!PREFS.missionOcr;
       $("tgFabCapture").checked = !!PREFS.fabCapture;
+      const ang = widget.angle != null ? widget.angle : DEFAULT_ANGLE;
+      $("cogAngle").value = ang; $("cogAngleV").textContent = ang + "°";
       updateOcr();
+      summonGlobalCog(); // clicking a widget cog reveals the global settings cog
       window.overlayApi?.setModal?.(true);
       window.overlayApi?.hover?.(true);
     } else {
@@ -1166,6 +1477,9 @@
   // Mission-name OCR on/off — read by the capture loop each poll (not a display pref).
   $("tgMissionOcr").addEventListener("change", () => { setPref({ missionOcr: $("tgMissionOcr").checked }); updateOcr(); });
   $("tgFabCapture").addEventListener("change", () => { setPref({ fabCapture: $("tgFabCapture").checked }); updateOcr(); });
+  // Per-widget angle: live-apply on drag, persist on release (this widget only).
+  $("cogAngle").addEventListener("input", () => { widget.angle = Number($("cogAngle").value); $("cogAngleV").textContent = widget.angle + "°"; applyWidget(); });
+  $("cogAngle").addEventListener("change", () => persistWidget());
   $("openSettings").addEventListener("click", (e) => { e.stopPropagation(); window.overlayApi?.openSettings?.(); setCog(false); });
 
   // OCR activity (fabricator image capture + tracked-mission read). Fed by the Electron

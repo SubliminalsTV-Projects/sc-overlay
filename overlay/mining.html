@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Mining Assistant</title>
 <script>/* AMD compatibility: apply the lite skin BEFORE first paint (no flash) when the shell asks for it. */
-  if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");</script>
+  if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
+  /* Apply ?theme=/?twist= overrides before first paint (testing + no flash); server appearance wins once SSE connects. */
+  { const q = new URLSearchParams(location.search); const r = document.documentElement;
+    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
+    const tw = q.get("twist"); if (tw !== null) r.style.setProperty("--twist", tw + "deg"); }</script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -18,10 +22,23 @@
   :root {
     --cyan: #45D0E0; --cyan-bright: #7fe3ef; --cyan-text: #c4dbe6; --cyan-dim: #7fa7bb; --faint: #5d7e90;
     --gold: #FFD27A; --amber: #F5A623; --green: #2ee6a0; --red: #ff8478;
-    --border: rgba(92, 198, 224, 0.38); --divider: rgba(92, 198, 224, 0.16); --track: #0c1a26;
+    --accent-rgb: 69, 208, 224; --value-rgb: 255, 210, 122;
+    --border: rgba(var(--accent-rgb), 0.38); --divider: rgba(var(--accent-rgb), 0.16); --track: #0c1a26;
+    --panel-top: rgba(13, 27, 40, 0.72); --panel-bot: rgba(8, 17, 26, 0.8); --panel-solid: rgba(8, 17, 26, 0.95);
+    --menu-bg: #0a1822; --scan: rgba(150, 225, 245, 0.06); --sheen: rgba(180, 235, 250, 0.09);
+    --twist: 0deg;
     --sans: "Inter", system-ui, sans-serif;
     --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", monospace;
     --leg: #ff9d5c; --epic: #c98bff; --rare: #5aa9ff; --unc: #4fd6a0; --common: #9fb4c0;
+  }
+  /* Drake Interplanetary theme (mirrors the HUD): burnt-orange chrome on warm gunmetal. Only
+     the tokens change; --border/--divider derive from --accent-rgb so they retint automatically. */
+  :root[data-theme="drake"] {
+    --cyan: #E4802F; --cyan-bright: #FBB24A; --cyan-text: #E7D6C0; --cyan-dim: #A88A66; --faint: #7A6650;
+    --gold: #FFC24A; --amber: #F6A93A; --green: #57C878; --red: #FF6B4A; --track: #1a1206;
+    --accent-rgb: 228, 128, 47; --value-rgb: 255, 194, 74;
+    --panel-top: rgba(31, 23, 14, 0.82); --panel-bot: rgba(16, 11, 6, 0.88); --panel-solid: rgba(16, 11, 6, 0.96);
+    --menu-bg: #150f08; --scan: rgba(245, 180, 90, 0.05); --sheen: rgba(250, 210, 150, 0.06);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: transparent; }
@@ -30,50 +47,73 @@
   /* Thin, themed scrollbars (matches the HUD). */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(92, 198, 224, 0.28); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(92, 198, 224, 0.5); }
-  * { scrollbar-width: thin; scrollbar-color: rgba(92, 198, 224, 0.28) transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(var(--accent-rgb), 0.28); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(var(--accent-rgb), 0.5); }
+  * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb), 0.28) transparent; }
 
   #panel {
     position: relative; width: 360px; margin: 14px auto 16px; border-radius: 12px;
-    background: linear-gradient(180deg, rgba(13, 27, 40, 0.72), rgba(8, 17, 26, 0.8));
+    background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
     border: 1px solid var(--border);
-    box-shadow: inset 0 0 0 1px rgba(92, 198, 224, 0.08), 0 8px 34px rgba(0, 0, 0, 0.45), 0 0 30px rgba(69, 208, 224, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.08), 0 8px 34px rgba(0, 0, 0, 0.45), 0 0 30px rgba(var(--accent-rgb), 0.16);
     -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
-    /* Subtle helmet-projection tilt (matches the HUD). rotateY keeps the horizontal
-       extent constant as content grows, so no horizontal scrollbar. */
-    transform: perspective(1700px) rotateY(4deg);
+    /* Skew (matches the HUD): shares the same --twist as the Blueprint widget, flat (0°) by
+       default. rotateY keeps the horizontal extent constant as content grows (no h-scrollbar). */
+    transform: perspective(1700px) rotateY(var(--twist, 0deg));
     transform-origin: 60% center;
     overflow: hidden;
   }
   /* CRT scanlines */
   #panel::before { content: ""; position: absolute; inset: 0; border-radius: 12px; pointer-events: none; z-index: 3;
-    background: repeating-linear-gradient(0deg, rgba(150, 225, 245, 0.06) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
+    background: repeating-linear-gradient(0deg, var(--scan) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
   /* visor sheen */
   #panel::after { content: ""; position: absolute; inset: 0; border-radius: 12px; pointer-events: none; z-index: 3;
-    background: linear-gradient(180deg, rgba(180, 235, 250, 0.09), transparent 36%); }
+    background: linear-gradient(180deg, var(--sheen), transparent 36%); }
 
   /* AMD compatibility "lite" skin (added on <html> via ?lite): strip everything that forces
      continuous GPU recompositing over the game's Vulkan surface — backdrop blur, the blend-mode
      scanlines/sheen, the 3D tilt, and all animations. Panel bg goes near-opaque for legibility. */
   html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
-    background: rgba(8, 17, 26, 0.95) !important; transform: none !important; }
+    background: var(--panel-solid) !important; transform: none !important; }
   html.amd-lite #panel::before, html.amd-lite #panel::after { display: none !important; }
   html.amd-lite #moveBanner { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   html.amd-lite *, html.amd-lite *::before, html.amd-lite *::after { animation: none !important; transition: none !important; }
 
+  /* ── Canvas / widget mode (Electron overlay-app, or ?canvas=1 for testing) ──────
+     The window is a full-screen transparent canvas; this panel is a free-floating widget
+     positioned by --wx/--wy and sized by its own --wscale — dragged/resized in arrange mode,
+     independent of the Blueprint widget and any global scale. Non-canvas (plain browser)
+     keeps the original centered layout. overflow:visible so the corner resize handle shows. */
+  body.canvas { overflow: hidden; }
+  #panel.canvas {
+    position: absolute; left: var(--wx, 0px); top: var(--wy, 0px); margin: 0; overflow: visible;
+    /* Angle is PER-WIDGET (--wangle) in canvas mode, so this can angle inward independently
+       of the Blueprint widget. (The base #panel keeps the global --twist for a plain browser.) */
+    transform: perspective(1700px) rotateY(var(--wangle, 0deg)) scale(var(--wscale, 1));
+  }
+  html.amd-lite #panel.canvas { transform: scale(var(--wscale, 1)) !important; } /* keep scale, drop tilt/blur */
+  #panel.canvas .head { -webkit-app-region: no-drag; cursor: default; }
+  #panel.canvas #moveBanner { -webkit-app-region: no-drag; }
+  /* Resize handle (arrange mode only) — drag the bottom-right corner to scale the widget. */
+  #resizeHandle { display: none; position: absolute; right: -7px; bottom: -7px; width: 22px; height: 22px;
+    z-index: 51; cursor: nwse-resize; -webkit-app-region: no-drag; border-radius: 4px;
+    border: 1px solid var(--cyan); background: rgba(8, 17, 26, 0.92); color: var(--cyan);
+    display: none; place-items: center; }
+  #resizeHandle svg { width: 12px; height: 12px; display: block; }
+  #panel.moving #resizeHandle { display: grid; }
+
   /* Move/reposition mode: whole panel becomes a drag surface with a banner (identical to
      the HUD — dragging by a click-through window fights hover, so move mode suspends it). */
   #moveBanner { display: none; position: absolute; inset: 0; z-index: 50; -webkit-app-region: drag; cursor: move;
-    background: rgba(69, 208, 224, 0.12); -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); }
+    background: rgba(var(--accent-rgb), 0.12); -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); }
   #panel.moving #moveBanner { display: flex; align-items: center; justify-content: center; }
   .movebox { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 4px;
     border: 1px solid var(--cyan); background: rgba(8, 17, 26, 0.92); color: var(--cyan-text);
     font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
   #moveDone { -webkit-app-region: no-drag; cursor: pointer; font-family: var(--sans); font-size: 11px; font-weight: 700;
     letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 12px; border-radius: 3px;
-    border: 1px solid var(--cyan); background: rgba(69, 208, 224, 0.15); color: var(--cyan); }
-  #moveDone:hover { background: rgba(69, 208, 224, 0.3); }
+    border: 1px solid var(--cyan); background: rgba(var(--accent-rgb), 0.15); color: var(--cyan); }
+  #moveDone:hover { background: rgba(var(--accent-rgb), 0.3); }
 
   /* Grab handle: the discoverable "move" affordance (Electron only). Clicking it drops
      into move mode — the reliable, hover-suspended drag. */
@@ -83,7 +123,7 @@
     background: rgba(8, 17, 26, 0.72); color: var(--cyan); opacity: 0.85; transition: opacity 0.15s ease; }
   #grip svg { width: 14px; height: 14px; display: block; }
   #panel.electron #grip { display: grid; }
-  #grip:hover { opacity: 1 !important; background: rgba(69, 208, 224, 0.2); }
+  #grip:hover { opacity: 1 !important; background: rgba(var(--accent-rgb), 0.2); }
   #panel.moving #grip { display: none; }
 
   /* Settings cog (top-right) — same chrome as the HUD. Opens the settings menu (audio,
@@ -93,22 +133,27 @@
     border: 1px solid var(--border); border-radius: 4px; background: rgba(8, 17, 26, 0.72);
     color: var(--cyan); font-size: 14px; line-height: 1; opacity: 0.85; transition: opacity 0.15s ease; }
   #cog.open { opacity: 1; }
-  #cog:hover { opacity: 1; background: rgba(69, 208, 224, 0.2); }
+  #cog:hover { opacity: 1; background: rgba(var(--accent-rgb), 0.2); }
   #panel.moving #cog { display: none; }
   #cogMenu { display: none; position: absolute; top: 37px; right: 11px; z-index: 31; width: 244px;
-    -webkit-app-region: no-drag; background: #0a1822; border: 1px solid var(--border); border-radius: 4px;
+    -webkit-app-region: no-drag; background: var(--menu-bg); border: 1px solid var(--border); border-radius: 4px;
     box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6); padding: 6px 0 8px; }
   #cogMenu.open { display: block; }
   #cogMenu .cog-sec { font-family: var(--sans); font-size: 8.5px; font-weight: 700; letter-spacing: 0.18em;
     text-transform: uppercase; color: var(--cyan-dim); padding: 8px 12px 4px; }
   #cogMenu .cog-opt { display: flex; align-items: center; gap: 9px; padding: 6px 12px; cursor: pointer;
     font-family: var(--sans); font-size: 12px; color: var(--cyan-text); }
-  #cogMenu .cog-opt:hover { background: rgba(69, 208, 224, 0.12); }
+  #cogMenu .cog-opt:hover { background: rgba(var(--accent-rgb), 0.12); }
   #cogMenu .cog-opt input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--cyan); cursor: pointer; }
   /* Volume row: a labelled slider that fills the menu width. */
   #cogMenu .cog-slider { display: flex; align-items: center; gap: 10px; padding: 5px 12px 7px;
     font-family: var(--sans); font-size: 12px; color: var(--cyan-text); }
   #cogMenu .cog-slider input[type=range] { flex: 1; accent-color: var(--gold); height: 4px; cursor: pointer; }
+  #cogMenu .cog-slider b { color: var(--gold); font-family: var(--mono); font-size: 11px; font-weight: 400; min-width: 30px; text-align: right; }
+  /* Angle only applies to the free-floating canvas widget; hide it in a plain browser. */
+  #cogMenu .cog-canvas-only { display: none !important; }
+  body.canvas #cogMenu .cog-sec.cog-canvas-only { display: block !important; }
+  body.canvas #cogMenu .cog-slider.cog-canvas-only { display: flex !important; }
   /* Alert-tone row: choose/clear a custom WAV. */
   #cogMenu .cog-tone { display: flex; align-items: center; gap: 8px; padding: 4px 12px 7px; font-size: 11.5px; color: var(--cyan-dim); }
   #cogMenu .cog-tone .lnk { cursor: pointer; color: var(--cyan-text); text-decoration: underline dotted; }
@@ -125,17 +170,17 @@
   /* Cog action buttons (Test sound / Open settings). */
   #cogMenu .cog-btn { display: block; width: calc(100% - 24px); margin: 5px 12px 2px; padding: 7px 10px;
     text-align: center; font-family: var(--sans); font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em;
-    cursor: pointer; color: var(--cyan-text); background: rgba(69, 208, 224, 0.1);
+    cursor: pointer; color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.1);
     border: 1px solid var(--border); border-radius: 4px; }
-  #cogMenu .cog-btn:hover { background: rgba(69, 208, 224, 0.2); border-color: var(--cyan); }
+  #cogMenu .cog-btn:hover { background: rgba(var(--accent-rgb), 0.2); border-color: var(--cyan); }
 
   /* Header: matches the HUD (drag region + tick-strip divider + eyebrow with diamond). */
   .head { position: relative; padding: 15px 17px 13px; z-index: 10; border-bottom: 1px solid var(--divider);
     -webkit-app-region: drag; cursor: grab; }
   .head::after { content: ""; position: absolute; left: 17px; right: 17px; bottom: -1px; height: 2px;
-    background: repeating-linear-gradient(90deg, rgba(92, 198, 224, 0.32) 0 3px, transparent 3px 8px); opacity: 0.7; }
+    background: repeating-linear-gradient(90deg, rgba(var(--accent-rgb), 0.32) 0 3px, transparent 3px 8px); opacity: 0.7; }
   .eyebrow { position: relative; display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 700;
-    letter-spacing: 0.16em; text-transform: uppercase; color: #eaf6fb; text-shadow: 0 0 14px rgba(69, 208, 224, 0.3); }
+    letter-spacing: 0.16em; text-transform: uppercase; color: #eaf6fb; text-shadow: 0 0 14px rgba(var(--accent-rgb), 0.3); }
   .eyebrow .dot { position: relative; width: 8px; height: 8px; background: var(--cyan-bright); transform: rotate(45deg);
     box-shadow: 0 0 8px var(--cyan); animation: pulse 1.9s ease-in-out infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
@@ -152,14 +197,14 @@
 
   /* Scanner readout */
   .scan-now { margin: 4px 0 8px; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--divider);
-    background: rgba(69, 208, 224, 0.05); transition: background .2s, border-color .2s; }
+    background: rgba(var(--accent-rgb), 0.05); transition: background .2s, border-color .2s; }
   .scan-now.empty { color: var(--faint); font-size: 11.5px; text-align: center; padding: 14px 12px; }
   .scan-now .rock { font-size: 18px; font-weight: 700; color: var(--gold); letter-spacing: .01em;
     text-shadow: 0 0 12px rgba(255, 210, 122, 0.3); }
   .scan-now .meta { margin-top: 3px; font-size: 11px; color: var(--cyan-dim); }
   .scan-now .sig { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 4px; }
   .scan-now.hit { animation: flashhit 1.1s ease-out; border-color: var(--gold); }
-  @keyframes flashhit { 0% { background: rgba(255, 210, 122, 0.55); } 100% { background: rgba(69, 208, 224, 0.05); } }
+  @keyframes flashhit { 0% { background: rgba(255, 210, 122, 0.55); } 100% { background: rgba(var(--accent-rgb), 0.05); } }
   .rk-pill { display: inline-block; font-size: 8.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
     padding: 1px 6px; border-radius: 8px; margin-left: 6px; vertical-align: 1px; }
 
@@ -172,7 +217,7 @@
     margin: 7px 0 2px; padding-left: 2px; }
   .rk { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 4px; cursor: pointer;
     font-size: 12px; min-width: 0; }
-  .rk:hover { background: rgba(69, 208, 224, 0.1); }
+  .rk:hover { background: rgba(var(--accent-rgb), 0.1); }
   .rk .box { width: 13px; height: 13px; border: 1.5px solid var(--cyan-dim); border-radius: 3px; flex: none;
     display: grid; place-items: center; }
   .rk.on .box { background: var(--gold); border-color: var(--gold); }
@@ -183,7 +228,7 @@
   /* Refinery jobs */
   .jobs { margin: 4px 0 2px; }
   .job { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin-bottom: 6px; border-radius: 6px;
-    border: 1px solid var(--divider); background: rgba(69, 208, 224, 0.04); }
+    border: 1px solid var(--divider); background: rgba(var(--accent-rgb), 0.04); }
   .job.done { border-color: var(--green); background: rgba(46, 230, 160, 0.12); animation: flashdone 1.2s ease-out; }
   @keyframes flashdone { 0% { background: rgba(46, 230, 160, 0.5); } 100% { background: rgba(46, 230, 160, 0.12); } }
   .job .info { flex: 1; min-width: 0; }
@@ -201,11 +246,14 @@
 </head>
 <body>
 <div id="panel">
-  <div id="moveBanner"><div class="movebox">⠿ Drag anywhere to move<button id="moveDone">Done</button></div></div>
+  <div id="moveBanner"><div class="movebox">⠿ Drag to move · corner to resize<button id="moveDone">Done</button></div></div>
+  <div id="resizeHandle" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
   <div class="head">
     <div id="grip" title="Move window"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg></div>
     <div id="cog" title="Mining settings">⚙</div>
     <div id="cogMenu">
+      <div class="cog-sec cog-canvas-only">This widget</div>
+      <div class="cog-slider cog-canvas-only"><span>Angle</span><input type="range" id="cogAngle" min="-35" max="35" step="1" value="0" /><b id="cogAngleV">0°</b></div>
       <div class="cog-sec">Audio</div>
       <label class="cog-opt"><input type="checkbox" id="voiceChk" /> HAL voice announcements</label>
       <div class="cog-slider"><span>Volume</span><input type="range" id="volSlider" min="0" max="100" step="1" /></div>
@@ -240,6 +288,14 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
+  // Canvas / widget mode: the Electron overlay-app runs this window as a full-screen
+  // transparent canvas hosting the panel as a free-floating, independently-scalable widget.
+  // ?canvas=1 forces it on for headless testing. A plain browser stays off (original layout).
+  const CANVAS = !!window.miningApi || new URLSearchParams(location.search).has("canvas");
+  const WIDGET_ID = "mining";
+  const DEFAULT_ANGLE = -5; // this widget's resting skew until the user changes it (angles left-in)
+  let widget = { x: null, y: null, scale: null };
+  let miningBaseScale = 100; // baseline from config.overlayScale; a per-widget scale overrides it
   const RAR = { Legendary: "--leg", Epic: "--epic", Rare: "--rare", Uncommon: "--unc", Common: "--common" };
   const RAR_ORDER = ["Legendary", "Epic", "Rare", "Uncommon", "Common"];
   let view = { rocks: [], targets: [], scan: null, jobs: [] };
@@ -418,16 +474,26 @@
   $("voiceChk").addEventListener("change", () => { localStorage.setItem("miningVoice", $("voiceChk").checked ? "on" : "off"); });
   $("volSlider").value = Math.round(getVol() * 100);
   $("volSlider").addEventListener("input", () => { localStorage.setItem("miningVol", ($("volSlider").value / 100).toString()); if (master) master.gain.value = getVol(); });
+  // Per-widget angle: live-apply on drag, persist on release (this widget only).
+  $("cogAngle").addEventListener("input", () => { widget.angle = Number($("cogAngle").value); $("cogAngleV").textContent = widget.angle + "°"; applyMiningWidget(); });
+  $("cogAngle").addEventListener("change", () => persistWidget());
   renderVoice();
   let cfg = {};
-  // Global UI scale — mirrors the main HUD. Zoom the content; resize the window only when the
-  // scale value actually changes (never on a mere re-read), so it's stable + persists position.
-  let lastMiningScale = null;
+  // Global UI scale from config. In canvas mode it's only the BASELINE for this widget (a
+  // per-widget resize overrides it); in a plain browser it zooms the content as before.
   function applyMiningScale(pct) {
-    const scale = Math.max(50, Math.min(200, Number(pct) || 100));
-    document.body.style.zoom = scale / 100;
-    if (lastMiningScale !== null && scale !== lastMiningScale && window.miningApi && window.miningApi.setScale) window.miningApi.setScale(scale);
-    lastMiningScale = scale;
+    miningBaseScale = Math.max(50, Math.min(200, Number(pct) || 100));
+    if (CANVAS) { applyMiningWidget(); return; }
+    document.body.style.zoom = miningBaseScale / 100;
+  }
+  // Server-pushed appearance (theme + skew + scale) — the resolved values (incl. Drake
+  // auto-by-ship) so this window matches the HUD.
+  function applyMiningAppearance(a) {
+    if (!a) return;
+    const r = document.documentElement;
+    if (a.theme) r.setAttribute("data-theme", a.theme);
+    if (a.overlayTwist != null) r.style.setProperty("--twist", (Number(a.overlayTwist) || 0) + "deg");
+    if (a.overlayScale != null) applyMiningScale(a.overlayScale);
   }
   async function loadCfg() {
     try { cfg = await fetch("api/config").then((r) => r.json()); } catch {}
@@ -516,16 +582,85 @@
   function setCog(open) {
     $("cogMenu").classList.toggle("open", open);
     $("cog").classList.toggle("open", open);
-    if (open) { window.miningApi?.setModal?.(true); window.miningApi?.hover?.(true); }
+    if (open) {
+      const ang = widget.angle != null ? widget.angle : DEFAULT_ANGLE;
+      $("cogAngle").value = ang; $("cogAngleV").textContent = ang + "°";
+      window.miningApi?.summonCog?.(); window.miningApi?.setModal?.(true); window.miningApi?.hover?.(true);
+    }
     else { window.miningApi?.setModal?.(false); }
   }
+  // ── Canvas widget: free-floating position + independent scale + arrange drag/resize ──
+  // Mirrors the Blueprint panel's canvas model (see missions.html). Layout persists to
+  // widgets.json under this widget's own id ("mining") via the shared shell IPC.
+  function widgetScale() { return widget.scale != null ? widget.scale : miningBaseScale / 100; }
+  function applyMiningWidget() {
+    if (!CANVAS) return;
+    const p = $("panel");
+    if (widget.x != null) p.style.setProperty("--wx", widget.x + "px");
+    if (widget.y != null) p.style.setProperty("--wy", widget.y + "px");
+    p.style.setProperty("--wscale", widgetScale());
+    p.style.setProperty("--wangle", (widget.angle != null ? widget.angle : DEFAULT_ANGLE) + "deg");
+  }
+  // Default resting spot: upper-left, clear of the Blueprint widget's default (top-right).
+  function defaultWidgetPos() { widget.x = 40; widget.y = 60; }
+  function persistWidget() { window.miningApi?.saveWidget?.(WIDGET_ID, { x: widget.x, y: widget.y, scale: widget.scale, angle: widget.angle }); }
+  function dragPointer(onMove) {
+    window.miningApi?.dragLock?.(true); // keep interactive for the whole gesture
+    const move = (ev) => onMove(ev);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.miningApi?.dragLock?.(false);
+      persistWidget();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  if (CANVAS) {
+    $("panel").classList.add("canvas");
+    document.body.classList.add("canvas");
+    (async () => {
+      let saved = null;
+      try { saved = (await window.miningApi?.getWidgets?.())?.[WIDGET_ID] || null; } catch { /* none */ }
+      const q = new URLSearchParams(location.search); // test overrides
+      if (q.has("wx") || q.has("wy") || q.has("wscale") || q.has("wangle")) {
+        saved = { ...(saved || {}) };
+        if (q.has("wx")) saved.x = +q.get("wx");
+        if (q.has("wy")) saved.y = +q.get("wy");
+        if (q.has("wscale")) saved.scale = +q.get("wscale");
+        if (q.has("wangle")) saved.angle = +q.get("wangle");
+      }
+      if (saved) widget = { ...widget, ...saved };
+      if (widget.x == null || widget.y == null) defaultWidgetPos();
+      applyMiningWidget();
+      if (q.has("cogopen")) { $("cogMenu").classList.add("open"); $("cog").classList.add("open"); } // headless-test the widget cog
+      if (q.has("arrange")) $("panel").classList.add("moving"); // headless-test the arrange chrome
+    })();
+    $("moveBanner").addEventListener("pointerdown", (e) => {
+      if (e.target.closest("#moveDone") || e.target.closest("#resizeHandle")) return;
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY, ox = widget.x, oy = widget.y;
+      dragPointer((ev) => { widget.x = ox + (ev.clientX - sx); widget.y = oy + (ev.clientY - sy); applyMiningWidget(); });
+    });
+    $("resizeHandle").addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const sx = e.clientX, os = widgetScale();
+      dragPointer((ev) => {
+        widget.scale = Math.max(0.5, Math.min(2.5, os + (ev.clientX - sx) / 360));
+        applyMiningWidget();
+      });
+    });
+  }
+
   if (window.miningApi) {
     const panel = $("panel");
     panel.classList.add("electron"); // reveals the grab handle
     let leaveT;
     panel.addEventListener("mouseenter", () => { clearTimeout(leaveT); window.miningApi.hover(true); });
     panel.addEventListener("mouseleave", () => { leaveT = setTimeout(() => window.miningApi.hover(false), 150); });
-    window.miningApi.onMoveMode?.((on) => panel.classList.toggle("moving", on));
+    // Any interaction with this widget summons the shell's global cog (via IPC).
+    panel.addEventListener("pointerdown", () => window.miningApi.summonCog?.());
+    window.miningApi.onMoveMode?.((on) => { if (on) window.miningApi.summonCog?.(); panel.classList.toggle("moving", on); });
     $("grip").addEventListener("click", () => window.miningApi.beginMove?.());
     $("moveDone").addEventListener("click", () => window.miningApi.endMove?.());
   }
@@ -539,7 +674,7 @@
     es.onmessage = (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.kind === "state") applyState(msg.view);
-      else if (msg.kind === "scale") applyMiningScale(msg.scale);
+      else if (msg.kind === "appearance") applyMiningAppearance(msg);
       else if (msg.kind === "refinery-done") { alarm(); speakRefineryDone(msg.job.material, msg.job.station); }
       // scanner alerts (target-hit) are handled client-side in onNewScan so they respect
       // the announce-mode toggle; the server still emits target-hit but we drive off state.

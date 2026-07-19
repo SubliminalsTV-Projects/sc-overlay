@@ -157,7 +157,7 @@ const DEFAULTS: Config = {
   showLoadout: false,
   hideCatbar: false,
   theme: "mobiglas",
-  overlayTwist: 4,
+  overlayTwist: 0, // flat by default; the user can dial in a skew angle in the hub
   overlayScale: 100,
 };
 
@@ -366,6 +366,11 @@ function miningSend(msg: unknown): void {
   const data = `data: ${JSON.stringify(msg)}\n\n`;
   for (const res of miningClients) res.write(data);
 }
+// Appearance (theme + skew + scale) for the Mining Assistant window — same resolved values the
+// HUD gets in its prefs, so the mining widget retints (incl. Drake auto-by-ship) and matches.
+function miningAppearance(): { kind: "appearance"; theme: string; overlayTwist: number; overlayScale: number } {
+  return { kind: "appearance", theme: effectiveTheme(), overlayTwist: config.overlayTwist, overlayScale: config.overlayScale };
+}
 mining.on("change", () => miningSend({ kind: "state", view: mining.view() }));
 // Transient alerts the overlay turns into TTS + sound + a flash.
 mining.on("target-hit", (hit) => miningSend({ kind: "target-hit", hit }));
@@ -450,7 +455,7 @@ function startWatcher(): void {
     const mfr = manufacturerFromLine(e.message);
     if (mfr && mfr !== shipManufacturer) {
       shipManufacturer = mfr;
-      if (config.theme === "auto") broadcastMissions();
+      if (config.theme === "auto") { broadcastMissions(); miningSend(miningAppearance()); }
     }
 
     if (!config.autoSwitch) return;
@@ -628,6 +633,7 @@ const server = createServer(async (req, res) => {
     res.write("\n");
     miningClients.add(res);
     res.write(`data: ${JSON.stringify({ kind: "state", view: mining.view() })}\n\n`);
+    res.write(`data: ${JSON.stringify(miningAppearance())}\n\n`); // theme + skew + scale
     req.on("close", () => miningClients.delete(res));
     return;
   }
@@ -777,8 +783,8 @@ const server = createServer(async (req, res) => {
     await saveConfig();
     // Push the new prefs to every open overlay (incl. OBS browser-source) live.
     broadcastMissions();
-    // The Mining Assistant window scales with the same global setting.
-    miningSend({ kind: "scale", scale: config.overlayScale });
+    // The Mining Assistant window shares the same appearance (theme + skew + scale).
+    miningSend(miningAppearance());
     await reindex();
     startWatcher();
     // Re-arm sync with the new settings and reconcile the full collection.

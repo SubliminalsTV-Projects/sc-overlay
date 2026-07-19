@@ -1,4 +1,11 @@
 {
+  "0.1.27": [
+    "New: the overlay is now an “overlay app” — the Blueprint tracker and Mining Assistant float freely on your screen. Drag them anywhere, resize each from its corner, and give each its own angle so a left and a right widget can lean in toward you.",
+    "New: an Arrange mode that moves everything at once. Grab a widget's ⠿ handle (or press Ctrl+Alt+M) and the whole screen shows it's in edit mode — drag, resize, then hit Done. Your layout is saved and survives updates.",
+    "New: a settings menu that appears top-right whenever you're working with the overlay — widget on/off, theme, and a way into everything. It fades away when you're done so it's not in your face while you fly.",
+    "The Mining Assistant now matches your ship's theme too — hop in a Drake and it goes gunmetal-and-orange right alongside the tracker.",
+    "Widgets now sit flat by default with a slight inward tilt; set each one's exact angle in its ⚙. And these patch notes now pop up in the middle of the screen on launch."
+  ],
   "0.1.26": [
     "Fixed: “Restart as administrator” now actually relaunches the app elevated. It was closing the tracker and never reopening it, leaving stray processes you had to kill by hand — that's sorted."
   ],

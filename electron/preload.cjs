@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("overlayApi", {
   hover: (on) => ipcRenderer.send("overlay:hover", !!on),
   beginMove: () => ipcRenderer.send("overlay:begin-move"),
   endMove: () => ipcRenderer.send("overlay:end-move"),
+  // Force this window interactive for the duration of a drag/resize gesture so it can't drop.
+  dragLock: (on) => ipcRenderer.send("overlay:drag-lock", !!on),
   onMoveMode: (cb) => ipcRenderer.on("overlay:move-mode", (_e, on) => cb(!!on)),
   // The app version (authoritative), for the "what's new" card.
   getVersion: () => ipcRenderer.invoke("app:version"),
@@ -21,7 +23,16 @@ contextBridge.exposeInMainWorld("overlayApi", {
   openSettings: () => ipcRenderer.send("overlay:open-settings"),
   // Open an external URL in the default browser (e.g. the live-on-Twitch diamond).
   openUrl: (url) => ipcRenderer.send("overlay:open-url", url),
-  // Global UI scale (percent): the page zooms its content; the window resizes to match so
-  // scaling up never clips the panel.
-  setScale: (pct) => ipcRenderer.send("overlay:set-scale", Number(pct) || 100),
+  // Per-widget canvas layout: read saved positions/sizes on load, and persist them as the
+  // user drags/resizes a widget in arrange mode. Layout = { [id]: {x, y, scale, visible} }.
+  getWidgets: () => ipcRenderer.invoke("overlay:get-widgets"),
+  saveWidget: (id, layout) => ipcRenderer.send("overlay:save-widget", id, layout),
+  // Global overlay-app chrome (the in-overlay hub): toggle the other widgets on/off, read
+  // their current visibility, enter/leave global arrange, and open the full settings window.
+  setMining: (on) => ipcRenderer.send("app:set-mining", !!on),
+  widgetStates: () => ipcRenderer.invoke("app:widget-states"),
+  onWidgetStates: (cb) => ipcRenderer.on("overlay:widget-states", (_e, s) => cb(s)),
+  arrange: (on) => ipcRenderer.send(on ? "overlay:begin-move" : "overlay:end-move"),
+  // The Mining window's cog was clicked → summon this shell's global cog too.
+  onSummonCog: (cb) => ipcRenderer.on("overlay:summon-cog", () => cb()),
 });
