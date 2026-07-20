@@ -1,6 +1,6 @@
 {
   "name": "sc-log-watcher",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "SubliminalsTV SC Blueprint Tracker — game.log watcher + overlay.",
   "type": "module",
   "main": "electron/main.cjs",
@@ -35,7 +35,7 @@
   },
   "build": {
     "appId": "gg.subliminal.blueprint-tracker",
-    "productName": "SC Blueprint Tracker",
+    "productName": "SC Overlay",
     "directories": {
       "output": "release",
       "buildResources": "build"

@@ -81,7 +81,10 @@ function onKeydown(e) {
 }
 function onKeyup(e) {
   for (const [accel, b] of bindings) {
-    if (!b.fallback && b.spec.code === e.keycode) held.delete(accel);
+    if (b.fallback || !b.spec || b.spec.code !== e.keycode) continue;
+    held.delete(accel);
+    // A HOLD binding fires its release callback when the key comes up (interact-to-hold).
+    if (b.hold && typeof b.cbUp === "function") { try { b.cbUp(); } catch { /* ignore */ } }
   }
 }
 
@@ -118,6 +121,21 @@ function register(accel, cb) {
   }
 }
 
+// Register a HOLD hotkey: onDown fires on key press, onUp on release. Requires the low-level
+// hook (globalShortcut can't observe key-up), so it reports {ok:false,error:"no_hook"} if the
+// hook is unavailable rather than silently degrading to a press-only shortcut.
+function registerHold(accel, onDown, onUp) {
+  if (!accel || typeof accel !== "string") return { ok: true };
+  if (!hookLoaded) return { ok: false, error: "no_hook" };
+  const spec = specFor(accel);
+  if (!spec) return { ok: false, error: "invalid" };
+  const sig = sigOf(spec);
+  for (const b of bindings.values()) if (!b.fallback && b.sig === sig) return { ok: false, error: "in_use" };
+  bindings.set(accel, { spec, sig, cb: onDown, cbUp: onUp, hold: true, fallback: false });
+  ensureStarted();
+  return hookLoaded ? { ok: true } : { ok: false, error: "no_hook" };
+}
+
 function unregister(accel) {
   const b = bindings.get(accel);
   if (b && b.fallback) { try { globalShortcut.unregister(accel); } catch { /* ignore */ } }
@@ -135,4 +153,4 @@ function unregisterAll() {
 // Whether hotkeys are backed by the low-level hook (true) vs the globalShortcut fallback.
 function isLowLevel() { return hookLoaded; }
 
-module.exports = { register, unregister, unregisterAll, isLowLevel };
+module.exports = { register, registerHold, unregister, unregisterAll, isLowLevel };

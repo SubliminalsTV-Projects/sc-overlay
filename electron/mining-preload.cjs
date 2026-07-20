@@ -6,6 +6,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("miningApi", {
   // Shell interaction model (same as the HUD).
   hover: (on) => ipcRenderer.send("mining:hover", !!on),
+  // Report interactive element client-rects for cursor hit-testing (replaces forward:true).
+  reportRegions: (rects) => ipcRenderer.send("mining:regions", rects),
   beginMove: () => ipcRenderer.send("mining:begin-move"),
   endMove: () => ipcRenderer.send("mining:end-move"),
   // Force this window interactive for the duration of a drag/resize gesture so it can't drop.
@@ -25,4 +27,5 @@ contextBridge.exposeInMainWorld("miningApi", {
   // own id ("mining"), so it never collides with the Blueprint widget's layout.
   getWidgets: () => ipcRenderer.invoke("overlay:get-widgets"),
   saveWidget: (id, layout) => ipcRenderer.send("overlay:save-widget", id, layout),
+  getCanvasInfo: () => ipcRenderer.invoke("overlay:canvas-info"),
 });

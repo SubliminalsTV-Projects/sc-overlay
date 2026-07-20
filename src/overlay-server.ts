@@ -1,4 +1,5 @@
 import { createServer, type ServerResponse } from "node:http";
+import { networkInterfaces } from "node:os";
 import { writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync } from "node:fs";
 import { extname, join, dirname } from "node:path";
@@ -82,6 +83,8 @@ interface Config {
   miningAssistant: boolean;
   /** Auto-show the Mining Assistant window when the scanner/refinery screen is detected. */
   miningAutoShow: boolean;
+  /** Remembers whether the Mining Assistant window was left open, so it's restored on launch. */
+  miningOpen: boolean;
   /** Path to a user-chosen WAV to use as the alert tone (empty = built-in synth tone). */
   miningTone: string;
   /** GPU hardware acceleration for the Electron overlay. OFF by default — it composites
@@ -104,6 +107,14 @@ interface Config {
   /** Global hotkey that shows/hides the Mining Assistant window (Electron accelerator
    *  syntax). Read by main.cjs at startup. */
   miningHotkey: string;
+  /** Hold-to-interact hotkey (Electron accelerator, default "F"): when hold-to-interact mode is
+   *  on, the overlay is passive (click-through) unless this key is HELD. */
+  interactHotkey: string;
+  /** Opt-in: require holding the interact key to click the overlay. Off by default (the overlay
+   *  is clickable whenever the cursor is over a widget). */
+  holdToInteract: boolean;
+  /** Global hotkey that toggles arrange/move mode (Electron accelerator syntax). */
+  moveHotkey: string;
   /** Recent-activity timestamps: relative ("2h ago") when true, absolute date+clock
    *  when false. Read by the overlay via the mission view's `prefs`. */
   timeRelative: boolean;
@@ -124,7 +135,7 @@ interface Config {
   hideCatbar: boolean;
   /** Overlay manufacturer theme: "mobiglas" (default), "drake", or "auto" (match the ship
    *  you're flying, detected from the log). Sent to the overlay via the mission view prefs. */
-  theme: "mobiglas" | "drake" | "auto";
+  theme: "mobiglas" | "drake" | "anvil" | "greys" | "auto";
   /** Y-axis (left↔right yaw) rotation of the overlay panel, in degrees, to line it up with a
    *  perspective-angled in-game HUD. 0 = flat, 4 = the default subtle tilt. Sent via prefs. */
   overlayTwist: number;
@@ -144,13 +155,17 @@ const DEFAULTS: Config = {
   missionOcr: false,
   miningAssistant: false,
   miningAutoShow: false,
+  miningOpen: false,
   miningTone: "",
   hwAccel: false,
   amdCompat: false,
   bindingPng: "",
-  bindingHotkey: "Alt+F3",
+  bindingHotkey: "Ctrl+F3",
   overlayHotkey: "F3",
   miningHotkey: "Shift+F3",
+  interactHotkey: "F",
+  holdToInteract: false,
+  moveHotkey: "Ctrl+Alt+M",
   timeRelative: true,
   shareLogs: false,
   seenChangelog: "",
@@ -306,17 +321,17 @@ const tracker = new MissionTracker({ dataDir, remoteBaseUrl: "https://subliminal
 let screenCatalog: CatalogEntry[] | null = null;
 const missionClients = new Set<ServerResponse>();
 // ── Overlay theme (manufacturer) ─────────────────────────────────────────────
-// The ship manufacturer we last detected in the log (for theme: "auto"). Only Drake has a
-// bespoke theme so far; every other manufacturer (and "unknown") falls back to Mobiglas.
+// The ship manufacturer we last detected in the log (for theme: "auto"). Drake and Anvil have
+// bespoke themes so far; every other manufacturer (and "unknown") falls back to Mobiglas.
 let shipManufacturer: string | null = null;
-const MFR_THEME: Record<string, "drake"> = { drake: "drake" };
+const MFR_THEME: Record<string, "drake" | "anvil" | "greys"> = { drake: "drake", anvil: "anvil", greys: "greys" };
 // Manufacturer codes (the vehicle-entity prefix) → a manufacturer key; display-name leads use
 // the same keys. Extend both this and MFR_THEME as more manufacturer themes are added.
 const MFR_BY_CODE: Record<string, string> = {
   DRAK: "drake", ORIG: "origin", AEGS: "aegis", ANVL: "anvil", RSI: "rsi", MISC: "misc",
   CRUS: "crusader", ARGO: "argo", BANU: "banu", AOPO: "aopoa", CNOU: "consolidated outland",
   GAMA: "gatac", GRIN: "greycat", ESPR: "esperia", TMBL: "tumbril", KRIG: "kruger",
-  MRAI: "mirai", XIAN: "xian", VNCL: "vanduul",
+  MRAI: "mirai", XIAN: "xian", VNCL: "vanduul", GLSN: "greys",
 };
 /** The manufacturer of the local player's ship from a log line, or null.
  *  AC: the OnVehicleSpawned entity name carries a MANU_ prefix. PU: the comms channel is
@@ -324,12 +339,14 @@ const MFR_BY_CODE: Record<string, string> = {
 function manufacturerFromLine(line: string): string | null {
   const spawn = line.match(/OnVehicleSpawned\s+\d+\s+\(([A-Za-z0-9_]+?)_\d+\)\s+by player 0/);
   if (spawn) { const code = spawn[1].split("_")[0].toUpperCase(); if (MFR_BY_CODE[code]) return MFR_BY_CODE[code]; }
-  const join = line.match(/joined channel '([^:']+?)\s*:\s*[^']+'/);
-  if (join) { const lead = join[1].trim().toLowerCase(); for (const name of Object.values(MFR_BY_CODE)) if (lead.startsWith(name)) return name; }
+  // Ship name may contain an apostrophe ("Grey's Shiv"), so DON'T exclude ' from the capture,
+  // and strip apostrophes before matching so "grey's" → "greys" lines up with the MFR key.
+  const join = line.match(/joined channel '([^:]+?)\s*:\s*[^']+'/);
+  if (join) { const lead = join[1].trim().toLowerCase().replace(/['’`]/g, ""); for (const name of Object.values(MFR_BY_CODE)) if (lead.startsWith(name)) return name; }
   return null;
 }
 /** The theme to actually apply: the fixed choice, or the ship's theme when set to "auto". */
-function effectiveTheme(): "mobiglas" | "drake" {
+function effectiveTheme(): "mobiglas" | "drake" | "anvil" | "greys" {
   if (config.theme === "auto") return (shipManufacturer && MFR_THEME[shipManufacturer]) || "mobiglas";
   return config.theme;
 }
@@ -680,6 +697,17 @@ const server = createServer(async (req, res) => {
 
   // Config read — includes resolved ship name per url for the config UI.
   if (url === "/api/config" && req.method === "GET") {
+    // This machine's LAN IPv4 (private range), so the settings page can offer a browser-source
+    // URL that works from a phone/second device on the same network (localhost only works on
+    // this PC). null if we can't find one (no LAN / VPN-only).
+    const lanHost = (() => {
+      for (const iface of Object.values(networkInterfaces())) {
+        for (const a of iface ?? []) {
+          if (a.family === "IPv4" && !a.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a.address)) return a.address;
+        }
+      }
+      return null;
+    })();
     const urls = await Promise.all(
       config.urls.map(async (u) => {
         try {
@@ -695,7 +723,7 @@ const server = createServer(async (req, res) => {
     const { syncToken, ...rest } = config;
     const syncTokenPreview = syncToken ? `${syncToken.slice(0, 9)}…${syncToken.slice(-4)}` : "";
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ...rest, hasSyncToken: !!syncToken, syncTokenPreview, resolved: urls }));
+    res.end(JSON.stringify({ ...rest, hasSyncToken: !!syncToken, syncTokenPreview, resolved: urls, lanHost, port: PORT }));
     return;
   }
 
@@ -763,6 +791,7 @@ const server = createServer(async (req, res) => {
     if (typeof body.missionOcr === "boolean") config.missionOcr = body.missionOcr;
     if (typeof body.miningAssistant === "boolean") config.miningAssistant = body.miningAssistant;
     if (typeof body.miningAutoShow === "boolean") config.miningAutoShow = body.miningAutoShow;
+    if (typeof body.miningOpen === "boolean") config.miningOpen = body.miningOpen;
     if (typeof body.miningTone === "string") config.miningTone = body.miningTone;
     // GPU accel is read by electron/main.cjs at startup; persist here, restart applies it.
     if (typeof body.hwAccel === "boolean") config.hwAccel = body.hwAccel;
@@ -771,11 +800,14 @@ const server = createServer(async (req, res) => {
     if (typeof body.bindingHotkey === "string" && body.bindingHotkey.trim()) config.bindingHotkey = body.bindingHotkey.trim();
     if (typeof body.overlayHotkey === "string" && body.overlayHotkey.trim()) config.overlayHotkey = body.overlayHotkey.trim();
     if (typeof body.miningHotkey === "string" && body.miningHotkey.trim()) config.miningHotkey = body.miningHotkey.trim();
+    if (typeof body.interactHotkey === "string" && body.interactHotkey.trim()) config.interactHotkey = body.interactHotkey.trim();
+    if (typeof body.holdToInteract === "boolean") config.holdToInteract = body.holdToInteract;
+    if (typeof body.moveHotkey === "string" && body.moveHotkey.trim()) config.moveHotkey = body.moveHotkey.trim();
     if (typeof body.timeRelative === "boolean") config.timeRelative = body.timeRelative;
     if (typeof body.shareLogs === "boolean") config.shareLogs = body.shareLogs;
     if (typeof body.showLoadout === "boolean") config.showLoadout = body.showLoadout;
     if (typeof body.hideCatbar === "boolean") config.hideCatbar = body.hideCatbar;
-    if (body.theme === "mobiglas" || body.theme === "drake" || body.theme === "auto") config.theme = body.theme;
+    if (body.theme === "mobiglas" || body.theme === "drake" || body.theme === "anvil" || body.theme === "greys" || body.theme === "auto") config.theme = body.theme;
     if (typeof body.overlayTwist === "number" && isFinite(body.overlayTwist))
       config.overlayTwist = Math.max(-35, Math.min(35, Math.round(body.overlayTwist)));
     if (typeof body.overlayScale === "number" && isFinite(body.overlayScale))

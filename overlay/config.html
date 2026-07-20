@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>SC Blueprint Tracker — Settings</title>
+<title>SC Overlay — Settings</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -29,6 +29,8 @@
   ::-webkit-scrollbar-corner { background: transparent; }
   .wrap { max-width: 680px; margin: 0 auto; }
   .apphead { display: flex; align-items: center; gap: 15px; cursor: default; user-select: none; }
+  .beta-badge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 4px; vertical-align: 4px;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.12em; color: #1a1205; background: var(--amber); }
   .app-logo { width: 54px; height: 54px; border-radius: 12px; flex: none; }
   h1 { font-family: var(--font-head); font-size: 34px; font-weight: 700; color: #fff; letter-spacing: -.015em; line-height: 1.05; }
   .app-sub { font-family: var(--font-body); font-size: 12px; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; margin-top: 5px; font-weight: 600; }
@@ -93,6 +95,45 @@
   .support .support-txt small { color: var(--muted); font-size: 11.5px; }
   .support .support-arrow { flex: none; color: var(--outline); font-size: 14px; }
   .support:hover .support-arrow { color: var(--amber); }
+  /* Partner promos — compact cards, synced from subliminal.gg/api/partners. */
+  .partner-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .partner { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 11px 13px;
+    background: var(--field); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    text-decoration: none; transition: background .15s, border-color .15s; }
+  .partner:hover { background: var(--card-high); border-color: var(--amber); text-decoration: none; }
+  .partner .p-brand { font-weight: 700; color: var(--text); font-size: 13.5px; padding-right: 14px; }
+  .partner .p-deal { align-self: flex-start; font-size: 10px; font-weight: 700; color: var(--on-amber);
+    background: var(--amber); padding: 1px 7px; border-radius: 999px; }
+  .partner .p-code { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+  .partner .p-arrow { position: absolute; top: 9px; right: 11px; color: var(--outline); font-size: 13px; }
+  .partner:hover .p-arrow { color: var(--amber); }
+  /* ── Redesign: tiers, one-liner setting rows, info-icon tooltips ── */
+  .tier { margin-top: 30px; }
+  .tier-h { font-family: var(--font-head); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--amber); font-weight: 700; display: flex; align-items: baseline; gap: 10px; padding-bottom: 2px; border-bottom: 1px solid var(--line-soft); }
+  .tier-sub { font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); }
+  .cardhead { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .cardhead .label { margin-bottom: 0; flex: 1; }
+  .setrow { display: flex; align-items: flex-start; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .setrow:last-child { border-bottom: none; }
+  .setrow .opt { margin-top: 0; flex: 1; }
+  .info { position: relative; flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line-strong);
+    color: var(--muted); font-family: ui-serif, Georgia, "Times New Roman", serif; font-style: italic; font-size: 12px; font-weight: 700;
+    line-height: 16px; text-align: center; cursor: pointer; user-select: none; transition: color .15s, border-color .15s; }
+  .info:hover, .info:focus { color: var(--amber); border-color: var(--amber); outline: none; }
+  .info .tip { position: absolute; top: calc(100% + 8px); right: 0; width: 300px; max-width: 78vw; z-index: 50;
+    background: var(--card-high); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 11px 13px;
+    font-family: var(--font-body); font-style: normal; font-weight: 400; font-size: 12.5px; line-height: 1.55; color: var(--text);
+    text-align: left; white-space: normal; box-shadow: 0 12px 34px rgba(0,0,0,.55);
+    opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .15s; }
+  .info:hover .tip, .info:focus .tip, .info.pinned .tip { opacity: 1; visibility: visible; pointer-events: auto; }
+  .info .tip code { font-family: ui-monospace, monospace; background: var(--field); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+  /* compact hotkey rows */
+  .hkrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .hkrow:last-child { border-bottom: none; }
+  .hkrow .hklabel { flex: 1; font-size: 14px; color: var(--text); }
+  .hkrow .hkbtn { margin-left: auto; }
+  .hkrow .hint { flex-basis: 100%; width: 100%; margin-top: 0; }
+  .hkrow .hint:empty { display: none; }
 </style>
 </head>
 <body>
@@ -100,15 +141,194 @@
   <div class="apphead" id="appTitle">
     <img src="/tray-icon.png" alt="" class="app-logo" />
     <div>
-      <h1>SC Blueprint Tracker</h1>
+      <h1>SC Overlay <span class="beta-badge">BETA</span></h1>
       <div class="app-sub">Settings</div>
     </div>
+  </div>
+
+<!-- ══════════ TIER 1 ══════════ -->
+  <div class="tier">
+    <div class="tier-h">Opt-in features <span class="tier-sub">all off until you turn them on</span></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Collection &amp; privacy</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="syncEnabled" /> Sync my collection to subliminal.gg</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Backs up your blueprint collection + tracked mission to your subliminal.gg account and lets you browse it on the web. Needs a token — get one at <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg/blueprints</a> → &ldquo;Connect the desktop tracker&rdquo; and paste it below.</span></span>
+    </div>
+    <input type="text" id="syncToken" placeholder="scbp_…  paste your token from subliminal.gg/blueprints" />
+    <div class="hint" id="syncStatus"></div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="shareLogs" /> Share anonymized logs to improve the tracker</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Sends your Star Citizen <code>Game.log</code> to SubliminalsTV so we can fix missions/drops the tracker gets wrong. Your handle, account ID, IP address and login session are stripped out and chat is removed before it leaves your PC — only mission and blueprint events remain. Needs a sync token. Off by default.</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Screen reading (OCR)</div>
+    <div class="hint" style="margin-top:0">Uses Windows' built-in text recognition, only while Star Citizen is focused.</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="missionOcr" /> Detect the mission I'm tracking in-game</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Reads the tracked-mission panel so the overlay knows which mission you've actually selected — ground truth the game log can't give. No account needed.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's catalog — only items we don't have yet. You're credited on the contributor leaderboard. Needs a sync token.</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Overlay extras</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="miningAutoShow" /> Pop the Mining Assistant open when I'm scanning or refining</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Shows the Mining Assistant on its own when the scanner or Refinement Center is detected. If you close it, it stays away for a bit before it can pop again.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="holdToInteract" onchange="onHoldModeToggle()" /> Only let me click the overlay while I hold a key</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">With this on, the overlay is click-through during gameplay — hold the interact key (set it under Hotkeys) and hover a widget to click it. Prevents accidental clicks mid-game.</span></span>
+    </div>
+    <div class="setrow">
+      <div class="opt" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <span>Binding-chart overlay</span>
+        <div class="add" style="margin-top:0">
+          <input type="text" id="bindingPng" placeholder="no PNG chosen — pick one to enable" readonly />
+          <button onclick="chooseBinding()">Choose PNG…</button>
+          <button class="danger" onclick="clearBinding()" title="Remove">✕</button>
+        </div>
+      </div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Pick a PNG (transparency supported — e.g. a joystick binding chart) and toggle it full-screen over the game with the binding hotkey (set under Hotkeys). Click-through, won't interfere.</span></span>
+    </div>
+  </div>
+
+  <!-- ══════════ TIER 2 ══════════ -->
+  <div class="tier">
+    <div class="tier-h">Setup &amp; defaults <span class="tier-sub">the essentials, sensible out of the box</span></div>
+  </div>
+
+  <div class="card">
+    <div class="cardhead">
+      <div class="label">Game log</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Pick the <code>game.log</code> FILE itself (not its folder) — e.g. …\StarCitizen\LIVE\game.log. <strong>Browse…</strong> to select it, or <strong>Detect</strong> to auto-find your install and channel (LIVE / PTU / …).</span></span>
+    </div>
+    <div class="add">
+      <input type="text" id="logPath" placeholder="…\StarCitizen\LIVE\game.log" />
+      <button onclick="chooseLog()">Browse…</button>
+      <button onclick="detectLog()">Detect</button>
+    </div>
+    <div id="logWarn" class="hint" style="display:none; color:#ffb4a8"></div>
+    <div id="detected" class="hint"></div>
+    <label class="opt loadout-only"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
+  </div>
+
+  <div class="card">
+    <div class="cardhead">
+      <div class="label">Appearance</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Restyle the overlay to a Star Citizen manufacturer. <strong>Mobiglas</strong> is the clean default; <strong>Drake</strong> is rugged burnt-orange; <strong>Anvil</strong> is military teal-green; <strong>Grey's</strong> is grungy CRT green; <strong>Auto</strong> matches the ship you're flying. Applies immediately. (Per-widget sizing: drag a widget's corner in arrange mode.)</span></span>
+    </div>
+    <label class="opt" style="margin-top:2px;">Theme
+      <select id="theme" onchange="save()" style="margin-left:auto;">
+        <option value="mobiglas">Mobiglas (default)</option>
+        <option value="drake">Drake Interplanetary</option>
+        <option value="anvil">Anvil Aerospace</option>
+        <option value="greys">Grey's</option>
+        <option value="auto">Auto — match my ship</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="card">
+    <div class="cardhead">
+      <div class="label">Hotkeys</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Click a button then press your combo. Use Ctrl/Alt/Shift + a key, or a bare <code>F3</code> / <code>F13–F24</code> (those are free in Star Citizen; F4–F12 are taken). Applies immediately, no restart.</span></span>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Show / hide overlay</span>
+      <button type="button" id="overlayHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('overlay')">F3</button>
+      <input type="hidden" id="overlayHotkey" />
+      <div class="hint" id="overlayHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Mining Assistant</span>
+      <button type="button" id="miningHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('mining')">Shift + F3</button>
+      <input type="hidden" id="miningHotkey" />
+      <div class="hint" id="miningHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Binding chart</span>
+      <button type="button" id="bindingHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('binding')">Ctrl + F3</button>
+      <input type="hidden" id="bindingHotkey" />
+      <div class="hint" id="bindingHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Hold-to-interact key</span>
+      <button type="button" id="interactHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('interact')">F</button>
+      <input type="hidden" id="interactHotkey" />
+      <div class="hint" id="interactHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Move / arrange</span>
+      <button type="button" id="moveHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('move')">Ctrl + Alt + M</button>
+      <input type="hidden" id="moveHotkey" />
+      <div class="hint" id="moveHotkeyHint"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Performance &amp; fixes</div>
+    <label class="opt" id="overlayShowRow" style="display:none"><input type="checkbox" id="overlayShow" /> Show the in-game overlay</label>
+    <div class="hint" id="overlayShowHint" style="display:none">Turn off if the overlay crashes your game — tracking + sync keep running without it.</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="amdCompat" /> AMD compatibility mode</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">On an AMD GPU and the game crashes (Vulkan &ldquo;device lost&rdquo;) when the overlay is up? Turn this on — it forces the overlay off the GPU with a simpler no-blur panel. Requires restarting the app.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="hwAccel" /> Use GPU hardware acceleration</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Off by default — the overlay renders on the CPU, avoiding crashes some GPUs hit. Turn on only if you have GPU headroom and no crashes. Requires restarting the app.</span></span>
+    </div>
+    <div class="setrow">
+      <span class="hklabel" style="flex:1; color:var(--muted); font-size:13px;">Hotkeys work on the desktop but not in-game?</span>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Do your hotkeys work on the desktop but not while Star Citizen is focused? The game runs as admin (anti-cheat), so another app's hotkeys only reach it while focused if that app is ALSO admin.</span></span>
+    </div>
+    <div class="hint" id="adminOk" style="display:none; color:#63d6a0">✓ Running as administrator — hotkeys work while the game is focused.</div>
+    <button type="button" id="adminBtn" class="amber" style="display:none" onclick="restartAsAdmin()">Restart as administrator</button>
+    <div class="hint" id="adminHint" style="display:none">Relaunches elevated (a Windows UAC prompt — click Yes). Only affects hotkeys while the game is focused. Tip: shortcut → Properties → Compatibility → Run as administrator to skip this each launch.</div>
+    <div class="setrow">
+      <button type="button" class="danger" style="width:100%" onclick="onResetLayout()">Reset overlay layout (recover lost widgets)</button>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">If a widget ends up off-screen (e.g. dragged onto another monitor), this returns every widget to its default on-screen spot.</span></span>
+    </div>
+  </div>
+
+  <!-- ══════════ TIER 3 ══════════ -->
+  <div class="tier">
+    <div class="tier-h">More</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Browser sources &amp; extra monitors</div>
+    <div class="hint">Want a widget on a <strong>second monitor</strong>, or as an <strong>OBS browser source</strong>? Open one of these URLs in any browser window — it renders that widget on its own, live and transparent. This is the way to put a widget off your main screen; the in-game overlay itself stays on your primary display.</div>
+    <label class="opt" style="margin-top:6px;">Blueprint tracker
+      <input type="text" id="srcBlueprint" readonly onclick="this.select()" style="margin-left:auto; width:230px; font-family:monospace; font-size:12px;" />
+      <button type="button" class="hkbtn" style="margin-left:8px;" onclick="copySrc('srcBlueprint', this)">Copy</button>
+    </label>
+    <label class="opt">Mining Assistant
+      <input type="text" id="srcMining" readonly onclick="this.select()" style="margin-left:auto; width:230px; font-family:monospace; font-size:12px;" />
+      <button type="button" class="hkbtn" style="margin-left:8px;" onclick="copySrc('srcMining', this)">Copy</button>
+    </label>
+    <div class="hint">In OBS: add a <strong>Browser</strong> source and paste the URL — the background is transparent, so it composites straight over your scene.</div>
+    <div class="hint" id="lanHint" style="display:none">📱 <strong>On a phone or another device</strong> on the same Wi-Fi, <code>localhost</code> won't work — swap in this PC's address instead: e.g. <code id="lanExample"></code><span class="lnk" id="lanCopy" style="margin-left:8px; cursor:pointer; text-decoration:underline dotted;">copy</span></div>
+  </div>
+
+  <div class="card" id="partnersCard" style="display:none">
+    <div class="label">Partner promos</div>
+    <div class="hint" style="margin-top:0; margin-bottom:12px">Deals from SubliminalsTV's partners — support development at no extra cost to you.</div>
+    <div class="partner-grid" id="partnerGrid"></div>
   </div>
 
   <div class="card">
     <div class="label">About</div>
     <div class="hint" style="margin-top:0">
-      <strong>SC Blueprint Tracker</strong> is a desktop app that reads your Star Citizen game log to show
+      <strong>SC Overlay</strong> is a desktop app that reads your Star Citizen game log to show
       the blueprint reward pool for the mission you're tracking, checking off each blueprint as you collect
       it. It runs as a lightweight in-game overlay — a transparent HUD that floats over the game and updates
       live while you play. Point it at your <code>game.log</code> below to get started, and optionally connect
@@ -152,114 +372,6 @@
     <div class="hint">Paste an erkul share URL per ship. The overlay reads the ship from each build automatically — when that ship spawns in-game, it switches to it. Click a row to make it the active overlay now.</div>
   </div>
 
-  <div class="card">
-    <div class="label">Game Log</div>
-    <div class="add">
-      <input type="text" id="logPath" placeholder="…\StarCitizen\LIVE\game.log" />
-      <button onclick="chooseLog()">Browse…</button>
-      <button onclick="detectLog()">Detect</button>
-    </div>
-    <div id="logWarn" class="hint" style="display:none; color:#ffb4a8"></div>
-    <div id="detected" class="hint"></div>
-    <label class="opt loadout-only"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
-    <div class="hint">Pick the <strong>game.log file itself</strong> — the actual file, <em>not</em> the folder it's in. It lives inside your channel folder, e.g. <code>…\StarCitizen\LIVE\game.log</code>. Click <strong>Browse…</strong> to select the file, or <strong>Detect</strong> to auto-find your install and choose your channel (LIVE / PTU / EPTU / …).</div>
-  </div>
-
-  <div class="card">
-    <div class="label">subliminal.gg Sync</div>
-    <input type="text" id="syncToken" placeholder="scbp_…  paste your token from subliminal.gg/blueprints" />
-    <label class="opt"><input type="checkbox" id="syncEnabled" /> Sync my collection to my subliminal.gg account</label>
-    <div class="hint" id="syncStatus"></div>
-    <div class="hint">Get your token at <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg/blueprints</a> → “Connect the desktop tracker”. Your collection and tracked mission then sync automatically.</div>
-    <label class="opt"><input type="checkbox" id="shareLogs" /> Share anonymized logs to improve the tracker</label>
-    <div class="hint">When on, the app sends your Star Citizen <code>Game.log</code> to SubliminalsTV so we can find missions and blueprint drops the tracker gets wrong. Before it leaves your PC, your <strong>handle, account ID, IP address, and login session are stripped out, and chat is removed entirely</strong> — only mission and blueprint events remain. It's only ever used to improve the app. Needs a sync token above. <strong>Off by default.</strong></div>
-  </div>
-
-  <div class="card">
-    <div class="label">Screen Reading (OCR)</div>
-    <div class="hint" style="margin-top:0">Both use Windows' built-in text recognition and only ever run <strong>while Star Citizen is the focused window</strong>. Both are <strong>off by default</strong> — nothing on your screen is read unless you turn it on. (You can also flip these from the overlay's ⚙ menu.)</div>
-    <label class="opt"><input type="checkbox" id="missionOcr" /> Detect the mission I'm tracking in-game</label>
-    <div class="hint">Reads the tracked-mission panel so the overlay knows which mission you've actually selected — ground truth the game log can't give (it sees every accepted mission the same). No account needed.</div>
-    <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
-    <div class="hint">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's blueprint catalog — only items we don't have yet, nothing else on your screen. You're credited on the contributor leaderboard. Needs a sync token above.</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Mining Assistant</div>
-    <div class="hint" style="margin-top:0">A separate overlay window (tray → Mining Assistant) that reads the mining scanner's signature to name rocks, and the Refinement Center to alarm when a refine finishes. It's click-through until you hover it — just like the main overlay — so you won't click it by accident in-game. Voice, volume, alert-tone and announce controls all live in that window's ⚙.</div>
-    <label class="opt"><input type="checkbox" id="miningAutoShow" /> Pop it open automatically when I'm scanning or refining</label>
-    <div class="hint">Shows the window on its own when the scanner or Refinement Center screen is detected. If you close it, it stays out of the way for a bit before it can pop again.</div>
-    <label class="opt" style="margin-top:12px;">Show / hide hotkey
-      <button type="button" id="miningHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('mining')">Shift + F3</button>
-      <input type="hidden" id="miningHotkey" />
-    </label>
-    <div class="hint" id="miningHotkeyHint">Press this key in-game to show or hide the Mining Assistant window. Click the button and press a new key to change it — a single <strong>F3 / F13–F24</strong>, or any combo with Ctrl / Alt / Shift. Default is <strong>Shift+F3</strong>. <strong>Applies immediately, no restart.</strong></div>
-  </div>
-
-  <div class="card">
-    <div class="label">In-Game Hotkeys</div>
-    <div class="hint" style="margin-top:0">Do your hotkeys work when you alt-tab to the desktop, but do nothing while Star Citizen is focused? Windows is the reason: the game runs as administrator (Easy Anti-Cheat requires it), and another app's hotkeys can only reach it while it's focused if that app is <strong>also</strong> running as administrator.</div>
-    <div class="hint" id="adminOk" style="display:none; margin-top:10px; color:#63d6a0; opacity:1">✓ Running as administrator — your hotkeys work while the game is focused.</div>
-    <button type="button" id="adminBtn" class="amber" style="display:none; margin-top:12px" onclick="restartAsAdmin()">Restart as administrator</button>
-    <div class="hint" id="adminHint" style="display:none">Relaunches the app with elevated permissions — you'll get a Windows UAC prompt, just click <strong>Yes</strong>. Nothing else changes; this only affects hotkeys while the game has focus. <em>To skip this every launch, right-click the app's shortcut → Properties → Compatibility → “Run this program as an administrator.”</em></div>
-  </div>
-
-  <div class="card">
-    <div class="label">Binding Chart Overlay</div>
-    <div class="add">
-      <input type="text" id="bindingPng" placeholder="no PNG chosen — pick one to enable" readonly />
-      <button onclick="chooseBinding()">Choose PNG…</button>
-      <button class="danger" onclick="clearBinding()" title="Remove">✕</button>
-    </div>
-    <label class="opt" style="margin-top:12px;">Hotkey
-      <button type="button" id="bindingHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('binding')">Alt + F3</button>
-      <input type="hidden" id="bindingHotkey" />
-    </label>
-    <div class="hint" id="bindingHotkeyHint">Pick a PNG (transparency supported — e.g. your joystick binding chart) and press the hotkey in-game to toggle it full-screen over gameplay (click-through, won't interfere). To change the hotkey, click the button and press your combination — include Ctrl, Alt, or Shift, <strong>or a single F3 / F13–F24 key on its own</strong> (these are free in Star Citizen; F4–F12 are already bound). Default is <strong>Alt+F3</strong>. <strong>Applies immediately, no restart.</strong></div>
-  </div>
-
-  <div class="card">
-    <div class="label">Overlay Appearance</div>
-    <label class="opt" style="margin-top:2px;">Theme
-      <select id="theme" onchange="save()" style="margin-left:auto;">
-        <option value="mobiglas">Mobiglas (default)</option>
-        <option value="drake">Drake Interplanetary</option>
-        <option value="auto">Auto — match my ship</option>
-      </select>
-    </label>
-    <div class="hint">Restyle the overlay to a Star Citizen ship manufacturer. <strong>Mobiglas</strong> is the clean default. <strong>Drake</strong> is rugged burnt-orange on gunmetal (with duct-tape corners). <strong>Auto</strong> matches the ship you're flying, read from your game log — currently Drake in a Drake ship, Mobiglas otherwise. Applies immediately.</div>
-    <label class="opt" style="margin-top:10px;">Angle — align to HUD
-      <input type="range" id="overlayTwist" min="-35" max="35" step="1" value="4" oninput="onTwist()" onchange="save()" style="flex:1; margin:0 10px; min-width:120px;" />
-      <span id="twistVal" style="min-width:42px; text-align:right; font-variant-numeric:tabular-nums;">4°</span>
-    </label>
-    <div class="hint">Tilt the panel left ↔ right (perspective) to line it up with an angled cockpit HUD. <strong>0°</strong> is flat; <strong>4°</strong> is the default.</div>
-    <label class="opt" style="margin-top:12px;">Size
-      <input type="range" id="overlayScale" min="50" max="200" step="5" value="100" oninput="onScale()" onchange="save()" style="flex:1; margin:0 10px; min-width:120px;" />
-      <span id="scaleVal" style="min-width:46px; text-align:right; font-variant-numeric:tabular-nums;">100%</span>
-    </label>
-    <div class="presets">
-      <button type="button" onclick="setScale(50)">1080p</button>
-      <button type="button" onclick="setScale(100)">Current</button>
-      <button type="button" onclick="setScale(200)">4K</button>
-    </div>
-    <div class="hint">Scale the whole overlay for your monitor — the window resizes to match. The presets are starting points; nudge the slider until it looks right.</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Overlay Performance</div>
-    <label class="opt" style="margin-top:2px;">Show / hide hotkey
-      <button type="button" id="overlayHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('overlay')">F3</button>
-      <input type="hidden" id="overlayHotkey" />
-    </label>
-    <div class="hint" id="overlayHotkeyHint">Press this key in-game to toggle the whole blueprint overlay on/off. Click the button and press a new key to change it — a single <strong>F3 / F13–F24</strong>, or any combo with Ctrl / Alt / Shift. Default is <strong>F3</strong>. <strong>Applies immediately, no restart.</strong></div>
-    <label class="opt" id="overlayShowRow" style="display:none"><input type="checkbox" id="overlayShow" /> Show the in-game overlay</label>
-    <div class="hint" id="overlayShowHint" style="display:none">Turn this <strong>off</strong> if the overlay crashes your game. Blueprint tracking and collection sync keep running without it — you just lose the on-screen panel. Takes effect immediately, no restart. <em>Tip: the binding-chart hotkey (Alt+F3) opens another overlay window, so leave that off too while testing.</em></div>
-    <label class="opt"><input type="checkbox" id="amdCompat" /> AMD compatibility mode</label>
-    <div class="hint">On an <strong>AMD</strong> GPU and the game crashes (Vulkan "device lost") when the overlay is up? Turn this on. It forces the overlay fully off the GPU and switches to a simplified, no-blur panel — which stops that crash while keeping the overlay visible. Slightly plainer look, a little more CPU. <em>Requires restarting the app.</em></div>
-    <label class="opt"><input type="checkbox" id="hwAccel" /> Use GPU hardware acceleration</label>
-    <div class="hint"><strong>Off by default.</strong> The overlay renders on the CPU, which avoids crashes some GPUs (especially AMD) hit when the overlay runs over the game. Turn this on only if you have GPU headroom and don't get crashes. <em>Changing this requires restarting the app.</em></div>
-  </div>
-
   <div style="margin-top:20px; display:flex; align-items:center;">
     <button class="amber" onclick="save()">Save</button>
     <span class="saved" id="saved">Saved ✓</span>
@@ -276,6 +388,20 @@
 
   async function loadCfg() {
     cfg = await (await fetch("/api/config")).json();
+    // Browser-source URLs (for a second monitor / OBS) — built from wherever this config page is
+    // served, so the port is always right.
+    document.getElementById("srcBlueprint").value = location.origin + "/missions.html";
+    document.getElementById("srcMining").value = location.origin + "/mining.html";
+    // Same widgets on a phone / second device: swap localhost for this PC's LAN address (the
+    // server reports it — a browser can't see it). Hidden if there's no LAN address to offer.
+    if (cfg.lanHost) {
+      const lanBase = "http://" + cfg.lanHost + ":" + (cfg.port || 8778);
+      document.getElementById("lanExample").textContent = lanBase + "/missions.html";
+      document.getElementById("lanCopy").dataset.url = lanBase + "/missions.html";
+      document.getElementById("lanHint").style.display = "";
+    } else {
+      document.getElementById("lanHint").style.display = "none";
+    }
     document.getElementById("logPath").value = cfg.logPath || "";
     checkLogPath();
     document.getElementById("autoSwitch").checked = !!cfg.autoSwitch;
@@ -283,8 +409,11 @@
     document.getElementById("amdCompat").checked = !!cfg.amdCompat;
     document.getElementById("bindingPng").value = cfg.bindingPng || "";
     setHotkeyDisplay("overlay", cfg.overlayHotkey || "F3");
-    setHotkeyDisplay("binding", cfg.bindingHotkey || "Alt+F3");
+    setHotkeyDisplay("binding", cfg.bindingHotkey || "Ctrl+F3");
     setHotkeyDisplay("mining", cfg.miningHotkey || "Shift+F3");
+    setHotkeyDisplay("interact", cfg.interactHotkey || "F");
+    setHotkeyDisplay("move", cfg.moveHotkey || "Ctrl+Alt+M");
+    document.getElementById("holdToInteract").checked = !!cfg.holdToInteract;
     document.body.classList.toggle("show-loadout", !!cfg.showLoadout);
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
@@ -292,9 +421,6 @@
     document.getElementById("miningAutoShow").checked = !!cfg.miningAutoShow;
     document.getElementById("shareLogs").checked = !!cfg.shareLogs;
     document.getElementById("theme").value = cfg.theme || "mobiglas";
-    document.getElementById("overlayTwist").value = cfg.overlayTwist ?? 4;
-    document.getElementById("overlayScale").value = cfg.overlayScale ?? 100;
-    onTwist(); onScale();
     // Put the saved key (truncated) right in the field so it's obvious one is connected.
     // Focusing clears it for a clean paste; the "…" guard in save() stops it being re-submitted.
     const tokenEl = document.getElementById("syncToken");
@@ -352,16 +478,20 @@
     cfg.activeUrl = url; renderList();
   }
 
-  function onTwist() {
-    document.getElementById("twistVal").textContent = (document.getElementById("overlayTwist").value || 0) + "°";
+
+  // Copy a browser-source URL to the clipboard, with brief button feedback.
+  function copySrc(id, btn) {
+    const v = document.getElementById(id).value;
+    const done = () => { const t = btn.textContent; btn.textContent = "Copied ✓"; setTimeout(() => { btn.textContent = t; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(done).catch(() => { document.getElementById(id).select(); document.execCommand("copy"); done(); });
+    else { document.getElementById(id).select(); document.execCommand("copy"); done(); }
   }
-  function onScale() {
-    document.getElementById("scaleVal").textContent = (document.getElementById("overlayScale").value || 100) + "%";
-  }
-  function setScale(pct) {
-    document.getElementById("overlayScale").value = pct;
-    onScale(); save();
-  }
+  // Copy the LAN browser-source URL (phone / second device).
+  document.getElementById("lanCopy")?.addEventListener("click", (e) => {
+    const url = e.target.dataset.url; if (!url) return;
+    const done = () => { const t = e.target.textContent; e.target.textContent = "copied ✓"; setTimeout(() => { e.target.textContent = t; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(done); else done();
+  });
 
   async function save() {
     cfg.logPath = document.getElementById("logPath").value.trim();
@@ -374,16 +504,17 @@
       amdCompat: document.getElementById("amdCompat").checked,
       bindingPng: document.getElementById("bindingPng").value,
       overlayHotkey: document.getElementById("overlayHotkey").value.trim() || "F3",
-      bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "Alt+F3",
+      bindingHotkey: document.getElementById("bindingHotkey").value.trim() || "Ctrl+F3",
       miningHotkey: document.getElementById("miningHotkey").value.trim() || "Shift+F3",
+      interactHotkey: document.getElementById("interactHotkey").value.trim() || "F",
+      holdToInteract: document.getElementById("holdToInteract").checked,
+      moveHotkey: document.getElementById("moveHotkey").value.trim() || "Ctrl+Alt+M",
       syncEnabled: document.getElementById("syncEnabled").checked,
       fabCapture: document.getElementById("fabCapture").checked,
       missionOcr: document.getElementById("missionOcr").checked,
       miningAutoShow: document.getElementById("miningAutoShow").checked,
       shareLogs: document.getElementById("shareLogs").checked,
       theme: document.getElementById("theme").value,
-      overlayTwist: parseInt(document.getElementById("overlayTwist").value, 10) || 0,
-      overlayScale: parseInt(document.getElementById("overlayScale").value, 10) || 100,
     };
     const token = document.getElementById("syncToken").value.trim();
     // The field may still show the truncated preview (contains "…"); only submit a real pasted token.
@@ -421,16 +552,30 @@
   }
   function clearBinding() { document.getElementById("bindingPng").value = ""; save(); }
 
+  // Opt-in hold-to-interact: apply live via the shell, and persist via save().
+  function onHoldModeToggle() {
+    const on = document.getElementById("holdToInteract").checked;
+    if (window.overlayConfig && window.overlayConfig.setHoldMode) window.overlayConfig.setHoldMode(on);
+    save();
+  }
+  async function onResetLayout() {
+    if (window.overlayConfig && window.overlayConfig.resetLayout) await window.overlayConfig.resetLayout();
+  }
+
   // ── configurable hotkeys: click-to-capture, live-applied ─────────────────
   // Two hotkeys share one capture flow: the overlay show/hide toggle and the
   // binding-chart PNG toggle. Each names its input/button/hint els + live-apply fn.
   const HOTKEYS = {
     overlay: { input: "overlayHotkey", btn: "overlayHotkeyBtn", hint: "overlayHotkeyHint", def: "F3",
                apply: (a) => window.overlayConfig && window.overlayConfig.setOverlayHotkey && window.overlayConfig.setOverlayHotkey(a) },
-    binding: { input: "bindingHotkey", btn: "bindingHotkeyBtn", hint: "bindingHotkeyHint", def: "Alt+F3",
+    binding: { input: "bindingHotkey", btn: "bindingHotkeyBtn", hint: "bindingHotkeyHint", def: "Ctrl+F3",
                apply: (a) => window.overlayConfig && window.overlayConfig.setBindingHotkey && window.overlayConfig.setBindingHotkey(a) },
     mining: { input: "miningHotkey", btn: "miningHotkeyBtn", hint: "miningHotkeyHint", def: "Shift+F3",
                apply: (a) => window.overlayConfig && window.overlayConfig.setMiningHotkey && window.overlayConfig.setMiningHotkey(a) },
+    interact: { input: "interactHotkey", btn: "interactHotkeyBtn", hint: "interactHotkeyHint", def: "F", bare: true,
+               apply: (a) => window.overlayConfig && window.overlayConfig.setInteractHotkey && window.overlayConfig.setInteractHotkey(a) },
+    move: { input: "moveHotkey", btn: "moveHotkeyBtn", hint: "moveHotkeyHint", def: "Ctrl+Alt+M",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setMoveHotkey && window.overlayConfig.setMoveHotkey(a) },
   };
   let capturing = null; // which HOTKEYS key is mid-capture, or null
   function prettyHotkey(accel) {
@@ -478,7 +623,7 @@
     const key = hkKeyName(e.code);
     // F3 and F13–F24 are free in Star Citizen (F4–F12 are taken), so allow them bare —
     // that's the whole point of a dedicated overlay key. Everything else needs a modifier.
-    const bareOk = /^F(3|1[3-9]|2[0-4])$/.test(key || "");
+    const bareOk = h.bare || /^F(3|1[3-9]|2[0-4])$/.test(key || "");
     capturing = null; btn.classList.remove("capturing");
     if (!key || (!mods.length && !bareOk)) {
       setHotkeyDisplay(which, document.getElementById(h.input).value);
@@ -546,6 +691,11 @@
   });
 
   document.getElementById("logPath").addEventListener("input", checkLogPath);
+  // Auto-save the plain checkboxes the instant they're toggled, so a change can never be lost by
+  // closing/scrolling away without clicking Save. (Theme, hotkeys, hold-to-interact and the file
+  // pickers already save on change; the sync token stays manual so a half-typed token isn't sent.)
+  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat"]
+    .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
   // The sync field shows the truncated saved key; clear it on focus so a new token pastes
   // cleanly, and restore the preview on blur if nothing was typed.
   const syncTokenEl = document.getElementById("syncToken");
@@ -562,6 +712,30 @@
   });
   loadCfg();
   initOverlayToggle();
+
+  // Partner promos — pulled live from subliminal.gg so they stay in sync with the site's
+  // partners page (single source of truth). Hidden if offline or none flagged for the app.
+  (async () => {
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    try {
+      const r = await fetch("https://subliminal.gg/api/partners");
+      if (!r.ok) return;
+      const { partners } = await r.json();
+      if (!partners || !partners.length) return;
+      document.getElementById("partnerGrid").innerHTML = partners.map((p) =>
+        '<a class="partner" href="' + esc(p.url) + '" target="_blank" rel="noopener">' +
+          '<span class="p-arrow">↗</span>' +
+          '<span class="p-brand">' + esc(p.brand) + "</span>" +
+          (p.discount ? '<span class="p-deal">' + esc(p.discount) + "</span>" : "") +
+          (p.code ? '<span class="p-code">code ' + esc(p.code) + "</span>" : "") +
+        "</a>"
+      ).join("");
+      document.getElementById("partnersCard").style.display = "";
+    } catch { /* offline — leave the card hidden */ }
+  })();
+
+  // Info-icon pin: click the (i) to keep its tooltip open; click elsewhere to close.
+  document.addEventListener("click",(e)=>{const info=e.target.closest(".info");document.querySelectorAll(".info.pinned").forEach(el=>{if(el!==info)el.classList.remove("pinned");});if(info){info.classList.toggle("pinned");e.stopPropagation();}});
 </script>
 </body>
 </html>

@@ -43,6 +43,10 @@ export interface MiningView {
 }
 
 const DONE_KEEP_MS = 6 * 3600 * 1000; // keep a finished job visible ~6h, then auto-clear
+// Signature floor: the scanner ignores any read below this entirely — no rock/debris call-out
+// and no scanner display. Filters out low-value noise (tiny/distant contacts) the player doesn't
+// want announced; only 2,000+ signatures get a response.
+const MIN_SIGNATURE = 2000;
 
 export class MiningTracker extends EventEmitter {
   private data: MineablesData | null = null;
@@ -75,6 +79,7 @@ export class MiningTracker extends EventEmitter {
    *  5 apart, so a tolerance would pick the wrong rock). Unknown numbers are ignored. */
   applyMineableRead(signature: number): void {
     if (!this.data) return;
+    if (signature < MIN_SIGNATURE) return; // below the floor -> ignore entirely (no display, no call-out)
     const matches = this.data.index[String(signature)] ?? []; // empty = not a rock -> salvage debris
     // Ignore a repeat read of the same signature (the loop polls the same rock every ~3s);
     // only a CHANGED signature is news worth re-announcing.

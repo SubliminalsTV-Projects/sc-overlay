@@ -1,4 +1,12 @@
 {
+  "0.1.28": [
+    "New name: this is now SC Overlay. It's grown well past just blueprints — mining, loadouts, and more — so the name caught up. Your settings and your whole collection carry over untouched.",
+    "The Mining Assistant is now part of the main overlay instead of its own separate window. That fixes the annoying stuff: clicking one widget while another's open just works now, and nothing steals a click you meant for the game.",
+    "A much cleaner Settings page. Everything's sorted into categories with the opt-in features up top, each setting is a single line with an ⓘ you can hover for the details, and changes save the moment you make them — no more hunting for a Save button.",
+    "New: put a widget on a second monitor or your phone. Settings now gives you copy-ready links for the Blueprint and Mining widgets (and OBS browser-source URLs), including one that works from your phone on the same Wi-Fi.",
+    "The mining scanner now ignores tiny signatures under 2,000, so it stops calling out every little scrap of debris.",
+    "New: partner promos in Settings — deals from the brands that support the channel, at no extra cost to you."
+  ],
   "0.1.27": [
     "New: the overlay is now an “overlay app” — the Blueprint tracker and Mining Assistant float freely on your screen. Drag them anywhere, resize each from its corner, and give each its own angle so a left and a right widget can lean in toward you.",
     "New: an Arrange mode that moves everything at once. Grab a widget's ⠿ handle (or press Ctrl+Alt+M) and the whole screen shows it's in edit mode — drag, resize, then hit Done. Your layout is saved and survives updates.",

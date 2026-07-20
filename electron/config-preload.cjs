@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld("overlayConfig", {
   setOverlayHotkey: (accel) => ipcRenderer.invoke("set-overlay-hotkey", accel),
   setBindingHotkey: (accel) => ipcRenderer.invoke("set-binding-hotkey", accel),
   setMiningHotkey: (accel) => ipcRenderer.invoke("set-mining-hotkey", accel),
+  setInteractHotkey: (accel) => ipcRenderer.invoke("set-interact-hotkey", accel),
+  setMoveHotkey: (accel) => ipcRenderer.invoke("set-move-hotkey", accel),
+  // Opt-in "hold to interact" mode (live-applied), and a layout reset for lost widgets.
+  setHoldMode: (on) => ipcRenderer.invoke("app:set-hold-mode", !!on),
+  resetLayout: () => ipcRenderer.invoke("overlay:reset-layout"),
   // Master overlay switch (crash workaround) — controlled live via the shell, not the
   // sidecar config, so toggling destroys/creates the HUD window immediately.
   getOverlayEnabled: () => ipcRenderer.invoke("overlay:get-enabled"),

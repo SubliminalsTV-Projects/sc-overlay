@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SC Blueprint Tracker</title>
+<title>SC Overlay</title>
 <script>/* AMD compatibility: apply the lite skin BEFORE first paint (no flash) when the shell asks for it. */
   if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
   /* Apply ?theme=/?twist=/?scale= overrides before first paint (testing + no flash); server prefs win once SSE connects. */
@@ -45,6 +45,30 @@
     --strip: repeating-linear-gradient(45deg, rgba(228,128,47,.55) 0 7px, rgba(0,0,0,.55) 7px 14px);
   }
 
+  /* ── Anvil Aerospace theme ──────────────────────────────────────────────────
+     Military night-ops HUD: phosphor-green chrome on dark gunmetal-olive glass,
+     warm brass readouts + amber switch accents (matches Anvil's in-cockpit MFDs).
+     Sleek — no hazard stripes or tape; keeps the base tick-strip divider (auto-retinted
+     green via --accent-rgb). */
+  :root[data-theme="anvil"] {
+    --cyan: #26D6AB; --cyan-bright: #5FE8CC; --cyan-text: #C4E7DF; --cyan-dim: #7BB3A8; --faint: #5C8078;
+    --gold: #E7BC52; --amber: #F0A63C; --green: #4FE0A8; --red: #FF7A5E; --track: #0a1a16;
+    --accent-rgb: 38, 214, 171; --value-rgb: 231, 188, 82;
+    --panel-top: rgba(10,24,21,.80); --panel-bot: rgba(6,15,13,.86); --panel-solid: rgba(6,15,13,.96);
+    --menu-bg: #0a1512; --title: #D6EFE7; --scan: rgba(38,214,171,.05); --sheen: rgba(120,235,205,.06);
+  }
+
+  /* ── Gray's theme ───────────────────────────────────────────────────────────
+     Grungy salvage-rig look: bright chartreuse phosphor-CRT green on warm olive-black,
+     amber switch-panel readouts. Louder + more industrial than Anvil's clean teal. */
+  :root[data-theme="greys"] {
+    --cyan: #83D93E; --cyan-bright: #A6F062; --cyan-text: #DCEFC4; --cyan-dim: #93B36E; --faint: #6C8050;
+    --gold: #EFA23E; --amber: #F0983A; --green: #9BF05A; --red: #FF6B4A; --track: #0d1406;
+    --accent-rgb: 131, 217, 62; --value-rgb: 239, 162, 62;
+    --panel-top: rgba(15,19,10,.82); --panel-bot: rgba(8,10,6,.88); --panel-solid: rgba(8,10,6,.96);
+    --menu-bg: #0b1006; --title: #E0EFC8; --scan: rgba(131,217,62,.06); --sheen: rgba(180,240,110,.06);
+  }
+
   /* Duct-tape corner accents — Drake's field-repair design language, so they belong to
      the Drake theme only. Sit on the panel (tilt with it), hang off the corner, lap a
      little onto it without covering the header/footer text. */
@@ -53,6 +77,14 @@
   :root[data-theme="drake"] #panel .tape { display: block; }
   .tape.tl { width: 60px; top: -20px; left: -22px; transform: rotate(-50deg); }
   .tape.br { width: 60px; bottom: -34px; right: -30px; transform: rotate(-19deg); }
+
+  /* Anvil corner hardware — flathead bolt + screw head, so the HUD looks bolted into the
+     cockpit. Anvil theme only; sits on the panel's outer corners (needs overflow:visible). */
+  .bolt { display: none; position: absolute; z-index: 6; pointer-events: none; user-select: none;
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,.55)); }
+  :root[data-theme="anvil"] #panel .bolt { display: block; }
+  .bolt.tl { width: 30px; top: -9px; left: -9px; transform: rotate(-12deg); }
+  .bolt.br { width: 29px; bottom: -9px; right: -9px; transform: rotate(15deg); }
 
   * { box-sizing: border-box; }
   html, body { margin: 0; background: transparent; }
@@ -124,6 +156,26 @@
   #resizeHandle svg { width: 12px; height: 12px; display: block; }
   #panel.moving #resizeHandle { display: grid; }
 
+  /* ── Mining Assistant widget (embedded iframe) ─────────────────────────────────
+     A second free-floating canvas widget hosting mining.html in an iframe. This shell owns its
+     geometry (position/scale/angle applied here), so the iframe just renders. The embedded page
+     reports its content size, so #miningFrame is resized to fit snugly (see setSize/host). */
+  #miningWidget { position: absolute; left: var(--mwx, 40px); top: var(--mwy, 60px); z-index: 20;
+    transform-origin: 40% center;
+    transform: perspective(1700px) rotateY(var(--mwangle, -5deg)) scale(var(--mwscale, 1)); }
+  html.amd-lite #miningWidget { transform: scale(var(--mwscale, 1)); }
+  #miningFrame { display: block; width: 416px; height: 380px; border: 0; background: transparent; color-scheme: normal; }
+  /* Arrange-mode drag surface (also the drag shield over the iframe) + corner resize handle —
+     parent-owned; the embedded page's own move banner / handle stay inactive. */
+  #miningMove { display: none; position: absolute; inset: 0; z-index: 50; cursor: move;
+    align-items: center; justify-content: center; background: rgba(var(--accent-rgb), 0.12); }
+  #miningWidget.moving #miningMove { display: flex; }
+  #miningResize { display: none; position: absolute; right: -7px; bottom: -7px; width: 22px; height: 22px;
+    z-index: 51; cursor: nwse-resize; border-radius: 4px; border: 1px solid var(--cyan);
+    background: rgba(8, 17, 26, 0.92); color: var(--cyan); place-items: center; }
+  #miningWidget.moving #miningResize { display: grid; }
+  #miningResize svg { width: 12px; height: 12px; display: block; }
+
   /* ── Global overlay-app chrome: a screen-anchored cog (top-right) that opens the in-overlay
        settings hub — one place for widget on/off, global appearance, and arrange. Lives in the
        shell (Blueprint canvas) so it stays even when the Blueprint panel itself is toggled off.
@@ -131,13 +183,15 @@
   /* Summoned, not always-on: hidden until a widget cog is clicked, then fades in top-right and
      fades back out when unused (see summonGlobalCog). */
   #globalCog { display: none; position: fixed; top: 14px; right: 16px; z-index: 60;
-    width: 34px; height: 34px; place-items: center; cursor: pointer; -webkit-app-region: no-drag;
-    border: 1px solid var(--border); border-radius: 6px; background: rgba(8, 17, 26, 0.82);
-    color: var(--cyan); font-size: 18px; line-height: 1; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-    opacity: 0; transition: opacity 0.2s ease; }
-  #globalCog.show { display: grid; opacity: 0.9; }
-  #globalCog.show:hover, #globalCog.open { opacity: 1; background: rgba(var(--accent-rgb), 0.2); }
-  #hub { display: none; position: fixed; top: 54px; right: 16px; z-index: 61; width: 268px;
+    width: 56px; height: 56px; place-items: center; cursor: pointer; -webkit-app-region: no-drag;
+    border: 1.5px solid var(--cyan); border-radius: 10px; background: rgba(8, 17, 26, 0.88);
+    color: var(--cyan); font-size: 32px; line-height: 1;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55), 0 0 14px rgba(var(--accent-rgb), 0.35);
+    opacity: 0; transition: opacity 0.2s ease, background 0.15s ease, box-shadow 0.15s ease; }
+  #globalCog.show { display: grid; opacity: 0.95; }
+  #globalCog.show:hover, #globalCog.open { opacity: 1; background: rgba(var(--accent-rgb), 0.25);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55), 0 0 22px rgba(var(--accent-rgb), 0.6); }
+  #hub { display: none; position: fixed; top: 78px; right: 16px; z-index: 61; width: 268px;
     -webkit-app-region: no-drag; border: 1px solid var(--border); border-radius: 8px;
     background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
     -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
@@ -233,11 +287,17 @@
     font-family: var(--sans); font-size: 12px; color: var(--cyan-text); }
   #cogMenu .cog-opt:hover { background: rgba(var(--accent-rgb), 0.12); }
   #cogMenu .cog-opt input { width: 15px; height: 15px; accent-color: var(--cyan); cursor: pointer; }
-  #cogMenu .cog-ocr { padding: 2px 12px 4px; font-size: 10.5px; line-height: 1.55; color: var(--cyan-dim); }
-  #cogMenu .cog-ocr b { color: var(--cyan-text); font-weight: 600; }
-  #cogMenu .cog-ocr .ocr-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-    margin-right: 6px; vertical-align: middle; background: var(--faint); }
-  #cogMenu .cog-ocr.on .ocr-dot { background: var(--cyan-bright); box-shadow: 0 0 6px var(--cyan); }
+  /* Persistent OCR status strip on the widget face (shown only while OCR is armed). */
+  #ocrBar { display: none; align-items: center; gap: 7px; padding: 6px 16px;
+    font-family: var(--sans); font-size: 10.5px; letter-spacing: 0.02em; color: var(--cyan-dim);
+    border-top: 1px solid var(--divider); background: rgba(var(--accent-rgb), 0.05); z-index: 2; }
+  #ocrBar.show { display: flex; }
+  #ocrBar .ocr-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    flex: none; background: var(--faint); }
+  #ocrBar.on .ocr-dot { background: var(--cyan-bright); box-shadow: 0 0 6px var(--cyan); }
+  #ocrBar.warn { color: var(--gold); }
+  #ocrBar.warn .ocr-dot { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+  #ocrBar .ocr-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Cog declutter toggles: hide footer odds/verify buttons + the category filter bar. */
   #panel.hide-catbar .catbar { display: none; }
@@ -259,16 +319,12 @@
   #cogMenu .cog-canvas-only { display: none; }
   body.canvas #cogMenu .cog-canvas-only { display: block; }
 
-  /* Transient OCR activity toast (item captured / mission read). Never blocks clicks. */
-  #ocrToast { position: absolute; left: 50%; bottom: 46px; transform: translateX(-50%) translateY(6px);
-    z-index: 40; pointer-events: none; max-width: 86%; box-sizing: border-box;
-    display: flex; align-items: center; gap: 8px; padding: 7px 13px;
-    background: rgba(10, 24, 34, 0.94); border: 1px solid var(--cyan); border-radius: 20px;
-    font-family: var(--sans); font-size: 11.5px; color: var(--cyan-text);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 16px rgba(var(--accent-rgb), 0.18) inset;
-    opacity: 0; transition: opacity 0.25s ease, transform 0.25s ease; }
-  #ocrToast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  /* OCR activity "toast": instead of a floating bubble, the footer's version column briefly
+     swaps to the message text, then reverts — cleaner, it lives inside the panel chrome. */
+  .fv-toast { display: none; font-family: var(--sans); font-size: 10.5px; line-height: 1.3;
+    color: var(--cyan-text); text-align: right; max-width: 210px; }
+  .foot-col-ver.toasting .fv-app, .foot-col-ver.toasting .fv-game { display: none; }
+  .foot-col-ver.toasting .fv-toast { display: block; }
 
   .head { position: relative; padding: 15px 17px 13px; z-index: 10;
     /* tick-strip data-texture divider under the header */
@@ -437,6 +493,10 @@
   .fv-app { font-family: var(--sans); font-size: 9px; font-weight: 600; letter-spacing: 0.06em;
     text-transform: uppercase; color: var(--cyan-dim); }
   .fv-game { font-family: var(--mono); font-size: 9.5px; color: var(--faint); }
+  /* Beta badge (beta phase) — small pill riding the version line. */
+  .fv-beta { display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 3px; vertical-align: 1px;
+    font-family: var(--sans); font-size: 7.5px; font-weight: 800; letter-spacing: 0.1em;
+    color: #04141b; background: var(--gold); }
   .foot { padding: 10px 16px 11px; position: relative; z-index: 2; border-top: 1px solid var(--divider);
     display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
 
@@ -454,6 +514,14 @@
     text-transform: uppercase; color: var(--cyan); }
   .poolhead .ph-sub { font-size: 8.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: none;
     color: var(--cyan-dim); }
+  /* Blueprint-pool pagination (8 rows/page). */
+  .pgnav { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 8px 3px 2px; }
+  .pgbtn { font-family: var(--sans); font-size: 14px; line-height: 1; width: 26px; height: 22px; cursor: pointer;
+    color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.1); border: 1px solid var(--border);
+    border-radius: 4px; -webkit-app-region: no-drag; }
+  .pgbtn:hover:not(:disabled) { background: rgba(var(--accent-rgb), 0.22); border-color: var(--cyan); }
+  .pgbtn:disabled { opacity: 0.35; cursor: default; }
+  .pgind { font-family: var(--mono); font-size: 10.5px; color: var(--cyan-dim); min-width: 42px; text-align: center; }
   .ambig { margin: 8px 3px 2px; padding: 6px 9px; border-radius: 3px; font-size: 10px; line-height: 1.35;
     color: var(--gold); border: 1px solid rgba(var(--value-rgb), 0.35); background: rgba(var(--value-rgb), 0.08); }
   .rewnote { margin-top: 7px; padding: 0 3px; font-size: 10.5px; color: var(--faint); }
@@ -519,6 +587,8 @@
   .mi-row .mi-k { min-width: 72px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--cyan-dim); }
   .mi-row .mi-v { flex: 1; font-size: 13px; color: var(--cyan-text); text-align: right; }
+  .mi-row .mi-v.pos { color: var(--gold); }
+  .mi-row .mi-v.neg { color: var(--red); }
   /* "inferred" qualifier on the rank readout — it's a lower bound, not exact rep. */
   .mi-row .mi-hint { font-size: 8.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--cyan-dim); }
@@ -568,6 +638,8 @@
   <div id="panel" class="empty">
     <img class="tape tl" alt="" src="tape-tl.webp">
     <img class="tape br" alt="" src="tape-br.webp">
+    <img class="bolt tl" alt="" src="anvil-bolt-tl.webp">
+    <img class="bolt br" alt="" src="anvil-screw-br.webp">
     <div id="moveBanner"><div class="movebox">⠿ Drag to move · corner to resize<button id="moveDone">Done</button></div></div>
     <div id="resizeHandle" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
     <div class="head">
@@ -583,7 +655,6 @@
         <div class="cog-sec">OCR (opt-in)</div>
         <label class="cog-opt"><input type="checkbox" id="tgMissionOcr" /> Scan for tracked mission</label>
         <label class="cog-opt"><input type="checkbox" id="tgFabCapture" /> Contribute item images</label>
-        <div class="cog-ocr" id="ocrStat"><span class="ocr-dot"></span><b>OCR idle</b></div>
         <div class="cog-sec">Tools</div>
         <button type="button" id="verify" class="cog-btn" title="Re-scan your game logs (including backups) for received blueprints">⟳ Verify from logs</button>
         <div class="cog-status" id="vstatus"></div>
@@ -604,17 +675,18 @@
     <div class="catbar" id="catbar"></div>
     <div class="pool" id="pool"></div>
     <div id="msg"></div>
+    <div id="ocrBar"><span class="ocr-dot"></span><span class="ocr-txt" id="ocrBarText"></span></div>
     <div class="foot">
       <div class="foot-col-collected">
         <span class="fc-label">Total collected</span>
         <span class="fc-num" id="collected">0</span>
       </div>
       <div class="foot-col-ver">
-        <span class="fv-app" id="appVer">Blueprint Tracker</span>
+        <span class="fv-app" id="appVer">SC Overlay</span>
         <span class="fv-game" id="patch"></span>
+        <span class="fv-toast" id="footToast"></span>
       </div>
     </div>
-    <div id="ocrToast"></div>
   </div>
 
   <!-- Global overlay-app chrome (canvas shell only): screen-anchored cog + in-overlay hub. -->
@@ -638,6 +710,16 @@
 
   <!-- Full-screen arrange-mode indicator (shell only). Click-through except its banner. -->
   <div id="arrangeScrim"><div class="ab"><span class="dia"></span><span><b>Arrange mode</b> · drag widgets to move · corners to resize</span><button type="button" id="arrangeDone">Done</button></div></div>
+
+  <!-- Mining Assistant widget — hosted as a same-origin iframe so its audio/SSE/render code
+       stays intact, while THIS canvas owns its position/scale/angle, drag/resize, and cursor
+       hit-testing (one window → no cross-window z-order bugs). Created lazily (only when mining
+       is enabled — see ensureMiningFrame) and sized snugly to its content by the embedded page. -->
+  <div id="miningWidget" style="display:none">
+    <iframe id="miningFrame" title="Mining Assistant" allow="autoplay" scrolling="no"></iframe>
+    <div id="miningMove"><div class="movebox">⠿ Drag to move · corner to resize<button type="button" id="miningMoveDone">Done</button></div></div>
+    <div id="miningResize" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
+  </div>
 
   <!-- Patch notes: a center-screen modal shown once per version on launch (must be closed). -->
   <div id="whatsnew">
@@ -673,7 +755,12 @@
   let cogHideT = null, cogHovered = false, hubOpen = false;
   function rescheduleCogHide() {
     clearTimeout(cogHideT);
-    cogHideT = setTimeout(() => { if (!hubOpen && !cogHovered) $("globalCog")?.classList.remove("show"); }, 4000);
+    // 10s auto-hide. Never fade out while the hub is open, the pointer is on the cog/hub, or a
+    // widget's settings menu is open — so the cog can't vanish mid-travel as you reach for it.
+    cogHideT = setTimeout(() => {
+      if (hubOpen || cogHovered || $("cogMenu")?.classList.contains("open")) return;
+      $("globalCog")?.classList.remove("show");
+    }, 10000);
   }
   function summonGlobalCog() { const gc = $("globalCog"); if (gc) { gc.classList.add("show"); rescheduleCogHide(); } }
   // "base" = odds out of the full pool; "adjusted" = your real odds counting only
@@ -681,9 +768,10 @@
   let oddsMode = "base";
   // Active fabricator category filter (null = All). Set by the icon filter bar.
   let activeTab = null;
-  // Whether the collapsed "Collected" (owned) group at the bottom of the pool is
-  // expanded. Collapsed by default so the list leads with what you still need.
-  let ownedOpen = false;
+  // Blueprint-pool pagination: current page (0-indexed) + the mission+filter key it belongs
+  // to, so the page resets to the first when the tracked mission or category filter changes.
+  let poolPage = 0;
+  let poolKey = "";
   // Whether the "Mission Info" drawer (faction/type/rep) is expanded. Open by default
   // (still collapsible via the header) so it's never hidden — most useful when the
   // mission has no pool or you've already collected everything. Forced open (static)
@@ -788,9 +876,9 @@
     // Show the dataset version, and flag when the player's actual build isn't the one
     // we have data for (pools are an approximation from the same family).
     let patchTxt = v.patch || "";
-    if (v.build && v.patch && !v.patch.includes(v.build)) patchTxt += " · build " + v.build + " (approx)";
+    if (v.build && v.patch && !v.patch.includes(v.build)) patchTxt += " · build " + v.build;
     $("patch").textContent = patchTxt;
-    $("appVer").textContent = "Blueprint Tracker" + (v.appVersion ? " v" + v.appVersion : "");
+    $("appVer").innerHTML = "SC Overlay" + (v.appVersion ? " v" + escapeHtml(v.appVersion) : "") + ' <span class="fv-beta">BETA</span>';
     $("collected").textContent = v.collectedTotal ?? 0;
     $("completed").innerHTML = v.completion ? completionCard(v.completion)
       : v.completed ? '<span class="completed">Mission complete</span>' : "";
@@ -880,23 +968,29 @@
     const shown = activeTab ? items.filter((it) => it.tab === activeTab) : items;
     const ordered = TABS.flatMap((tab) => shown.filter((it) => it.tab === tab.key));
 
-    // Lead with what you can still GET; everything owned tucks into a collapsed
-    // "Collected" group at the bottom (click to expand — rows stay toggleable).
-    // A pooled mission with a known payout / item rewards shows those up top.
+    // One combined list — what you still need first, then what you've already collected
+    // (owned rows keep their ✔ and stay toggleable) — paginated at 8 rows per page.
     const need = ordered.filter((it) => !it.owned);
     const have = ordered.filter((it) => it.owned);
-    // A labeled divider separates the GUARANTEED item rewards (no checkbox) above from the
-    // collectible blueprint POOL (checkboxes) below — otherwise the two read as one list and
-    // the reward rows look like pool items that are "missing" their checkmark.
+    const allRows = need.concat(have);
+    // Reset to the first page whenever the tracked mission or the category filter changes.
+    const pkey = (v.contractKey || "") + "|" + (activeTab || "");
+    if (pkey !== poolKey) { poolKey = pkey; poolPage = 0; }
+    const PER = 8;
+    const pages = Math.max(1, Math.ceil(allRows.length / PER));
+    if (poolPage > pages - 1) poolPage = pages - 1;
+    const pageRows = allRows.slice(poolPage * PER, poolPage * PER + PER);
+
     let html = missionInfoHtml(v) + rewardsHtml(v);
     if (v.ambiguous) html += '<div class="ambig">⚠ Multiple mission tiers share this name — showing all possible drops. Your actual mission draws from one tier, so odds are approximate.</div>';
-    if (need.length || have.length) html += '<div class="poolhead">Blueprint pool<span class="ph-sub">1 random blueprint per completion</span></div>';
-    html += need.map(rowHtml).join("");
-    if (have.length) {
-      html += '<div class="grphead" id="ownedHead" title="' + (ownedOpen ? "Hide" : "Show") + ' the blueprints you already own">' +
-        '<span class="car">' + (ownedOpen ? "▾" : "▸") + "</span>Collected" +
-        '<span class="gcnt">' + have.length + "/" + ordered.length + "</span></div>";
-      if (ownedOpen) html += have.map(rowHtml).join("");
+    if (allRows.length) html += '<div class="poolhead">Blueprint pool<span class="ph-sub">1 random blueprint per completion</span></div>';
+    html += pageRows.map(rowHtml).join("");
+    if (pages > 1) {
+      html += '<div class="pgnav">' +
+        '<button class="pgbtn" data-pg="prev"' + (poolPage === 0 ? " disabled" : "") + ' title="Previous page">‹</button>' +
+        '<span class="pgind">' + (poolPage + 1) + " / " + pages + "</span>" +
+        '<button class="pgbtn" data-pg="next"' + (poolPage >= pages - 1 ? " disabled" : "") + ' title="Next page">›</button>' +
+      "</div>";
     }
     $("pool").innerHTML = html;
   }
@@ -1024,15 +1118,35 @@
   function missionInfoHtml(v, forceOpen) {
     const giver = v.giver, type = v.missionType;
     const rg = v.reputationGained || [], rl = v.reputationLost || [];
-    if (!giver && !type && !rg.length && !rl.length) return "";
+    const payTxt = payoutText(v.payout);
+    if (!giver && !type && !rg.length && !rl.length && !payTxt) return "";
     const open = !!forceOpen || infoOpen;
     let body = "";
     if (open) {
       const rows = [];
+      // Order (Sub's layout): Type → Reward → Faction → Reputation gained/lost → Standing bar.
+      if (type) rows.push('<div class="mi-row"><span class="mi-k">Type</span><span class="mi-v">' + escapeHtml(type) + "</span></div>");
+      // aUEC reward when the dataset carries it (a fixed payout). Most PU missions are
+      // runtime-calculated, so this is null for them until the dataset is regenerated to
+      // pull FixedReward — then it appears here automatically.
+      if (payTxt) rows.push('<div class="mi-row"><span class="mi-k">Reward</span><span class="mi-v pos">' + escapeHtml(payTxt) + "</span></div>");
       if (giver) rows.push('<div class="mi-row"><span class="mi-k">Faction</span><span class="mi-v">' + escapeHtml(giver) + "</span></div>");
-      // Reputation progress: current standing NAME + a bar toward the next rank when we
-      // have the giver's ladder (repBar). Falls back to the bare inferred-rank number for
-      // givers with no rankable rep scope. Both are lower bounds — rep is server-side.
+      // Reputation gained/lost. A single entry that just repeats the giver shown above becomes
+      // a clean "Reputation gained: +N rep" row (no redundant name); multiple entries — or rep
+      // with a DIFFERENT faction — keep the labeled section with per-faction names.
+      const repSection = (list, neg, label) => {
+        if (!list.length) return;
+        if (list.length === 1 && (!list[0].faction || list[0].faction === giver)) {
+          const amt = (neg ? "−" : "+") + Number(list[0].amount || 0).toLocaleString();
+          rows.push('<div class="mi-row"><span class="mi-k">' + label + '</span><span class="mi-v ' + (neg ? "neg" : "pos") + '">' + amt + " rep</span></div>");
+        } else {
+          rows.push('<div class="mi-sec">' + label + "</div>" + repRows(list, neg));
+        }
+      };
+      repSection(rg, false, "Reputation gained");
+      repSection(rl, true, "Reputation lost");
+      // Standing (rep progress bar toward the next rank) sits at the BOTTOM. The bar when we
+      // have the giver's ladder, else the bare inferred-rank number. Both are lower bounds.
       if (v.repBar) {
         rows.push(repBarHtml(v.repBar));
       } else if (v.inferredRank != null) {
@@ -1041,9 +1155,6 @@
           '<span class="mi-k">Your rank</span><span class="mi-v">' + v.inferredRank +
           '+ <span class="mi-hint">inferred</span></span></div>');
       }
-      if (type) rows.push('<div class="mi-row"><span class="mi-k">Type</span><span class="mi-v">' + escapeHtml(type) + "</span></div>");
-      if (rg.length) rows.push('<div class="mi-sec">Reputation gained</div>' + repRows(rg, false));
-      if (rl.length) rows.push('<div class="mi-sec">Reputation lost</div>' + repRows(rl, true));
       body = '<div class="mi-body">' + rows.join("") + "</div>";
     }
     const car = forceOpen ? "" : '<span class="car">' + (open ? "▾" : "▸") + "</span>";
@@ -1055,8 +1166,8 @@
   // Payout line + ITEM rewards (actual items — not blueprints; display-only).
   function rewardsHtml(v) {
     const parts = [];
-    const pay = payoutText(v.payout);
-    if (pay) parts.push('<div class="rewpay"><span class="rp-lbl">Payout</span><span class="rp-val">' + escapeHtml(pay) + "</span></div>");
+    // Payout moved into the Mission Info drawer (as a "Reward" row); here we only render
+    // the guaranteed ITEM rewards (actual items, not blueprints).
     const items = v.itemRewards || [];
     if (items.length) {
       // Same divider + row treatment as the blueprint pool — these are things you
@@ -1100,7 +1211,7 @@
   // One unlocked-blueprint tile: the item render (falls back to a glyph) + its name.
   function bpTile(b){
     const thumb = b.image
-      ? '<span class="cc-bp-thumb"><img src="' + b.image + '" alt="" onerror="this.remove();this.parentElement.classList.add(\'noimg\')"></span>'
+      ? '<span class="cc-bp-thumb"><img src="' + b.image + '" alt="" onerror="this.parentElement.classList.add(\'noimg\');this.remove()"></span>'
       : '<span class="cc-bp-thumb noimg"></span>';
     return '<div class="cc-bp">' + thumb + '<span class="cc-bp-name">' + escapeHtml(b.name || "Blueprint") + '</span></div>';
   }
@@ -1166,10 +1277,10 @@
       if (current && current.hasPool) { infoOpen = !infoOpen; render(current); }
       return;
     }
-    // The "Collected" group header toggles the owned rows open/closed.
-    if (e.target.closest("#ownedHead")) {
-      ownedOpen = !ownedOpen;
-      if (current) render(current);
+    // Blueprint-pool pagination arrows.
+    const pg = e.target.closest(".pgbtn");
+    if (pg) {
+      if (!pg.disabled) { poolPage += pg.getAttribute("data-pg") === "next" ? 1 : -1; if (current) render(current); }
       return;
     }
     // An event-ladder tier header toggles that tier's reward rows.
@@ -1244,11 +1355,16 @@
     p.style.setProperty("--wscale", widgetScale());
     p.style.setProperty("--wangle", (widget.angle != null ? widget.angle : DEFAULT_ANGLE) + "deg");
   }
-  // Default resting spot: top-right of the canvas (mirrors where the old panel-sized window sat).
+  // Primary-display offset/size within the full-desktop canvas (fetched at init). Falls back to
+  // the whole window so a single-monitor / non-electron context still works.
+  let canvasInfo = null;
+  // Default resting spot: top-right of the PRIMARY display (mirrors where the old panel sat), so a
+  // new/reset widget never lands on a left/top secondary monitor or in the void between them.
   function defaultWidgetPos() {
     const w = 380 * widgetScale();
-    widget.x = Math.max(8, Math.round(window.innerWidth - w - 40));
-    widget.y = 40;
+    const ci = canvasInfo || { px: 0, py: 0, pw: window.innerWidth, ph: window.innerHeight };
+    widget.x = Math.max(ci.px + 8, Math.round(ci.px + ci.pw - w - 40));
+    widget.y = ci.py + 40;
   }
   function persistWidget() {
     window.overlayApi?.saveWidget?.(WIDGET_ID, { x: widget.x, y: widget.y, scale: widget.scale, angle: widget.angle, visible: widget.visible });
@@ -1265,22 +1381,111 @@
   // Pointer-drag helper: track by delta so the panel's transform (twist/scale) never fights it.
   // Holds a shell "drag lock" for the gesture so the (otherwise hover-gated) window stays
   // interactive even if the pointer briefly outruns the widget.
-  function dragPointer(onMove) {
+  function dragPointer(onMove, onEnd) {
     window.overlayApi?.dragLock?.(true);
     const move = (ev) => onMove(ev);
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.overlayApi?.dragLock?.(false);
-      persistWidget();
+      (onEnd || persistWidget)();
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
+
+  // ── Mining Assistant widget (embedded iframe hosted on this canvas) ────────────
+  // We own its geometry (x/y/scale/angle → CSS vars on #miningWidget) and its drag/resize; the
+  // iframe (mining.html?embedded=1) renders + plays audio + streams SSE and talks back same-origin
+  // via window.__miningHost. Visibility is driven by the shell (main.cjs) — see onMiningVisible —
+  // so the tray, hotkey, hub toggle, and suppress-gated auto-show stay one source of truth.
+  const MINING_DEFAULT_ANGLE = -5;
+  let mwidget = { x: null, y: null, scale: null, angle: null, visible: false };
+  let miningFrameArmed = false; // the iframe's src is set (SSE live) — even while hidden, so it can self-pop
+  function miningScale() { return mwidget.scale != null ? mwidget.scale : Math.max(50, Math.min(200, Number(PREFS.overlayScale) || 100)) / 100; }
+  function applyMiningFrame() {
+    const w = $("miningWidget"); if (!w) return;
+    if (mwidget.x != null) w.style.setProperty("--mwx", mwidget.x + "px");
+    if (mwidget.y != null) w.style.setProperty("--mwy", mwidget.y + "px");
+    w.style.setProperty("--mwscale", miningScale());
+    w.style.setProperty("--mwangle", (mwidget.angle != null ? mwidget.angle : MINING_DEFAULT_ANGLE) + "deg");
+  }
+  function defaultMiningPos() { const ci = canvasInfo || { px: 0, py: 0 }; mwidget.x = ci.px + 40; mwidget.y = ci.py + 60; }
+  function persistMiningWidget() { window.overlayApi?.saveWidget?.("mining", { x: mwidget.x, y: mwidget.y, scale: mwidget.scale, angle: mwidget.angle }); }
+  // Create the iframe (idempotent). Loading it starts its SSE + arms the OCR reader, so only do it
+  // when mining is shown OR auto-show is on (armed hidden, waiting to self-pop on a scan).
+  function ensureMiningFrame() {
+    if (miningFrameArmed) return;
+    const f = $("miningFrame"); if (!f) return;
+    const theme = document.documentElement.getAttribute("data-theme") || (PREFS && PREFS.theme) || "mobiglas";
+    const lite = document.documentElement.classList.contains("amd-lite") ? "&lite=1" : "";
+    f.src = "/mining.html?embedded=1&theme=" + encodeURIComponent(theme) + lite;
+    miningFrameArmed = true;
+  }
+  function setMiningVisible(on) {
+    const w = $("miningWidget"); if (!w) return;
+    mwidget.visible = !!on;
+    if (on) { ensureMiningFrame(); w.style.display = ""; applyMiningFrame(); }
+    else { w.style.display = "none"; w.classList.remove("moving"); }
+  }
+  // Same-origin bridge the embedded mining page calls via window.parent.__miningHost.
+  window.__miningHost = {
+    ready: () => applyMiningFrame(),
+    summonCog: () => summonGlobalCog(),
+    setModal: (on) => window.overlayApi?.setModal?.(!!on),
+    requestAutoShow: () => window.overlayApi?.miningAutoShow?.(),
+    getAngle: () => (mwidget.angle != null ? mwidget.angle : MINING_DEFAULT_ANGLE),
+    setAngle: (deg) => { mwidget.angle = Number(deg); applyMiningFrame(); },
+    persist: () => persistMiningWidget(),
+    setSize: (wpx, hpx) => { const f = $("miningFrame"); if (!f) return; if (wpx) f.style.width = wpx + "px"; if (hpx) f.style.height = hpx + "px"; },
+  };
+  // Shell (main.cjs) drives visibility: {on:true} show · {on:false,arm:true} load hidden for
+  // auto-show · {on:false} hide. One source of truth for tray/hotkey/hub/auto-show.
+  window.overlayApi?.onMiningVisible?.((s) => {
+    if (!s) return;
+    if (s.on) setMiningVisible(true);
+    else { if (s.arm) ensureMiningFrame(); setMiningVisible(false); }
+  });
+
+  if (CANVAS) {
+    // Load this widget's saved layout (shares widgets.json under key "mining").
+    (async () => {
+      let msaved = null;
+      try { msaved = (await window.overlayApi?.getWidgets?.())?.["mining"] || null; } catch { /* none */ }
+      const q = new URLSearchParams(location.search);
+      if (q.has("mwx") || q.has("mwy") || q.has("mwscale") || q.has("mwangle")) {
+        msaved = { ...(msaved || {}) };
+        if (q.has("mwx")) msaved.x = +q.get("mwx");
+        if (q.has("mwy")) msaved.y = +q.get("mwy");
+        if (q.has("mwscale")) msaved.scale = +q.get("mwscale");
+        if (q.has("mwangle")) msaved.angle = +q.get("mwangle");
+      }
+      if (msaved) mwidget = { ...mwidget, ...msaved };
+      if (mwidget.x == null || mwidget.y == null) defaultMiningPos();
+      applyMiningFrame();
+      if (q.has("mining")) { setMiningVisible(true); } // headless-test the mining widget
+    })();
+    // Move + resize the mining widget (arrange mode). The move banner doubles as a drag shield
+    // over the iframe (which would otherwise swallow the pointer).
+    $("miningMove").addEventListener("pointerdown", (e) => {
+      if (e.target.closest("#miningMoveDone") || e.target.closest("#miningResize")) return;
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY, ox = mwidget.x, oy = mwidget.y;
+      dragPointer((ev) => { mwidget.x = ox + (ev.clientX - sx); mwidget.y = oy + (ev.clientY - sy); applyMiningFrame(); }, persistMiningWidget);
+    });
+    $("miningResize").addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const sx = e.clientX, os = miningScale();
+      dragPointer((ev) => { mwidget.scale = Math.max(0.5, Math.min(2.5, os + (ev.clientX - sx) / 380)); applyMiningFrame(); }, persistMiningWidget);
+    });
+    $("miningMoveDone").addEventListener("click", () => window.overlayApi.endMove());
+  }
+
   if (CANVAS) {
     $("panel").classList.add("canvas");
     document.body.classList.add("canvas");
     (async () => {
+      try { canvasInfo = await window.overlayApi?.getCanvasInfo?.() || null; } catch { /* single-monitor fallback */ }
       let saved = null;
       try { saved = (await window.overlayApi?.getWidgets?.())?.[WIDGET_ID] || null; } catch { /* none */ }
       const q = new URLSearchParams(location.search); // test overrides
@@ -1385,6 +1590,9 @@
       if (on) summonGlobalCog(); // arranging is an interaction too
       panel.classList.toggle("moving", on);
       document.body.classList.toggle("arranging", on);
+      // The mining widget joins arrange mode too (only when it's actually shown).
+      const mw = $("miningWidget");
+      if (mw) mw.classList.toggle("moving", on && mw.style.display !== "none");
     });
     $("grip").addEventListener("click", () => window.overlayApi.beginMove?.());
     $("moveDone").addEventListener("click", () => window.overlayApi.endMove());
@@ -1395,6 +1603,25 @@
     ab.addEventListener("mouseenter", () => { clearTimeout(abLeaveT); window.overlayApi.hover(true); });
     ab.addEventListener("mouseleave", () => { abLeaveT = setTimeout(() => window.overlayApi.hover(false), 150); });
     $("arrangeDone").addEventListener("click", () => window.overlayApi.endMove());
+
+    // Report interactive element rects to the shell (~10×/s) so pollCursor() can hit-test the
+    // cursor against them — REPLACES forward:true mouse-forwarding (which stuttered the whole
+    // cursor when elevated). Inactive elements are display:none → 0-size → filtered out.
+    if (window.overlayApi.reportRegions) {
+      // #miningWidget: its iframe is sized snugly to the mining panel by the embedded page, so its
+      // rect ≈ the visible widget. display:none (hidden) → 0-size → filtered out below.
+      const RSEL = "#panel, #globalCog, #hub, #cogMenu, #whatsnew, #arrangeScrim .ab, #miningWidget";
+      const reportRegions = () => {
+        const rects = [];
+        document.querySelectorAll(RSEL).forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width > 1 && r.height > 1) rects.push({ x: r.left, y: r.top, w: r.width, h: r.height });
+        });
+        window.overlayApi.reportRegions(rects);
+      };
+      setInterval(reportRegions, 100);
+      reportRegions();
+    }
 
     // "What's new" card — show once per new version. Hover-interactive (like the panel)
     // and flagged as a modal so it stays clickable to close even when the HUD is locked.
@@ -1454,6 +1681,7 @@
       window.overlayApi?.hover?.(true);
     } else {
       window.overlayApi?.setModal?.(false);
+      rescheduleCogHide(); // menu closed — restart the global cog's 10s countdown
     }
   }
   $("cog").addEventListener("click", (e) => { e.stopPropagation(); setCog(!$("cogMenu").classList.contains("open")); });
@@ -1484,28 +1712,34 @@
 
   // OCR activity (fabricator image capture + tracked-mission read). Fed by the Electron
   // shell over IPC; a no-op in OBS browser-source mode (no overlayApi).
-  let OCR = { state: "", lastMission: "", lastCapture: "" };
+  let OCR = { state: "", fabNote: "", fabWarn: false };
   let inFab = false;   // a fabricator kiosk is on screen (OCR context) -> gold diamond
   let isLive = false;  // SubliminalsTV is live on Twitch (from the view) -> purple diamond
   let ocrToastT;
   function showOcrToast(text) {
-    const el = $("ocrToast");
-    el.textContent = text; el.classList.add("show");
-    clearTimeout(ocrToastT); ocrToastT = setTimeout(() => el.classList.remove("show"), 4200);
+    const ver = document.querySelector(".foot-col-ver");
+    const el = $("footToast");
+    if (!ver || !el) return;
+    el.textContent = text;
+    ver.classList.add("toasting");
+    clearTimeout(ocrToastT); ocrToastT = setTimeout(() => ver.classList.remove("toasting"), 4200);
   }
+  // One-line OCR status strip on the widget face. Hidden entirely unless OCR is armed
+  // (at least one opt-in on) — so OBS/idle overlays stay uncluttered.
   function updateOcr() {
-    const el = $("ocrStat");
+    const bar = $("ocrBar");
     const active = OCR.state === "watching" || OCR.state === "fabricator";
-    el.classList.toggle("on", active);
+    const armed = OCR.state && OCR.state !== "off";
+    const warn = OCR.state === "fabricator" && OCR.fabWarn;
+    bar.classList.toggle("show", !!armed);
+    bar.classList.toggle("on", active);
+    bar.classList.toggle("warn", warn);
     let head;
-    if (OCR.state === "fabricator") head = "Reading the fabricator…";
+    if (OCR.state === "fabricator") head = OCR.fabNote ? "Fabricator — " + OCR.fabNote : "Reading the fabricator…";
     else if (OCR.state === "idle") head = "Waiting for Star Citizen…";
     else if (active) head = "Watching Star Citizen…";
-    else head = "OCR off — turn on scanning above";
-    let html = '<span class="ocr-dot"></span><b>' + head + "</b>";
-    if (OCR.lastMission) html += "<br>Mission read: " + escapeHtml(OCR.lastMission);
-    if (OCR.lastCapture) html += "<br>Last image: " + escapeHtml(OCR.lastCapture);
-    el.innerHTML = html;
+    else head = "";
+    $("ocrBarText").textContent = head;
   }
   // Diamond glyph colour: gold in the fabricator, purple when SubliminalsTV is live, else cyan.
   // Fabricator wins (it's a momentary crafting cue); the live click/tooltip stay active whenever live.
@@ -1519,14 +1753,28 @@
   function onOcrEvent(s) {
     if (!s || !s.state) return;
     if (s.state === "mission") {
-      if (s.title) { OCR.lastMission = s.title; showOcrToast("🎯 " + s.title); }
+      if (s.title) showOcrToast("🎯 " + s.title);
     } else if (s.state === "captured") {
-      if (s.name) { OCR.lastCapture = s.name; showOcrToast("📸 " + s.name + (s.uploaded ? " · shared" : " · saved")); }
+      OCR.fabNote = ""; OCR.fabWarn = false;   // a capture went through — clear the kiosk note
+      if (s.name) showOcrToast("📸 " + s.name + (s.uploaded ? " · shared" : " · saved"));
     } else if (s.state === "settling") {
-      /* discrete event; leaves the on-screen context as-is */
+      OCR.fabNote = ""; OCR.fabWarn = false;   // a fresh item is being captured
+    } else if (s.state === "have") {
+      // Recognized the item, but its image is already on the site — nothing to capture. Name it
+      // (the strip truncates with an ellipsis when the name is long).
+      OCR.fabNote = "already have " + (s.name || "this item"); OCR.fabWarn = false;
+    } else if (s.state === "render") {
+      // Recognized the item, waiting for its 3D render to finish loading before capturing.
+      OCR.fabNote = "waiting for item render…"; OCR.fabWarn = false;
+    } else if (s.state === "unresolved") {
+      // In the fabricator with image capture on, but OCR couldn't identify the item on
+      // screen — so no picture was taken. Flag it (gold) and let the user know why.
+      OCR.fabNote = "couldn't read this item"; OCR.fabWarn = true;
+      showOcrToast("⚠ Fabricator — couldn't read this item");
     } else {
       OCR.state = s.state;                 // context: off / idle / watching / fabricator
       inFab = s.state === "fabricator";
+      if (s.state !== "fabricator") { OCR.fabNote = ""; OCR.fabWarn = false; }  // left the kiosk
       updateDiamond();
     }
     updateOcr();

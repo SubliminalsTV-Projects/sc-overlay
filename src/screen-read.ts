@@ -239,7 +239,14 @@ export function resolveName(
 ): { name: string | null; item: string | null; match: "exact" | "fuzzy" | "none" } {
   const n = normName(raw);
   if (!n) return { name: null, item: null, match: "none" };
-  for (const e of catalog) if (normName(e.name) === n) return { name: e.name, item: e.item, match: "exact" };
+  // OCR routinely confuses 0<->O (a size-0 "S0 Helix" reads as "SO HELIX"). Fold them together
+  // for the exact pass only, so it still matches — the fuzzy/size-digit logic below is untouched.
+  const fold = (s: string) => s.replace(/0/g, "O");
+  const nf = fold(n);
+  for (const e of catalog) {
+    const en = normName(e.name);
+    if (en === n || fold(en) === nf) return { name: e.name, item: e.item, match: "exact" };
+  }
 
   const nt = new Set(n.split(" "));
   const jaccard = catalog

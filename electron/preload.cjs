@@ -7,6 +7,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("overlayApi", {
   hover: (on) => ipcRenderer.send("overlay:hover", !!on),
+  // Report the page's interactive element client-rects so the shell can hit-test the cursor
+  // against them (replaces forward:true mouse-forwarding). rects = [{x,y,w,h}, …].
+  reportRegions: (rects) => ipcRenderer.send("overlay:regions", rects),
   beginMove: () => ipcRenderer.send("overlay:begin-move"),
   endMove: () => ipcRenderer.send("overlay:end-move"),
   // Force this window interactive for the duration of a drag/resize gesture so it can't drop.
@@ -27,6 +30,8 @@ contextBridge.exposeInMainWorld("overlayApi", {
   // user drags/resizes a widget in arrange mode. Layout = { [id]: {x, y, scale, visible} }.
   getWidgets: () => ipcRenderer.invoke("overlay:get-widgets"),
   saveWidget: (id, layout) => ipcRenderer.send("overlay:save-widget", id, layout),
+  // Primary-display offset/size within the full-desktop canvas (for default widget placement).
+  getCanvasInfo: () => ipcRenderer.invoke("overlay:canvas-info"),
   // Global overlay-app chrome (the in-overlay hub): toggle the other widgets on/off, read
   // their current visibility, enter/leave global arrange, and open the full settings window.
   setMining: (on) => ipcRenderer.send("app:set-mining", !!on),
@@ -35,4 +40,12 @@ contextBridge.exposeInMainWorld("overlayApi", {
   arrange: (on) => ipcRenderer.send(on ? "overlay:begin-move" : "overlay:end-move"),
   // The Mining window's cog was clicked → summon this shell's global cog too.
   onSummonCog: (cb) => ipcRenderer.on("overlay:summon-cog", () => cb()),
+  // ── Mining Assistant (now folded into this canvas as an iframe widget) ──────────
+  // The embedded mining page reaches these through the parent (same-origin). Native tone
+  // picker + clear (renderers can't open OS dialogs); a suppress-gated auto-show request;
+  // and main → renderer show/arm/hide of the in-canvas mining widget.
+  pickTone: () => ipcRenderer.invoke("mining:pick-tone"),
+  clearTone: () => ipcRenderer.invoke("mining:clear-tone"),
+  miningAutoShow: () => ipcRenderer.send("mining:show"),
+  onMiningVisible: (cb) => ipcRenderer.on("overlay:mining-visible", (_e, s) => cb(s)),
 });

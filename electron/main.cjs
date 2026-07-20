@@ -1,4 +1,4 @@
-// Electron shell for the SC Blueprint Tracker — a transparent, always-on-top,
+// Electron shell for SC Overlay — a transparent, always-on-top,
 // click-through in-game HUD plus a system tray, wrapping the existing local server.
 //
 // The server (src/overlay-server.ts) is unchanged: Electron just manages its
@@ -97,16 +97,17 @@ let overlay = null;
 let configWin = null;
 let tray = null;
 let hovering = false; // pointer is over the HUD (reported by the page)
-let locked = false; // force click-through always (ignore hover), for uninterrupted play
+let holdInteract = false; // true only while the interact-hold hotkey (default F) is held down
+let holdMode = false; // opt-in: when true, interaction REQUIRES holding the interact key (default off)
 let moveMode = false; // arrange mode: show the drag banner/handles (VISUAL only — interactivity stays hover-based)
 let modalOpen = false; // a HUD modal (what's-new card / hub) is up — stay hover-interactive even if locked
 let dragging = false; // an active drag/resize gesture on THIS window — force it interactive so it can't drop
-// Mining Assistant window — mirrors the HUD's hover-to-click shell so it behaves identically
-// (click-through until the pointer is over it, cog stays clickable).
-let miningHovering = false; // pointer is over the mining window (reported by the page)
-let miningMoveMode = false; // arrange mode for the mining window (visual only)
-let miningModalOpen = false; // the mining cog menu is open — keep it clickable
-let miningDragging = false; // an active drag/resize gesture on the mining window
+// Mining Assistant — now folded INTO the overlay canvas as an iframe widget (no separate
+// window). The shell owns its VISIBILITY (so the tray, hotkey, hub toggle, and auto-show stay
+// one source of truth) and drives it into the overlay renderer; the renderer owns the DOM +
+// per-widget layout, drag, and cursor hit-testing (one window → no cross-window z-order bugs).
+let miningVisible = false; // is the in-canvas mining widget currently shown
+let miningArm = false;      // load the mining iframe hidden at startup (auto-show waiting to pop)
 let miningAutoSuppress = 0; // auto-show is suppressed until this timestamp (set on a manual hide)
 let overlayEnabled = true; // master switch — false = HUD window destroyed, tracking still runs
 let manualCheck = false; // true while a tray-triggered update check is in flight (gates dialogs)
@@ -153,15 +154,30 @@ function waitForServer(tries = 60) {
   });
 }
 
-// The overlay is now a FULL-SCREEN transparent canvas that hosts free-floating widgets
-// (the Blueprint panel, later Mining) — like Streamlabs/OBS. It covers the whole primary
-// display (same precedent as bindingWin) so a widget's decorations (e.g. Drake's duct-tape
-// corners) can hang into open canvas instead of being clipped by a panel-sized window, and
-// so widgets can be dragged/scaled freely inside it. Per-widget position/size/visibility
-// live in widgets.json (see below), NOT in a window-bounds file — the window itself is fixed
-// full-screen. Click-through everywhere except the widget the pointer is over (see applyMouse).
+// The canvas windows cover the PRIMARY display. Spanning a single transparent window across
+// multiple monitors breaks down when they differ in resolution / DPI / rotation (Electron maps
+// the coordinates against one display's scale, which shifts the whole overlay off-screen — seen
+// on a mixed landscape+portrait setup). Primary-only is always correct; genuine multi-monitor
+// placement is deferred to the widget-canvas consolidation (which can do it per-display).
+function fullDisplayBounds() {
+  const b = screen.getPrimaryDisplay().bounds;
+  return { x: b.x, y: b.y, width: b.width, height: b.height };
+}
+// Re-fit every canvas window when the monitor layout changes (plugged/unplugged/rearranged).
+function refitCanvasWindows() {
+  const b = fullDisplayBounds();
+  for (const w of [overlay, bindingWin]) {
+    try { if (w && !w.isDestroyed()) w.setBounds(b); } catch { /* ignore */ }
+  }
+}
+
+// The overlay is a FULL-SCREEN transparent canvas that hosts free-floating widgets (the Blueprint
+// panel + Mining) — like Streamlabs/OBS. It spans the whole virtual desktop so a widget's
+// decorations can hang into open canvas and widgets can be dragged/scaled/moved across monitors.
+// Per-widget position/size/visibility live in widgets.json (see below), NOT a window-bounds file —
+// the window itself is fixed. Click-through except over the widget the pointer is on (applyMouse).
 function createOverlay() {
-  const { bounds } = screen.getPrimaryDisplay(); // full display — the widget canvas
+  const bounds = fullDisplayBounds(); // spans all monitors
   overlay = new BrowserWindow({
     x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
     frame: false,
@@ -173,7 +189,9 @@ function createOverlay() {
     hasShadow: false,
     fullscreenable: false,
     focusable: true,
-    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "preload.cjs") },
+    // autoplayPolicy: the embedded Mining Assistant iframe plays alert tones / HAL voice via
+    // Web Audio; allow it to sound without a prior user gesture (matches the old mining window).
+    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "preload.cjs"), autoplayPolicy: "no-user-gesture-required" },
   });
   // Float above borderless fullscreen games.
   overlay.setAlwaysOnTop(true, "screen-saver");
@@ -181,7 +199,14 @@ function createOverlay() {
   // Clear any cached copy + cache-bust the URL so UI changes always show up.
   const hudUrl = `${HUD_URL}?v=${Date.now()}${AMD_COMPAT ? "&lite=1" : ""}`;
   overlay.webContents.session.clearCache().finally(() => overlay.loadURL(hudUrl));
+  // Once the page is up, tell the renderer the mining widget's initial state: shown if the user
+  // left it open last session, else armed-hidden if auto-show is on (so it can self-pop).
+  overlay.webContents.on("did-finish-load", () => {
+    sendMiningVisible(miningVisible ? { on: true } : { on: false, arm: miningArm });
+    pushWidgetStates();
+  });
   applyMouse();
+  startMousePoll();
   overlay.on("closed", () => {
     overlay = null;
   });
@@ -212,6 +237,17 @@ function saveWidget(id, layout) {
     catch { /* non-fatal */ }
   }, 400);
 }
+// Recover widgets dragged off-screen / onto a disconnected monitor: wipe saved positions so
+// every widget returns to its default on-screen spot. Also normalizes the global scale baseline
+// back to 100% — otherwise a leftover scale (e.g. 200%) makes the reset widgets huge and
+// ungrabbable. Reloads the pages so they re-read the layout.
+async function resetWidgetLayout() {
+  clearTimeout(widgetSaveTimer);
+  widgetCache = {};
+  try { fs.unlinkSync(widgetsFile()); } catch { /* already gone */ }
+  try { await postConfig({ overlayScale: 100 }); } catch { /* sidecar down — non-fatal */ }
+  try { overlay && !overlay.isDestroyed() && overlay.webContents.reload(); } catch { /* ignore */ }
+}
 
 function applyMouse() {
   if (!overlay) return;
@@ -221,10 +257,40 @@ function applyMouse() {
   // stays hover-based so clicks route to whichever widget is under the cursor, regardless of
   // which window is on top. Exceptions that force interactive: an active drag on THIS window
   // (so a gesture can't drop), or an open modal (hub / what's-new — clickable even when locked).
-  // forward:true keeps mousemove flowing so the page can detect enter/leave even while ignored.
-  const interactive = dragging || modalOpen || (hovering && !locked);
-  overlay.setIgnoreMouseEvents(!interactive, { forward: true });
+  // NOTE: no {forward:true} — on Windows that installs a system-wide low-level mouse hook per
+  // window, and three full-screen overlays' worth of hooks stutters the whole cursor once the
+  // app is elevated (UIPI stops masking them). `hovering` is driven by pollCursor() instead.
+  // Default: clickable whenever the cursor is over a widget. Opt-in "hold to interact" mode
+  // (holdMode) makes it passive UNLESS the interact key (default F) is held — so gameplay never
+  // accidentally clicks it. Either way, dragging/modal force it interactive.
+  const canHover = holdMode ? holdInteract : true;
+  const interactive = dragging || modalOpen || (hovering && canHover);
+  overlay.setIgnoreMouseEvents(!interactive);
 }
+
+// ── Cursor-poll hover detection (replaces setIgnoreMouseEvents forward:true) ──────
+// Each page reports its interactive elements' client-rects (panel, summoned cog, open menus,
+// arrange banner). We poll the OS cursor and flip a window interactive only while the cursor is
+// actually over one of those rects — so the window is click-through everywhere else with NO
+// mouse hook and NO screen-wide event forwarding.
+let overlayRegions = []; // [{x,y,w,h}] in overlay-client coords (includes the mining widget)
+let mousePoll = null;
+function insideRegions(regions, win, pt) {
+  if (!regions.length || !win || win.isDestroyed()) return false;
+  const b = win.getBounds();
+  for (const r of regions) {
+    if (pt.x >= b.x + r.x && pt.x < b.x + r.x + r.w && pt.y >= b.y + r.y && pt.y < b.y + r.y + r.h) return true;
+  }
+  return false;
+}
+function pollCursor() {
+  let pt; try { pt = screen.getCursorScreenPoint(); } catch { return; }
+  if (overlay && !overlay.isDestroyed()) {
+    const over = insideRegions(overlayRegions, overlay, pt);
+    if (over !== hovering) { hovering = over; applyMouse(); }
+  }
+}
+function startMousePoll() { if (!mousePoll) mousePoll = setInterval(pollCursor, 30); }
 
 // ── binding-chart PNG overlay ─────────────────────────────────────────────────
 // A separate full-screen, transparent, always-click-through window that shows a
@@ -232,7 +298,7 @@ function applyMouse() {
 // reference-only, so it never takes focus or eats clicks.
 let bindingWin = null;
 function createBinding() {
-  const { bounds } = screen.getPrimaryDisplay(); // full display, covers the whole screen
+  const bounds = fullDisplayBounds(); // spans all monitors
   bindingWin = new BrowserWindow({
     x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
     frame: false, transparent: true, resizable: false, movable: false, skipTaskbar: true,
@@ -241,7 +307,7 @@ function createBinding() {
   });
   bindingWin.setAlwaysOnTop(true, "screen-saver");
   bindingWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  bindingWin.setIgnoreMouseEvents(true, { forward: true }); // always click-through
+  bindingWin.setIgnoreMouseEvents(true); // always click-through, reference-only (no forward hook needed)
   bindingWin.loadURL(`http://localhost:${PORT}/binding.html`);
   bindingWin.on("closed", () => { bindingWin = null; });
 }
@@ -263,58 +329,38 @@ async function postConfig(patch) {
   } catch { /* sidecar not up yet — non-fatal */ }
 }
 
-// ── Mining Assistant window ───────────────────────────────────────────────────
-// A second full-screen transparent canvas (same model as the overlay) hosting the Mining
-// Assistant as its own free-floating, independently-scalable widget — so it can be dragged
-// and corner-resized like the Blueprint panel, without a panel-sized window clipping it or
-// anchoring it. Click-through everywhere except over the widget; the two canvases stack and
-// each becomes interactive only over its own widget. Hidden (not destroyed) on hide so
-// countdowns + state persist. Its position/size live in widgets.json (keyed "mining").
-let miningWin = null;
-function createMining() {
-  const { bounds } = screen.getPrimaryDisplay(); // full display — the widget canvas
-  miningWin = new BrowserWindow({
-    x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
-    frame: false, transparent: true, resizable: false, movable: false, skipTaskbar: true,
-    alwaysOnTop: true, hasShadow: false, fullscreenable: false, focusable: true, show: false,
-    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "mining-preload.cjs"), autoplayPolicy: "no-user-gesture-required" },
-  });
-  miningWin.setAlwaysOnTop(true, "screen-saver");
-  miningWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  miningWin.loadURL(`http://localhost:${PORT}/mining.html?v=${Date.now()}${AMD_COMPAT ? "&lite=1" : ""}`);
-  applyMiningMouse();
-  miningWin.on("close", (e) => { e.preventDefault(); hideMining(); });
+// ── Mining Assistant widget (in-canvas) ───────────────────────────────────────
+// The Mining Assistant is now an iframe widget INSIDE the overlay canvas (see missions.html +
+// mining.html?embedded=1), not its own window. The shell owns its VISIBILITY and drives it into
+// the overlay renderer; the renderer shows/hides the widget and owns its layout, drag, and
+// cursor hit-testing. setMiningVisible is the single mutator (keeps config + tray + hub in sync).
+function sendMiningVisible(state) {
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:mining-visible", state); }
+  catch { /* renderer gone */ }
 }
-// Same hover-based rule as the HUD's applyMouse (this window has no lock): click-through
-// except over its own widget, an active drag, or an open cog menu — so it never blocks the
-// stacked HUD canvas. NOT forced interactive by arrange mode (that was the click-blocking bug).
-function applyMiningMouse() {
-  if (!miningWin) return;
-  miningWin.setIgnoreMouseEvents(!(miningDragging || miningModalOpen || miningHovering), { forward: true });
+// Push the mining widget's on/off state to the in-overlay hub checkbox (kept in sync with tray).
+function pushWidgetStates() {
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible }); }
+  catch { /* renderer gone */ }
 }
-// Reposition mode for the mining window (grab handle / "Done" in the page). Hover-toggling
-// is suspended so the window can't slip out from under the cursor mid-drag.
-function setMiningMoveMode(on) {
-  miningMoveMode = on;
-  applyMiningMouse();
-  if (on && miningWin) miningWin.focus();
-  miningWin?.webContents.send("mining:move-mode", on);
-}
-// Hiding via tray/hotkey/close suppresses the auto-show pop-up briefly, so it doesn't
-// immediately re-appear on the next scan/refinery read the player didn't ask to see.
-function hideMining() {
-  if (!miningWin) return;
-  miningMoveMode = false;
-  miningAutoSuppress = Date.now() + 90000;
-  miningWin.hide();
+function setMiningVisible(on, opts) {
+  opts = opts || {};
+  on = !!on;
+  miningVisible = on;
+  // A manual hide (tray/hotkey/hub off) suppresses auto-show briefly, so it doesn't re-pop on
+  // the next scan/refinery read the player didn't ask to see.
+  if (!on && opts.manual) miningAutoSuppress = Date.now() + 90000;
+  sendMiningVisible({ on });
+  // Remember open/closed for next launch — but an AUTO-SHOW pop (persist:false) must NOT make
+  // mining permanently "open"; only an explicit user open/close persists.
+  if (opts.persist !== false) postConfig({ miningOpen: on });
+  pushWidgetStates();
+  refreshTray();
 }
 function toggleMining() {
-  if (!miningWin) createMining();
-  if (miningWin.isVisible()) { hideMining(); return; }
-  miningWin.showInactive(); // never steal focus from the game
-  applyMiningMouse();
+  if (miningVisible) setMiningVisible(false, { manual: true });
+  else { miningAutoSuppress = 0; setMiningVisible(true); }
 }
-ipcMain.on("mining:hide", hideMining);
 
 // Live-rebindable global shortcut for the binding-chart overlay — swap it WITHOUT a restart.
 // Returns {ok:true} or {ok:false,error} so the config window can warn (invalid combo, or the
@@ -341,7 +387,7 @@ function registerBindingHotkey(accel) {
   return r;
 }
 
-// Live-rebindable hotkey for showing/hiding the Mining Assistant window. Same shape as the
+// Live-rebindable hotkey for showing/hiding the Mining Assistant widget. Same shape as the
 // overlay/binding registrations so the config window can warn on an invalid / in-use combo.
 let miningAccel = null;
 function registerMiningHotkey(accel) {
@@ -353,12 +399,33 @@ function registerMiningHotkey(accel) {
   return r;
 }
 
-// ── actions ─────────────────────────────────────────────────────────────────
-function toggleLock() {
-  locked = !locked;
-  applyMouse();
-  refreshTray();
+// Interact-to-hold (default F): the overlay is passive until you HOLD this key — then it's
+// clickable over its widgets, so it never eats a click during gameplay. Requires the low-level
+// hook (key-up detection). Move (arrange mode) stays a normal press hotkey.
+let interactAccel = null;
+function registerInteractHotkey(accel) {
+  if (interactAccel) hotkeys.unregister(interactAccel);
+  interactAccel = null;
+  if (!accel || typeof accel !== "string") return { ok: true };
+  const r = hotkeys.registerHold(accel,
+    // On press (only matters in opt-in hold mode): allow interaction AND summon the global cog so
+    // settings are reachable while held. In the default hover mode this key does nothing.
+    () => { if (!holdMode) return; holdInteract = true; applyMouse(); try { overlay && !overlay.isDestroyed() && overlay.webContents.send("overlay:summon-cog"); } catch { /* ignore */ } },
+    () => { if (!holdInteract) return; holdInteract = false; applyMouse(); });
+  if (r.ok) interactAccel = accel;
+  return r;
 }
+let moveAccel = null;
+function registerMoveHotkey(accel) {
+  if (moveAccel) hotkeys.unregister(moveAccel);
+  moveAccel = null;
+  if (!accel || typeof accel !== "string") return { ok: true };
+  const r = hotkeys.register(accel, toggleMove);
+  if (r.ok) moveAccel = accel;
+  return r;
+}
+
+// ── actions ─────────────────────────────────────────────────────────────────
 
 // Reposition mode: whole panel becomes a drag surface (banner + Done in the page),
 // hover-toggling suspended so the window can't slip out from under the cursor.
@@ -369,16 +436,14 @@ function setMoveMode(on) {
   overlay?.webContents.send("overlay:move-mode", on);
   refreshTray();
 }
-// Global arrange: one cohesive overlay app, so entering "arrange" puts EVERY visible widget
-// (Blueprint canvas + Mining canvas) into move/resize at once, and either window's "Done"
-// exits for all. Triggered by any widget's grip, the global cog's Arrange button, the tray,
-// or Ctrl+Alt+M.
+// Global arrange: one cohesive overlay app. Both widgets (Blueprint + Mining) now live in the
+// one overlay renderer, so a single move-mode message puts EVERY visible widget into
+// move/resize at once (the renderer's onMoveMode toggles both), and any "Done" exits for all.
+// Triggered by a widget's grip, the global cog's Arrange button, the tray, or Ctrl+Alt+M.
 let arrangeAll = false;
 function setArrangeAll(on) {
   arrangeAll = on;
-  setMoveMode(on); // Blueprint widget (also refreshes the tray)
-  if (miningWin && !miningWin.isDestroyed() && miningWin.isVisible()) setMiningMoveMode(on);
-  else miningMoveMode = false;
+  setMoveMode(on); // drives the overlay renderer (both widgets) + refreshes the tray
 }
 function toggleMove() {
   setArrangeAll(!arrangeAll);
@@ -413,7 +478,7 @@ function openConfig() {
   configWin = new BrowserWindow({
     width: 780,
     height: 820,
-    title: "SC Blueprint Tracker — Config",
+    title: "SC Overlay — Config",
     autoHideMenuBar: true,
     alwaysOnTop: true,
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, "config-preload.cjs") },
@@ -507,12 +572,12 @@ function setupUpdater() {
   autoUpdater.on("update-downloaded", (info) => {
     updateDownload = null;
     refreshTray();
-    if (tray) tray.setToolTip("SC Blueprint Tracker");
+    if (tray) tray.setToolTip("SC Overlay");
     dialog
       .showMessageBox({
         type: "info",
         title: "Update ready",
-        message: `SC Blueprint Tracker ${info.version} is ready to install.`,
+        message: `SC Overlay ${info.version} is ready to install.`,
         detail: "Restart now to update?",
         buttons: ["Restart now", "Later"],
         defaultId: 0,
@@ -535,7 +600,7 @@ function setupUpdater() {
     manualCheck = false;
     dialog.showMessageBox({
       type: "info", title: "Update available",
-      message: `SC Blueprint Tracker ${info.version} is available.`,
+      message: `SC Overlay ${info.version} is available.`,
       detail: "Downloading in the background — the tray menu shows live progress, and you'll be prompted to restart when it's ready.",
       buttons: ["OK"],
     });
@@ -547,7 +612,7 @@ function setupUpdater() {
     if (!updateDownload) updateDownload = { version: "", percent: 0, bps: 0 };
     const pct = Math.floor(p.percent);
     updateDownload.bps = p.bytesPerSecond;
-    if (tray) tray.setToolTip(`SC Blueprint Tracker — downloading update ${pct}%`);
+    if (tray) tray.setToolTip(`SC Overlay — downloading update ${pct}%`);
     if (pct !== updateDownload.percent) {
       updateDownload.percent = pct;
       refreshTray();
@@ -566,7 +631,7 @@ function setupUpdater() {
     console.error("[updater]", String(e));
     updateDownload = null;
     refreshTray();
-    if (tray) tray.setToolTip("SC Blueprint Tracker");
+    if (tray) tray.setToolTip("SC Overlay");
     if (!manualCheck) return;
     manualCheck = false;
     dialog.showMessageBox({
@@ -609,15 +674,8 @@ function refreshTray() {
         click: () => setOverlayEnabled(!overlayEnabled),
       },
       ...(overlayEnabled
-        ? [
-            { label: moveMode ? "Done arranging" : "Arrange widgets…", click: toggleMove },
-            {
-              label: "Lock (always click-through)",
-              type: "checkbox",
-              checked: locked,
-              click: toggleLock,
-            },
-          ]
+        ? [{ label: moveMode ? "Done arranging" : "Arrange widgets…", click: toggleMove },
+            { label: "Reset overlay layout (recover lost widgets)", click: resetWidgetLayout }]
         : [{ label: "Overlay off — tracking still running", enabled: false }]),
       { type: "separator" },
       { label: "Mining Assistant", click: toggleMining },
@@ -661,7 +719,7 @@ function createTray() {
     : path.join(ROOT, "overlay", "tray-icon.png");
   const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon);
-  tray.setToolTip("SC Blueprint Tracker");
+  tray.setToolTip("SC Overlay");
   tray.on("click", toggleShow);
   refreshTray();
 }
@@ -685,31 +743,45 @@ if (!app.requestSingleInstanceLock()) {
     if (overlayEnabled) createOverlay();
     createTray();
     setupUpdater();
-    hotkeys.register("Control+Alt+L", toggleLock); // lock/unlock click-through
-    hotkeys.register("Control+Alt+M", toggleMove); // move/reposition mode
+    // Keep the canvas windows covering the whole virtual desktop when monitors change.
+    screen.on("display-added", refitCanvasWindows);
+    screen.on("display-removed", refitCanvasWindows);
+    screen.on("display-metrics-changed", refitCanvasWindows);
     // Configurable global hotkeys (live-rebindable from the config window), read from the
-    // persisted config: overlay show/hide (default F3) + binding-chart PNG (default Alt+F3).
+    // persisted config: overlay show/hide (F3), binding-chart PNG (Ctrl+F3), Mining (Shift+F3),
+    // Interact-to-hold (F — hold to click the overlay), and Move/arrange (Ctrl+Alt+M).
     let overlayKey = "F3";
-    let bindKey = "Alt+F3";
+    let bindKey = "Ctrl+F3";
     let miningKey = "Shift+F3";
+    let interactKey = "F";
+    let moveKey = "Ctrl+Alt+M";
     try {
       const p = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", "config.json");
       const c = JSON.parse(fs.readFileSync(p, "utf8"));
       if (c.overlayHotkey) overlayKey = c.overlayHotkey;
       if (c.bindingHotkey) bindKey = c.bindingHotkey;
       if (c.miningHotkey) miningKey = c.miningHotkey;
+      if (c.interactHotkey) interactKey = c.interactHotkey;
+      if (c.moveHotkey) moveKey = c.moveHotkey;
+      if (c.holdToInteract === true) holdMode = true; // opt-in: require holding the interact key
     } catch { /* defaults */ }
     registerOverlayHotkey(overlayKey);
     registerBindingHotkey(bindKey);
     registerMiningHotkey(miningKey);
+    registerInteractHotkey(interactKey);
+    registerMoveHotkey(moveKey);
     // Learn our elevation state (async) so the tray can offer "Restart as administrator" when
     // we're NOT elevated — the state hotkeys-over-a-focused-game depend on.
     checkElevated().then(() => refreshTray());
-    // Auto-show: pre-create the (hidden) Mining Assistant window so it's listening on the
-    // event stream and can pop itself when the scanner/refinery screen is detected.
+    // Restore the Mining Assistant widget: if the user left it OPEN last session, show it; else,
+    // if auto-show is on, ARM it (the overlay loads the mining iframe hidden so it's listening on
+    // the event stream and can pop itself when the scanner/refinery screen is detected). The
+    // overlay's did-finish-load handler pushes this initial state into the renderer.
     try {
       const p = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", "config.json");
-      if (JSON.parse(fs.readFileSync(p, "utf8")).miningAutoShow === true) createMining();
+      const c = JSON.parse(fs.readFileSync(p, "utf8"));
+      miningVisible = c.miningOpen === true;
+      miningArm = !miningVisible && c.miningAutoShow === true;
     } catch { /* default off */ }
     // Opt-in fabricator screen-capture loop (config.fabCapture). No-op until enabled.
     startFabCapture({
@@ -732,7 +804,7 @@ if (!app.requestSingleInstanceLock()) {
   // Mining Assistant: custom alert-tone WAV picker + show (for auto-pop-up). The chosen
   // path is persisted server-side (config.miningTone) so the sidecar can serve it.
   ipcMain.handle("mining:pick-tone", async () => {
-    const r = await dialog.showOpenDialog(miningWin ?? undefined, {
+    const r = await dialog.showOpenDialog(overlay ?? undefined, {
       title: "Choose an alert-tone WAV",
       filters: [{ name: "WAV audio", extensions: ["wav"] }],
       properties: ["openFile"],
@@ -742,12 +814,13 @@ if (!app.requestSingleInstanceLock()) {
     return true;
   });
   ipcMain.handle("mining:clear-tone", async () => { await postConfig({ miningTone: "" }); return true; });
-  // Auto-show from the page (a new scan / refinery read). Gated by the suppress window so a
-  // manual hide keeps it out of the way for a bit. Never steals focus from the game.
+  // Auto-show request from the embedded mining page (a new scan / refinery read). Gated by the
+  // suppress window so a manual hide keeps it out of the way for a bit. The config.miningAutoShow
+  // opt-in is checked page-side before this fires; here we just enforce the suppress + not-already-shown.
   ipcMain.on("mining:show", () => {
+    if (miningVisible) return;
     if (Date.now() < miningAutoSuppress) return;
-    if (!miningWin) createMining();
-    if (!miningWin.isVisible()) { miningWin.showInactive(); applyMiningMouse(); }
+    setMiningVisible(true, { persist: false }); // auto-show pop — don't persist as "open"
   });
 
   // Config window's "Show in-game overlay" toggle (crash workaround). Owned here, not by
@@ -784,12 +857,28 @@ if (!app.requestSingleInstanceLock()) {
     registerBindingHotkey(typeof accel === "string" ? accel : ""));
   ipcMain.handle("set-mining-hotkey", (_e, accel) =>
     registerMiningHotkey(typeof accel === "string" ? accel : ""));
-
-  // The HUD page reports hover enter/leave → become clickable only while hovered.
-  ipcMain.on("overlay:hover", (_e, on) => {
-    hovering = !!on;
-    applyMouse();
+  ipcMain.handle("set-interact-hotkey", (_e, accel) =>
+    registerInteractHotkey(typeof accel === "string" ? accel : ""));
+  ipcMain.handle("set-move-hotkey", (_e, accel) =>
+    registerMoveHotkey(typeof accel === "string" ? accel : ""));
+  ipcMain.handle("overlay:reset-layout", () => { resetWidgetLayout(); return true; });
+  // Primary display's offset + size within the full-desktop canvas, so the page can default a
+  // new/reset widget onto the PRIMARY monitor (not a corner of a left/top secondary display).
+  ipcMain.handle("overlay:canvas-info", () => {
+    const v = fullDisplayBounds();
+    const p = screen.getPrimaryDisplay().bounds;
+    return { px: p.x - v.x, py: p.y - v.y, pw: p.width, ph: p.height, vw: v.width, vh: v.height };
   });
+  // Hold-to-interact opt-in: when off (default), the overlay is clickable whenever the cursor is
+  // over a widget; when on, it's passive unless the interact key is held.
+  ipcMain.handle("app:set-hold-mode", (_e, on) => { holdMode = !!on; applyMouse(); return holdMode; });
+
+  // Legacy hover signal — hover is now driven by pollCursor() hit-testing the reported regions,
+  // so this is a no-op (kept so the preload bridge / page calls don't error).
+  ipcMain.on("overlay:hover", () => {});
+  // The page reports its interactive elements' client-rects; pollCursor() hit-tests the cursor
+  // against them to decide when this window is interactive (no mouse hook, no forwarding).
+  ipcMain.on("overlay:regions", (_e, rects) => { overlayRegions = Array.isArray(rects) ? rects : []; });
   // A HUD modal (what's-new card / hub) opened/closed → keep it clickable even under lock.
   ipcMain.on("overlay:modal", (_e, on) => {
     modalOpen = !!on;
@@ -819,38 +908,15 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("overlay:save-widget", (_e, id, layout) => saveWidget(id, layout));
 
   // ── global widget on/off (from the in-overlay hub) ──────────────────────────
-  // Only the Mining Assistant is a hub toggle — the Blueprint widget hides in-page (it's in
-  // the shell window's own DOM) and the Binding chart is hotkey-only (never kept on). Widget
-  // state feeds the hub checkbox; a change is pushed back so it stays in sync with the tray.
-  function miningVisible() { return !!(miningWin && !miningWin.isDestroyed() && miningWin.isVisible()); }
-  function pushWidgetStates() {
-    try { overlay?.webContents.send("overlay:widget-states", { mining: miningVisible() }); } catch { /* window gone */ }
-  }
-  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible() }));
+  // Only the Mining Assistant is a hub toggle — the Blueprint widget hides in-page and the
+  // Binding chart is hotkey-only (never kept on). Both widgets now live in the one overlay
+  // renderer, so mining is a shell-owned visibility flag (setMiningVisible) rather than a window.
+  // (sendMiningVisible / pushWidgetStates / setMiningVisible are defined at module scope above.)
+  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible }));
   ipcMain.on("app:set-mining", (_e, on) => {
-    if (on) { if (!miningWin) createMining(); if (!miningWin.isVisible()) { miningAutoSuppress = 0; miningWin.showInactive(); applyMiningMouse(); } }
-    else hideMining();
-    pushWidgetStates();
+    if (on) { miningAutoSuppress = 0; setMiningVisible(true); }
+    else setMiningVisible(false, { manual: true });
   });
-
-  // Mining Assistant window: same hover-to-click + move-mode + cog-modal bridge as the HUD.
-  ipcMain.on("mining:hover", (_e, on) => {
-    miningHovering = !!on;
-    applyMiningMouse();
-  });
-  ipcMain.on("mining:modal", (_e, on) => {
-    miningModalOpen = !!on;
-    applyMiningMouse();
-  });
-  ipcMain.on("mining:drag-lock", (_e, on) => {
-    miningDragging = !!on;
-    applyMiningMouse();
-  });
-  // Mining's cog was clicked → summon the global cog in the shell (HUD) window.
-  ipcMain.on("mining:summon-cog", () => { try { overlay?.webContents.send("overlay:summon-cog"); } catch { /* shell gone */ } });
-  // Mining's grip/Done also drives GLOBAL arrange (one cohesive overlay).
-  ipcMain.on("mining:begin-move", () => setArrangeAll(true));
-  ipcMain.on("mining:end-move", () => setArrangeAll(false));
 
   // Tray app — keep running when the overlay window is closed.
   app.on("window-all-closed", (e) => {

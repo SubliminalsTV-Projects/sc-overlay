@@ -48,66 +48,78 @@ async function captureScreen() {
 // so we DON'T save (and dedup-lock) an empty frame — a later poll retries once it loads.
 function hasRender(image) {
   const bmp = image.getBitmap();          // BGRA, 4 bytes/pixel
+  const { width: w, height: h } = image.getSize();
   const total = bmp.length / 4;
-  if (total < 1) return false;
+  if (total < 1 || w < 2) return false;
+  const lumAt = (i) => 0.114 * bmp[i] + 0.587 * bmp[i + 1] + 0.299 * bmp[i + 2];
   let bright = 0;
-  for (let i = 0; i < bmp.length; i += 4) {
-    const lum = 0.114 * bmp[i] + 0.587 * bmp[i + 1] + 0.299 * bmp[i + 2];
-    if (lum > 150) bright++;
+  for (let i = 0; i < bmp.length; i += 4) if (lumAt(i) > 150) bright++;
+  if (bright / total > 0.0005) return true; // specular highlights — most items load this way
+  // Fallback for small, DARK items (fuel components, dark weapons): they add almost no bright
+  // pixels (measured: 0.02% vs 0.25%+ for normal items) but still have hard silhouette edges an
+  // empty mid-load teal gradient doesn't. Count horizontal neighbour luminance jumps > 24; a
+  // smooth gradient stays near zero, a real render is well above (measured: dark item 0.14%).
+  let edges = 0;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let x = 0; x < w - 1; x++) {
+      const i = row + x * 4;
+      if (Math.abs(lumAt(i) - lumAt(i + 4)) > 24) edges++;
+    }
   }
-  return bright / total > 0.0005;
+  return edges / total > 0.0006;
 }
 
 const SITE = "https://subliminal.gg";
 
-// Crop tight around the SUBJECT and re-centre on it. The anchor crop's x-span runs
-// name-left..X-close, which is NOT centred on the 3D render, so a symmetric trim around the
-// frame midline would preserve any lean (dead space on the opposite side) and keep the kiosk's
-// category-tab sliver stuck at the far-left edge. Instead we find the item's own L/R extent
-// and crop to it with equal margins. Item pixels = far from the sampled teal bg; a column
-// counts if item in >10% of rows — then we keep only the DOMINANT contiguous block, so the
-// tab rail (thin, at the edge, gap-separated from the render) is excluded, not just un-stretched.
-function centerTighten(image, margin = 20, tol = 48) {
+// Crop tight around the SUBJECT and re-centre on it, on BOTH axes. The kiosk shows the item
+// floating on a smooth teal glow with a faint backdrop grid. The old approach kept the item's
+// extent by colour-distance from the corner background — but the glow ALSO differs from the
+// corners, so for a small, dark item (e.g. fuel components) it locked onto the glow and left the
+// item tiny + off-centre. Instead we locate the item by its EDGES: a real 3D render has hard
+// silhouette/detail edges, while the glow is smooth and the grid is low-contrast. We take the
+// dominant contiguous edge cluster's bounding box on x and y and crop to it with a small margin.
+function centerTighten(image, margin = 22) {
   const { width: w, height: h } = image.getSize();
   if (w < 40 || h < 40) return image;
   const bmp = image.getBitmap(); // BGRA
-  const med = (a) => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
-  const sb = [], sg = [], sr = [];
-  for (const [cx, cy] of [[4, 4], [w - 9, 4], [4, h - 9], [w - 9, h - 9]]) {
-    for (let dy = 0; dy < 8; dy++) for (let dx = 0; dx < 8; dx++) {
-      const i = ((cy + dy) * w + (cx + dx)) * 4;
-      sb.push(bmp[i]); sg.push(bmp[i + 1]); sr.push(bmp[i + 2]);
+  const lumAt = (x, y) => { const i = (y * w + x) * 4; return 0.114 * bmp[i] + 0.587 * bmp[i + 1] + 0.299 * bmp[i + 2]; };
+  const T = 28; // edge threshold: above the faint backdrop grid (~10-15), at/below item silhouette
+  const colE = new Int32Array(w), rowE = new Int32Array(h);
+  let totalE = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const l = lumAt(x, y);
+      const gx = x + 1 < w ? Math.abs(l - lumAt(x + 1, y)) : 0;
+      const gy = y + 1 < h ? Math.abs(l - lumAt(x, y + 1)) : 0;
+      if (gx > T || gy > T) { colE[x]++; rowE[y]++; totalE++; }
     }
   }
-  const bg = { b: med(sb), g: med(sg), r: med(sr) };
-  const rowThresh = h * 0.10;
-  const isItem = new Array(w);
-  for (let x = 0; x < w; x++) {
-    let cnt = 0;
-    for (let y = 0; y < h; y++) {
-      const i = (y * w + x) * 4;
-      if (Math.abs(bmp[i] - bg.b) + Math.abs(bmp[i + 1] - bg.g) + Math.abs(bmp[i + 2] - bg.r) > tol) cnt++;
+  if (totalE < 50) return image; // no discernible subject — leave the anchor crop as-is
+  // Dominant contiguous run in an edge-count projection (bridging small gaps), so a stray UI
+  // sliver or grid speck loses to the item cluster. `span` is the perpendicular dimension.
+  const domRun = (arr, n, span) => {
+    const floor = Math.max(2, Math.round(0.008 * span)); // a line needs this many edge px to count
+    const maxGap = Math.max(6, Math.round(n * 0.06));
+    let bestL = -1, bestR = -1, bestSum = 0, i = 0;
+    while (i < n) {
+      if (arr[i] < floor) { i++; continue; }
+      let segL = i, segR = i, sum = 0, gap = 0;
+      while (i < n && gap <= maxGap) {
+        if (arr[i] >= floor) { segR = i; sum += arr[i]; gap = 0; } else { gap++; }
+        i++;
+      }
+      if (sum > bestSum) { bestSum = sum; bestL = segL; bestR = segR; }
     }
-    isItem[x] = cnt > rowThresh;
-  }
-  // Dominant contiguous block, bridging gaps <= maxGap (a render's internal background
-  // shouldn't split it). The tab rail is a thin far-edge cluster separated by a wide gap,
-  // so it becomes its own tiny segment and loses to the render.
-  const maxGap = Math.round(w * 0.06);
-  let left = -1, right = -1, best = 0;
-  for (let x = 0; x < w; ) {
-    if (!isItem[x]) { x++; continue; }
-    let segL = x, segR = x, cnt = 0, gap = 0;
-    while (x < w && gap <= maxGap) {
-      if (isItem[x]) { segR = x; cnt++; gap = 0; } else { gap++; }
-      x++;
-    }
-    if (cnt > best) { best = cnt; left = segL; right = segR; }
-  }
-  if (left < 0 || right - left < 20) return image;
-  const nl = Math.max(0, left - margin), nr = Math.min(w, right + margin);
-  const nw = nr - nl;
-  if (nw > 40 && nw < w) return image.crop({ x: nl, y: 0, width: nw, height: h });
+    return [bestL, bestR];
+  };
+  const [xL, xR] = domRun(colE, w, h);
+  const [yT, yB] = domRun(rowE, h, w);
+  if (xL < 0 || yT < 0) return image;
+  const nl = Math.max(0, xL - margin), nr = Math.min(w, xR + 1 + margin);
+  const nt = Math.max(0, yT - margin), nb = Math.min(h, yB + 1 + margin);
+  const nw = nr - nl, nh = nb - nt;
+  if (nw >= 24 && nh >= 24 && (nw < w || nh < h)) return image.crop({ x: nl, y: nt, width: nw, height: nh });
   return image;
 }
 
@@ -118,7 +130,10 @@ function readConfig(configDir) {
 
 /** Start the opt-in capture loop. `configDir` = the %APPDATA%/sc-blueprint-tracker dir.
  *  `onStatus(s)` (optional) reports OCR activity to the overlay: {state} for
- *  off/idle/watching/settling, or {state:"mission",title} / {state:"captured",name,uploaded}. */
+ *  off/idle/watching/settling, {state:"mission",title}, {state:"captured",name,uploaded},
+ *  {state:"have",name} (recognized, but the site already has the image — skipped),
+ *  {state:"render",name} (recognized, waiting for the 3D render to finish loading), or
+ *  {state:"unresolved",nameRaw} (in the kiosk but the item couldn't be identified). */
 function startFabCapture({ port, configDir, onStatus }) {
   const captureDir = path.join(configDir, "fab-captures");
   const shotsDir = path.join(configDir, "fab-shots"); // full uncropped frames (mineable)
@@ -131,6 +146,9 @@ function startFabCapture({ port, configDir, onStatus }) {
   const emitContext = (state) => { if (state !== lastContext) { lastContext = state; onStatus?.({ state }); } };
   const emitEvent = (s) => { onStatus?.(s); };
   let lastMission = "";       // last mission title sent (throttle screen-read posts)
+  let lastUnresolved = "";    // last unreadable kiosk item flagged (throttle the "can't read" note)
+  let lastHave = "";          // last already-on-site item flagged (throttle the "already have" note)
+  let lastRenderWait = "";    // last item stuck waiting on its render (throttle the "waiting" note)
   let pendingItem = null;     // item seen last tick, awaiting a settle poll before capture
   const uploaded = new Set(); // items pushed to the site this session
   let remoteHave = null;      // set of items the site already has (dedup)
@@ -193,11 +211,19 @@ function startFabCapture({ port, configDir, onStatus }) {
       // A kiosk on screen -> "fabricator" context (gold diamond) even if image capture is off;
       // anything else while watching -> "watching".
       emitContext(read.kind === "fabricator" ? "fabricator" : "watching");
+      if (read.kind !== "fabricator") { lastUnresolved = ""; lastHave = ""; lastRenderWait = ""; } // left the kiosk
       if (read.kind === "fabricator" && read.item) {
+        lastUnresolved = "";
         if (!fab) { pendingItem = null; return; } // image capture disabled — ignore kiosk frames
         const item = read.item;
-        // Dedup: already uploaded this session, or the site already has it.
-        if (uploaded.has(item) || have.has(item)) { pendingItem = null; return; }
+        // Dedup: already uploaded this session, or the site already has it. Surface it once
+        // per item so the user sees it was recognized but there's nothing to capture (rather
+        // than the loop looking stuck on "Reading the fabricator…").
+        if (uploaded.has(item) || have.has(item)) {
+          pendingItem = null;
+          if (item !== lastHave) { lastHave = item; emitEvent({ state: "have", name: read.name }); }
+          return;
+        }
         // Settle: the kiosk's 3D render fades in over ~1-2s, so a first-glimpse capture
         // can come out half-loaded / see-through. Require the item to still be on screen
         // a poll later (this shot) before capturing, giving the render time to finish.
@@ -210,9 +236,11 @@ function startFabCapture({ port, configDir, onStatus }) {
         const c = read.crop;
         const cropped = centerTighten(shot.crop({ x: c.x, y: c.y, width: c.w, height: c.h }));
         if (!hasRender(cropped)) {
+          if (item !== lastRenderWait) { lastRenderWait = item; emitEvent({ state: "render", name: read.name }); }
           console.log(`[fab-capture] ${read.name}: render not loaded yet, will retry`);
           return; // keep pendingItem so the next poll retries
         }
+        lastRenderWait = "";
         // Opaque teal kiosk background -> JPEG (small, fits the ingest cap).
         const jpeg = cropped.toJPEG(82);
         fs.mkdirSync(captureDir, { recursive: true });
@@ -229,6 +257,18 @@ function startFabCapture({ port, configDir, onStatus }) {
           console.log(`[fab-capture] saved ${read.name} (${item}) — no sync token, not uploaded`);
         }
         emitEvent({ state: "captured", name: read.name, uploaded: uploadedOk });
+      } else if (read.kind === "fabricator" && fab) {
+        // In the kiosk with image capture on, but the item name didn't resolve to a known
+        // blueprint (still rendering in, or an item not in our dataset) — so there's nothing
+        // to tag a capture with. Surface it once per item so the user knows why no picture
+        // was taken, rather than the loop failing silently.
+        pendingItem = null;
+        const raw = (read.nameRaw || "").trim();
+        if (raw !== lastUnresolved) {
+          lastUnresolved = raw;
+          emitEvent({ state: "unresolved", nameRaw: raw });
+          console.log(`[fab-capture] kiosk item not identified${raw ? `: "${raw}"` : ""}`);
+        }
       } else if (read.kind === "mission" && miss && read.titleRaw && read.titleRaw !== lastMission) {
         // Tell the tracker which mission is pinned in-game (ground truth the log lacks).
         lastMission = read.titleRaw;
