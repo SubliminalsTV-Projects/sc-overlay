@@ -5,7 +5,8 @@
     "The mission-complete card shows the mission's payout again — read from the game data now that the game stopped logging the award.",
     "Streamers: the overlay broadcasts the manufacturer of the ship you're flying, so your other stream overlays can re-color to match it live. Plus a new \"switch back to Mobiglas when I leave my ship\" option.",
     "Fixed the binding-chart PNG picker in Settings rendering as a tiny box with no room for the filename.",
-    "Manufacturer skins now stay pinned for active Twitch subscribers — connect the tracker to subliminal.gg and link your Twitch, and your chosen skin sticks instead of reverting after the preview."
+    "Manufacturer skins now stay pinned for active Twitch subscribers — connect the tracker to subliminal.gg and link your Twitch, and your chosen skin sticks instead of reverting after the preview.",
+    "Multi-monitor: in Arrange mode you can now drag a widget onto a second display — it crosses seamlessly and stays there, and the Arrange controls always stay on your primary monitor."
   ],
   "0.1.29": [
     "Manufacturer skins! The overlay now automatically matches the ship you're flying — Drake, Aegis, Crusader, RSI, MISC, Origin and more. Free on 'Auto'; subscribers can pin one manufacturer to use it regardless of ship.",
