@@ -526,6 +526,8 @@ function checkElevated() {
 // the elevated one can take the single-instance lock + the sidecar port. Detached PowerShell
 // so the elevation survives our exit.
 function restartAsAdmin() {
+  const logPath = path.join(app.getPath("userData"), "restart-admin.log");
+  const mlog = (m) => { try { fs.appendFileSync(logPath, `[${new Date().toISOString()}] main: ${m}\r\n`); } catch { /* best-effort */ } };
   try {
     const exe = process.execPath;
     const args = app.isPackaged ? [] : [path.join(__dirname, "main.cjs")]; // dev: pass the entry script (absolute)
@@ -535,21 +537,38 @@ function restartAsAdmin() {
     const wd = app.isPackaged ? path.dirname(exe) : ROOT;
     const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
     const argList = args.length ? ` -ArgumentList @(${args.map(q).join(",")})` : "";
-    // Detached helper owns the handoff: wait for THIS instance to fully exit, then sweep any
-    // leftover sidecar, THEN launch elevated. Without the wait, the new instance races the dying
-    // old one and bounces off the single-instance lock / held :8778 — leaving nothing running and
-    // orphaned processes to kill by hand. (Name sweep covers the packaged sidecar; dev's tsx child
-    // is handled by before-quit's server.kill.)
-    const ps = [
+    // The handoff runs from a detached HELPER SCRIPT (not an inline -Command) so it can transcript
+    // every step to restart-admin.log — otherwise elevation failures are invisible (the app just
+    // closes). The helper waits for THIS instance to fully exit, sweeps any leftover sidecar, THEN
+    // relaunches elevated; without the wait the new instance races the dying old one and bounces off
+    // the single-instance lock / held :8778. Start-Process uses -ErrorAction Stop + try/catch so a
+    // declined/blocked UAC is logged with its exact message instead of being swallowed by stdio:ignore.
+    const helper = [
+      `$ErrorActionPreference = 'Continue'`,
+      `$log = ${q(logPath)}`,
+      `function W($m){ try { Add-Content -LiteralPath $log -Value ('[' + (Get-Date -Format o) + '] helper: ' + $m) } catch {} }`,
+      `W 'started; waiting for old instance (pid ${process.pid}) to exit'`,
       `Wait-Process -Id ${process.pid} -Timeout 10 -ErrorAction SilentlyContinue`,
+      `W 'old instance gone (or 10s timeout); sweeping leftover sidecar'`,
       `Get-Process -Name 'sc-overlay-server' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
-      `Start-Process -FilePath ${q(exe)}${argList} -WorkingDirectory ${q(wd)} -Verb RunAs`,
-    ].join("; ");
-    spawn("powershell", ["-NoProfile", "-Command", ps], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+      `try {`,
+      `  W 'requesting elevated relaunch (UAC): ${exe.replace(/'/g, "''")}'`,
+      `  Start-Process -FilePath ${q(exe)}${argList} -WorkingDirectory ${q(wd)} -Verb RunAs -ErrorAction Stop`,
+      `  W 'elevated relaunch accepted'`,
+      `} catch {`,
+      `  W ('ELEVATION FAILED: ' + $_.Exception.Message)`,
+      `}`,
+    ].join("\r\n");
+    const helperPath = path.join(app.getPath("temp"), "sc-overlay-elevate.ps1");
+    fs.writeFileSync(helperPath, helper, "utf8");
+    mlog(`spawning elevation helper (isPackaged=${app.isPackaged}, exe=${exe})`);
+    spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", helperPath],
+      { detached: true, stdio: "ignore", windowsHide: true }).unref();
     app.isQuitting = true;
-    setTimeout(() => app.quit(), 300); // begin our own shutdown; the helper waits for us to exit
+    setTimeout(() => app.quit(), 400); // begin our own shutdown; the helper waits for us to exit
   } catch (e) {
     console.error("[restart-as-admin]", String(e));
+    mlog(`EXCEPTION ${String(e)}`);
   }
 }
 
