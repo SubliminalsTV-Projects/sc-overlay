@@ -276,6 +276,8 @@
         <a href="https://subliminal.gg" target="_blank" rel="noopener" style="color:#ffb231; font-weight:600; text-decoration:none;">subliminal.gg →</a>
       </span>
     </div>
+    <label class="opt" style="margin-top:10px;"><input type="checkbox" id="revertThemeOnFoot" /> Switch back to Mobiglas when I leave my ship</label>
+    <div class="hint" style="margin-top:2px;">Applies to <strong>Auto</strong> theme and the stream ship-signal (<code>/api/ship</code>). Off = keep the last ship's manufacturer skin until you board another.</div>
   </div>
 
   <div class="card">
@@ -490,6 +492,7 @@
     setHotkeyDisplay("interact", cfg.interactHotkey || "F");
     setHotkeyDisplay("move", cfg.moveHotkey || "Ctrl+Alt+M");
     document.getElementById("holdToInteract").checked = !!cfg.holdToInteract;
+    document.getElementById("revertThemeOnFoot").checked = !!cfg.revertThemeOnFoot;
     document.body.classList.toggle("show-loadout", !!cfg.showLoadout);
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
@@ -588,6 +591,7 @@
       miningHotkey: document.getElementById("miningHotkey").value.trim() || "Shift+F3",
       interactHotkey: document.getElementById("interactHotkey").value.trim() || "F",
       holdToInteract: document.getElementById("holdToInteract").checked,
+      revertThemeOnFoot: document.getElementById("revertThemeOnFoot").checked,
       moveHotkey: document.getElementById("moveHotkey").value.trim() || "Ctrl+Alt+M",
       syncEnabled: document.getElementById("syncEnabled").checked,
       fabCapture: document.getElementById("fabCapture").checked,
@@ -774,7 +778,7 @@
   // Auto-save the plain checkboxes the instant they're toggled, so a change can never be lost by
   // closing/scrolling away without clicking Save. (Theme, hotkeys, hold-to-interact and the file
   // pickers already save on change; the sync token stays manual so a half-typed token isn't sent.)
-  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat"]
+  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
     .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
   // The sync field shows the truncated saved key; clear it on focus so a new token pastes
   // cleanly, and restore the preview on blur if nothing was typed.

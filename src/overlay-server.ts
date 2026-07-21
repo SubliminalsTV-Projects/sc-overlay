@@ -146,6 +146,10 @@ interface Config {
   /** Global overlay UI scale, in percent (100 = design size). Lets 4K users size it up and
    *  small screens size it down. Applied as CSS zoom; the window resizes to match. */
   overlayScale: number;
+  /** When you get out of your ship (leave its comms channel), revert the theme to Mobiglas
+   *  instead of keeping the ship's manufacturer skin. Affects theme="auto" AND the /api/ship
+   *  signal. Default false = stay on the last ship's manufacturer until you board another. */
+  revertThemeOnFoot: boolean;
 }
 
 const DEFAULTS: Config = {
@@ -178,6 +182,7 @@ const DEFAULTS: Config = {
   theme: "mobiglas",
   overlayTwist: 0, // flat by default; the user can dial in a skew angle in the hub
   overlayScale: 100,
+  revertThemeOnFoot: false,
 };
 
 function loadConfig(): Config {
@@ -328,6 +333,7 @@ const missionClients = new Set<ServerResponse>();
 // The ship manufacturer we last detected in the log (for theme: "auto"). Drake and Anvil have
 // bespoke themes so far; every other manufacturer (and "unknown") falls back to Mobiglas.
 let shipManufacturer: string | null = null;
+let shipName: string | null = null; // ship display name from the comms-join, e.g. "Grey's Basher"
 const MFR_THEME: Record<string, "drake" | "anvil" | "greys" | "esperia" | "misc" | "banu" | "gatac" | "mirai" | "origin" | "aegis" | "crusader" | "rsi" | "kruger" | "argo" | "cnou"> = { drake: "drake", anvil: "anvil", greys: "greys", esperia: "esperia", misc: "misc", banu: "banu", gatac: "gatac", mirai: "mirai", origin: "origin", aegis: "aegis", crusader: "crusader", rsi: "rsi", kruger: "kruger", argo: "argo", "consolidated outland": "cnou" };
 // Manufacturer codes (the vehicle-entity prefix) → a manufacturer key; display-name leads use
 // the same keys. Extend both this and MFR_THEME as more manufacturer themes are added.
@@ -340,23 +346,34 @@ const MFR_BY_CODE: Record<string, string> = {
 // Channel-name lead prefixes that abbreviate the manufacturer (so the full manufacturer key
 // from MFR_BY_CODE isn't a startsWith match). Dots survive the apostrophe-strip in the match.
 const MFR_LEAD_ALIAS: Record<string, string> = { "c.o.": "consolidated outland" };
+/** Resolve a ship's DISPLAY NAME (the comms-channel lead) to a manufacturer key, or null.
+ *  Ship names may contain an apostrophe ("Grey's Shiv"), so strip apostrophes before matching;
+ *  most names lead with the brand ("MISC Prospector"), some abbreviate ("C.O. Nomad"). */
+function manufacturerFromShipName(shipDisplayName: string): string | null {
+  const lead = shipDisplayName.trim().toLowerCase().replace(/['’`]/g, "");
+  for (const name of Object.values(MFR_BY_CODE)) if (lead.startsWith(name)) return name;
+  // Some ships abbreviate the manufacturer in the channel name, so the full manufacturer
+  // key isn't a prefix (Consolidated Outland → "C.O. Nomad"). Map those lead-prefixes.
+  for (const [alias, name] of Object.entries(MFR_LEAD_ALIAS)) if (lead.startsWith(alias)) return name;
+  return null;
+}
 /** The manufacturer of the local player's ship from a log line, or null.
  *  AC: the OnVehicleSpawned entity name carries a MANU_ prefix. PU: the comms channel is
  *  named "<Ship Display Name> : <Player>", so the display name leads with the manufacturer. */
 function manufacturerFromLine(line: string): string | null {
   const spawn = line.match(/OnVehicleSpawned\s+\d+\s+\(([A-Za-z0-9_]+?)_\d+\)\s+by player 0/);
   if (spawn) { const code = spawn[1].split("_")[0].toUpperCase(); if (MFR_BY_CODE[code]) return MFR_BY_CODE[code]; }
-  // Ship name may contain an apostrophe ("Grey's Shiv"), so DON'T exclude ' from the capture,
-  // and strip apostrophes before matching so "grey's" → "greys" lines up with the MFR key.
   const join = line.match(/joined channel '([^:]+?)\s*:\s*[^']+'/);
-  if (join) {
-    const lead = join[1].trim().toLowerCase().replace(/['’`]/g, "");
-    for (const name of Object.values(MFR_BY_CODE)) if (lead.startsWith(name)) return name;
-    // Some ships abbreviate the manufacturer in the channel name, so the full manufacturer
-    // key isn't a prefix (Consolidated Outland → "C.O. Nomad"). Map those lead-prefixes.
-    for (const [alias, name] of Object.entries(MFR_LEAD_ALIAS)) if (lead.startsWith(alias)) return name;
-  }
+  if (join) return manufacturerFromShipName(join[1]);
   return null;
+}
+/** PU comms-channel enter/exit for the local player's ship — "You have joined/left the channel
+ *  '<Ship> : <Player>'". Gives both a ship NAME and an exit signal (AC spawn has neither). */
+function shipChannelEvent(line: string): { action: "enter" | "leave"; ship: string; manufacturer: string | null } | null {
+  const m = line.match(/You have (joined|left the) channel '([^:]+?)\s*:\s*[^']+'/);
+  if (!m) return null;
+  const ship = m[2].trim();
+  return { action: m[1] === "joined" ? "enter" : "leave", ship, manufacturer: manufacturerFromShipName(ship) };
 }
 type ManufacturerTheme = "mobiglas" | "drake" | "anvil" | "greys" | "esperia" | "misc" | "banu" | "gatac" | "mirai" | "origin" | "aegis" | "crusader" | "rsi" | "kruger" | "argo" | "cnou";
 // Manufacturer skins are a subscriber perk. Entitlement is server-resolved; until the
@@ -383,6 +400,41 @@ function effectiveTheme(): ManufacturerTheme {
   return entitled() ? config.theme : "mobiglas"; // a pinned manufacturer is subscriber-only
 }
 
+// Accent hex per theme = the `--cyan` value of each :root[data-theme] block in missions.html.
+// KEEP IN SYNC with that CSS. (`--accent-rgb` there is just rgb(--cyan), so we derive it below.)
+const THEME_ACCENT: Record<ManufacturerTheme, string> = {
+  mobiglas: "#45D0E0", drake: "#E4802F", anvil: "#26D6AB", greys: "#83D93E",
+  esperia: "#E8455A", misc: "#E7B93E", banu: "#F2511E", gatac: "#A47CE8",
+  mirai: "#3E9BF2", origin: "#5E8AD6", aegis: "#5CBBD9", crusader: "#4FA6E4",
+  rsi: "#8B90E9", kruger: "#5CDD90", argo: "#E37B36", cnou: "#CFF0F6",
+};
+function hexToRgb(hex: string): string {
+  const h = hex.replace("#", "");
+  return `${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)}`;
+}
+// manufacturer key → its entity code (invert MFR_BY_CODE; first code wins).
+const MFR_CODE_BY_NAME: Record<string, string> = {};
+for (const [code, name] of Object.entries(MFR_BY_CODE)) if (!(name in MFR_CODE_BY_NAME)) MFR_CODE_BY_NAME[name] = code;
+/** The flown ship's manufacturer theme + accent, DECOUPLED from config.theme/entitlement/demo —
+ *  for external consumers (stream overlays via GET /api/ship + the SSE) that re-tint to the ship,
+ *  independent of what skin the streamer has pinned on their own HUD. `theme` falls back to
+ *  "mobiglas" for a manufacturer with no bespoke skin, so registering a new theme (MFR_THEME +
+ *  THEME_ACCENT + the CSS block) makes it auto-report here with ZERO change to this endpoint. */
+function shipInfo() {
+  const theme: ManufacturerTheme = (shipManufacturer && MFR_THEME[shipManufacturer]) || "mobiglas";
+  const accent = THEME_ACCENT[theme];
+  return {
+    type: "shipTheme" as const,
+    theme,
+    accent,
+    accentRgb: hexToRgb(accent),
+    manufacturer: shipManufacturer,                                              // raw key, e.g. "aopoa" (null on foot)
+    ship: shipName,                                                              // display name (null on foot)
+    code: shipManufacturer ? (MFR_CODE_BY_NAME[shipManufacturer] ?? null) : null,
+    onFoot: !shipManufacturer,
+  };
+}
+
 // The overlay view plus user prefs the overlay needs (kept out of the tracker, which
 // doesn't know about config). Sent on every mission broadcast so a config change (e.g.
 // the time-format toggle) reaches the overlay live via broadcastMissions().
@@ -391,6 +443,7 @@ function missionsPayload(): string {
     ...tracker.view(),
     appVersion: APP_VERSION,
     live: twitchLive,
+    ship: shipInfo(), // flown-ship manufacturer/theme/accent — push-live for external overlays
     prefs: {
       timeRelative: config.timeRelative,
       hideCatbar: config.hideCatbar,
@@ -513,10 +566,29 @@ function startWatcher(): void {
 
     // Theme auto-switch: track the manufacturer of the ship we're in; re-broadcast so the
     // overlay retints live when theme="auto". Independent of the erkul loadout autoSwitch.
-    const mfr = manufacturerFromLine(e.message);
-    if (mfr && mfr !== shipManufacturer) {
-      shipManufacturer = mfr;
-      if (config.theme === "auto") { broadcastMissions(); miningSend(miningAppearance()); }
+    // Track the flown ship's manufacturer (drives theme="auto" AND the /api/ship signal). The PU
+    // comms channel gives enter + EXIT with a ship name; AC's OnVehicleSpawned gives only a spawn.
+    // Broadcast on any change so external overlays get it push-live even when theme != "auto"
+    // (the HUD's own theme is prefs.theme = effectiveTheme(), unchanged unless it's in Auto).
+    const chan = shipChannelEvent(e.message);
+    if (chan) {
+      if (chan.action === "enter" && chan.manufacturer) {
+        if (chan.manufacturer !== shipManufacturer || chan.ship !== shipName) {
+          shipManufacturer = chan.manufacturer; shipName = chan.ship;
+          broadcastMissions(); miningSend(miningAppearance());
+        }
+      } else if (chan.action === "leave" && config.revertThemeOnFoot && shipManufacturer &&
+                 (chan.manufacturer === shipManufacturer || chan.ship === shipName)) {
+        // Left our ship's channel and the user opted to revert to Mobiglas on foot.
+        shipManufacturer = null; shipName = null;
+        broadcastMissions(); miningSend(miningAppearance());
+      }
+    } else {
+      const mfr = manufacturerFromLine(e.message); // AC-only spawn (no channel, no exit event)
+      if (mfr && mfr !== shipManufacturer) {
+        shipManufacturer = mfr; shipName = null;
+        broadcastMissions(); miningSend(miningAppearance());
+      }
     }
 
     if (!config.autoSwitch) return;
@@ -593,6 +665,15 @@ const server = createServer(async (req, res) => {
   if (url === "/api/missions" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(missionsPayload());
+    return;
+  }
+
+  // The flown ship's manufacturer theme + accent, independent of the pinned display theme.
+  // For external consumers (e.g. Streamer.bot) that re-tint stream overlays to the current ship.
+  // Also emitted push-live on the /missions/events SSE as the `ship` field of each payload.
+  if (url === "/api/ship" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+    res.end(JSON.stringify(shipInfo()));
     return;
   }
 
@@ -886,6 +967,7 @@ const server = createServer(async (req, res) => {
     if (typeof body.shareLogs === "boolean") config.shareLogs = body.shareLogs;
     if (typeof body.showLoadout === "boolean") config.showLoadout = body.showLoadout;
     if (typeof body.hideCatbar === "boolean") config.hideCatbar = body.hideCatbar;
+    if (typeof body.revertThemeOnFoot === "boolean") config.revertThemeOnFoot = body.revertThemeOnFoot;
     if (body.theme === "mobiglas" || body.theme === "drake" || body.theme === "anvil" || body.theme === "greys" || body.theme === "esperia" || body.theme === "misc" || body.theme === "banu" || body.theme === "gatac" || body.theme === "mirai" || body.theme === "origin" || body.theme === "aegis" || body.theme === "crusader" || body.theme === "rsi" || body.theme === "kruger" || body.theme === "argo" || body.theme === "cnou" || body.theme === "auto") {
       const t = body.theme as Config["theme"];
       if (t !== "mobiglas" && t !== "auto" && !entitled()) {
