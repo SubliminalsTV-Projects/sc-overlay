@@ -102,6 +102,10 @@
     text-decoration: none; transition: background .15s, border-color .15s; }
   .partner:hover { background: var(--card-high); border-color: var(--amber); text-decoration: none; }
   .partner .p-brand { font-weight: 700; color: var(--text); font-size: 13.5px; padding-right: 14px; }
+  .partner .p-logo { height: 30px; max-width: calc(100% - 14px); width: auto; object-fit: contain; align-self: flex-start; margin: 2px 0 5px; }
+  /* MonsterTech's thin mark + Tobii's compact wordmark read small at a shared height — bump them. */
+  .partner .p-logo[data-brand="MonsterTech"] { height: 46px; }
+  .partner .p-logo[data-brand="Tobii"] { height: 40px; }
   .partner .p-deal { align-self: flex-start; font-size: 10px; font-weight: 700; color: var(--on-amber);
     background: var(--amber); padding: 1px 7px; border-radius: 999px; }
   .partner .p-code { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
@@ -135,6 +139,22 @@
   .hkrow .hint { flex-basis: 100%; width: 100%; margin-top: 0; }
   .hkrow .hint:empty { display: none; }
 </style>
+<script>
+  // Auto-scale the whole settings UI to the display so 1080p AND 4K are readable out of the box.
+  // This page is fixed-px + Chromium-only, so a root `zoom` scales fonts AND layout uniformly with
+  // no px→rem refactor. `screen.height` is CSS px (already reduced by any OS scaling), so this one
+  // factor lands at a consistent PHYSICAL size across resolution × OS-scale combos — the key case
+  // being a 4K TV left at 100% OS scaling (→ 2×). Users can still Ctrl+= to zoom further on top.
+  // Runs pre-paint (in <head>) so there's no flash of tiny text.
+  (function () {
+    function applyScale() {
+      var h = (window.screen && window.screen.height) || 1080;
+      document.documentElement.style.zoom = Math.max(1, Math.min(2.25, h / 1080));
+    }
+    applyScale();
+    window.addEventListener("resize", applyScale);
+  })();
+</script>
 </head>
 <body>
 <div class="wrap">
@@ -227,14 +247,34 @@
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Restyle the overlay to a Star Citizen manufacturer. <strong>Mobiglas</strong> is the clean default; <strong>Drake</strong> is rugged burnt-orange; <strong>Anvil</strong> is military teal-green; <strong>Grey's</strong> is grungy CRT green; <strong>Auto</strong> matches the ship you're flying. Applies immediately. (Per-widget sizing: drag a widget's corner in arrange mode.)</span></span>
     </div>
     <label class="opt" style="margin-top:2px;">Theme
-      <select id="theme" onchange="save()" style="margin-left:auto;">
+      <select id="theme" onchange="onThemePicked()" style="margin-left:auto;">
         <option value="mobiglas">Mobiglas (default)</option>
         <option value="drake">Drake Interplanetary</option>
         <option value="anvil">Anvil Aerospace</option>
         <option value="greys">Grey's</option>
+        <option value="esperia">Esperia</option>
+        <option value="misc">MISC</option>
+        <option value="banu">Banu</option>
+        <option value="gatac">Gatac</option>
+        <option value="mirai">Mirai</option>
+        <option value="origin">Origin</option>
+        <option value="aegis">Aegis Dynamics</option>
+        <option value="crusader">Crusader Industries</option>
+        <option value="rsi">RSI</option>
+        <option value="kruger">Kruger Intergalactic</option>
+        <option value="argo">Argo Astronautics</option>
         <option value="auto">Auto — match my ship</option>
       </select>
     </label>
+    <div id="themeLock" style="display:none; margin-top:8px; padding:9px 11px; border-radius:8px;
+         background:rgba(255,178,49,.09); border:1px solid rgba(255,178,49,.35); font-size:12.5px; line-height:1.45;">
+      <span style="opacity:.9"><strong>Auto</strong> (matches the ship you're flying) and <strong>Mobiglas</strong> are free. 🔒 <strong>Pinning</strong> one manufacturer regardless of ship is a subscriber perk — pick one to <strong>preview</strong> it, then it reverts. Subscribe any way below and it stays unlocked for as long as you're subscribed:</span>
+      <span style="display:flex; gap:16px; margin-top:7px; flex-wrap:wrap;">
+        <a href="https://www.twitch.tv/subs/subliminalstv" target="_blank" rel="noopener" style="color:#ffb231; font-weight:600; text-decoration:none;">Twitch →</a>
+        <a href="https://subliminal.gg/#subclub" target="_blank" rel="noopener" style="color:#ffb231; font-weight:600; text-decoration:none;">SubClub →</a>
+        <a href="https://subliminal.gg" target="_blank" rel="noopener" style="color:#ffb231; font-weight:600; text-decoration:none;">subliminal.gg →</a>
+      </span>
+    </div>
   </div>
 
   <div class="card">
@@ -328,13 +368,14 @@
   <div class="card">
     <div class="label">About</div>
     <div class="hint" style="margin-top:0">
-      <strong>SC Overlay</strong> is a desktop app that reads your Star Citizen game log to show
-      the blueprint reward pool for the mission you're tracking, checking off each blueprint as you collect
-      it. It runs as a lightweight in-game overlay — a transparent HUD that floats over the game and updates
-      live while you play. Point it at your <code>game.log</code> below to get started, and optionally connect
-      your <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg</a> account to sync your
-      collection and browse everything you've unlocked on the web. It can also use screen reading (OCR) —
-      completely opt-in — to detect which mission you're tracking in-game.
+      <strong>SC Overlay</strong> is a lightweight, transparent in-game HUD for Star Citizen. It reads your
+      <code>game.log</code> to show the blueprint reward pool for the mission you're tracking and checks off each
+      blueprint as you collect it — plus a <strong>Mining Assistant</strong> (signature scanner + refinery-job timers)
+      and <strong>manufacturer skins</strong> that automatically match the ship you're flying. Opt-in screen reading
+      (OCR) can detect your tracked mission in-game and help crowdsource item images for the catalog. Point it at your
+      <code>game.log</code> below to get started, and optionally connect your
+      <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg</a> account to sync your collection and
+      browse everything you've unlocked on the web.
     </div>
     <div class="hint" style="margin-top:16px; margin-bottom:8px">This tracker is free for everyone and supported by those who have the means. If it saves you time, helps your Star Citizen gameplay, here are the ways to back and keep development going:</div>
     <div class="support-grid">
@@ -381,10 +422,44 @@
     This app's source is public — view it on
     <a href="https://github.com/SubliminalsTV-Projects/sc-loadout-overlay" target="_blank">GitHub</a>.
   </div>
+  <!-- CIG Fan Kit compliance: the Made By The Community logo (unaltered, full opacity) + the
+       required trademark notice at ≥10pt, per the Star Citizen Fan Kit Guidelines. -->
+  <div style="display:flex; align-items:center; gap:14px; margin-top:22px; padding-top:16px; border-top:1px solid var(--outline);">
+    <img src="/made-by-community.png" alt="Made By The Community" style="width:56px; height:56px; flex:none;" />
+    <div style="font-size:10.5pt; line-height:1.45; color:var(--muted);">
+      This is an unofficial Star Citizen fan tool, not affiliated with Cloud Imperium.
+      <strong style="color:var(--text)">Star Citizen®, Roberts Space Industries® and Cloud Imperium® are registered trademarks of Cloud Imperium Rights LLC.</strong>
+    </div>
+  </div>
 </div>
 
 <script>
   let cfg = { urls: [], activeUrl: null, logPath: "", autoSwitch: true, resolved: [] };
+
+  // FREE: Mobiglas + Auto (match my ship). SUBSCRIBER: pinning a specific manufacturer regardless of ship.
+  const PREMIUM_THEMES = ["drake","anvil","greys","esperia","misc","banu","gatac","mirai","origin","aegis","crusader","rsi","kruger","argo"];
+  let themeEntitled = true, demoTimer = null;
+  function applyThemeLock(entitled) {
+    themeEntitled = entitled;
+    const sel = document.getElementById("theme");
+    for (const opt of sel.options) {
+      const locked = PREMIUM_THEMES.includes(opt.value) && !entitled;
+      opt.disabled = false; // selectable so non-subs can PREVIEW (trial) — the server reverts it
+      const base = opt.textContent.replace(/^🔒\s*/, "");
+      opt.textContent = (locked ? "🔒 " : "") + base;
+    }
+    document.getElementById("themeLock").style.display = entitled ? "none" : "block";
+  }
+  // When a non-subscriber previews a locked skin, the overlay trials it for ~20s then reverts to
+  // Mobiglas; mirror that here so the dropdown doesn't sit on a skin they didn't unlock.
+  function onThemePicked() {
+    save();
+    clearTimeout(demoTimer);
+    const sel = document.getElementById("theme");
+    if (!themeEntitled && PREMIUM_THEMES.includes(sel.value)) {
+      demoTimer = setTimeout(() => { sel.value = "mobiglas"; }, 21000);
+    }
+  }
 
   async function loadCfg() {
     cfg = await (await fetch("/api/config")).json();
@@ -421,6 +496,10 @@
     document.getElementById("miningAutoShow").checked = !!cfg.miningAutoShow;
     document.getElementById("shareLogs").checked = !!cfg.shareLogs;
     document.getElementById("theme").value = cfg.theme || "mobiglas";
+    // Manufacturer skins are a Twitch-sub perk. Entitlement comes from the server (cfg.premium,
+    // resolved from Twitch-sub status via subliminal.gg login); default unlocked until that
+    // pipeline lands. ?lockpreview forces the locked UI for testing.
+    applyThemeLock(cfg.premium !== false && !new URLSearchParams(location.search).has("lockpreview"));
     // Put the saved key (truncated) right in the field so it's obvious one is connected.
     // Focusing clears it for a clean paste; the "…" guard in save() stops it being re-submitted.
     const tokenEl = document.getElementById("syncToken");
@@ -722,10 +801,20 @@
       if (!r.ok) return;
       const { partners } = await r.json();
       if (!partners || !partners.length) return;
+      // Brand logos hosted on subliminal.gg (/brands/*). Shown when mapped; brand text is the fallback.
+      const LOGOS = {
+        "Beam Eye Tracker": "https://subliminal.gg/brands/beam-eye-tracker-color.svg",
+        "GameGlass": "https://subliminal.gg/brands/gg-grayscale-on-black.svg",
+        "MonsterTech": "https://subliminal.gg/brands/monstertech-white.png",
+        "Pimax": "https://subliminal.gg/brands/pimax-white-color.svg",
+        "Tobii": "https://subliminal.gg/brands/tobii-white.png",
+      };
       document.getElementById("partnerGrid").innerHTML = partners.map((p) =>
         '<a class="partner" href="' + esc(p.url) + '" target="_blank" rel="noopener">' +
           '<span class="p-arrow">↗</span>' +
-          '<span class="p-brand">' + esc(p.brand) + "</span>" +
+          (LOGOS[p.brand]
+            ? '<img class="p-logo" data-brand="' + esc(p.brand) + '" src="' + LOGOS[p.brand] + '" alt="' + esc(p.brand) + '" onerror="this.replaceWith(Object.assign(document.createElement(\'span\'),{className:\'p-brand\',textContent:this.alt}))" />'
+            : '<span class="p-brand">' + esc(p.brand) + "</span>") +
           (p.discount ? '<span class="p-deal">' + esc(p.discount) + "</span>" : "") +
           (p.code ? '<span class="p-code">code ' + esc(p.code) + "</span>" : "") +
         "</a>"

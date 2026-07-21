@@ -210,9 +210,15 @@ function dice(a: Map<string, number>, b: Map<string, number>): number {
   return total ? (2 * inter) / total : 0;
 }
 
+// OCR look-alikes for the size digit in a variant tag (a vertical-stroke "1" reads as
+// "I"/"l"/"|"; a "0" as "O"; a "2" as "Z"). Used ONLY to break a size-variant near-tie the
+// literal digits couldn't (e.g. "S1" misread "SI"), and only from short size-tag tokens.
+const DIGIT_LOOKALIKE: Record<string, string> = { I: "1", L: "1", "|": "1", O: "0", Z: "2" };
+
 /** Pick the winner from scored candidates (sorted desc). A clear top wins; a near-tie is
- *  disambiguated only by digits the OCR actually saw (size variants S1/S2/S3), else null —
- *  never guess between equally-likely candidates. */
+ *  disambiguated by the size digit (variants S1/S2/S3): first the digits the OCR literally
+ *  saw, then — only if none settled it — OCR letter->digit look-alikes read from short
+ *  size-tag tokens. An ambiguous read returns null; never guess between equal candidates. */
 function pickBest(
   scored: { e: CatalogEntry; s: number }[],
   minScore: number,
@@ -222,11 +228,24 @@ function pickBest(
   if (!top || top.s < minScore) return null;
   const near = scored.filter((x) => top.s - x.s < 0.04);
   if (near.length === 1) return top.e;
-  const seen = new Set(n.match(/\d/g) || []);
-  const picks = near.filter((x) => {
-    const d = normName(x.e.name).match(/\d/g) || [];
-    return d.length > 0 && d.every((dd) => seen.has(dd));
-  });
+  const digitsOf = (name: string) => normName(name).match(/\d/g) || [];
+  const winnow = (allowed: Set<string>) =>
+    near.filter((x) => {
+      const d = digitsOf(x.e.name);
+      return d.length > 0 && d.every((dd) => allowed.has(dd));
+    });
+  // Tier 1 — the digits the OCR literally saw. A literal hit (or literal ambiguity) is final.
+  const literal = new Set(n.match(/\d/g) || []);
+  let picks = winnow(literal);
+  if (picks.length) return picks.length === 1 ? picks[0].e : null;
+  // Tier 2 — no literal digit settled it; fold in look-alikes, but harvest them only from
+  // short (<=4 char) size-tag tokens so an "I"/"L" inside a word (LASER, MINING) can't
+  // inject a phantom "1" and hijack a genuinely digit-less read.
+  const fuzzy = new Set(literal);
+  for (const tok of n.split(" "))
+    if (tok.length <= 4)
+      for (const ch of tok) if (DIGIT_LOOKALIKE[ch]) fuzzy.add(DIGIT_LOOKALIKE[ch]);
+  picks = winnow(fuzzy);
   return picks.length === 1 ? picks[0].e : null;
 }
 

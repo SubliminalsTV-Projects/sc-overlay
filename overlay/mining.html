@@ -56,6 +56,94 @@
     --panel-top: rgba(15, 19, 10, 0.82); --panel-bot: rgba(8, 10, 6, 0.88); --panel-solid: rgba(8, 10, 6, 0.96);
     --menu-bg: #0b1006; --scan: rgba(131, 217, 62, 0.06); --sheen: rgba(180, 240, 110, 0.06);
   }
+  /* Esperia — alien-tech crimson chrome on dark red-black glass, warm amber readouts (matches missions.html). */
+  :root[data-theme="esperia"] {
+    --cyan: #E8455A; --cyan-bright: #FF7E8C; --cyan-text: #EBC7CD; --cyan-dim: #B67C85; --faint: #7E555C;
+    --gold: #F4B44E; --amber: #F0A03A; --green: #4FE0A8; --red: #FF6B5A; --track: #1c0a0d;
+    --accent-rgb: 232, 69, 90; --value-rgb: 244, 180, 78;
+    --panel-top: rgba(30, 13, 16, 0.82); --panel-bot: rgba(17, 7, 9, 0.88); --panel-solid: rgba(17, 7, 9, 0.96);
+    --menu-bg: #150809; --scan: rgba(232, 69, 90, 0.05); --sheen: rgba(255, 150, 160, 0.06);
+  }
+  /* MISC (Musashi Industrial) — bright gold chrome + cyan data readouts (matches missions.html). */
+  :root[data-theme="misc"] {
+    --cyan: #E7B93E; --cyan-bright: #F8D468; --cyan-text: #E6DBC4; --cyan-dim: #A99A6E; --faint: #776E52;
+    --gold: #6FDCEC; --amber: #F0A83C; --green: #57C878; --red: #FF6B4A; --track: #171206;
+    --accent-rgb: 231, 185, 62; --value-rgb: 111, 220, 236;
+    --panel-top: rgba(26, 22, 10, 0.82); --panel-bot: rgba(15, 12, 5, 0.88); --panel-solid: rgba(15, 12, 5, 0.96);
+    --menu-bg: #120e05; --scan: rgba(231, 185, 62, 0.05); --sheen: rgba(255, 225, 150, 0.06);
+  }
+  /* Banu — hot vermilion chrome (sampled from the Defender's hydration meter #f2511e) + gold readouts (matches missions.html). */
+  :root[data-theme="banu"] {
+    --cyan: #F2511E; --cyan-bright: #FF7A4A; --cyan-text: #EFD0C0; --cyan-dim: #B58370; --faint: #855A4A;
+    --gold: #F5CE4E; --amber: #F0A63A; --green: #5FD69A; --red: #FF6B4A; --track: #1c0d06;
+    --accent-rgb: 242, 81, 30; --value-rgb: 245, 206, 78;
+    --panel-top: rgba(30, 14, 8, 0.82); --panel-bot: rgba(18, 8, 4, 0.88); --panel-solid: rgba(18, 8, 4, 0.96);
+    --menu-bg: #160a05; --scan: rgba(242, 81, 30, 0.05); --sheen: rgba(255, 150, 110, 0.06);
+  }
+  /* Gatac — Xi'an alien-tech neon violet chrome + gold readouts (matches missions.html). */
+  :root[data-theme="gatac"] {
+    --cyan: #A47CE8; --cyan-bright: #C4A6F5; --cyan-text: #D8CBEC; --cyan-dim: #9585B0; --faint: #6B5F82;
+    --gold: #F2C85A; --amber: #E8A93C; --green: #4FE0A8; --red: #FF6B6B; --track: #140b1e;
+    --accent-rgb: 164, 124, 232; --value-rgb: 242, 200, 90;
+    --panel-top: rgba(22, 14, 34, 0.80); --panel-bot: rgba(13, 8, 22, 0.86); --panel-solid: rgba(13, 8, 22, 0.96);
+    --menu-bg: #120a1e; --scan: rgba(164, 124, 232, 0.06); --sheen: rgba(200, 170, 245, 0.07);
+  }
+  /* Mirai — electric azure-blue chrome + warm amber readouts (matches missions.html). */
+  :root[data-theme="mirai"] {
+    --cyan: #3E9BF2; --cyan-bright: #6FB8FA; --cyan-text: #C4DAF0; --cyan-dim: #7C9DC0; --faint: #566F8C;
+    --gold: #F2B84E; --amber: #F0A63C; --green: #4FE0A8; --red: #FF6B5A; --track: #08131f;
+    --accent-rgb: 62, 155, 242; --value-rgb: 242, 184, 78;
+    --panel-top: rgba(10, 20, 34, 0.80); --panel-bot: rgba(6, 12, 22, 0.86); --panel-solid: rgba(6, 12, 22, 0.96);
+    --menu-bg: #0a1420; --scan: rgba(62, 155, 242, 0.06); --sheen: rgba(150, 200, 250, 0.07);
+  }
+  /* Origin Jumpworks — luxury cornflower-blue chrome + platinum-gold readouts, red as accent (matches missions.html). */
+  :root[data-theme="origin"] {
+    --cyan: #5E8AD6; --cyan-bright: #86A9E8; --cyan-text: #CFDAEC; --cyan-dim: #8496B4; --faint: #5B6B85;
+    --gold: #E8C98A; --amber: #EBAE5C; --green: #4FE0A8; --red: #FF5A4E; --track: #0c1220;
+    --accent-rgb: 94, 138, 214; --value-rgb: 232, 201, 138;
+    --panel-top: rgba(14, 18, 32, 0.80); --panel-bot: rgba(8, 11, 20, 0.86); --panel-solid: rgba(8, 11, 20, 0.96);
+    --menu-bg: #0b1020; --scan: rgba(94, 138, 214, 0.05); --sheen: rgba(180, 200, 240, 0.07);
+  }
+  /* Aegis Dynamics — military sky-cyan chrome (#5cbbd9) + amber annunciator readouts (#efe077) (matches missions.html). */
+  :root[data-theme="aegis"] {
+    --cyan: #5CBBD9; --cyan-bright: #8AD6EE; --cyan-text: #C6DEE8; --cyan-dim: #7EA3B2; --faint: #566E7A;
+    --gold: #EFE077; --amber: #EBCB55; --green: #4FE0A8; --red: #FF5A4E; --track: #0a151a;
+    --accent-rgb: 92, 187, 217; --value-rgb: 239, 224, 119;
+    --panel-top: rgba(12, 22, 28, 0.80); --panel-bot: rgba(7, 13, 17, 0.86); --panel-solid: rgba(7, 13, 17, 0.96);
+    --menu-bg: #091318; --scan: rgba(92, 187, 217, 0.05); --sheen: rgba(160, 220, 240, 0.07);
+  }
+  /* Crusader Industries — clean sky-blue chrome (#6fbdec) + gold readouts, red accent (matches missions.html). */
+  :root[data-theme="crusader"] {
+    --cyan: #4FA6E4; --cyan-bright: #7EC3F2; --cyan-text: #C6DCEF; --cyan-dim: #7B9DB8; --faint: #556F86;
+    --gold: #F2C766; --amber: #EBAE5C; --green: #4FE0A8; --red: #FF5A4E; --track: #08131f;
+    --accent-rgb: 79, 166, 228; --value-rgb: 242, 199, 102;
+    --panel-top: rgba(11, 19, 30, 0.80); --panel-bot: rgba(6, 11, 19, 0.86); --panel-solid: rgba(6, 11, 19, 0.96);
+    --menu-bg: #0a1220; --scan: rgba(79, 166, 228, 0.05); --sheen: rgba(150, 200, 245, 0.07);
+  }
+  /* RSI — lavender-periwinkle chrome (#8b90e9) + vivid orange readouts (#f7691d) (matches missions.html). */
+  :root[data-theme="rsi"] {
+    --cyan: #8B90E9; --cyan-bright: #AEB2F4; --cyan-text: #D2D5EE; --cyan-dim: #8E92B8; --faint: #5F6389;
+    --gold: #F5983C; --amber: #F0863A; --green: #4FE0A8; --red: #FF6A4A; --track: #0e0f1e;
+    --accent-rgb: 139, 144, 233; --value-rgb: 245, 152, 60;
+    --panel-top: rgba(16, 16, 32, 0.80); --panel-bot: rgba(9, 9, 20, 0.86); --panel-solid: rgba(9, 9, 20, 0.96);
+    --menu-bg: #0c0c1e; --scan: rgba(139, 144, 233, 0.05); --sheen: rgba(180, 182, 245, 0.07);
+  }
+  /* Kruger Intergalactic — mint-emerald chrome (#86efb1) + gold readouts, red accent (matches missions.html). */
+  :root[data-theme="kruger"] {
+    --cyan: #5CDD90; --cyan-bright: #8CEDB1; --cyan-text: #CDE8D6; --cyan-dim: #85B39A; --faint: #5E7E6C;
+    --gold: #F2D06A; --amber: #EBB84E; --green: #6BE6A0; --red: #F0342B; --track: #0a1a10;
+    --accent-rgb: 92, 221, 144; --value-rgb: 242, 208, 106;
+    --panel-top: rgba(12, 26, 18, 0.80); --panel-bot: rgba(6, 15, 10, 0.86); --panel-solid: rgba(6, 15, 10, 0.96);
+    --menu-bg: #08160e; --scan: rgba(92, 221, 144, 0.05); --sheen: rgba(150, 240, 190, 0.07);
+  }
+  /* Argo Astronautics — industrial orange chrome (#e37b36) + green scan-signal readouts (#54fb75) (matches missions.html). */
+  :root[data-theme="argo"] {
+    --cyan: #E37B36; --cyan-bright: #F59A54; --cyan-text: #E7D3C0; --cyan-dim: #A88A6E; --faint: #7A6650;
+    --gold: #5EE884; --amber: #4FD97A; --green: #5EE884; --red: #FF6B4A; --track: #1a1206;
+    --accent-rgb: 227, 123, 54; --value-rgb: 94, 232, 132;
+    --panel-top: rgba(28, 20, 10, 0.82); --panel-bot: rgba(16, 11, 5, 0.88); --panel-solid: rgba(16, 11, 5, 0.96);
+    --menu-bg: #140d05; --scan: rgba(227, 123, 54, 0.05); --sheen: rgba(255, 200, 150, 0.06);
+  }
   /* Duct-tape corners — Drake theme only (field-repair language), mirrors the Blueprint widget
      but with two DIFFERENT tape pieces so the two windows don't look copy-pasted. */
   .tape { display: none; position: absolute; z-index: 6; pointer-events: none; user-select: none;

@@ -135,7 +135,10 @@ interface Config {
   hideCatbar: boolean;
   /** Overlay manufacturer theme: "mobiglas" (default), "drake", or "auto" (match the ship
    *  you're flying, detected from the log). Sent to the overlay via the mission view prefs. */
-  theme: "mobiglas" | "drake" | "anvil" | "greys" | "auto";
+  theme: "mobiglas" | "drake" | "anvil" | "greys" | "esperia" | "misc" | "banu" | "gatac" | "mirai" | "origin" | "aegis" | "crusader" | "rsi" | "kruger" | "argo" | "auto";
+  /** Local subscriber-entitlement override for manufacturer skins. Default false = locked
+   *  (preview-only). Superseded by the server-resolved Twitch-sub check when that lands. */
+  premiumOverride?: boolean;
   /** Y-axis (left↔right yaw) rotation of the overlay panel, in degrees, to line it up with a
    *  perspective-angled in-game HUD. 0 = flat, 4 = the default subtle tilt. Sent via prefs. */
   overlayTwist: number;
@@ -324,7 +327,7 @@ const missionClients = new Set<ServerResponse>();
 // The ship manufacturer we last detected in the log (for theme: "auto"). Drake and Anvil have
 // bespoke themes so far; every other manufacturer (and "unknown") falls back to Mobiglas.
 let shipManufacturer: string | null = null;
-const MFR_THEME: Record<string, "drake" | "anvil" | "greys"> = { drake: "drake", anvil: "anvil", greys: "greys" };
+const MFR_THEME: Record<string, "drake" | "anvil" | "greys" | "esperia" | "misc" | "banu" | "gatac" | "mirai" | "origin" | "aegis" | "crusader" | "rsi" | "kruger" | "argo"> = { drake: "drake", anvil: "anvil", greys: "greys", esperia: "esperia", misc: "misc", banu: "banu", gatac: "gatac", mirai: "mirai", origin: "origin", aegis: "aegis", crusader: "crusader", rsi: "rsi", kruger: "kruger", argo: "argo" };
 // Manufacturer codes (the vehicle-entity prefix) → a manufacturer key; display-name leads use
 // the same keys. Extend both this and MFR_THEME as more manufacturer themes are added.
 const MFR_BY_CODE: Record<string, string> = {
@@ -345,10 +348,29 @@ function manufacturerFromLine(line: string): string | null {
   if (join) { const lead = join[1].trim().toLowerCase().replace(/['’`]/g, ""); for (const name of Object.values(MFR_BY_CODE)) if (lead.startsWith(name)) return name; }
   return null;
 }
-/** The theme to actually apply: the fixed choice, or the ship's theme when set to "auto". */
-function effectiveTheme(): "mobiglas" | "drake" | "anvil" | "greys" {
+type ManufacturerTheme = "mobiglas" | "drake" | "anvil" | "greys" | "esperia" | "misc" | "banu" | "gatac" | "mirai" | "origin" | "aegis" | "crusader" | "rsi" | "kruger" | "argo";
+// Manufacturer skins are a subscriber perk. Entitlement is server-resolved; until the
+// Twitch-sub pipeline lands it's a local override (default false = locked for everyone).
+function entitled(): boolean { return config.premiumOverride === true; }
+// Non-subscribers may PREVIEW a skin: it applies briefly then reverts to Mobiglas, with a
+// trial watermark on the overlay — so nobody gets used to keeping a skin they haven't unlocked.
+let demoTheme: ManufacturerTheme | null = null;
+let demoTimer: ReturnType<typeof setTimeout> | undefined;
+const DEMO_MS = 20000;
+function startDemo(theme: ManufacturerTheme): void {
+  demoTheme = theme;
+  clearTimeout(demoTimer);
+  demoTimer = setTimeout(() => { demoTheme = null; broadcastMissions(); miningSend(miningAppearance()); }, DEMO_MS);
+  broadcastMissions();
+  miningSend(miningAppearance());
+}
+/** The theme to actually apply. FREE: "auto" (match the ship you're flying) + "mobiglas".
+ *  SUBSCRIBER: pinning a specific manufacturer regardless of ship. A live trial demo wins. */
+function effectiveTheme(): ManufacturerTheme {
+  if (demoTheme) return demoTheme;
   if (config.theme === "auto") return (shipManufacturer && MFR_THEME[shipManufacturer]) || "mobiglas";
-  return config.theme;
+  if (config.theme === "mobiglas") return "mobiglas";
+  return entitled() ? config.theme : "mobiglas"; // a pinned manufacturer is subscriber-only
 }
 
 // The overlay view plus user prefs the overlay needs (kept out of the tracker, which
@@ -367,6 +389,8 @@ function missionsPayload(): string {
       theme: effectiveTheme(),
       overlayTwist: config.overlayTwist,
       overlayScale: config.overlayScale,
+      premium: entitled(),   // subscriber: skins unlocked + logos/flair shown
+      demo: !!demoTheme,     // a trial preview is live → overlay shows the trial watermark
     },
   });
 }
@@ -635,9 +659,13 @@ const server = createServer(async (req, res) => {
       result = await readScreenshot(body.path, screenCatalog);
       // Mining Assistant reads are fed straight to its tracker (same process); the
       // mission/fabricator reads are still routed by capture.cjs off the returned result.
-      const rd = result as { kind?: string; signature?: number };
+      const rd = result as { kind?: string; signature?: number; name?: string; items?: string[] };
       if (rd.kind === "refinery") mining.applyRefineryRead(result as never);
       else if (rd.kind === "mineable" && typeof rd.signature === "number") mining.applyMineableRead(rd.signature);
+      // A fabricator display name can map to several distinct same-named items (e.g. the 3
+      // sizes of "Cinch Scraper Module"). Hand back every sibling UUID so the capture loop can
+      // share the one captured image across all of them (the log/kiosk can't say which size).
+      else if (rd.kind === "fabricator" && rd.name) rd.items = tracker.itemUuidsForName(rd.name);
     }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
@@ -723,7 +751,7 @@ const server = createServer(async (req, res) => {
     const { syncToken, ...rest } = config;
     const syncTokenPreview = syncToken ? `${syncToken.slice(0, 9)}…${syncToken.slice(-4)}` : "";
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ...rest, hasSyncToken: !!syncToken, syncTokenPreview, resolved: urls, lanHost, port: PORT }));
+    res.end(JSON.stringify({ ...rest, premium: entitled(), hasSyncToken: !!syncToken, syncTokenPreview, resolved: urls, lanHost, port: PORT }));
     return;
   }
 
@@ -807,7 +835,16 @@ const server = createServer(async (req, res) => {
     if (typeof body.shareLogs === "boolean") config.shareLogs = body.shareLogs;
     if (typeof body.showLoadout === "boolean") config.showLoadout = body.showLoadout;
     if (typeof body.hideCatbar === "boolean") config.hideCatbar = body.hideCatbar;
-    if (body.theme === "mobiglas" || body.theme === "drake" || body.theme === "anvil" || body.theme === "greys" || body.theme === "auto") config.theme = body.theme;
+    if (body.theme === "mobiglas" || body.theme === "drake" || body.theme === "anvil" || body.theme === "greys" || body.theme === "esperia" || body.theme === "misc" || body.theme === "banu" || body.theme === "gatac" || body.theme === "mirai" || body.theme === "origin" || body.theme === "aegis" || body.theme === "crusader" || body.theme === "rsi" || body.theme === "kruger" || body.theme === "argo" || body.theme === "auto") {
+      const t = body.theme as Config["theme"];
+      if (t !== "mobiglas" && t !== "auto" && !entitled()) {
+        // Pinning a specific manufacturer is subscriber-only → preview it (trial), don't persist.
+        startDemo(t);
+      } else {
+        config.theme = t; // Mobiglas + Auto are free; entitled users persist any pinned theme
+        clearTimeout(demoTimer); demoTheme = null;
+      }
+    }
     if (typeof body.overlayTwist === "number" && isFinite(body.overlayTwist))
       config.overlayTwist = Math.max(-35, Math.min(35, Math.round(body.overlayTwist)));
     if (typeof body.overlayScale === "number" && isFinite(body.overlayScale))

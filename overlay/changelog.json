@@ -1,4 +1,10 @@
 {
+  "0.1.29": [
+    "Manufacturer skins! The overlay now automatically matches the ship you're flying — Drake, Aegis, Crusader, RSI, MISC, Origin and more. Free on 'Auto'; subscribers can pin one manufacturer to use it regardless of ship.",
+    "Each skin shows its manufacturer logo in a folder-tab on the panel, with brand-specific corner details, dividers, and a reputation bar tinted to match the theme.",
+    "Smarter blueprint image capture: items that render as a dark schematic (like quantum drives) are now captured instead of skipped, and same-name size variants (e.g. the mining lasers) resolve to the right one.",
+    "Fixed same-named blueprints (like the three Cinch Scraper Modules) so they all share the item image instead of only one showing a picture."
+  ],
   "0.1.28": [
     "New name: this is now SC Overlay. It's grown well past just blueprints — mining, loadouts, and more — so the name caught up. Your settings and your whole collection carry over untouched.",
     "The Mining Assistant is now part of the main overlay instead of its own separate window. That fixes the annoying stuff: clicking one widget while another's open just works now, and nothing steals a click you meant for the game.",

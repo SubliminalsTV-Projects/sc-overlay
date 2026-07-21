@@ -41,33 +41,31 @@ async function captureScreen() {
   return sources[0] ? sources[0].thumbnail : null;
 }
 
-// Is an item actually rendered in the crop, or did we catch the fabricator mid-load
-// (just the teal background)? The 3D preview streams in when an item is selected; an
-// empty crop is a smooth gradient with no specular highlights. Real renders always have
-// some bright pixels (measured: empty = 0.00%, every real item >= 0.17%). Gate at 0.05%
-// so we DON'T save (and dedup-lock) an empty frame — a later poll retries once it loads.
+// Is an item actually rendered in the crop, or did we catch the fabricator mid-load (just the
+// teal background)? We test for STRUCTURE, not brightness. The 3D preview streams in when an
+// item is selected; an empty kiosk is a smooth teal gradient with almost no hard edges, whereas
+// ANY real render — including the DARK schematics quantum drives + some ship components show,
+// which never "light up" — has silhouette/detail edges. (Brightness alone wrongly rejected those
+// dark items: they add almost no bright pixels, so the gate sat on "waiting for render" forever.)
+// Count pixels bordering a hard luminance step in either direction; a smooth gradient stays near
+// zero (measured: empty kiosk ~0%), a lit item is several %, a dark schematic is still clearly
+// above the floor. The settle poll already covers fade-in timing, so this only guards emptiness.
 function hasRender(image) {
   const bmp = image.getBitmap();          // BGRA, 4 bytes/pixel
   const { width: w, height: h } = image.getSize();
-  const total = bmp.length / 4;
-  if (total < 1 || w < 2) return false;
-  const lumAt = (i) => 0.114 * bmp[i] + 0.587 * bmp[i + 1] + 0.299 * bmp[i + 2];
-  let bright = 0;
-  for (let i = 0; i < bmp.length; i += 4) if (lumAt(i) > 150) bright++;
-  if (bright / total > 0.0005) return true; // specular highlights — most items load this way
-  // Fallback for small, DARK items (fuel components, dark weapons): they add almost no bright
-  // pixels (measured: 0.02% vs 0.25%+ for normal items) but still have hard silhouette edges an
-  // empty mid-load teal gradient doesn't. Count horizontal neighbour luminance jumps > 24; a
-  // smooth gradient stays near zero, a real render is well above (measured: dark item 0.14%).
+  const total = w * h;
+  if (total < 4 || w < 2 || h < 2) return false;
+  const lumAt = (x, y) => { const i = (y * w + x) * 4; return 0.114 * bmp[i] + 0.587 * bmp[i + 1] + 0.299 * bmp[i + 2]; };
   let edges = 0;
   for (let y = 0; y < h; y++) {
-    const row = y * w * 4;
-    for (let x = 0; x < w - 1; x++) {
-      const i = row + x * 4;
-      if (Math.abs(lumAt(i) - lumAt(i + 4)) > 24) edges++;
+    for (let x = 0; x < w; x++) {
+      const l = lumAt(x, y);
+      const gx = x + 1 < w ? Math.abs(l - lumAt(x + 1, y)) : 0;
+      const gy = y + 1 < h ? Math.abs(l - lumAt(x, y + 1)) : 0;
+      if (gx > 24 || gy > 24) edges++;
     }
   }
-  return edges / total > 0.0006;
+  return edges / total > 0.001;
 }
 
 const SITE = "https://subliminal.gg";
@@ -132,7 +130,8 @@ function readConfig(configDir) {
  *  `onStatus(s)` (optional) reports OCR activity to the overlay: {state} for
  *  off/idle/watching/settling, {state:"mission",title}, {state:"captured",name,uploaded},
  *  {state:"have",name} (recognized, but the site already has the image — skipped),
- *  {state:"render",name} (recognized, waiting for the 3D render to finish loading), or
+ *  {state:"render",name,stuck} (recognized, waiting for the 3D render — stuck:true once it's
+ *  clear the render won't load, e.g. quantum drives / ship components that show no lit model), or
  *  {state:"unresolved",nameRaw} (in the kiosk but the item couldn't be identified). */
 function startFabCapture({ port, configDir, onStatus }) {
   const captureDir = path.join(configDir, "fab-captures");
@@ -149,6 +148,8 @@ function startFabCapture({ port, configDir, onStatus }) {
   let lastUnresolved = "";    // last unreadable kiosk item flagged (throttle the "can't read" note)
   let lastHave = "";          // last already-on-site item flagged (throttle the "already have" note)
   let lastRenderWait = "";    // last item stuck waiting on its render (throttle the "waiting" note)
+  let renderTries = 0;        // consecutive polls the current item failed the render check
+  let renderStuck = false;    // we've already told the user this item's render won't load
   let pendingItem = null;     // item seen last tick, awaiting a settle poll before capture
   const uploaded = new Set(); // items pushed to the site this session
   let remoteHave = null;      // set of items the site already has (dedup)
@@ -215,11 +216,15 @@ function startFabCapture({ port, configDir, onStatus }) {
       if (read.kind === "fabricator" && read.item) {
         lastUnresolved = "";
         if (!fab) { pendingItem = null; return; } // image capture disabled — ignore kiosk frames
-        const item = read.item;
-        // Dedup: already uploaded this session, or the site already has it. Surface it once
-        // per item so the user sees it was recognized but there's nothing to capture (rather
-        // than the loop looking stuck on "Reading the fabricator…").
-        if (uploaded.has(item) || have.has(item)) {
+        const item = read.item; // canonical UUID — settle key + local file name
+        // One display name can map to several distinct same-named items (e.g. the 3 sizes of
+        // "Cinch Scraper Module"); the log/kiosk can't say which, so they share one image.
+        // Capture as long as ANY sibling still lacks it, and upload to every missing one.
+        const targets = Array.isArray(read.items) && read.items.length ? read.items : [item];
+        const missing = targets.filter((t) => !uploaded.has(t) && !have.has(t));
+        // Dedup: every sibling already covered (uploaded this session or the site has it).
+        // Surface it once so the user sees it was recognized but there's nothing to capture.
+        if (missing.length === 0) {
           pendingItem = null;
           if (item !== lastHave) { lastHave = item; emitEvent({ state: "have", name: read.name }); }
           return;
@@ -229,6 +234,7 @@ function startFabCapture({ port, configDir, onStatus }) {
         // a poll later (this shot) before capturing, giving the render time to finish.
         if (pendingItem !== item) {
           pendingItem = item;
+          renderTries = 0; renderStuck = false; // fresh item — reset the render-stuck tracking
           emitEvent({ state: "settling", name: read.name });
           console.log(`[fab-capture] ${read.name}: waiting for render to settle`);
           return;
@@ -236,11 +242,18 @@ function startFabCapture({ port, configDir, onStatus }) {
         const c = read.crop;
         const cropped = centerTighten(shot.crop({ x: c.x, y: c.y, width: c.w, height: c.h }));
         if (!hasRender(cropped)) {
-          if (item !== lastRenderWait) { lastRenderWait = item; emitEvent({ state: "render", name: read.name }); }
-          console.log(`[fab-capture] ${read.name}: render not loaded yet, will retry`);
+          renderTries++;
+          // Some items (quantum drives + certain ship components) show a dark schematic in the
+          // kiosk, not a lit 3D model, so the render check never passes — the loop would otherwise
+          // sit on "waiting for render…" forever. After several polls, report it as STUCK so the
+          // widget can tell the user this item can't be captured, instead of looking like it's loading.
+          const stuck = renderTries >= 4;
+          if (item !== lastRenderWait) { lastRenderWait = item; emitEvent({ state: "render", name: read.name, stuck: false }); }
+          if (stuck && !renderStuck) { renderStuck = true; emitEvent({ state: "render", name: read.name, stuck: true }); }
+          console.log(`[fab-capture] ${read.name}: render not loaded (try ${renderTries})${stuck ? " — giving up: no capturable render" : ", will retry"}`);
           return; // keep pendingItem so the next poll retries
         }
-        lastRenderWait = "";
+        lastRenderWait = ""; renderTries = 0; renderStuck = false;
         // Opaque teal kiosk background -> JPEG (small, fits the ingest cap).
         const jpeg = cropped.toJPEG(82);
         fs.mkdirSync(captureDir, { recursive: true });
@@ -251,8 +264,11 @@ function startFabCapture({ port, configDir, onStatus }) {
         fs.writeFileSync(path.join(shotsDir, `${item}.jpg`), shot.toJPEG(85));
         let uploadedOk = false;
         if (cfg.syncToken) {
-          uploadedOk = await upload(item, jpeg, cfg.syncToken);
-          console.log(`[fab-capture] ${uploadedOk ? "uploaded" : "saved (upload failed)"} ${read.name} (${item})`);
+          // Share the one capture across every sibling that still lacks it (name collision).
+          const oks = await Promise.all(missing.map((t) => upload(t, jpeg, cfg.syncToken)));
+          uploadedOk = oks.some(Boolean);
+          const label = missing.length > 1 ? `${read.name} (${missing.length} sizes)` : `${read.name} (${item})`;
+          console.log(`[fab-capture] ${uploadedOk ? "uploaded" : "saved (upload failed)"} ${label}`);
         } else {
           console.log(`[fab-capture] saved ${read.name} (${item}) — no sync token, not uploaded`);
         }

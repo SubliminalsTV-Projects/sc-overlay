@@ -475,9 +475,17 @@ function toggleShow() {
 
 function openConfig() {
   if (configWin) { configWin.show(); configWin.focus(); return; }
+  // Size the window to the display so it (and its auto-scaled content — config.html applies the
+  // same screen.height/1080 zoom) is readable on a 4K TV instead of a tiny 780px box. Clamp to the
+  // work area, and center on whichever display the cursor is on.
+  const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const scale = Math.max(1, Math.min(2.25, disp.size.height / 1080));
+  const width = Math.min(disp.workArea.width - 40, Math.round(780 * scale));
+  const height = Math.min(disp.workArea.height - 40, Math.round(860 * scale));
+  const x = Math.round(disp.workArea.x + (disp.workArea.width - width) / 2);
+  const y = Math.round(disp.workArea.y + (disp.workArea.height - height) / 2);
   configWin = new BrowserWindow({
-    width: 780,
-    height: 820,
+    x, y, width, height,
     title: "SC Overlay — Config",
     autoHideMenuBar: true,
     alwaysOnTop: true,
