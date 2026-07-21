@@ -1609,8 +1609,11 @@
   function applyWidget() {
     if (!CANVAS) return;
     const p = $("panel");
-    if (widget.x != null) p.style.setProperty("--wx", widget.x + "px");
-    if (widget.y != null) p.style.setProperty("--wy", widget.y + "px");
+    // widget.x/y are PRIMARY-relative; add the primary's offset within the (multi-monitor) canvas
+    // so an existing layout stays on the primary and a leftward drag carries onto another monitor.
+    const ox = canvasInfo?.px || 0, oy = canvasInfo?.py || 0;
+    if (widget.x != null) p.style.setProperty("--wx", (widget.x + ox) + "px");
+    if (widget.y != null) p.style.setProperty("--wy", (widget.y + oy) + "px");
     p.style.setProperty("--wscale", widgetScale());
     p.style.setProperty("--wangle", (widget.angle != null ? widget.angle : DEFAULT_ANGLE) + "deg");
   }
@@ -1622,8 +1625,9 @@
   function defaultWidgetPos() {
     const w = 380 * widgetScale();
     const ci = canvasInfo || { px: 0, py: 0, pw: window.innerWidth, ph: window.innerHeight };
-    widget.x = Math.max(ci.px + 8, Math.round(ci.px + ci.pw - w - 40));
-    widget.y = ci.py + 40;
+    // primary-relative; applyWidget() adds the primary's canvas offset so this lands on the primary
+    widget.x = Math.max(8, Math.round(ci.pw - w - 40));
+    widget.y = 40;
   }
   function persistWidget() {
     window.overlayApi?.saveWidget?.(WIDGET_ID, { x: widget.x, y: widget.y, scale: widget.scale, angle: widget.angle, visible: widget.visible });
@@ -1664,12 +1668,13 @@
   function miningScale() { return mwidget.scale != null ? mwidget.scale : Math.max(50, Math.min(200, Number(PREFS.overlayScale) || 100)) / 100; }
   function applyMiningFrame() {
     const w = $("miningWidget"); if (!w) return;
-    if (mwidget.x != null) w.style.setProperty("--mwx", mwidget.x + "px");
-    if (mwidget.y != null) w.style.setProperty("--mwy", mwidget.y + "px");
+    const ox = canvasInfo?.px || 0, oy = canvasInfo?.py || 0; // primary-relative + primary's canvas offset
+    if (mwidget.x != null) w.style.setProperty("--mwx", (mwidget.x + ox) + "px");
+    if (mwidget.y != null) w.style.setProperty("--mwy", (mwidget.y + oy) + "px");
     w.style.setProperty("--mwscale", miningScale());
     w.style.setProperty("--mwangle", (mwidget.angle != null ? mwidget.angle : MINING_DEFAULT_ANGLE) + "deg");
   }
-  function defaultMiningPos() { const ci = canvasInfo || { px: 0, py: 0 }; mwidget.x = ci.px + 40; mwidget.y = ci.py + 60; }
+  function defaultMiningPos() { mwidget.x = 40; mwidget.y = 60; } // primary-relative; applyMiningFrame() adds the primary offset
   function persistMiningWidget() { window.overlayApi?.saveWidget?.("mining", { x: mwidget.x, y: mwidget.y, scale: mwidget.scale, angle: mwidget.angle }); }
   // Create the iframe (idempotent). Loading it starts its SSE + arms the OCR reader, so only do it
   // when mining is shown OR auto-show is on (armed hidden, waiting to self-pop on a scan).
@@ -1758,6 +1763,7 @@
       if (saved) widget = { ...widget, ...saved };
       if (widget.x == null || widget.y == null) defaultWidgetPos();
       applyWidget();
+      applyMiningFrame(); // re-apply with the now-loaded canvas offset (mining inits in a separate async block)
       if (widget.visible === false) { bpHidden = true; document.body.classList.add("bp-hidden"); } // restore hidden state
       if (q.has("arrange")) { $("panel").classList.add("moving"); document.body.classList.add("arranging"); } // headless-test the arrange chrome
       if (q.has("cogopen")) { $("cogMenu").classList.add("open"); $("cog").classList.add("open"); } // headless-test the widget cog

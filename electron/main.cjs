@@ -154,21 +154,31 @@ function waitForServer(tries = 60) {
   });
 }
 
-// The canvas windows cover the PRIMARY display. Spanning a single transparent window across
-// multiple monitors breaks down when they differ in resolution / DPI / rotation (Electron maps
-// the coordinates against one display's scale, which shifts the whole overlay off-screen — seen
-// on a mixed landscape+portrait setup). Primary-only is always correct; genuine multi-monitor
-// placement is deferred to the widget-canvas consolidation (which can do it per-display).
-function fullDisplayBounds() {
+function primaryBounds() {
   const b = screen.getPrimaryDisplay().bounds;
   return { x: b.x, y: b.y, width: b.width, height: b.height };
 }
+// The union of every display = the whole virtual desktop. Its origin can be NEGATIVE when a
+// monitor sits left/above the primary (e.g. x:-1080). The overlay canvas spans this so a widget
+// can be dragged across monitors; the page renders widgets at their PRIMARY-relative position +
+// the primary's offset within the canvas (overlay:canvas-info → px/py), so existing layouts stay
+// put on the primary and only a deliberate drag carries a widget onto another display.
+function virtualDesktopBounds() {
+  const all = screen.getAllDisplays();
+  const minX = Math.min(...all.map((d) => d.bounds.x));
+  const minY = Math.min(...all.map((d) => d.bounds.y));
+  const maxX = Math.max(...all.map((d) => d.bounds.x + d.bounds.width));
+  const maxY = Math.max(...all.map((d) => d.bounds.y + d.bounds.height));
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+// The widget overlay spans the virtual desktop (multi-monitor). fullDisplayBounds() drives the
+// overlay window + overlay:canvas-info. (The binding-chart PNG stays PRIMARY-only — it's a
+// gameplay reference overlay, not a widget canvas — so it uses primaryBounds() directly.)
+function fullDisplayBounds() { return virtualDesktopBounds(); }
 // Re-fit every canvas window when the monitor layout changes (plugged/unplugged/rearranged).
 function refitCanvasWindows() {
-  const b = fullDisplayBounds();
-  for (const w of [overlay, bindingWin]) {
-    try { if (w && !w.isDestroyed()) w.setBounds(b); } catch { /* ignore */ }
-  }
+  try { if (overlay && !overlay.isDestroyed()) overlay.setBounds(fullDisplayBounds()); } catch { /* ignore */ }
+  try { if (bindingWin && !bindingWin.isDestroyed()) bindingWin.setBounds(primaryBounds()); } catch { /* ignore */ }
 }
 
 // The overlay is a FULL-SCREEN transparent canvas that hosts free-floating widgets (the Blueprint
@@ -298,7 +308,7 @@ function startMousePoll() { if (!mousePoll) mousePoll = setInterval(pollCursor, 
 // reference-only, so it never takes focus or eats clicks.
 let bindingWin = null;
 function createBinding() {
-  const bounds = fullDisplayBounds(); // spans all monitors
+  const bounds = primaryBounds(); // gameplay reference overlay — primary display only
   bindingWin = new BrowserWindow({
     x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
     frame: false, transparent: true, resizable: false, movable: false, skipTaskbar: true,
