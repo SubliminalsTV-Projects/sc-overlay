@@ -397,7 +397,7 @@
        Canvas mode only (body.canvas); OBS browser-source never shows it. */
   /* Summoned, not always-on: hidden until a widget cog is clicked, then fades in top-right and
      fades back out when unused (see summonGlobalCog). */
-  #globalCog { display: none; position: fixed; top: 14px; right: 16px; z-index: 60;
+  #globalCog { display: none; position: fixed; top: calc(var(--prim-top, 0px) + 14px); right: calc(var(--prim-right, 0px) + 16px); z-index: 60;
     width: 56px; height: 56px; place-items: center; cursor: pointer; -webkit-app-region: no-drag;
     border: 1.5px solid var(--cyan); border-radius: 10px; background: rgba(8, 17, 26, 0.88);
     color: var(--cyan); font-size: 32px; line-height: 1;
@@ -445,9 +445,14 @@
   #arrangeScrim { display: none; position: fixed; inset: 0; z-index: 58; pointer-events: none;
     background: rgba(4, 10, 16, 0.12); }
   body.arranging #arrangeScrim { display: block; }
-  #arrangeScrim::before { content: ""; position: absolute; inset: 7px; border-radius: 12px;
+  /* Frame + banner anchor to the PRIMARY monitor's rect (via --prim-* from canvas-info), NOT the
+     canvas edges — the virtual-desktop rectangle has void corners wherever monitors don't line up,
+     so a canvas-edge anchor lands off-screen. The primary is always a real, visible monitor. */
+  #arrangeScrim::before { content: ""; position: absolute; border-radius: 12px;
+    top: calc(var(--prim-top, 0px) + 7px); left: calc(var(--prim-left, 0px) + 7px);
+    width: calc(var(--prim-w, 100%) - 14px); height: calc(var(--prim-h, 100%) - 14px);
     border: 2px dashed rgba(var(--accent-rgb), 0.5); }
-  #arrangeScrim .ab { pointer-events: auto; position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  #arrangeScrim .ab { pointer-events: auto; position: absolute; top: calc(var(--prim-top, 0px) + 16px); left: var(--prim-cx, 50%); transform: translateX(-50%);
     display: flex; align-items: center; gap: 13px; padding: 8px 9px 8px 15px; border-radius: 24px;
     background: rgba(10, 24, 34, 0.96); border: 1px solid var(--cyan); color: var(--cyan-text);
     font-family: var(--sans); font-size: 12px; letter-spacing: 0.02em; white-space: nowrap;
@@ -1620,6 +1625,18 @@
   // Primary-display offset/size within the full-desktop canvas (fetched at init). Falls back to
   // the whole window so a single-monitor / non-electron context still works.
   let canvasInfo = null;
+  // Publish the PRIMARY monitor's rect within the (multi-monitor) canvas as CSS vars, so screen-
+  // anchored chrome (the arrange banner/frame + summoned cog) pins to the primary, never a void corner.
+  function applyCanvasVars() {
+    const ci = canvasInfo; if (!ci) return;
+    const s = document.documentElement.style, vw = ci.vw != null ? ci.vw : (ci.px + ci.pw);
+    s.setProperty("--prim-top", ci.py + "px");
+    s.setProperty("--prim-left", ci.px + "px");
+    s.setProperty("--prim-cx", (ci.px + ci.pw / 2) + "px");
+    s.setProperty("--prim-right", (vw - (ci.px + ci.pw)) + "px");
+    s.setProperty("--prim-w", ci.pw + "px");
+    s.setProperty("--prim-h", ci.ph + "px");
+  }
   // Default resting spot: top-right of the PRIMARY display (mirrors where the old panel sat), so a
   // new/reset widget never lands on a left/top secondary monitor or in the void between them.
   function defaultWidgetPos() {
@@ -1750,6 +1767,7 @@
     document.body.classList.add("canvas");
     (async () => {
       try { canvasInfo = await window.overlayApi?.getCanvasInfo?.() || null; } catch { /* single-monitor fallback */ }
+      applyCanvasVars(); // pin screen-anchored chrome to the primary monitor (multi-monitor void-safe)
       let saved = null;
       try { saved = (await window.overlayApi?.getWidgets?.())?.[WIDGET_ID] || null; } catch { /* none */ }
       const q = new URLSearchParams(location.search); // test overrides
