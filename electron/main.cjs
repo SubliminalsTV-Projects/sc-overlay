@@ -206,12 +206,18 @@ function createOverlay() {
   // Float above borderless fullscreen games.
   overlay.setAlwaysOnTop(true, "screen-saver");
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // 🔑 Windows CLAMPS a transparent window's INITIAL (constructor) size to the display it opens
+  // on, so a virtual-desktop-spanning size gets shrunk to the primary (window ends up positioned
+  // at the desktop origin but only primary-sized → the canvas can't reach the other monitors).
+  // setBounds AFTER creation isn't re-clamped, so force the real span here (and again once loaded).
+  overlay.setBounds(bounds);
   // Clear any cached copy + cache-bust the URL so UI changes always show up.
   const hudUrl = `${HUD_URL}?v=${Date.now()}${AMD_COMPAT ? "&lite=1" : ""}`;
   overlay.webContents.session.clearCache().finally(() => overlay.loadURL(hudUrl));
   // Once the page is up, tell the renderer the mining widget's initial state: shown if the user
   // left it open last session, else armed-hidden if auto-show is on (so it can self-pop).
   overlay.webContents.on("did-finish-load", () => {
+    try { overlay.setBounds(bounds); } catch { /* re-assert the full span past any creation-time clamp */ }
     sendMiningVisible(miningVisible ? { on: true } : { on: false, arm: miningArm });
     pushWidgetStates();
   });
