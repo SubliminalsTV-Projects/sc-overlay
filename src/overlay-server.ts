@@ -378,7 +378,9 @@ function shipChannelEvent(line: string): { action: "enter" | "leave"; ship: stri
 type ManufacturerTheme = "mobiglas" | "drake" | "anvil" | "greys" | "esperia" | "misc" | "banu" | "gatac" | "mirai" | "origin" | "aegis" | "crusader" | "rsi" | "kruger" | "argo" | "cnou";
 // Manufacturer skins are a subscriber perk. Entitlement is server-resolved; until the
 // Twitch-sub pipeline lands it's a local override (default false = locked for everyone).
-function entitled(): boolean { return config.premiumOverride === true; }
+// A real active-Twitch-subscriber (server-resolved via /api/sc/entitlement, below) OR a local
+// override (dev / preview). The Twitch result is the real driver of skins staying pinned.
+function entitled(): boolean { return twitchEntitled || config.premiumOverride === true; }
 // Non-subscribers may PREVIEW a skin: it applies briefly then reverts to Mobiglas, with a
 // trial watermark on the overlay — so nobody gets used to keeping a skin they haven't unlocked.
 let demoTheme: ManufacturerTheme | null = null;
@@ -514,6 +516,33 @@ async function pollTwitchLive(): Promise<void> {
 }
 void pollTwitchLive();
 setInterval(() => void pollTwitchLive(), TWITCH_POLL_MS).unref?.();
+
+// Subscriber-skin entitlement: poll subliminal.gg with the device token to learn whether the
+// linked account is an ACTIVE Twitch subscriber. That server-resolved result (not the local
+// premiumOverride) is what lets a pinned manufacturer skin stay up instead of reverting after
+// the trial. No token (unsynced) → not entitled → trial only. Site: GET /api/sc/entitlement.
+let twitchEntitled = false;
+const ENTITLEMENT_POLL_MS = 20 * 60 * 1000;
+async function pollEntitlement(): Promise<void> {
+  const applyIfChanged = (next: boolean) => {
+    if (next !== twitchEntitled) { twitchEntitled = next; broadcastMissions(); miningSend(miningAppearance()); }
+  };
+  if (!config.syncToken) { applyIfChanged(false); return; } // unsynced → can't be entitled
+  try {
+    const base = process.env.SC_SYNC_BASE || "https://subliminal.gg";
+    const r = await fetch(`${base}/api/sc/entitlement`, {
+      headers: { Authorization: `Bearer ${config.syncToken}` },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!r.ok) return; // 401/5xx — keep last known state
+    const j = (await r.json()) as { entitled?: boolean };
+    applyIfChanged(!!j.entitled);
+  } catch {
+    /* network hiccup — keep last known state */
+  }
+}
+void pollEntitlement();
+setInterval(() => void pollEntitlement(), ENTITLEMENT_POLL_MS).unref?.();
 
 // ── subliminal.gg collection sync ────────────────────────────────────────────
 // Pushes received blueprints (resolved name→UUID) + the tracked mission to the
@@ -991,6 +1020,8 @@ const server = createServer(async (req, res) => {
     startWatcher();
     // Re-arm sync with the new settings and reconcile the full collection.
     if (sync.configure(config.syncToken, config.syncEnabled)) syncFull();
+    // A changed token → re-resolve subscriber entitlement now (don't wait for the 20-min tick).
+    void pollEntitlement();
     // If log-sharing was just turned on, upload the current session now.
     void maybeShareLog(config, APP_VERSION);
     // Push prefs (e.g. the time-format toggle) to any open overlay immediately.
