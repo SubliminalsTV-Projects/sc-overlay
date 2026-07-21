@@ -290,8 +290,42 @@ export function resolveName(
 
 // ---- Layout extraction --------------------------------------------------------
 
-const FAB_ANCHOR = /FABRICATION KIOSK/i;
+// OCR isn't character-perfect: the wide-tracked kiosk font drops or mangles a glyph, or splits
+// a word ("FABRICATION" -> "FABRICA TION", "Tier" -> "Tie@"), especially at 4K / high UI-scale.
+// So the STRUCTURAL anchors that decide "is this a kiosk / where's the item" are matched FUZZILY
+// (a couple of edits of slack) rather than exactly — the same closest-match idea the item NAME
+// resolver already uses. Without it a single bad glyph makes the whole screen go unrecognized and
+// nothing scans, with no signal to the user.
+
+/** Levenshtein distance of the best-matching substring of `hay` against `needle` (Sellers'
+ *  approximate substring search — `needle` may align anywhere in `hay`). */
+function fuzzySubstringDistance(hay: string, needle: string): number {
+  const n = needle.length;
+  if (!n) return 0;
+  let prev = new Array<number>(hay.length + 1).fill(0); // empty needle matches at any offset (cost 0)
+  for (let i = 1; i <= n; i++) {
+    const cur = new Array<number>(hay.length + 1);
+    cur[0] = i;
+    for (let j = 1; j <= hay.length; j++) {
+      const cost = needle[i - 1] === hay[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j - 1] + cost, prev[j] + 1, cur[j - 1] + 1);
+    }
+    prev = cur;
+  }
+  return Math.min(...prev);
+}
+/** Reduce to comparable letters+digits only (an OCR glyph that became a space/'@'/'//' drops out). */
+const anchorNorm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+/** Does `text` contain `needle` (already anchor-normalized) within `maxErr` edits? */
+function fuzzyHas(text: string, needle: string, maxErr: number): boolean {
+  return fuzzySubstringDistance(anchorNorm(text), needle) <= maxErr;
+}
+
+const FAB_ANCHOR_NORM = "FABRICATIONKIOSK";
 const CATEGORY_LINE = /^\s*(Armor|Weapons|Vehicles|Clothing|Utility|Ammo|Sustenance|Container|Other)\b/i;
+/** The "Tier" label beside the category — short, so bound the fragment length and allow one
+ *  edit ("Tie@"/"Tler" -> Tier) without letting a long word-filled line fuzzy-match it. */
+const tierish = (t: string) => { const a = anchorNorm(t); return a.length <= 6 && fuzzySubstringDistance(a, "TIER") <= 1; };
 
 /** Turn an OCR result into a structured read: fabricator item, tracked mission, or nothing. */
 export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenRead {
@@ -299,7 +333,7 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
   if (!lines.length) return { kind: "none" };
   const joined = lines.map((l) => l.text).join(" ");
 
-  if (FAB_ANCHOR.test(joined)) {
+  if (fuzzyHas(joined, FAB_ANCHOR_NORM, 2)) {
     // The item name is the line(s) directly above the "<Category> ... Tier" line,
     // sharing its left edge. The render sits above the name, in the kiosk's right half.
     // "· Tier" can be OCR-split onto a separate fragment at the same row (a wide "·" gap),
@@ -307,9 +341,12 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
     const cat = lines.find(
       (l) =>
         CATEGORY_LINE.test(l.text) &&
-        (/Tier/i.test(l.text) ||
-          lines.some((o) => o !== l && Math.abs(o.y - l.y) < 20 && /Tier/i.test(o.text))),
+        (tierish(l.text) ||
+          lines.some((o) => o !== l && Math.abs(o.y - l.y) < 20 && tierish(o.text))),
     );
+    const title = lines.find((l) => fuzzyHas(l.text, FAB_ANCHOR_NORM, 3));
+    const close = lines.find((l) => /(?:^|\s)close$/i.test(l.text));
+    const top = title ? title.y + 50 : Math.round(ocr.h * 0.1);
     if (cat) {
       const nameLines = lines
         .filter((l) => Math.abs(l.x - cat.x) < 60 && cat.y - l.y > 0 && cat.y - l.y < 130)
@@ -317,9 +354,6 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
       if (nameLines.length) {
         const nameRaw = nameLines.map((l) => l.text).join(" ");
         const { name, item, match } = resolveName(nameRaw, catalog);
-        const title = lines.find((l) => FAB_ANCHOR.test(l.text));
-        const close = lines.find((l) => /(?:^|\s)close$/i.test(l.text));
-        const top = title ? title.y + 50 : Math.round(ocr.h * 0.1);
         const nameTop = Math.min(...nameLines.map((l) => l.y));
         const left = cat.x - 40;
         const right = close ? close.x + close.w : cat.x + 800;
@@ -327,6 +361,15 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
         return { kind: "fabricator", nameRaw, name, item, match, crop };
       }
     }
+    // The anchor says we're at a kiosk, but the item name couldn't be isolated (a mangled
+    // category/Tier line, or the name still fading in). Return a fabricator read with no item
+    // so the capture loop can tell the user "couldn't read this item" instead of silently
+    // sitting on "Watching Star Citizen…". Crop is a best-effort right-half box (unused when
+    // item is null, but keeps the shape honest).
+    const rt = close ? close.x + close.w : Math.round(ocr.w * 0.92);
+    const lf = Math.round(ocr.w * 0.58);
+    const crop: Rect = { x: lf, y: Math.max(0, top), w: Math.max(0, rt - lf), h: Math.round(ocr.h * 0.5) };
+    return { kind: "fabricator", nameRaw: "", name: null, item: null, match: "none", crop };
   }
 
   // Refinement Center: read each active PROCESSING order's "TIME REMAINING" countdown so

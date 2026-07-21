@@ -146,6 +146,7 @@ function startFabCapture({ port, configDir, onStatus }) {
   const emitEvent = (s) => { onStatus?.(s); };
   let lastMission = "";       // last mission title sent (throttle screen-read posts)
   let lastUnresolved = "";    // last unreadable kiosk item flagged (throttle the "can't read" note)
+  let unresolvedTries = 0;    // consecutive polls a kiosk was on screen but unreadable
   let lastHave = "";          // last already-on-site item flagged (throttle the "already have" note)
   let lastRenderWait = "";    // last item stuck waiting on its render (throttle the "waiting" note)
   let renderTries = 0;        // consecutive polls the current item failed the render check
@@ -212,9 +213,9 @@ function startFabCapture({ port, configDir, onStatus }) {
       // A kiosk on screen -> "fabricator" context (gold diamond) even if image capture is off;
       // anything else while watching -> "watching".
       emitContext(read.kind === "fabricator" ? "fabricator" : "watching");
-      if (read.kind !== "fabricator") { lastUnresolved = ""; lastHave = ""; lastRenderWait = ""; } // left the kiosk
+      if (read.kind !== "fabricator") { lastUnresolved = ""; unresolvedTries = 0; lastHave = ""; lastRenderWait = ""; } // left the kiosk
       if (read.kind === "fabricator" && read.item) {
-        lastUnresolved = "";
+        lastUnresolved = ""; unresolvedTries = 0;
         if (!fab) { pendingItem = null; return; } // image capture disabled — ignore kiosk frames
         const item = read.item; // canonical UUID — settle key + local file name
         // One display name can map to several distinct same-named items (e.g. the 3 sizes of
@@ -279,8 +280,11 @@ function startFabCapture({ port, configDir, onStatus }) {
         // to tag a capture with. Surface it once per item so the user knows why no picture
         // was taken, rather than the loop failing silently.
         pendingItem = null;
+        unresolvedTries++;
         const raw = (read.nameRaw || "").trim();
-        if (raw !== lastUnresolved) {
+        // Require the unreadable state to persist a poll before warning, so a kiosk that's just
+        // mid-load (the name/render still fading in) doesn't flash a false "couldn't read".
+        if (unresolvedTries >= 2 && raw !== lastUnresolved) {
           lastUnresolved = raw;
           emitEvent({ state: "unresolved", nameRaw: raw });
           console.log(`[fab-capture] kiosk item not identified${raw ? `: "${raw}"` : ""}`);
