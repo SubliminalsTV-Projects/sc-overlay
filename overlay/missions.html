@@ -1450,6 +1450,9 @@
     }
     const stats = [];
     if (c.aUEC != null) stats.push('<div class="cc-stat"><span class="cc-val">+' + c.aUEC.toLocaleString() + '</span><span class="cc-lbl">aUEC</span></div>');
+    // No live "Awarded aUEC" was logged (current patches dropped it) → fall back to the
+    // mission's static dataset payout (FixedReward), labelled "payout" (expected, not confirmed).
+    else { const pt = payoutText(c.payout); if (pt) stats.push('<div class="cc-stat"><span class="cc-val">' + pt + '</span><span class="cc-lbl">payout</span></div>'); }
     const dur = fmtDur(c.durationMs);
     if (dur) stats.push('<div class="cc-stat"><span class="cc-val">' + dur + '</span><span class="cc-lbl">time</span></div>');
     const bps = c.blueprints || [];

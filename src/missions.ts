@@ -212,8 +212,11 @@ export interface TrackedView {
     title: string | null;
     /** How the mission ended — an abandoned card renders without stats. */
     kind: "completed" | "abandoned";
-    /** aUEC awarded, or null if none correlated. */
+    /** aUEC awarded (live "Awarded N aUEC"), or null if none correlated. */
     aUEC: number | null;
+    /** The mission's static dataset payout (FixedReward) — shown on the card when no live
+     *  award was logged (current patches stopped emitting "Awarded N aUEC"). null if none. */
+    payout: { min: number | null; max: number; currency: string | null } | null;
     /** Accept→complete duration in ms, or null if the accept wasn't seen. */
     durationMs: number | null;
     /** Blueprints received during the mission (name + item image for the card). */
@@ -549,7 +552,7 @@ export class MissionTracker extends EventEmitter {
    *  mission for COMPLETION_HOLD_MS before the overlay moves to the next mission.
    *  Only set for real-time completions (see beginCompletion). */
   private completion:
-    | { missionId: string; title: string | null; kind: "completed" | "abandoned"; completedAtMs: number; acceptedAtMs: number | null; aUEC: number | null; until: number }
+    | { missionId: string; title: string | null; kind: "completed" | "abandoned"; completedAtMs: number; acceptedAtMs: number | null; aUEC: number | null; payout: { min: number | null; max: number; currency: string | null } | null; until: number }
     | null = null;
   private completionTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last "Awarded N aUEC" seen (log time), to attach to the completion near it. */
@@ -866,6 +869,7 @@ export class MissionTracker extends EventEmitter {
       completedAtMs,
       acceptedAtMs: info?.acceptedAt ?? null,
       aUEC,
+      payout: this.datasetMission(missionId)?.payout ?? null,
       until: Date.now() + holdMs,
     };
     if (this.completionTimer) clearTimeout(this.completionTimer);
@@ -1617,6 +1621,7 @@ export class MissionTracker extends EventEmitter {
             title: this.completion!.title ?? mission?.title ?? tracked?.title ?? null,
             kind: this.completion!.kind,
             aUEC: this.completion!.aUEC,
+            payout: this.completion!.payout,
             durationMs: this.completion!.acceptedAtMs != null ? this.completion!.completedAtMs - this.completion!.acceptedAtMs : null,
             blueprints: this.completion!.kind === "completed" ? this.completionBlueprints() : [],
           }
