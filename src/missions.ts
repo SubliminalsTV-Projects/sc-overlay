@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { parseMissionEvent, type MissionEvent } from "./missions-parser.js";
 import { categorize, type TabKey } from "./categories.js";
 import { parseLine } from "./parser.js";
+import { BlueprintDetailStore, type BlueprintDetail } from "./blueprint-detail.js";
 
 // ---- dataset shape (matches tools/build-blueprint-data.sql output) ----
 export interface PoolEntry {
@@ -133,6 +134,12 @@ export interface BlueprintStatus {
   /** Fabricator category tab (matches the in-game filter) + text sub-category. */
   tab: TabKey;
   sub: string;
+  /** Output item UUID (from the pool entry) — the key to look up crafting detail via
+   *  /api/blueprint-detail. Null when the pool entry carries no UUID. */
+  item: string | null;
+  /** True when a crafting recipe is on record for this blueprint (the detail dataset has
+   *  it) — lets the overlay show an affordance without fetching the full recipe up front. */
+  hasDetail: boolean;
 }
 /** A completed mission in the recent-activity list (idle overlay state). */
 export interface RecentMission {
@@ -476,6 +483,9 @@ export class MissionTracker extends EventEmitter {
   private remoteBaseUrl?: string;
 
   private dataset: Dataset | null = null;
+  /** Per-blueprint crafting detail (recipe/dismantle/stats/manufacturer), following the
+   *  same changelist as `dataset`. Loaded from the bundled blueprint-detail.<cl>.json. */
+  private detail: BlueprintDetailStore;
   private patch: string | null = null;
   private detectedChangelist: string | null = null;
   /** Version family (major.minor, e.g. "4.8") from the log header — picks the right
@@ -550,6 +560,7 @@ export class MissionTracker extends EventEmitter {
   constructor(opts: MissionTrackerOptions) {
     super();
     this.dataDir = opts.dataDir;
+    this.detail = new BlueprintDetailStore(opts.dataDir);
     this.remoteBaseUrl = opts.remoteBaseUrl;
     this.stateDir =
       opts.stateDir ??
@@ -592,20 +603,35 @@ export class MissionTracker extends EventEmitter {
   /** Load the changelist's dataset, fetching it from the public endpoint first if we
    *  don't have it bundled and a remote URL is configured. Offline-safe. */
   async ensureDataset(changelist: string): Promise<void> {
-    const local = join(this.dataDir, `blueprints.${changelist}.json`);
-    if (!existsSync(local) && this.remoteBaseUrl) {
-      try {
-        const res = await fetch(`${this.remoteBaseUrl}/blueprints.${changelist}.json`);
-        if (res.ok) {
-          const text = await res.text();
-          JSON.parse(text); // validate before caching
-          writeFileSync(local, text);
-        }
-      } catch {
-        /* offline — fall through to bundled / latest */
-      }
+    // Only the remote-fetch path is async. When nothing needs fetching (offline, or the
+    // files are already bundled/cached) there is NO await before loadDataset, so it stays
+    // synchronous for the bundled case — callers that read view() right after a patch
+    // detect (and the tests) depend on that.
+    if (this.remoteBaseUrl) {
+      await this.fetchIfMissing(`blueprints.${changelist}.json`);
+      // Pull the matching crafting-detail dataset too, so a patch fetched online gets its
+      // recipes/stats — not just its pools. Independent + best-effort: missing detail only
+      // costs the recipe panel, never the pools.
+      await this.fetchIfMissing(`blueprint-detail.${changelist}.json`);
     }
     this.loadDataset(changelist);
+  }
+
+  /** Download data/<file> from the remote endpoint into the writable data dir when it's
+   *  not already present. Offline-safe + validated before caching; a failure is a no-op. */
+  private async fetchIfMissing(file: string): Promise<void> {
+    const local = join(this.dataDir, file);
+    if (existsSync(local) || !this.remoteBaseUrl) return;
+    try {
+      const res = await fetch(`${this.remoteBaseUrl}/${file}`);
+      if (res.ok) {
+        const text = await res.text();
+        JSON.parse(text); // validate before caching
+        writeFileSync(local, text);
+      }
+    } catch {
+      /* offline — fall through to bundled / latest */
+    }
   }
 
   /** Load the right dataset: exact build → same version family → newest bundled.
@@ -622,6 +648,8 @@ export class MissionTracker extends EventEmitter {
       try {
         this.dataset = JSON.parse(readFileSync(p, "utf8")) as Dataset;
         this.patch = this.dataset.version;
+        // Follow the same changelist with the crafting-detail dataset (recipes/stats).
+        this.detail.loadForChangelist(this.dataset.changelist);
         this.buildTitleIndex();
         this.buildRepTitleIndex();
         this.reresolveAccepts();
@@ -1427,6 +1455,24 @@ export class MissionTracker extends EventEmitter {
     return model ? this.resolveName(norm(model), entries) : [];
   }
 
+  /** Crafting detail (recipe / dismantle / craft time / stats / manufacturer) for a
+   *  blueprint, given EITHER its output item UUID or a blueprint NAME. A name is resolved
+   *  to a UUID through the same variant-aware index as ownership (itemUuidsForName), then
+   *  looked up in the detail dataset. Returns null when the detail file isn't loaded or
+   *  the blueprint has no recipe on record. Reachable by the overlay via the server's
+   *  /api/blueprint-detail endpoint. */
+  blueprintDetail(nameOrUuid: string): BlueprintDetail | null {
+    if (!nameOrUuid) return null;
+    // A UUID-shaped argument is looked up directly; otherwise resolve the name → UUID(s).
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nameOrUuid);
+    const uuids = isUuid ? [nameOrUuid] : this.itemUuidsForName(nameOrUuid);
+    for (const u of uuids) {
+      const d = this.detail.get(u);
+      if (d) return d;
+    }
+    return null;
+  }
+
   /** Every collected blueprint (observed + owned-overrides) as item UUIDs. */
   collectedItemUuids(): string[] {
     const out = new Set<string>();
@@ -1508,7 +1554,11 @@ export class MissionTracker extends EventEmitter {
           if (o.owned) owned++;
           total++;
           const cat = categorize(e);
-          return { name: e.blueprint, owned: o.owned, source: o.source, chance: e.chance, tab: cat.tab, sub: cat.sub };
+          return {
+            name: e.blueprint, owned: o.owned, source: o.source, chance: e.chance,
+            tab: cat.tab, sub: cat.sub,
+            item: e.item ?? null, hasDetail: !!this.detail.get(e.item),
+          };
         });
         pools.push({ poolUuid, blueprints });
       }

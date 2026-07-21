@@ -10,6 +10,7 @@ import { parseLine } from "./parser.js";
 import { parseMissionEvent } from "./missions-parser.js";
 import { MissionTracker } from "./missions.js";
 import { MiningTracker } from "./mining.js";
+import { MiningEconomyStore } from "./mining-economy.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
 import { loadCatalog, readScreenshot, type CatalogEntry } from "./screen-read.js";
@@ -400,6 +401,16 @@ function broadcastMissions(): void {
 }
 tracker.on("change", broadcastMissions);
 
+// ── Mining / economy datasets (commodities prices + rock->ore composition) ───
+// Bundled, version-independent reference data for offline use (see MiningEconomyStore).
+// Served on demand via /api/commodities + /api/mining-composition; no UI consumes it yet.
+const economy = new MiningEconomyStore(dataDir);
+{
+  const c = economy.counts();
+  console.log(`[economy] commodities: ${c.commodities}, mining resources: ${c.resources}` +
+    (c.compositionSource ? ` (composition from ${c.compositionSource})` : ""));
+}
+
 // ── Mining Assistant (signature scanner + refinery timer) ────────────────────
 const mining = new MiningTracker({ dataDir, stateDir: userDir });
 const miningClients = new Set<ServerResponse>();
@@ -573,6 +584,37 @@ const server = createServer(async (req, res) => {
   if (url === "/api/missions" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(missionsPayload());
+    return;
+  }
+
+  // Crafting detail (recipe / dismantle / craft time / stats / manufacturer) for one
+  // blueprint, looked up by ?item=<uuid> or ?name=<blueprint name>. Powers the overlay's
+  // recipe view on demand (kept OUT of the mission-view payload so the SSE stays lean).
+  if (url === "/api/blueprint-detail" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://x").searchParams;
+    const key = (q.get("item") || q.get("name") || "").trim();
+    const detail = key ? tracker.blueprintDetail(key) : null;
+    res.writeHead(detail ? 200 : 404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(detail ?? { error: "not found" }));
+    return;
+  }
+
+  // Commodity economy: ?item=<uuid|name> for one commodity's refine map + material props +
+  // per-terminal buy/sell prices; no query returns the whole commodity map.
+  if (url === "/api/commodities" && req.method === "GET") {
+    const key = new URL(req.url ?? "", "http://x").searchParams.get("item")?.trim();
+    const body = key ? economy.commodity(key) : { commodities: economy.commodities() };
+    res.writeHead(key && !body ? 404 : 200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(body ?? { error: "not found" }));
+    return;
+  }
+
+  // Rock/deposit -> ore composition: ?key=<resource key> for one, else the whole map.
+  if (url === "/api/mining-composition" && req.method === "GET") {
+    const key = new URL(req.url ?? "", "http://x").searchParams.get("key")?.trim();
+    const body = key ? economy.composition(key) : { resources: economy.resources() };
+    res.writeHead(key && !body ? 404 : 200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(body ?? { error: "not found" }));
     return;
   }
 
