@@ -845,6 +845,9 @@
   .grphead .car { color: var(--cyan); font-size: 9px; }
   .grphead .gcnt { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--gold);
     font-variant-numeric: tabular-nums; }
+  /* Shown when everything in the pool is already collected (the "need" list is empty). */
+  .allgot { margin: 7px 3px 2px; padding: 6px 9px; font-size: 11px; color: var(--cyan-dim);
+    border: 1px solid var(--divider); border-radius: 3px; background: rgba(var(--accent-rgb), 0.04); }
 
   /* Confirm-before-removing (prevents an accidental click un-owning a blueprint). */
   .row.confirming { background: rgba(255, 132, 120, 0.1); }
@@ -1010,6 +1013,9 @@
   // Blueprint-pool pagination: current page (0-indexed) + the mission+filter key it belongs
   // to, so the page resets to the first when the tracked mission or category filter changes.
   let poolPage = 0;
+  // Owned blueprints are hidden by default (list leads with what you can still GET); the
+  // "Collected" disclosure reveals them. Session-scoped: re-hides on restart (= the default).
+  let poolShowCollected = false;
   let poolKey = "";
   // Whether the "Mission Info" drawer (faction/type/rep) is expanded. Open by default
   // (still collapsible via the header) so it's never hidden — most useful when the
@@ -1229,29 +1235,36 @@
     const shown = activeTab ? items.filter((it) => it.tab === activeTab) : items;
     const ordered = TABS.flatMap((tab) => shown.filter((it) => it.tab === tab.key));
 
-    // One combined list — what you still need first, then what you've already collected
-    // (owned rows keep their ✔ and stay toggleable) — paginated at 8 rows per page.
+    // The list leads with what you can still GET (paginated, 8/page); what you've already
+    // COLLECTED is hidden under a "Collected" disclosure by default (poolShowCollected).
     const need = ordered.filter((it) => !it.owned);
     const have = ordered.filter((it) => it.owned);
-    const allRows = need.concat(have);
     // Reset to the first page whenever the tracked mission or the category filter changes.
     const pkey = (v.contractKey || "") + "|" + (activeTab || "");
     if (pkey !== poolKey) { poolKey = pkey; poolPage = 0; }
     const PER = 8;
-    const pages = Math.max(1, Math.ceil(allRows.length / PER));
+    const pages = Math.max(1, Math.ceil(need.length / PER));
     if (poolPage > pages - 1) poolPage = pages - 1;
-    const pageRows = allRows.slice(poolPage * PER, poolPage * PER + PER);
+    const pageRows = need.slice(poolPage * PER, poolPage * PER + PER);
 
     let html = missionInfoHtml(v) + rewardsHtml(v);
     if (v.ambiguous) html += '<div class="ambig">⚠ Multiple mission tiers share this name — showing all possible drops. Your actual mission draws from one tier, so odds are approximate.</div>';
-    if (allRows.length) html += '<div class="poolhead">Blueprint pool<span class="ph-sub">1 random blueprint per completion</span></div>';
+    if (need.length || have.length) html += '<div class="poolhead">Blueprint pool<span class="ph-sub">1 random blueprint per completion</span></div>';
     html += pageRows.map(rowHtml).join("");
+    if (!need.length && have.length) html += '<div class="allgot">✓ You already have every blueprint in this pool.</div>';
     if (pages > 1) {
       html += '<div class="pgnav">' +
         '<button class="pgbtn" data-pg="prev"' + (poolPage === 0 ? " disabled" : "") + ' title="Previous page">‹</button>' +
         '<span class="pgind">' + (poolPage + 1) + " / " + pages + "</span>" +
         '<button class="pgbtn" data-pg="next"' + (poolPage >= pages - 1 ? " disabled" : "") + ' title="Next page">›</button>' +
       "</div>";
+    }
+    // Collected disclosure — owned blueprints tuck here; click to expand/collapse (owned rows
+    // keep their ✔ and stay click-to-toggle). Hidden by default so the list shows what to chase.
+    if (have.length) {
+      html += '<div class="grphead" data-grp="collected"><span class="car">' + (poolShowCollected ? "▾" : "▸") +
+        '</span>Collected<span class="gcnt">' + have.length + "</span></div>";
+      if (poolShowCollected) html += have.map(rowHtml).join("");
     }
     $("pool").innerHTML = html;
   }
@@ -1545,6 +1558,12 @@
     const pg = e.target.closest(".pgbtn");
     if (pg) {
       if (!pg.disabled) { poolPage += pg.getAttribute("data-pg") === "next" ? 1 : -1; if (current) render(current); }
+      return;
+    }
+    // The "Collected" disclosure reveals/hides the owned blueprints.
+    if (e.target.closest('.grphead[data-grp="collected"]')) {
+      poolShowCollected = !poolShowCollected;
+      if (current) render(current);
       return;
     }
     // An event-ladder tier header toggles that tier's reward rows.
