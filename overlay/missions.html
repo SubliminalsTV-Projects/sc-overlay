@@ -289,6 +289,11 @@
   /* Grey's — rusty bolt + exposed wires */
   :root[data-theme="greys"] .corner.tl { width: 46px; height: 46px; top: -15px; left: -15px; background-image: url(greys-corner-tl.png); }
   :root[data-theme="greys"] .corner.br { width: 46px; height: 46px; bottom: -15px; right: -15px; background-image: url(greys-corner-br.png); }
+  /* Origin Jumpworks — a fine dashed inset stroke reads as high-end contrast stitching on a leather
+     dash (their luxury interiors). Gold thread (value color) just inside the panel edge. */
+  .stitch { display: none; position: absolute; inset: 5px; border-radius: 8px; pointer-events: none; z-index: 4;
+    border: 1.5px dashed rgba(var(--value-rgb), 0.5); }
+  :root[data-theme="origin"] #panel .stitch { display: block; }
 
   /* Esperia — replace the CRT scanlines with the Prowler/Talon interior's triangular mesh.
      Three crossing 1px line-gradients at 0°/60°/120° tessellate into triangles, tinted with
@@ -553,6 +558,12 @@
     -webkit-app-region: drag; cursor: grab; }
   .head::after { content: ""; position: absolute; left: 17px; right: 17px; bottom: -1px; height: 2px;
     background: var(--strip); opacity: 0.7; }
+  /* RSI — a brushed-metal STRUT replaces the tick-strip divider under the mission name (a milled
+     spar across the HUD), matching RSI's clean industrial hardware language. */
+  :root[data-theme="rsi"] .head::after {
+    background: linear-gradient(180deg, #8a92a3 0%, #ccd3df 44%, #98a0b0 54%, #545b68 100%);
+    height: 5px; bottom: -2px; opacity: 1; border-radius: 1.5px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.55); }
   #missionPick, .progress { -webkit-app-region: no-drag; }
 
   .eyebrow { position: relative; display: flex; align-items: center; gap: 9px; font-size: 10px; font-weight: 600;
@@ -863,6 +874,7 @@
     <div class="brandtab"><img alt="" class="brandtab-logo"></div>
     <div class="corner tl"></div>
     <div class="corner br"></div>
+    <div class="stitch"></div>
     <div class="trialmark"></div>
     <img class="tape tl" alt="" src="tape-tl.webp">
     <img class="tape br" alt="" src="tape-br.webp">

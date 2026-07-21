@@ -177,6 +177,10 @@
   :root[data-theme="misc"] .corner.br { width: 31px; height: 31px; bottom: -11px; right: -11px; background-image: url(cog-misc-br.png); transform: rotate(8deg); }
   :root[data-theme="greys"] .corner.tl { width: 46px; height: 46px; top: -15px; left: -15px; background-image: url(greys-corner-tl.png); }
   :root[data-theme="greys"] .corner.br { width: 46px; height: 46px; bottom: -15px; right: -15px; background-image: url(greys-corner-br.png); }
+  /* Origin — fine dashed inset stroke = high-end contrast stitching (mirrors the Blueprint widget). */
+  .stitch { display: none; position: absolute; inset: 5px; border-radius: 8px; pointer-events: none; z-index: 4;
+    border: 1.5px dashed rgba(var(--value-rgb), 0.5); }
+  :root[data-theme="origin"] #panel .stitch { display: block; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: transparent; }
   body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
@@ -247,7 +251,7 @@
      same-origin (no miningApi preload in an iframe, so CANVAS stays false — the self-geometry
      and shell-IPC blocks below are skipped). */
   body.embedded { overflow: visible; background: transparent; }
-  body.embedded #panel { margin: 10px auto 14px; overflow: visible; transform: none; }
+  body.embedded #panel { margin: 34px auto 16px; overflow: visible; transform: none; } /* top room so corner flair (Drake tape) isn't clipped into negative iframe coords */
   html.amd-lite body.embedded #panel { transform: none !important; }
 
   /* Move/reposition mode: whole panel becomes a drag surface with a banner (identical to
@@ -403,6 +407,7 @@
   <img class="bolt br" alt="" src="anvil-screw-br.webp">
   <div class="corner tl"></div>
   <div class="corner br"></div>
+  <div class="stitch"></div>
   <div id="moveBanner"><div class="movebox">⠿ Drag to move · corner to resize<button id="moveDone">Done</button></div></div>
   <div id="resizeHandle" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
   <div class="head">
@@ -872,9 +877,16 @@
       const p = $("panel").getBoundingClientRect();
       if (p.width < 2 || p.height < 2) return; // parent has us display:none (armed-hidden) — keep last size, don't shrink to nothing
       let right = p.right, bottom = p.bottom;
+      // Include VISIBLE corner flair (tape/bolt/cog) so the iframe is sized to contain the overhang
+      // and doesn't clip it (the panel's top margin keeps the top-left flair out of negative coords).
+      document.querySelectorAll("#panel .tape, #panel .bolt, #panel .corner").forEach((el) => {
+        if (getComputedStyle(el).display === "none") return;
+        const r = el.getBoundingClientRect(); if (r.width < 1) return;
+        right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom);
+      });
       const menu = $("cogMenu");
       if (menu.classList.contains("open")) { const m = menu.getBoundingClientRect(); right = Math.max(right, m.right); bottom = Math.max(bottom, m.bottom); }
-      const w = Math.ceil(right + 30), h = Math.ceil(bottom + 16); // pad for corner decorations
+      const w = Math.ceil(right + 8), h = Math.ceil(bottom + 8);
       if (w !== lastW || h !== lastH) { lastW = w; lastH = h; host()?.setSize?.(w, h); }
     };
     setInterval(measure, 150); measure();
