@@ -406,7 +406,7 @@
   #globalCog.show { display: grid; opacity: 0.95; }
   #globalCog.show:hover, #globalCog.open { opacity: 1; background: rgba(var(--accent-rgb), 0.25);
     box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55), 0 0 22px rgba(var(--accent-rgb), 0.6); }
-  #hub { display: none; position: fixed; top: 78px; right: 16px; z-index: 61; width: 268px;
+  #hub { display: none; position: fixed; top: calc(var(--prim-top, 0px) + 78px); right: calc(var(--prim-right, 0px) + 16px); z-index: 61; width: 268px;
     -webkit-app-region: no-drag; border: 1px solid var(--border); border-radius: 8px;
     background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
     -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
@@ -764,7 +764,7 @@
      interactive (like the panel) + flagged as a modal so it's closeable even under lock. */
   /* Patch notes are a CENTER-SCREEN modal shown once per version on launch — the user must
      close it (while open the shell stays fully interactive, so it blocks the game until closed). */
-  #whatsnew { display: none; position: fixed; inset: 0; z-index: 70; align-items: center; justify-content: center;
+  #whatsnew { display: none; position: fixed; top: var(--prim-top, 0px); left: var(--prim-left, 0px); width: var(--prim-w, 100%); height: var(--prim-h, 100%); z-index: 70; align-items: center; justify-content: center;
     background: rgba(4, 10, 16, 0.5); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
   #whatsnew.show { display: flex; }
   #whatsnew .wn-card { width: 400px; max-width: 88vw; max-height: 82vh; overflow-y: auto;
