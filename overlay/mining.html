@@ -144,6 +144,14 @@
     --panel-top: rgba(28, 20, 10, 0.82); --panel-bot: rgba(16, 11, 5, 0.88); --panel-solid: rgba(16, 11, 5, 0.96);
     --menu-bg: #140d05; --scan: rgba(227, 123, 54, 0.05); --sheen: rgba(255, 200, 150, 0.06);
   }
+  /* Consolidated Outland — frost-white icy cyan HUD sampled from the Nomad (#CFF0F6), mirrors the HUD. */
+  :root[data-theme="cnou"] {
+    --cyan: #CFF0F6; --cyan-bright: #EAFBFE; --cyan-text: #DBEEF3; --cyan-dim: #9FBEC7; --faint: #6B8890;
+    --gold: #FFD27A; --amber: #F5C048; --green: #6FE3B0; --red: #FF8478; --track: #0d1a1e;
+    --accent-rgb: 207, 240, 246; --value-rgb: 255, 210, 122;
+    --panel-top: rgba(16, 28, 33, 0.76); --panel-bot: rgba(9, 18, 22, 0.84); --panel-solid: rgba(9, 18, 22, 0.96);
+    --menu-bg: #0a1519; --scan: rgba(207, 240, 246, 0.06); --sheen: rgba(220, 245, 250, 0.10);
+  }
   /* Duct-tape corners — Drake theme only (field-repair language), mirrors the Blueprint widget
      but with two DIFFERENT tape pieces so the two windows don't look copy-pasted. */
   .tape { display: none; position: absolute; z-index: 6; pointer-events: none; user-select: none;
@@ -157,6 +165,18 @@
   :root[data-theme="anvil"] #panel .bolt { display: block; }
   .bolt.tl { width: 30px; top: -9px; left: -9px; transform: rotate(-12deg); }
   .bolt.br { width: 29px; bottom: -9px; right: -9px; transform: rotate(15deg); }
+  /* Corner flair — machine cogs (Argo + MISC) and Grey's rusty bolt + wires, mirrors the Blueprint
+     widget. Consolidated Outland and every other theme carry NO corner flair (color only). */
+  .corner { display: none; position: absolute; z-index: 6; pointer-events: none;
+    background-size: contain; background-repeat: no-repeat; filter: drop-shadow(0 2px 3px rgba(0,0,0,.55)); }
+  :root[data-theme="argo"] .corner, :root[data-theme="misc"] .corner,
+  :root[data-theme="greys"] .corner { display: block; }
+  :root[data-theme="argo"] .corner.tl { width: 34px; height: 34px; top: -12px; left: -12px; background-image: url(cog-argo-tl.png); transform: rotate(-6deg); }
+  :root[data-theme="argo"] .corner.br { width: 32px; height: 32px; bottom: -11px; right: -11px; background-image: url(cog-argo-br.png); transform: rotate(11deg); }
+  :root[data-theme="misc"] .corner.tl { width: 30px; height: 30px; top: -10px; left: -10px; background-image: url(cog-misc-tl.png); }
+  :root[data-theme="misc"] .corner.br { width: 31px; height: 31px; bottom: -11px; right: -11px; background-image: url(cog-misc-br.png); transform: rotate(8deg); }
+  :root[data-theme="greys"] .corner.tl { width: 46px; height: 46px; top: -15px; left: -15px; background-image: url(greys-corner-tl.png); }
+  :root[data-theme="greys"] .corner.br { width: 46px; height: 46px; bottom: -15px; right: -15px; background-image: url(greys-corner-br.png); }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: transparent; }
   body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
@@ -381,6 +401,8 @@
   <img class="tape br" alt="" src="tape-m-br.webp">
   <img class="bolt tl" alt="" src="anvil-bolt-tl.webp">
   <img class="bolt br" alt="" src="anvil-screw-br.webp">
+  <div class="corner tl"></div>
+  <div class="corner br"></div>
   <div id="moveBanner"><div class="movebox">⠿ Drag to move · corner to resize<button id="moveDone">Done</button></div></div>
   <div id="resizeHandle" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
   <div class="head">
