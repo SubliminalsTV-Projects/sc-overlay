@@ -48,6 +48,7 @@
   button:hover { background: var(--card-high); }
   button.amber { border: none; background: var(--amber); color: var(--amber-deep); font-weight: 700; padding: 9px 18px; border-radius: var(--radius); }
   button.amber:hover { filter: brightness(1.08); background: var(--amber); }
+  button.amber.ok, button.amber.ok:hover { background: #35c46a; color: #06210f; filter: none; } /* post-save confirmation */
   button.danger { border-color: rgba(255,180,171,.3); color: var(--error); background: rgba(255,180,171,.06); padding: 6px 10px; }
   button.danger:hover { background: rgba(255,180,171,.12); }
   .active-tag { font-size: 10px; letter-spacing: .06em; color: var(--on-amber); background: var(--amber); padding: 2px 8px; border-radius: 999px; font-weight: 700; }
@@ -417,7 +418,7 @@
   </div>
 
   <div style="margin-top:20px; display:flex; align-items:center;">
-    <button class="amber" onclick="save()">Save</button>
+    <button class="amber" id="saveBtn" onclick="save()">Save</button>
     <span class="saved" id="saved">Saved ✓</span>
   </div>
 
@@ -610,6 +611,9 @@
     }
     await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     document.getElementById("syncToken").value = "";
+    // Unmissable confirmation: flip the Save button to a green "Saved ✓" for ~1.6s (+ keep the toast).
+    const b = document.getElementById("saveBtn");
+    if (b) { b.textContent = "Saved ✓"; b.classList.add("ok"); setTimeout(() => { b.textContent = "Save"; b.classList.remove("ok"); }, 1600); }
     const s = document.getElementById("saved"); s.classList.add("show"); setTimeout(() => s.classList.remove("show"), 1400);
     await loadCfg();
   }

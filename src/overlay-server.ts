@@ -571,12 +571,24 @@ function syncFull(): void {
 function seedTrackerFromLog(): void {
   try {
     const text = readFileSync(config.logPath, "utf8");
+    // Also seed the CURRENT ship (last board still in effect) so theme="auto" matches on a cold
+    // start while already seated — the watcher only tails NEW lines, so it wouldn't otherwise see it.
+    let seedMfr: string | null = null, seedShip: string | null = null;
     for (const line of text.split(/\r?\n/)) {
       if (!line) continue;
       tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
       if (ev) tracker.apply(ev);
+      const chan = shipChannelEvent(line);
+      if (chan) {
+        if (chan.action === "enter" && chan.manufacturer) { seedMfr = chan.manufacturer; seedShip = chan.ship; }
+        else if (chan.action === "leave" && config.revertThemeOnFoot && (chan.manufacturer === seedMfr || chan.ship === seedShip)) { seedMfr = null; seedShip = null; }
+      } else {
+        const mfr = manufacturerFromLine(line); // AC OnVehicleSpawned (no channel)
+        if (mfr) { seedMfr = mfr; seedShip = null; }
+      }
     }
+    shipManufacturer = seedMfr; shipName = seedShip;
   } catch {
     /* log not present yet */
   }
