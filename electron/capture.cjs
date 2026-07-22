@@ -124,7 +124,7 @@ const SITE = "https://subliminal.gg";
 // item tiny + off-centre. Instead we locate the item by its EDGES: a real 3D render has hard
 // silhouette/detail edges, while the glow is smooth and the grid is low-contrast. We take the
 // dominant contiguous edge cluster's bounding box on x and y and crop to it with a small margin.
-function centerTighten(image, margin = 22) {
+function centerTighten(image, margin = 40) {
   const { width: w, height: h } = image.getSize();
   if (w < 40 || h < 40) return image;
   const bmp = image.getBitmap(); // BGRA
@@ -158,9 +158,23 @@ function centerTighten(image, margin = 22) {
     }
     return [bestL, bestR];
   };
-  const [xL, xR] = domRun(colE, w, h);
-  const [yT, yB] = domRun(rowE, h, w);
+  let [xL, xR] = domRun(colE, w, h);
+  let [yT, yB] = domRun(rowE, h, w);
   if (xL < 0 || yT < 0) return image;
+  // The edge cluster nails the item's HIGH-contrast (bright) parts but can miss a dark, low-contrast
+  // region — a helmet's black visor, black-finish armor — that blends into the dark teal backdrop,
+  // clipping it off. Grow the box outward to re-absorb any attached NON-TEAL "content": the kiosk
+  // background and its glow are teal (green+blue clearly above red), whereas the item — red, grey or
+  // near-black — is not. Growth only EXTENDS the box (never tightens), so it can NEVER introduce a
+  // new clip; and a teal gap stops it, so it won't jump to a separated glyph (the X-close, stat text).
+  const isItem = (x, y) => { const i = (y * w + x) * 4; const B = bmp[i], G = bmp[i + 1], R = bmp[i + 2]; return R + 12 >= Math.min(G, B); };
+  const colItem = (x, t, b) => { let c = 0; for (let y = t; y <= b; y++) if (isItem(x, y)) c++; return c / (b - t + 1); };
+  const rowItem = (y, l, r) => { let c = 0; for (let x = l; x <= r; x++) if (isItem(x, y)) c++; return c / (r - l + 1); };
+  const FL = 0.06; // an adjacent line needs at least this fraction of item pixels to keep growing
+  while (xL > 0 && colItem(xL - 1, yT, yB) > FL) xL--;
+  while (xR < w - 1 && colItem(xR + 1, yT, yB) > FL) xR++;
+  while (yT > 0 && rowItem(yT - 1, xL, xR) > FL) yT--;
+  while (yB < h - 1 && rowItem(yB + 1, xL, xR) > FL) yB++;
   const nl = Math.max(0, xL - margin), nr = Math.min(w, xR + 1 + margin);
   const nt = Math.max(0, yT - margin), nb = Math.min(h, yB + 1 + margin);
   const nw = nr - nl, nh = nb - nt;
