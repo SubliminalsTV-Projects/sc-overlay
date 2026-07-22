@@ -1,4 +1,12 @@
 {
+  "0.1.32": {
+    "date": "2026-07-22T02:00:23Z",
+    "notes": [
+      "Much sharper item reading at the Fabrication Kiosk — a new, more accurate text reader handles the stylized kiosk fonts (item names, \"Tier\", ship-component names) that the old one sometimes mangled.",
+      "The overlay now reads only the monitor your game is on, and only the part of the screen it needs — so multi-monitor setups no longer accidentally read the wrong display.",
+      "What's New tidy-up: each version now shows its release date and time (UTC), older versions are collapsed by default so the card stays short, the close button can never end up off-screen, and it no longer hides itself after one look unless you tick \"Don't show this again\"."
+    ]
+  },
   "0.1.31": {
     "date": "2026-07-22T00:05:45Z",
     "notes": [
