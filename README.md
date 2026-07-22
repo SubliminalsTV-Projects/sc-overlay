@@ -37,26 +37,14 @@ Optional OCR can be enabled when you want help reading fabrication screens. That
 Requirements:
 
 - Windows
-- Node.js
 - Star Citizen installed and running
 
-Install dependencies:
+Install the desktop app:
 
-```bash
-npm install
-```
+- Download the latest .exe installer from the releases page.
+- Run the installer and follow the setup prompts.
 
-Launch the overlay app:
-
-```bash
-npm run overlay-app
-```
-
-If you want to run the server-side overlay pieces separately:
-
-```bash
-npm run overlay
-```
+If you are running from source for development purposes, use the project’s local development commands instead.
 
 ## Development notes
 
