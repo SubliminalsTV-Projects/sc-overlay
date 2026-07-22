@@ -43,10 +43,20 @@ Install the desktop app:
 
 - Download the latest .exe installer from the releases page.
 - Run the installer and follow the setup prompts.
-
-If you are running from source for development purposes, use the project’s local development commands instead.
+- Launch the app and keep Star Citizen running while you use it.
 
 ## Development notes
+
+If you are working from source or building the project yourself, install the following first:
+
+- Node.js
+- npm
+
+Then install dependencies:
+
+```bash
+npm install
+```
 
 Useful commands:
 
@@ -54,6 +64,12 @@ Useful commands:
 npm run build
 npm run typecheck
 npm run overlay-app
+```
+
+If you want to run the server-side overlay pieces separately:
+
+```bash
+npm run overlay
 ```
 
 ## Project status
