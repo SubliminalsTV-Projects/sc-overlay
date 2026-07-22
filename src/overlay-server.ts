@@ -13,7 +13,7 @@ import { MiningTracker } from "./mining.js";
 import { MiningEconomyStore } from "./mining-economy.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
-import { loadCatalog, readScreenshot, type CatalogEntry } from "./screen-read.js";
+import { loadCatalog, readScreenshot, classifyScreen, type CatalogEntry, type OcrResult } from "./screen-read.js";
 import { maybeShareLog } from "./log-share.js";
 
 const overlayDir = assetDir(import.meta.url, "overlay");
@@ -827,19 +827,24 @@ const server = createServer(async (req, res) => {
   if (url === "/api/screen-read" && req.method === "POST") {
     const body = await readBody(req);
     let result: unknown = { kind: "none" };
-    if (typeof body.path === "string" && body.path) {
-      if (!screenCatalog) screenCatalog = loadCatalog(dataDir);
+    if (!screenCatalog) screenCatalog = loadCatalog(dataDir);
+    if (Array.isArray(body.lines)) {
+      // Pre-computed OCR from the main process (RapidOCR reads the fabricator name off a right-
+      // panel crop). Classify directly — skip the WinRT OCR entirely for this call.
+      const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
+      result = classifyScreen(ocr, screenCatalog);
+    } else if (typeof body.path === "string" && body.path) {
       result = await readScreenshot(body.path, screenCatalog);
-      // Mining Assistant reads are fed straight to its tracker (same process); the
-      // mission/fabricator reads are still routed by capture.cjs off the returned result.
-      const rd = result as { kind?: string; signature?: number; name?: string; items?: string[] };
-      if (rd.kind === "refinery") mining.applyRefineryRead(result as never);
-      else if (rd.kind === "mineable" && typeof rd.signature === "number") mining.applyMineableRead(rd.signature);
-      // A fabricator display name can map to several distinct same-named items (e.g. the 3
-      // sizes of "Cinch Scraper Module"). Hand back every sibling UUID so the capture loop can
-      // share the one captured image across all of them (the log/kiosk can't say which size).
-      else if (rd.kind === "fabricator" && rd.name) rd.items = tracker.itemUuidsForName(rd.name);
     }
+    // Routing applies to BOTH sources. Mining reads feed its tracker (same process); the
+    // mission/fabricator reads are routed by capture.cjs off the returned result.
+    const rd = result as { kind?: string; signature?: number; name?: string; items?: string[] };
+    if (rd.kind === "refinery") mining.applyRefineryRead(result as never);
+    else if (rd.kind === "mineable" && typeof rd.signature === "number") mining.applyMineableRead(rd.signature);
+    // A fabricator display name can map to several distinct same-named items (e.g. the 3
+    // sizes of "Cinch Scraper Module"). Hand back every sibling UUID so the capture loop can
+    // share the one captured image across all of them (the log/kiosk can't say which size).
+    else if (rd.kind === "fabricator" && rd.name) rd.items = tracker.itemUuidsForName(rd.name);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
     return;

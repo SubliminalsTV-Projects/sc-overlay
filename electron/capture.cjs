@@ -16,29 +16,76 @@ const os = require("node:os");
 
 const POLL_MS = 3000;
 
-// Return the foreground window's process name (e.g. "StarCitizen"), or "" on failure.
-function foregroundProcess() {
+// Return the FOREGROUND window's process name AND its screen rectangle. The rect lets us capture
+// the monitor the game is actually on (not a blind sources[0]) — critical on multi-monitor rigs.
+const fgPs1 = path.join(os.tmpdir(), "sc-fgwin.ps1");
+let fgPs1Written = false;
+function writeFgPs1() {
+  if (fgPs1Written) return;
+  fs.writeFileSync(fgPs1, [
+    'Add-Type @"',
+    "using System;using System.Runtime.InteropServices;",
+    "public class FGW{",
+    ' [DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();',
+    ' [DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,out int pid);',
+    " [StructLayout(LayoutKind.Sequential)]public struct RECT{public int Left,Top,Right,Bottom;}",
+    ' [DllImport("user32.dll")]public static extern bool GetWindowRect(IntPtr h,out RECT r);',
+    "}",
+    '"@',
+    "$h=[FGW]::GetForegroundWindow();$procId=0;[void][FGW]::GetWindowThreadProcessId($h,[ref]$procId)",
+    "$r=New-Object FGW+RECT;[void][FGW]::GetWindowRect($h,[ref]$r)",
+    "$n=try{(Get-Process -Id $procId -ErrorAction Stop).ProcessName}catch{''}",
+    'Write-Output ("$n|$($r.Left)|$($r.Top)|$([int]($r.Right-$r.Left))|$([int]($r.Bottom-$r.Top))")',
+  ].join("\n"));
+  fgPs1Written = true;
+}
+function foregroundWindow() {
   return new Promise((resolve) => {
-    const ps = [
-      "$s='[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();",
-      "[DllImport(\"user32.dll\")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);';",
-      "$t=Add-Type -MemberDefinition $s -Name U -Namespace W -PassThru;",
-      "$h=$t::GetForegroundWindow(); $procId=0; [void]$t::GetWindowThreadProcessId($h,[ref]$procId);",
-      "try { (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { '' }",
-    ].join(" ");
-    execFile("powershell", ["-NoProfile", "-Command", ps], { windowsHide: true, timeout: 4000 }, (err, out) => {
-      resolve(err ? "" : String(out).trim());
+    try { writeFgPs1(); } catch { return resolve({ name: "", rect: null }); }
+    execFile("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fgPs1], { windowsHide: true, timeout: 4000 }, (err, out) => {
+      if (err) return resolve({ name: "", rect: null });
+      const p = String(out).trim().split("|");
+      const x = +p[1], y = +p[2], w = +p[3], hh = +p[4];
+      resolve({ name: p[0] || "", rect: w > 0 && hh > 0 ? { x, y, width: w, height: hh } : null });
     });
   });
 }
 
-// Capture the primary display at full physical resolution → nativeImage.
-async function captureScreen() {
-  const d = screen.getPrimaryDisplay();
-  const width = Math.round(d.size.width * d.scaleFactor);
-  const height = Math.round(d.size.height * d.scaleFactor);
+// Capture the display the GAME window is on (matched by display_id), at that monitor's full
+// resolution → nativeImage. Falls back to the primary / sources[0] if the match fails.
+async function captureGame(winRect) {
+  const disp = winRect ? screen.getDisplayMatching(winRect) : screen.getPrimaryDisplay();
+  const width = Math.round(disp.size.width * disp.scaleFactor);
+  const height = Math.round(disp.size.height * disp.scaleFactor);
   const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width, height } });
-  return sources[0] ? sources[0].thumbnail : null;
+  const src = sources.find((s) => s.display_id && String(s.display_id) === String(disp.id)) || sources[0];
+  return src ? { image: src.thumbnail, width, height } : null;
+}
+
+// The kiosk's item render + name + category all live in the upper-right of the screen. Cropping to
+// it before RapidOCR both (a) stops PP-OCR fusing the left material panel into the name and (b)
+// speeds the read up. Fractions are of the captured GAME display (the fabricator is a fullscreen UI).
+function rightPanelCrop(image, w, h) {
+  const x = Math.round(w * 0.5);
+  const cw = w - x, ch = Math.round(h * 0.72);
+  return { img: image.crop({ x, y: 0, width: cw, height: ch }), w: cw, h: ch };
+}
+
+// RapidOCR (PP-OCR) reader — main-process only, ESM loaded lazily (model loads once, ~2s). Returns
+// the same {text,x,y,w,h} line shape the sidecar classifier expects, from the PP-OCR {text,box}.
+let _rapid = null;
+function getRapid() {
+  if (!_rapid) _rapid = import("@gutenye/ocr-node").then((m) => m.default.create());
+  return _rapid;
+}
+async function ocrRapidLines(imgPath) {
+  const ocr = await getRapid();
+  const res = await ocr.detect(imgPath);
+  return (res || []).map((r) => {
+    const xs = r.box.map((pt) => pt[0]), ys = r.box.map((pt) => pt[1]);
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return { text: String(r.text || ""), x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+  });
 }
 
 // Is an item actually rendered in the crop, or did we catch the fabricator mid-load (just the
@@ -139,6 +186,7 @@ function startFabCapture({ port, configDir, onStatus }) {
   const captureDir = path.join(configDir, "fab-captures");
   const shotsDir = path.join(configDir, "fab-shots"); // full uncropped frames (mineable)
   const tmpShot = path.join(os.tmpdir(), "sc-fab-shot.png");
+  const tmpPanel = path.join(os.tmpdir(), "sc-fab-panel.png"); // upper-right crop fed to RapidOCR
   let busy = false;
   let busyAt = 0;             // when the current tick set busy (watchdog against a wedged loop)
   const TICK_WATCHDOG_MS = 15000; // if a tick has "held" busy this long, it hung — force re-arm
@@ -215,22 +263,44 @@ function startFabCapture({ port, configDir, onStatus }) {
       console.warn("[fab-capture] tick watchdog: a prior tick hung — re-arming the loop");
       busy = false;
     }
-    const proc = await foregroundProcess();
-    if (!/^StarCitizen$/i.test(proc)) { emitContext("idle"); return; } // only ever look at SC
+    const fg = await foregroundWindow();
+    if (!/^StarCitizen$/i.test(fg.name)) { emitContext("idle"); return; } // only ever look at SC
     busy = true;
     busyAt = Date.now();
     try {
       const have = fab ? await ensureRemoteHave() : null; // dedup set only needed for capture
-      const shot = await captureScreen();
+      const cap = await captureGame(fg.rect); // the monitor the GAME is on, not a blind sources[0]
+      const shot = cap && cap.image;
       if (!shot) return;
       fs.writeFileSync(tmpShot, shot.toPNG());
+      // Pass 1 — Windows OCR on the full game frame: the cheap "where am I" glance. It detects the
+      // kiosk and serves the mission / mining reads (which work fine on it today).
       const resp = await fetch(`http://localhost:${port}/api/screen-read`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: tmpShot }),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      const read = await resp.json();
+      let read = await resp.json();
+      let renderSrc = shot; // where the item render is cropped FROM (full frame, or the panel below)
+      // Pass 2 — dual-engine: once pass 1 says we're at a kiosk, re-read the item NAME with RapidOCR
+      // on the upper-right crop. It's far better at the stylized name tokens Windows OCR mangles
+      // ("MH1"->"MI-II", "Tier"->"Tie@"). Only runs in a kiosk (rare), so no cost during play.
+      if (read.kind === "fabricator" && fab && cfg.rapidOcr !== false) {
+        try {
+          const panel = rightPanelCrop(shot, cap.width, cap.height);
+          fs.writeFileSync(tmpPanel, panel.img.toPNG());
+          const lines = await ocrRapidLines(tmpPanel);
+          const r2 = await fetch(`http://localhost:${port}/api/screen-read`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lines, w: panel.w, h: panel.h }),
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
+          const rr = await r2.json();
+          if (rr.kind === "fabricator" && rr.item) { read = rr; renderSrc = panel.img; } // rr.crop is panel-relative
+        } catch (e) { console.warn("[fab-capture] RapidOCR re-read failed, using Windows OCR:", e && e.message); }
+      }
       // A kiosk on screen -> "fabricator" context (gold diamond) even if image capture is off;
       // anything else while watching -> "watching".
       emitContext(read.kind === "fabricator" ? "fabricator" : "watching");
@@ -262,7 +332,9 @@ function startFabCapture({ port, configDir, onStatus }) {
           return;
         }
         const c = read.crop;
-        const cropped = centerTighten(shot.crop({ x: c.x, y: c.y, width: c.w, height: c.h }));
+        // Crop the render from whichever frame produced `read` — the panel crop (RapidOCR path,
+        // its crop is panel-relative) or the full frame (Windows OCR path).
+        const cropped = centerTighten(renderSrc.crop({ x: c.x, y: c.y, width: c.w, height: c.h }));
         if (!hasRender(cropped)) {
           renderTries++;
           // Some items (quantum drives + certain ship components) show a dark schematic in the
