@@ -774,13 +774,16 @@
   #whatsnew { display: none; position: fixed; top: var(--prim-top, 0px); left: var(--prim-left, 0px); width: var(--prim-w, 100%); height: var(--prim-h, 100%); z-index: 70; align-items: center; justify-content: center;
     background: rgba(4, 10, 16, 0.5); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
   #whatsnew.show { display: flex; }
-  #whatsnew .wn-card { width: 400px; max-width: 88vw; max-height: 82vh; overflow-y: auto;
+  /* Flex column with a capped height: header + footer are PINNED (flex:none) and only #wnList
+     scrolls, so the ✕ and "Got it" are ALWAYS on screen no matter how many versions are shown. */
+  #whatsnew .wn-card { width: 400px; max-width: 88vw; max-height: 82vh; display: flex; flex-direction: column;
     border: 1px solid var(--cyan); border-radius: 10px; padding: 16px 18px 18px;
     background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 26px rgba(var(--accent-rgb), 0.18); }
   html.amd-lite #whatsnew { -webkit-backdrop-filter: none; backdrop-filter: none; }
   html.amd-lite #whatsnew .wn-card { background: var(--panel-solid); }
-  #whatsnew .wn-head { display: flex; align-items: center; gap: 8px; }
+  #whatsnew .wn-head { display: flex; align-items: center; gap: 8px; flex: none; }
+  #whatsnew #wnList { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 2px; }
   #whatsnew .wn-title { flex: 1; font-family: var(--sans); font-size: 11px; font-weight: 700;
     letter-spacing: 0.16em; text-transform: uppercase; color: var(--cyan); }
   #whatsnew .wn-ver { font-family: var(--mono); font-size: 11px; color: var(--gold); }
@@ -791,10 +794,16 @@
   #whatsnew .wn-group:first-child { margin-top: 3px; }
   #whatsnew .wn-gver { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
     color: var(--gold); padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+  /* Older versions collapse (<details>): a clickable version header with a disclosure caret. */
+  #whatsnew details.wn-group > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 7px; }
+  #whatsnew details.wn-group > summary::-webkit-details-marker { display: none; }
+  #whatsnew details.wn-group > summary::before { content: "▸"; font-size: 9px; color: var(--gold); transition: transform 0.15s; }
+  #whatsnew details.wn-group[open] > summary::before { transform: rotate(90deg); }
+  #whatsnew details.wn-group > summary:hover { color: var(--cyan); }
   #whatsnew ul { list-style: none; margin: 7px 0 0; padding: 0; }
   #whatsnew li { display: flex; gap: 8px; padding: 4px 0; font-size: 12px; line-height: 1.4; color: var(--cyan-text); }
   #whatsnew li::before { content: "◆"; color: var(--cyan); font-size: 7px; flex: none; transform: translateY(4px); }
-  #whatsnew .wn-foot { display: flex; align-items: center; gap: 10px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border); }
+  #whatsnew .wn-foot { display: flex; align-items: center; gap: 10px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border); flex: none; }
   #whatsnew .wn-dismiss { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--cyan-dim); cursor: pointer; user-select: none; }
   #whatsnew .wn-dismiss input { width: 15px; height: 15px; accent-color: var(--cyan); }
   #whatsnew .wn-close { margin-left: auto; font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
@@ -1950,10 +1959,14 @@
         // Header chip = newest version; body groups the last few versions so a returning user
         // sees everything they missed across our fast patches, not just the latest.
         $("wnVer").textContent = "v" + (entries[0].version || version);
-        $("wnList").innerHTML = entries.map((e) =>
-          '<div class="wn-group"><div class="wn-gver">v' + escapeHtml(e.version) + '</div><ul>' +
-          e.notes.map((n) => "<li>" + escapeHtml(n) + "</li>").join("") + "</ul></div>"
-        ).join("");
+        // Newest version is expanded; older ones (2..5) are collapsed <details> — click to expand.
+        // Keeps the card short by default while still letting a returning user catch up on all of them.
+        $("wnList").innerHTML = entries.map((e, i) => {
+          const bullets = "<ul>" + e.notes.map((n) => "<li>" + escapeHtml(n) + "</li>").join("") + "</ul>";
+          return i === 0
+            ? '<div class="wn-group"><div class="wn-gver">v' + escapeHtml(e.version) + "</div>" + bullets + "</div>"
+            : '<details class="wn-group"><summary class="wn-gver">v' + escapeHtml(e.version) + "</summary>" + bullets + "</details>";
+        }).join("");
         card.classList.add("show");
         window.overlayApi.setModal?.(true);
         let wnLeaveT;
