@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@gutenye/ocr-node": "^1.4.8",
     "electron-updater": "^6.3.9",
     "uiohook-napi": "^1.5.5"
   },

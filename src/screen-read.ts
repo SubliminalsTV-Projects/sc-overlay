@@ -324,8 +324,16 @@ function fuzzyHas(text: string, needle: string, maxErr: number): boolean {
 const FAB_ANCHOR_NORM = "FABRICATIONKIOSK";
 const CATEGORY_LINE = /^\s*(Armor|Weapons|Vehicles|Clothing|Utility|Ammo|Sustenance|Container|Other)\b/i;
 /** The "Tier" label beside the category — short, so bound the fragment length and allow one
- *  edit ("Tie@"/"Tler" -> Tier) without letting a long word-filled line fuzzy-match it. */
+ *  edit ("Tie@"/"Tler" -> Tier) without letting a long word-filled line fuzzy-match it. Used for a
+ *  SEPARATE fragment sharing the category row (Windows OCR splits "· Tier" off on its own). */
 const tierish = (t: string) => { const a = anchorNorm(t); return a.length <= 6 && fuzzySubstringDistance(a, "TIER") <= 1; };
+/** A "Tier" token embedded ANYWHERE in a line — PP-OCR groups the whole "<Category> … · Tier <T>"
+ *  into one long line, so accept it there too. Safe to leave unbounded because it's only tested on
+ *  lines that already start with a category word (CATEGORY_LINE). */
+const catHasTier = (t: string) => fuzzySubstringDistance(anchorNorm(t), "TIER") <= 1;
+/** PP-OCR can glue the far-right "Fabrication Time" column onto the name row ("TS-2 Fabrication
+ *  Time:") — drop that label (and anything after it) so the name resolves cleanly. */
+const stripName = (raw: string) => raw.replace(/\s*fabrication\s*time.*$/i, "").replace(/\s+/g, " ").trim();
 
 /** Turn an OCR result into a structured read: fabricator item, tracked mission, or nothing. */
 export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenRead {
@@ -333,7 +341,10 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
   if (!lines.length) return { kind: "none" };
   const joined = lines.map((l) => l.text).join(" ");
 
-  if (fuzzyHas(joined, FAB_ANCHOR_NORM, 2)) {
+  // Kiosk gate: the full-frame title "FABRICATION KIOSK", OR (crop-first path) the right panel's
+  // "Fabrication Time" / FABRICATE — both fuzzy-match "FABRICATION". A stray "fabrication" without
+  // the kiosk layout still fails to yield a category+name below, so it can't false-classify an item.
+  if (fuzzyHas(joined, "FABRICATION", 2)) {
     // The item name is the line(s) directly above the "<Category> ... Tier" line,
     // sharing its left edge. The render sits above the name, in the kiosk's right half.
     // "· Tier" can be OCR-split onto a separate fragment at the same row (a wide "·" gap),
@@ -341,18 +352,24 @@ export function classifyScreen(ocr: OcrResult, catalog: CatalogEntry[]): ScreenR
     const cat = lines.find(
       (l) =>
         CATEGORY_LINE.test(l.text) &&
-        (tierish(l.text) ||
+        (catHasTier(l.text) ||
           lines.some((o) => o !== l && Math.abs(o.y - l.y) < 20 && tierish(o.text))),
     );
     const title = lines.find((l) => fuzzyHas(l.text, FAB_ANCHOR_NORM, 3));
     const close = lines.find((l) => /(?:^|\s)close$/i.test(l.text));
     const top = title ? title.y + 50 : Math.round(ocr.h * 0.1);
     if (cat) {
+      // The name is the left-aligned line(s) directly above the category. Distance is relative to
+      // the category's own text height (a few line-heights) so it survives multi-line names AND
+      // any capture/upscale resolution — a fixed pixel gap breaks on both.
+      const nameGap = Math.max(130, cat.h * 8);
       const nameLines = lines
-        .filter((l) => Math.abs(l.x - cat.x) < 60 && cat.y - l.y > 0 && cat.y - l.y < 130)
+        .filter((l) => Math.abs(l.x - cat.x) < 60 && cat.y - l.y > 0 && cat.y - l.y < nameGap)
         .sort((a, b) => a.y - b.y);
       if (nameLines.length) {
-        const nameRaw = nameLines.map((l) => l.text).join(" ");
+        // Strip PER LINE (not the joined string) — PP-OCR glues "Fabrication Time" onto the first
+        // name line, and stripping to end-of-string would eat the later name lines after it.
+        const nameRaw = nameLines.map((l) => stripName(l.text)).filter((t) => t).join(" ");
         const { name, item, match } = resolveName(nameRaw, catalog);
         const nameTop = Math.min(...nameLines.map((l) => l.y));
         const left = cat.x - 40;
