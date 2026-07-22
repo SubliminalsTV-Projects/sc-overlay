@@ -258,9 +258,11 @@ export function resolveName(
 ): { name: string | null; item: string | null; match: "exact" | "fuzzy" | "none" } {
   const n = normName(raw);
   if (!n) return { name: null, item: null, match: "none" };
-  // OCR routinely confuses 0<->O (a size-0 "S0 Helix" reads as "SO HELIX"). Fold them together
-  // for the exact pass only, so it still matches — the fuzzy/size-digit logic below is untouched.
-  const fold = (s: string) => s.replace(/0/g, "O");
+  // OCR routinely confuses 0<->O (a size-0 "S0 Helix" reads as "SO HELIX") and 1<->I/| (the
+  // QuantumDrive "XL-1" reads as "XL-I", "S1" as "SI"). Fold each digit to its look-alike letter
+  // for the exact pass only, so short coded names still match — the fuzzy/size-digit logic below
+  // is untouched. Verified collision-free against the live catalog (no two items fold alike).
+  const fold = (s: string) => s.replace(/0/g, "O").replace(/[1|]/g, "I");
   const nf = fold(n);
   for (const e of catalog) {
     const en = normName(e.name);

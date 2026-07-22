@@ -17,6 +17,7 @@ function check(name: string, cond: boolean, detail = ""): void {
 const CATALOG: CatalogEntry[] = [
   { name: "Palisade", item: "15ebdff2-2724-4fb3-abbf-db20e150da77" },
   { name: "TS-2", item: "8ea47c7e-f70f-469d-abc2-911cc5013854" },
+  { name: "XL-1", item: "fce50a6d-690e-4b2d-9104-f3743387e1f0" },
 ];
 
 // Build an OcrResult from [text, x, y] rows (w/h don't matter for these gates).
@@ -41,6 +42,15 @@ const qd = frame([
   ["Tie@", 2828, 1114],
   ["X close", 3411, 130],
 ]);
+// Quantum drive "XL-1": OCR reads the digit 1 as the letter I ("XL-I") — a real Cryojenix
+// contribution frame. The exact-pass 1<->I fold must still resolve it to XL-1.
+const xl1 = frame([
+  ["FABRICATION KIOSK //FABRICATE", 355, 140],
+  ["XL-I", 2380, 1059],
+  ["Vehicles QUANTUM DRIVES", 2339, 1125],
+  ["Tier", 2828, 1114],
+  ["X close", 3411, 130],
+]);
 // A non-kiosk screen must NOT be taken for a fabricator.
 const notKiosk = frame([
   ["INVENTORY", 200, 100],
@@ -61,6 +71,9 @@ check("shield: resolves to Palisade", shieldRead.kind === "fabricator" && shield
 const qdRead = classifyScreen(qd, CATALOG);
 check("QD: split anchor + 'Tie@' still classifies", qdRead.kind === "fabricator", qdRead.kind);
 check("QD: resolves to TS-2", qdRead.kind === "fabricator" && qdRead.item === CATALOG[1].item);
+
+const xl1Read = classifyScreen(xl1, CATALOG);
+check("QD: 'XL-I' (digit-1 misread) resolves to XL-1", xl1Read.kind === "fabricator" && xl1Read.item === CATALOG[2].item, xl1Read.kind === "fabricator" ? String(xl1Read.item) : xl1Read.kind);
 
 const notRead = classifyScreen(notKiosk, CATALOG);
 check("non-kiosk screen is NOT a fabricator", notRead.kind !== "fabricator", notRead.kind);

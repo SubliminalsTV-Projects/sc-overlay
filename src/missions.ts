@@ -154,6 +154,20 @@ export interface RecentBlueprint {
   /** ISO-8601 receipt time from the log. */
   at: string | null;
 }
+/** Per-hour earning rates for the idle screen. rep is dataset-reliable; aUEC is null when the
+ *  game logged no payout (calculated-reward missions) — the UI shows "—", never a false 0. */
+export interface EarningRates {
+  /** Rep gained in the last rolling 60 minutes of the current grind session. */
+  repLastHr: number;
+  /** Extrapolated rep/hr for the current grind session (null until ~1 min in). */
+  repPace: number | null;
+  /** aUEC in the last 60 min from missions with a KNOWN payout (null if none known). */
+  aUECLastHr: number | null;
+  /** Extrapolated aUEC/hr from known-payout missions this session (null if none known). */
+  aUECPace: number | null;
+  /** Completions counted in the current grind session (0 = nothing to rate yet). */
+  missions: number;
+}
 /** A blueprint unlocked during a mission — the completion card shows its item image. */
 export interface BlueprintReward {
   name: string;
@@ -205,6 +219,13 @@ export interface TrackedView {
    *  overlay's idle state when no mission is tracked. Backfilled from the logs. */
   recentMissions: RecentMission[];
   recentBlueprints: RecentBlueprint[];
+  /** Per-hour aUEC + rep rates for the idle screen. */
+  earnings: EarningRates;
+  /** The most-recently received blueprint (real-time receipts only), for the global
+   *  "Blueprint Received" pop card — shown regardless of which mission is displayed, so a
+   *  receipt is never missed when it lands on a same-named mission you aren't viewing.
+   *  null until a blueprint is received live this session. `at` = the log receipt time. */
+  justReceived: (BlueprintReward & { at: string }) | null;
   /** Present for ~30s after the on-screen mission completes (~8s for an abandon):
    *  a summary card (payout, duration, blueprints received — or just "abandoned")
    *  shown before moving to the next mission. null the rest of the time. */
@@ -411,8 +432,11 @@ const REWARD_WINDOW_MS = 6_000;
 /** Only show the completion card for a real-time completion — not the historical
  *  ones replayed when the app seeds from the log on startup. */
 const COMPLETION_FRESH_MS = 90_000;
+/** A gap between completions longer than this starts a fresh "grind session" for the idle
+ *  per-hour rates, so a break doesn't drag the extrapolated pace down. */
+const SESSION_GAP_MS = 20 * 60_000;
 /** How many completed missions to retain for the idle recent-activity list. */
-const MISSION_HISTORY_MAX = 20;
+const MISSION_HISTORY_MAX = 200; // keep enough for a full-hour rate even on a fast grind (recentMissions still shows only the top few)
 
 export interface MissionTrackerOptions {
   /** Directory holding blueprints.<changelist>.json (+ blueprints.latest.json). */
@@ -519,6 +543,9 @@ export class MissionTracker extends EventEmitter {
   private observed = new Set<string>();
   /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log). */
   private observedAt = new Map<string, string>();
+  /** The last blueprint received live this session (real-time only), for the global receipt
+   *  pop card. Persists in the view (client dedupes by `at`); overwritten by the next receipt. */
+  private justReceived: (BlueprintReward & { at: string }) | null = null;
   private overrides = new Map<string, boolean>();
 
   /** missionId -> info, built from accept + marker events. `acceptedAt` (log time,
@@ -794,6 +821,16 @@ export class MissionTracker extends EventEmitter {
         const isNew = !this.observed.has(ev.name);
         const dateChanged = this.noteReceiptTime(ev.name, ev.ts);
         if (isNew) this.observed.add(ev.name);
+        // Global "Blueprint Received" pop card — REAL-TIME receipts only (not the historical
+        // replay on startup), and independent of the displayed mission. Set before emitting so
+        // the broadcast view carries the resolved image. Gated by COMPLETION_FRESH_MS like the
+        // completion card so seeding the log at launch never pops a stale card.
+        if (isNew) {
+          const t = ev.ts ? Date.parse(ev.ts) : Date.now();
+          if (!Number.isFinite(t) || Date.now() - t < COMPLETION_FRESH_MS) {
+            this.justReceived = { ...this.blueprintReward(ev.name), at: ev.ts ?? new Date().toISOString() };
+          }
+        }
         if (isNew || dateChanged) {
           this.saveState();
           if (isNew) this.emit("collected", ev.name);
@@ -849,8 +886,13 @@ export class MissionTracker extends EventEmitter {
         : null;
     // Record to the persisted recent-mission history for BOTH real-time and
     // startup-replayed completions (the summary card below stays gated to real-time).
+    // Store the best-known payout: the live award, else the mission's FIXED dataset payout
+    // (min===max) resolved NOW while the mission is still accepted — so the idle aUEC/hr can
+    // count fixed-payout missions. Calculated-reward missions stay null (→ "—").
     if (kind === "completed") {
-      this.recordMissionComplete(missionId, title ?? info?.title ?? null, ts, aUEC);
+      const p = this.datasetMission(missionId)?.payout ?? null;
+      const fixed = p && p.min != null && p.min === p.max && p.max > 0 ? p.max : null;
+      this.recordMissionComplete(missionId, title ?? info?.title ?? null, ts, aUEC ?? fixed);
     }
     if (Date.now() - completedAtMs > COMPLETION_FRESH_MS) return; // historical replay — no card
     if (this.completion && this.completion.missionId === missionId) {
@@ -1237,6 +1279,51 @@ export class MissionTracker extends EventEmitter {
     else this.repWitnessed.set(e.giver, { scope: e.scope, sum: (cur?.sum ?? 0) + e.amount });
   }
 
+  /** Per-hour aUEC + rep for the idle screen, computed from the PERSISTED completion history
+   *  (so it survives app restarts and counts retroactively — the in-memory version reset every
+   *  relaunch). Each entry's rep is resolved from its mission title; aUEC is the logged award
+   *  (usually null now — the game stopped logging payouts, so it shows "—"). Two readouts: the
+   *  actual last rolling 60 min, and an extrapolated pace over the current grind session (the
+   *  most-recent contiguous run of completions with gaps < SESSION_GAP_MS). */
+  private earningRates(): EarningRates {
+    const now = Date.now();
+    const HOUR = 3_600_000;
+    const rows = this.missionHistory
+      .map((m) => ({ atMs: Date.parse(m.at), aUEC: m.aUEC, rep: (m.title ? this.repTitleIndex.get(normScreenTitle(m.title))?.amount : 0) ?? 0 }))
+      .filter((r) => Number.isFinite(r.atMs))
+      .sort((a, b) => b.atMs - a.atMs); // newest first
+    // Actual last rolling 60 minutes.
+    const within = rows.filter((r) => now - r.atMs <= HOUR);
+    const repLastHr = within.reduce((s, r) => s + r.rep, 0);
+    const aUECknown = within.filter((r) => r.aUEC != null);
+    const aUECLastHr = aUECknown.length ? aUECknown.reduce((s, r) => s + (r.aUEC ?? 0), 0) : null;
+    // Current grind session = the most-recent contiguous run (break on a > SESSION_GAP_MS gap).
+    const session: { atMs: number; aUEC: number | null; rep: number }[] = [];
+    for (const r of rows) {
+      if (session.length && session[session.length - 1].atMs - r.atMs > SESSION_GAP_MS) break;
+      session.push(r);
+    }
+    // Pace = your ACTIVE grind rate = session earnings ÷ the span you were completing (newest −
+    // oldest), so an idle stretch after the grind doesn't dilute it. Needs ≥2 to have a span.
+    let repPace: number | null = null, aUECPace: number | null = null;
+    if (session.length >= 2) {
+      const spanHr = Math.max((session[0].atMs - session[session.length - 1].atMs) / HOUR, 60_000 / HOUR);
+      repPace = Math.round(session.reduce((s, r) => s + r.rep, 0) / spanHr);
+      const known = session.filter((r) => r.aUEC != null);
+      aUECPace = known.length ? Math.round(known.reduce((s, r) => s + (r.aUEC ?? 0), 0) / spanHr) : null;
+    }
+    // Show the block while a grind is recent (last completion within SHOW_MS), even if the
+    // rolling 60 min has since emptied — so you still see your last grind's pace.
+    const SHOW_MS = 90 * 60_000;
+    return {
+      repLastHr: Math.round(repLastHr),
+      repPace,
+      aUECLastHr: aUECLastHr != null ? Math.round(aUECLastHr) : null,
+      aUECPace,
+      missions: rows.filter((r) => now - r.atMs <= SHOW_MS).length,
+    };
+  }
+
   /** Build the rep progress bar for the tracked mission's giver: estimate = max(inferred-
    *  rank floor, witnessed post-4.8 gains), placed on the scope's ladder. A lower bound —
    *  reads low until a higher-rank mission is offered (raising the floor) and re-anchors. */
@@ -1616,6 +1703,8 @@ export class MissionTracker extends EventEmitter {
       collectedTotal: this.observed.size + [...this.overrides.values()].filter(Boolean).length,
       recentMissions: this.recentMissions(),
       recentBlueprints: this.recentBlueprints(),
+      earnings: this.earningRates(),
+      justReceived: this.justReceived,
       completion: holdActive
         ? {
             title: this.completion!.title ?? mission?.title ?? tracked?.title ?? null,

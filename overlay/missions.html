@@ -396,6 +396,23 @@
   #miningWidget.moving #miningResize { display: grid; }
   #miningResize svg { width: 12px; height: 12px; display: block; }
 
+  /* ── Notepad widget (embedded iframe) ──────────────────────────────────────────
+     Local-only scratch notes. Same canvas-widget pattern as Mining, but flat (no
+     perspective tilt — text stays readable) and box-resized (drag the corner to grow
+     the box and see more text), not scale-zoomed. Geometry lives here; the iframe just
+     renders notepad.html?embedded=1 and persists notes via /api/notes itself. */
+  #notepadWidget { position: absolute; left: var(--nwx, 480px); top: var(--nwy, 60px); z-index: 20; }
+  #notepadFrame { display: block; width: var(--nww, 320px); height: var(--nwh, 380px); border: 0;
+    background: transparent; color-scheme: normal; }
+  #notepadMove { display: none; position: absolute; inset: 0; z-index: 50; cursor: move;
+    align-items: center; justify-content: center; background: rgba(var(--accent-rgb), 0.12); }
+  #notepadWidget.moving #notepadMove { display: flex; }
+  #notepadResize { display: none; position: absolute; right: -7px; bottom: -7px; width: 22px; height: 22px;
+    z-index: 51; cursor: nwse-resize; border-radius: 4px; border: 1px solid var(--handle);
+    background: rgba(8, 17, 26, 0.92); color: var(--handle); place-items: center; }
+  #notepadWidget.moving #notepadResize { display: grid; }
+  #notepadResize svg { width: 12px; height: 12px; display: block; }
+
   /* ── Global overlay-app chrome: a screen-anchored cog (top-right) that opens the in-overlay
        settings hub — one place for widget on/off, global appearance, and arrange. Lives in the
        shell (Blueprint canvas) so it stays even when the Blueprint panel itself is toggled off.
@@ -636,6 +653,28 @@
   .cc-stat { display: flex; flex-direction: column; line-height: 1.05; }
   .cc-val { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 18px; font-weight: 700; color: var(--gold); }
   .cc-lbl { font-size: 8.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan-dim); margin-top: 2px; }
+  /* Global "Blueprint Received" pop — a transient bottom banner that fires on ANY real-time
+     receipt regardless of the displayed mission, so a drop is never missed when it lands on a
+     same-named mission you aren't viewing. Auto-dismisses; click-through (pointer-events:none). */
+  .bp-pop { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 12;
+    display: flex; align-items: center; gap: 10px; padding: 8px 11px;
+    border: 1px solid var(--cyan); border-radius: 10px;
+    background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.20), var(--panel-solid));
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55), 0 0 16px rgba(var(--accent-rgb), 0.22);
+    opacity: 0; transform: translateY(8px) scale(0.98); pointer-events: none;
+    transition: opacity 0.28s ease, transform 0.28s ease; }
+  .bp-pop.show { opacity: 1; transform: translateY(0) scale(1); }
+  .bp-pop-thumb { width: 44px; height: 44px; flex: none; border-radius: 7px; overflow: hidden;
+    background: rgba(0, 0, 0, 0.28); display: grid; place-items: center; border: 1px solid var(--divider); }
+  .bp-pop-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .bp-pop-thumb.noimg img { display: none; }
+  .bp-pop-thumb.noimg::after { content: "◆"; color: var(--cyan); font-size: 17px; }
+  .bp-pop-txt { min-width: 0; }
+  .bp-pop-lbl { font-family: var(--sans); font-size: 8.5px; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--cyan-bright); }
+  .bp-pop-name { font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--gold);
+    margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
   /* Unlocked-blueprint reveal: the actual item render + name for each drop.
      Column count = min(drops, 4); tiles fill their cell, so fewer drops = bigger
      images. A single drop gets the full-width hero treatment (.single). */
@@ -752,6 +791,16 @@
   .ambig { margin: 8px 3px 2px; padding: 6px 9px; border-radius: 3px; font-size: 10px; line-height: 1.35;
     color: var(--gold); border: 1px solid rgba(var(--value-rgb), 0.35); background: rgba(var(--value-rgb), 0.08); }
   .rewnote { margin-top: 7px; padding: 0 3px; font-size: 10.5px; color: var(--faint); }
+
+  /* Idle per-hour rates (aUEC + rep): last rolling 60 min (actual) + extrapolated session pace. */
+  .rates { margin-bottom: 13px; }
+  .rt-sub { color: var(--faint); font-weight: 500; letter-spacing: 0.04em; text-transform: none; }
+  .rt-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 5px 14px; margin-top: 7px; align-items: baseline; }
+  .rt-col { font-family: var(--sans); font-size: 8px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); text-align: right; }
+  .rt-row { font-family: var(--sans); font-size: 11px; color: var(--cyan-text); }
+  .rt-v { font-family: var(--mono); font-size: 13px; color: var(--gold); text-align: right; white-space: nowrap; }
+  .rt-v.rt-pace { color: var(--cyan-text); font-size: 12px; opacity: 0.8; }
+  .rt-na { color: var(--faint); }
 
   /* Idle recent-activity: last completed missions + received blueprints (with times). */
   .recent { display: flex; flex-direction: column; gap: 11px; padding: 2px 1px; position: relative; z-index: 2; }
@@ -892,6 +941,14 @@
     <img class="bolt br" alt="" src="anvil-screw-br.webp">
     <div id="moveBanner"><div class="movebox">⠿ Drag to move · corner to resize<button id="moveDone">Done</button></div></div>
     <div id="resizeHandle" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
+    <!-- Global "Blueprint Received" pop — fires on any real-time receipt regardless of the mission shown. -->
+    <div id="bpPop" class="bp-pop">
+      <span class="bp-pop-thumb"><img id="bpPopImg" alt=""></span>
+      <div class="bp-pop-txt">
+        <div class="bp-pop-lbl">✓ Blueprint Received</div>
+        <div class="bp-pop-name" id="bpPopName"></div>
+      </div>
+    </div>
     <div class="head">
       <div id="grip" title="Move overlay"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg></div>
       <div id="cog" title="Overlay settings">⚙</div>
@@ -946,6 +1003,7 @@
     <div class="hub-sec">Widgets</div>
     <label class="hub-row tog"><input type="checkbox" id="wgBlueprint" checked /> Blueprint tracker</label>
     <label class="hub-row tog"><input type="checkbox" id="wgMining" /> Mining Assistant</label>
+    <label class="hub-row tog"><input type="checkbox" id="wgNotepad" /> Notepad</label>
     <div class="hub-sec">Global appearance</div>
     <div class="hub-row col"><label>Theme</label>
       <select id="hubTheme">
@@ -970,6 +1028,7 @@
     <div class="hub-sec">Layout</div>
     <button type="button" id="hubArrange" class="hub-btn primary">⠿ Arrange widgets</button>
     <button type="button" id="hubSettings" class="hub-btn">⚙ Open full settings…</button>
+    <button type="button" id="hubWhatsNew" class="hub-btn">✦ Patch notes</button>
   </div>
 
   <!-- Full-screen arrange-mode indicator (shell only). Click-through except its banner. -->
@@ -983,6 +1042,14 @@
     <iframe id="miningFrame" title="Mining Assistant" allow="autoplay" scrolling="no"></iframe>
     <div id="miningMove"><div class="movebox">⠿ Drag to move · corner to resize<button type="button" id="miningMoveDone">Done</button></div></div>
     <div id="miningResize" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
+  </div>
+
+  <!-- Notepad widget — same-origin iframe (notepad.html?embedded=1). THIS canvas owns its
+       position/size, drag/resize, and cursor hit-testing; the iframe just renders + saves notes. -->
+  <div id="notepadWidget" style="display:none">
+    <iframe id="notepadFrame" title="Notepad" scrolling="no"></iframe>
+    <div id="notepadMove"><div class="movebox">⠿ Drag to move · corner to resize<button type="button" id="notepadMoveDone">Done</button></div></div>
+    <div id="notepadResize" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>
   </div>
 
   <!-- Patch notes: a center-screen modal shown once per version on launch (must be closed). -->
@@ -1038,6 +1105,7 @@
   // Owned blueprints are hidden by default (list leads with what you can still GET); the
   // "Collected" disclosure reveals them. Session-scoped: re-hides on restart (= the default).
   let poolShowCollected = false;
+  let physOpen = false; // Physical Rewards: reveal the ticked-off (Received) items to un-tick a misclick
   let poolKey = "";
   // Whether the "Mission Info" drawer (faction/type/rep) is expanded. Open by default
   // (still collapsible via the header) so it's never hidden — most useful when the
@@ -1092,6 +1160,7 @@
     const root = document.documentElement;
     const qTheme = new URLSearchParams(location.search).get("theme");
     root.setAttribute("data-theme", qTheme || PREFS.theme || "mobiglas");
+    if (typeof syncNotepadTheme === "function") syncNotepadTheme(); // retint the embedded notepad iframe (same-origin)
     // Server-resolved entitlement + trial state (a ?premium/?demo query pins them for previews).
     const q2 = new URLSearchParams(location.search);
     if (!q2.has("premium")) root.classList.toggle("premium", !!PREFS.premium);
@@ -1126,11 +1195,26 @@
     return { date: date + " " + clock, rel };
   }
 
-  // Idle recent-activity block: last few completed missions + received blueprints.
+  // Idle per-hour rates: aUEC + rep, "last 60m" (actual) and extrapolated session "pace".
+  // aUEC shows "—" when unknown (calculated-reward missions log no payout) — never a false 0.
+  function ratesHtml(v) {
+    const e = v.earnings;
+    if (!e || !e.missions) return ""; // nothing completed this grind session yet
+    const fmt = (n) => (n == null ? '<span class="rt-na">—</span>' : Number(n).toLocaleString());
+    return '<div class="rates"><div class="ra-h">Per hour <span class="rt-sub">· this grind</span></div>' +
+      '<div class="rt-grid">' +
+        '<div></div><div class="rt-col">last 60m</div><div class="rt-col">pace</div>' +
+        '<div class="rt-row">Reputation</div><div class="rt-v">' + fmt(e.repLastHr) + '</div><div class="rt-v rt-pace">' + fmt(e.repPace) + '</div>' +
+        '<div class="rt-row">aUEC</div><div class="rt-v">' + fmt(e.aUECLastHr) + '</div><div class="rt-v rt-pace">' + fmt(e.aUECPace) + '</div>' +
+      '</div></div>';
+  }
+
+  // Idle recent-activity block: per-hour rates + last few completed missions + received blueprints.
   function recentActivityHtml(v) {
     const missions = v.recentMissions || [];
     const blueprints = v.recentBlueprints || [];
-    if (!missions.length && !blueprints.length) return "";
+    const rates = ratesHtml(v);
+    if (!missions.length && !blueprints.length && !rates) return "";
     function whenCell(iso) {
       const w = fmtWhen(iso);
       if (!w) return '<span class="ra-when"></span>';
@@ -1138,7 +1222,7 @@
       const label = PREFS.timeRelative ? w.rel : w.date;
       return '<span class="ra-when"><span class="ra-date">' + label + "</span></span>";
     }
-    let html = '<div class="recent">';
+    let html = '<div class="recent">' + rates;
     if (missions.length) {
       html += '<div class="ra-sec"><div class="ra-h">Recent Missions</div><ul class="ra-list">';
       for (const m of missions) {
@@ -1157,8 +1241,30 @@
     return html + "</div>";
   }
 
+  // Global "Blueprint Received" pop — driven by the view's justReceived (real-time receipts only),
+  // deduped by receipt time, with a client-side freshness guard so an SSE reconnect / page reload
+  // carrying a stale justReceived doesn't re-pop. Fires regardless of which mission is displayed.
+  let lastBpPopAt = null;
+  let bpPopTimer = null;
+  function maybeBpPop(jr) {
+    if (!jr || !jr.at || jr.at === lastBpPopAt) return;
+    lastBpPopAt = jr.at;
+    const t = Date.parse(jr.at);
+    if (isFinite(t) && Date.now() - t > 120000) return; // stale (reconnect/reload) — don't pop
+    const el = $("bpPop"); if (!el) return;
+    const thumb = el.querySelector(".bp-pop-thumb"), img = $("bpPopImg");
+    $("bpPopName").textContent = jr.name || "Blueprint";
+    thumb.classList.remove("noimg");
+    if (jr.image) { img.onerror = () => thumb.classList.add("noimg"); img.src = jr.image; }
+    else { thumb.classList.add("noimg"); img.removeAttribute("src"); }
+    el.classList.add("show");
+    clearTimeout(bpPopTimer);
+    bpPopTimer = setTimeout(() => el.classList.remove("show"), 6500);
+  }
+
   function render(v) {
     current = v;
+    maybeBpPop(v.justReceived);
     if (v.prefs) { PREFS = v.prefs; applyPrefs(); }
     isLive = !!v.live; updateDiamond();
     const panel = $("panel");
@@ -1461,24 +1567,27 @@
 
   // Payout line + ITEM rewards (actual items — not blueprints; display-only).
   function rewardsHtml(v) {
-    const parts = [];
-    // Payout moved into the Mission Info drawer (as a "Reward" row); here we only render
-    // the guaranteed ITEM rewards (actual items, not blueprints).
+    // Physical item rewards (actual items/ships, NOT blueprints). The log never reports item
+    // awards, so ticking is MANUAL + local-only — it never touches the blueprint count or sync.
+    // Ticking one confirms you got it and tucks it under the "Received" disclosure so it leaves
+    // the main view (recoverable — expand to un-tick a misclick).
     const items = v.itemRewards || [];
-    if (items.length) {
-      // Same divider + row treatment as the blueprint pool — these are things you
-      // acquire too, so they get a tick box. Ticking is MANUAL and local-only: the log
-      // never reports item awards, and these never touch the blueprint count or sync.
-      parts.push('<div class="poolhead">Guaranteed rewards<span class="ph-sub">always awarded</span></div>');
-      for (const it of items) {
-        parts.push('<div class="row ' + (it.owned ? "owned" : "") + '" data-item="' + escapeAttr(it.name) + '" title="Click to tick off (manual)">' +
-          '<span class="mark">' + (it.owned ? "✔" : "") + "</span>" +
-          '<span class="name">' + escapeHtml(it.name) + "</span>" +
-          (it.amount > 1 ? '<span class="chance">×' + it.amount + "</span>" : "") +
-          "</div>");
-      }
+    if (!items.length) return "";
+    const need = items.filter((i) => !i.owned);
+    const got = items.filter((i) => i.owned);
+    const itemRow = (it) =>
+      '<div class="row ' + (it.owned ? "owned" : "") + '" data-item="' + escapeAttr(it.name) + '" title="Manual — tick it once it\'s in your hangar">' +
+        '<span class="mark">' + (it.owned ? "✔" : "") + "</span>" +
+        '<span class="name">' + escapeHtml(it.name) + "</span>" +
+        (it.amount > 1 ? '<span class="chance">×' + it.amount + "</span>" : "") +
+      "</div>";
+    const parts = ['<div class="poolhead">Physical Rewards<span class="ph-sub">not a blueprint · tick when you get it</span></div>'];
+    for (const it of need) parts.push(itemRow(it));
+    if (got.length) {
+      parts.push('<div class="grphead" data-grp="gotitems"><span class="car">' + (physOpen ? "▾" : "▸") + '</span>Received<span class="gcnt">' + got.length + "</span></div>");
+      if (physOpen) for (const it of got) parts.push(itemRow(it));
     }
-    return parts.length ? '<div class="rew">' + parts.join("") + "</div>" : "";
+    return '<div class="rew">' + parts.join("") + "</div>";
   }
 
   // Mission-complete summary card: payout, time taken, blueprints received. Shown
@@ -1585,6 +1694,12 @@
     // The "Collected" disclosure reveals/hides the owned blueprints.
     if (e.target.closest('.grphead[data-grp="collected"]')) {
       poolShowCollected = !poolShowCollected;
+      if (current) render(current);
+      return;
+    }
+    // The Physical Rewards "Received" disclosure reveals/hides the ticked-off items.
+    if (e.target.closest('.grphead[data-grp="gotitems"]')) {
+      physOpen = !physOpen;
       if (current) render(current);
       return;
     }
@@ -1803,6 +1918,104 @@
     $("miningMoveDone").addEventListener("click", () => window.overlayApi.endMove());
   }
 
+  // ── Notepad widget (embedded iframe hosted on this canvas) ─────────────────────
+  // We own its geometry (x/y/w/h → CSS vars on #notepadWidget) and its drag/resize; the iframe
+  // (notepad.html?embedded=1) renders + persists notes via /api/notes and talks back same-origin
+  // via window.__notepadHost. Visibility is driven by the shell (main.cjs) — see onNotepadVisible —
+  // so the tray and hub toggle stay one source of truth. Flat + box-resized (not tilted/scaled like
+  // mining) so note text stays readable and the box can grow to show more.
+  let nwidget = { x: null, y: null, w: null, h: null, visible: false };
+  let notepadFrameArmed = false;
+  function applyNotepadFrame() {
+    const w = $("notepadWidget"); if (!w) return;
+    const ox = canvasInfo?.px || 0, oy = canvasInfo?.py || 0; // primary-relative + primary's canvas offset
+    if (nwidget.x != null) w.style.setProperty("--nwx", (nwidget.x + ox) + "px");
+    if (nwidget.y != null) w.style.setProperty("--nwy", (nwidget.y + oy) + "px");
+    if (nwidget.w != null) w.style.setProperty("--nww", nwidget.w + "px");
+    if (nwidget.h != null) w.style.setProperty("--nwh", nwidget.h + "px");
+  }
+  function defaultNotepadPos() { nwidget.x = 480; nwidget.y = 60; } // primary-relative; applyNotepadFrame() adds the offset
+  function persistNotepadWidget() { window.overlayApi?.saveWidget?.("notepad", { x: nwidget.x, y: nwidget.y, w: nwidget.w, h: nwidget.h }); }
+  function ensureNotepadFrame() {
+    if (notepadFrameArmed) return;
+    const f = $("notepadFrame"); if (!f) return;
+    const theme = document.documentElement.getAttribute("data-theme") || (PREFS && PREFS.theme) || "mobiglas";
+    const lite = document.documentElement.classList.contains("amd-lite") ? "&lite=1" : "";
+    f.src = "/notepad.html?embedded=1&theme=" + encodeURIComponent(theme) + lite;
+    notepadFrameArmed = true;
+  }
+  function setNotepadVisible(on) {
+    const w = $("notepadWidget"); if (!w) return;
+    nwidget.visible = !!on;
+    if (on) { ensureNotepadFrame(); w.style.display = ""; applyNotepadFrame(); }
+    else {
+      try { $("notepadFrame")?.contentWindow?.__notepadExitTyping?.(); } catch { /* iframe gone */ } // don't leave typing mode stranded
+      w.style.display = "none"; w.classList.remove("moving");
+    }
+  }
+  // Keep the embedded notepad's theme in sync when the overlay retints (same-origin; no SSE).
+  function syncNotepadTheme() {
+    if (!notepadFrameArmed) return;
+    const f = $("notepadFrame"); if (!f) return;
+    try {
+      const doc = f.contentDocument;
+      const theme = document.documentElement.getAttribute("data-theme") || "mobiglas";
+      if (doc && doc.documentElement) doc.documentElement.setAttribute("data-theme", theme);
+    } catch { /* iframe not ready yet — it applies ?theme= at load, so it's already correct */ }
+  }
+  // Same-origin bridge the embedded notepad page calls via window.parent.__notepadHost.
+  window.__notepadHost = {
+    ready: () => { applyNotepadFrame(); syncNotepadTheme(); },
+    summonCog: () => summonGlobalCog(),
+    persist: () => persistNotepadWidget(),
+    // Typing mode: the shell grabs keyboard focus + suspends the interact key so the note field
+    // can be typed into in-game (see main.cjs). editStart/editEnd toggle it.
+    editStart: () => window.overlayApi?.notepadEditing?.(true),
+    editEnd: () => window.overlayApi?.notepadEditing?.(false),
+  };
+  window.overlayApi?.onNotepadVisible?.((s) => { if (s) setNotepadVisible(!!s.on); });
+  // The shell says the (held) interact key is released → safe to focus the note field now.
+  window.overlayApi?.onNotepadFocus?.(() => { try { $("notepadFrame")?.contentWindow?.__notepadFocus?.(); } catch { /* iframe gone */ } });
+
+  if (CANVAS) {
+    // Load this widget's saved layout (shares widgets.json under key "notepad").
+    (async () => {
+      let nsaved = null;
+      try { nsaved = (await window.overlayApi?.getWidgets?.())?.["notepad"] || null; } catch { /* none */ }
+      const q = new URLSearchParams(location.search);
+      if (q.has("nwx") || q.has("nwy") || q.has("nww") || q.has("nwh")) {
+        nsaved = { ...(nsaved || {}) };
+        if (q.has("nwx")) nsaved.x = +q.get("nwx");
+        if (q.has("nwy")) nsaved.y = +q.get("nwy");
+        if (q.has("nww")) nsaved.w = +q.get("nww");
+        if (q.has("nwh")) nsaved.h = +q.get("nwh");
+      }
+      if (nsaved) nwidget = { ...nwidget, ...nsaved };
+      if (nwidget.x == null || nwidget.y == null) defaultNotepadPos();
+      applyNotepadFrame();
+      if (q.has("notepad")) setNotepadVisible(true); // headless-test the notepad widget
+    })();
+    // Move + resize (arrange mode). The move banner doubles as a drag shield over the iframe.
+    $("notepadMove").addEventListener("pointerdown", (e) => {
+      if (e.target.closest("#notepadMoveDone") || e.target.closest("#notepadResize")) return;
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY, ox = nwidget.x, oy = nwidget.y;
+      dragPointer((ev) => { nwidget.x = ox + (ev.clientX - sx); nwidget.y = oy + (ev.clientY - sy); applyNotepadFrame(); }, persistNotepadWidget);
+    });
+    $("notepadResize").addEventListener("pointerdown", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const sx = e.clientX, sy = e.clientY;
+      const ow = nwidget.w != null ? nwidget.w : ($("notepadFrame").offsetWidth || 320);
+      const oh = nwidget.h != null ? nwidget.h : ($("notepadFrame").offsetHeight || 380);
+      dragPointer((ev) => {
+        nwidget.w = Math.max(220, Math.min(900, ow + (ev.clientX - sx)));
+        nwidget.h = Math.max(160, Math.min(900, oh + (ev.clientY - sy)));
+        applyNotepadFrame();
+      }, persistNotepadWidget);
+    });
+    $("notepadMoveDone").addEventListener("click", () => window.overlayApi.endMove());
+  }
+
   if (CANVAS) {
     $("panel").classList.add("canvas");
     document.body.classList.add("canvas");
@@ -1828,6 +2041,9 @@
       if (q.has("cogopen")) { $("cogMenu").classList.add("open"); $("cog").classList.add("open"); } // headless-test the widget cog
       if (q.has("whatsnew")) { $("wnVer").textContent = "v0.1.31"; $("wnList").innerHTML = '<div class="wn-group"><div class="wn-gver">v0.1.31</div><ul><li>Newest note one</li><li>Newest note two</li></ul></div><div class="wn-group"><div class="wn-gver">v0.1.30</div><ul><li>Older note</li></ul></div>'; $("whatsnew").classList.add("show"); } // headless-test the patch-notes modal
       if (q.has("cog")) $("globalCog").classList.add("show"); // headless-test the summoned cog
+      if (q.has("bppop")) maybeBpPop({ name: "MH1 Multi-Tool", image: null, at: new Date().toISOString() }); // headless-test the blueprint-received pop
+      if (q.has("rates")) { $("panel").classList.remove("empty"); document.body.classList.remove("empty"); const el = $("pool"); if (el) el.innerHTML = recentActivityHtml({ earnings: { repLastHr: 1240, repPace: 1480, aUECLastHr: null, aUECPace: null, missions: 6 }, recentMissions: [{ title: "Blackbox Retrieval Very Dangerous", aUEC: null, at: new Date().toISOString() }], recentBlueprints: [{ name: "MH1 Multi-Tool", at: new Date().toISOString() }] }); } // headless-test the idle per-hour rates
+      if (q.has("phys")) { $("panel").classList.remove("empty"); document.body.classList.remove("empty"); const el = $("pool"); if (el) el.innerHTML = rewardsHtml({ itemRewards: [{ name: 'CF-227 Badger "Hazard-Zone" Repeater', amount: 2, owned: false }, { name: "Drake Golem Alliance", amount: 1, owned: false }, { name: "People's Alliance Hat", amount: 1, owned: true }] }); } // headless-test Physical Rewards
       if (q.has("hub")) { $("globalCog").classList.add("show", "open"); $("hub").classList.add("open"); } // headless-test the hub
     })();
 
@@ -1878,7 +2094,7 @@
         $("hubTheme").value = c.theme || "mobiglas";
       }).catch(() => { /* fall back to whatever's in the inputs */ });
       $("wgBlueprint").checked = !bpHidden;
-      window.overlayApi.widgetStates?.().then((s) => { if (s) $("wgMining").checked = !!s.mining; });
+      window.overlayApi.widgetStates?.().then((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; } });
       window.overlayApi.setModal?.(true); window.overlayApi.hover?.(true);
     }
     gc.addEventListener("click", (e) => { e.stopPropagation(); setHub(!hub.classList.contains("open")); });
@@ -1888,13 +2104,16 @@
     // Binding chart is hotkey-only (nobody keeps it visible), so it's not a hub toggle.
     $("wgBlueprint").addEventListener("change", () => setBlueprintVisible($("wgBlueprint").checked));
     $("wgMining").addEventListener("change", () => window.overlayApi.setMining($("wgMining").checked));
-    // Stay in sync if Mining is toggled elsewhere (tray) while the hub is open.
-    window.overlayApi.onWidgetStates?.((s) => { if (s) $("wgMining").checked = !!s.mining; });
+    $("wgNotepad").addEventListener("change", () => window.overlayApi.setNotepad($("wgNotepad").checked));
+    // Stay in sync if a widget is toggled elsewhere (tray) while the hub is open.
+    window.overlayApi.onWidgetStates?.((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; } });
     // Global appearance — persisted config (also broadcasts to OBS sources).
     $("hubTheme").addEventListener("change", () => setPref({ theme: $("hubTheme").value }));
     // Layout
     $("hubArrange").addEventListener("click", (e) => { e.stopPropagation(); window.overlayApi.arrange(true); setHub(false); });
     $("hubSettings").addEventListener("click", (e) => { e.stopPropagation(); window.overlayApi.openSettings(); setHub(false); });
+    // Re-open the "What's new" patch-notes card (force = ignore the per-version seen flag).
+    $("hubWhatsNew").addEventListener("click", (e) => { e.stopPropagation(); setHub(false); window.__showWhatsNew?.(true); });
   }
 
   // Electron overlay: report hover so the shell makes the HUD clickable only while
@@ -1917,6 +2136,9 @@
       // The mining widget joins arrange mode too (only when it's actually shown).
       const mw = $("miningWidget");
       if (mw) mw.classList.toggle("moving", on && mw.style.display !== "none");
+      // The notepad widget joins arrange mode too (only when it's actually shown).
+      const nw = $("notepadWidget");
+      if (nw) nw.classList.toggle("moving", on && nw.style.display !== "none");
     });
     $("grip").addEventListener("click", () => window.overlayApi.beginMove?.());
     $("moveDone").addEventListener("click", () => window.overlayApi.endMove());
@@ -1934,7 +2156,7 @@
     if (window.overlayApi.reportRegions) {
       // #miningWidget: its iframe is sized snugly to the mining panel by the embedded page, so its
       // rect ≈ the visible widget. display:none (hidden) → 0-size → filtered out below.
-      const RSEL = "#panel, #globalCog, #hub, #cogMenu, #whatsnew, #arrangeScrim .ab, #miningWidget";
+      const RSEL = "#panel, #globalCog, #hub, #cogMenu, #whatsnew, #arrangeScrim .ab, #miningWidget, #notepadWidget";
       const reportRegions = () => {
         const rects = [];
         document.querySelectorAll(RSEL).forEach((el) => {
@@ -1947,33 +2169,48 @@
       reportRegions();
     }
 
-    // "What's new" card — show once per new version. Hover-interactive (like the panel)
-    // and flagged as a modal so it stays clickable to close even when the HUD is locked.
-    (async () => {
+    // "What's new" card. Auto-shows once per new version on launch AND is re-openable any time
+    // from the hub's "Patch notes" button (force=true ignores the per-version seen flag).
+    // Hover-interactive + flagged as a modal so it stays clickable to close even when locked.
+    let wnVersion = null;
+    const WN_MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const wnP2 = (n) => String(n).padStart(2, "0");
+    const wnFmtUTC = (iso) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      return WN_MON[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear() + " · " + wnP2(d.getUTCHours()) + ":" + wnP2(d.getUTCMinutes()) + " UTC";
+    };
+    const wnClose = async () => {
+      if (wnVersion && $("wnDontShow").checked) {
+        try { await fetch("/api/changelog-seen?v=" + encodeURIComponent(wnVersion), { method: "POST" }); } catch { /* best-effort */ }
+      }
+      $("whatsnew").classList.remove("show");
+      window.overlayApi.setModal?.(false);
+      window.overlayApi.hover(false);
+    };
+    async function showWhatsNew(force) {
       try {
         const version = await window.overlayApi.getVersion?.();
         if (!version) return;
+        wnVersion = version;
         const data = await (await fetch("/api/changelog?v=" + encodeURIComponent(version))).json();
         const entries = (Array.isArray(data.entries) ? data.entries : []).filter((e) => Array.isArray(e.notes) && e.notes.length);
-        if (data.seen || !entries.length) return;
+        if (!entries.length) return;
+        if (!force && data.seen) return; // auto-show respects the seen flag; the hub button forces it
         const card = $("whatsnew");
+        // Center on the PRIMARY monitor. The launch auto-show can win the race against the async
+        // canvas-info fetch, leaving --prim-* at their full-canvas defaults (100%/0) so the card
+        // straddles both monitors. Ensure canvas-info is loaded + the vars applied before showing.
+        if (!canvasInfo) { try { canvasInfo = await window.overlayApi?.getCanvasInfo?.() || null; } catch { /* single-monitor */ } }
+        applyCanvasVars();
         // Header chip = newest version; body groups the last few versions so a returning user
         // sees everything they missed across our fast patches, not just the latest.
         $("wnVer").textContent = "v" + (entries[0].version || version);
-        // Release date/time in UTC (Sub ships multiple times a day, so the time matters).
-        const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-        const p2 = (n) => String(n).padStart(2, "0");
-        const fmtUTC = (iso) => {
-          if (!iso) return "";
-          const d = new Date(iso);
-          if (isNaN(d.getTime())) return "";
-          return MON[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear() + " · " + p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()) + " UTC";
-        };
         // Newest version is expanded; older ones (2..5) are collapsed <details> — click to expand.
-        // Keeps the card short by default while still letting a returning user catch up on all of them.
         $("wnList").innerHTML = entries.map((e, i) => {
           const bullets = "<ul>" + e.notes.map((n) => "<li>" + escapeHtml(n) + "</li>").join("") + "</ul>";
-          const dt = fmtUTC(e.date);
+          const dt = wnFmtUTC(e.date);
           const head = "v" + escapeHtml(e.version) + (dt ? ' <span class="wn-date">' + dt + "</span>" : "");
           return i === 0
             ? '<div class="wn-group"><div class="wn-gver">' + head + "</div>" + bullets + "</div>"
@@ -1981,21 +2218,16 @@
         }).join("");
         card.classList.add("show");
         window.overlayApi.setModal?.(true);
-        let wnLeaveT;
-        card.addEventListener("mouseenter", () => { clearTimeout(wnLeaveT); window.overlayApi.hover(true); });
-        card.addEventListener("mouseleave", () => { wnLeaveT = setTimeout(() => window.overlayApi.hover(false), 150); });
-        const close = async () => {
-          if ($("wnDontShow").checked) {
-            try { await fetch("/api/changelog-seen?v=" + encodeURIComponent(version), { method: "POST" }); } catch { /* best-effort */ }
-          }
-          card.classList.remove("show");
-          window.overlayApi.setModal?.(false);
-          window.overlayApi.hover(false);
-        };
-        $("wnX").addEventListener("click", close);
-        $("wnCloseBtn").addEventListener("click", close);
       } catch { /* changelog is best-effort */ }
-    })();
+    }
+    // Close + hover wiring (attached once; the hub button re-opens the same card).
+    $("wnX").addEventListener("click", wnClose);
+    $("wnCloseBtn").addEventListener("click", wnClose);
+    { let wnLeaveT; const card = $("whatsnew");
+      card.addEventListener("mouseenter", () => { clearTimeout(wnLeaveT); window.overlayApi.hover(true); });
+      card.addEventListener("mouseleave", () => { wnLeaveT = setTimeout(() => window.overlayApi.hover(false), 150); }); }
+    window.__showWhatsNew = showWhatsNew; // reachable from the hub button (different block scope)
+    showWhatsNew(false); // auto-show on launch
   }
 
   // Filter bar: click a lit tab to filter the pool to that category; click it again
