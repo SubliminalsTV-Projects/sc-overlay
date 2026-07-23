@@ -909,8 +909,8 @@
     };
     es.onerror = () => { es.close(); setTimeout(connect, 2000); };
   }
-  // Opening the window arms the screen reader (refinery + signature) so it starts watching.
-  fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ miningAssistant: true }) }).catch(() => {});
+  // Scanning is controlled by the Electron shell based on widget visibility.
+  // Do not auto-enable it from iframe load (the frame can be loaded while hidden).
   connect();
 </script>
 </body>

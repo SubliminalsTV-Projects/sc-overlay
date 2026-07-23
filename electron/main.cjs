@@ -392,6 +392,9 @@ function setMiningVisible(on, opts) {
   // the next scan/refinery read the player didn't ask to see.
   if (!on && opts.manual) miningAutoSuppress = Date.now() + 90000;
   sendMiningVisible({ on });
+  // Scan only while the Mining Assistant widget is actually open. This disables
+  // OCR/signature polling when the widget is closed.
+  postConfig({ miningAssistant: on });
   // Remember open/closed for next launch — but an AUTO-SHOW pop (persist:false) must NOT make
   // mining permanently "open"; only an explicit user open/close persists.
   if (opts.persist !== false) postConfig({ miningOpen: on });
@@ -860,6 +863,8 @@ if (!app.requestSingleInstanceLock()) {
       miningArm = !miningVisible && c.miningAutoShow === true;
       notepadVisible = c.notepadOpen === true;
     } catch { /* default off */ }
+    // Keep capture gating aligned on launch: closed mining widget => no mining scan.
+    postConfig({ miningAssistant: miningVisible });
     // Opt-in fabricator screen-capture loop (config.fabCapture). No-op until enabled.
     startFabCapture({
       port: PORT,
