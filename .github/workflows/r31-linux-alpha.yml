@@ -30,20 +30,26 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/r31-linux /tmp/r31-core
-          decode_parts() {
-            local pattern="$1"
-            local output="$2"
-            : > "$output"
-            local found=0
-            for part in $pattern; do
-              [[ -f "$part" ]] || continue
-              found=1
-              tr -d '\r\n\t ' < "$part" | base64 --decode >> "$output"
-            done
-            (( found == 1 )) || { echo "No payload chunks matched: $pattern" >&2; return 1; }
-          }
-          decode_parts 'linux-port/payload/part-*' /tmp/r31-linux.tar.gz
-          decode_parts 'linux-port/core/part-*' /tmp/r31-core.tar.gz
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import glob
+          import re
+
+          def decode_parts(pattern: str, output: str) -> None:
+              parts = sorted(glob.glob(pattern))
+              if not parts:
+                  raise SystemExit(f"No payload chunks matched: {pattern}")
+              encoded = "".join(Path(part).read_text(encoding="utf-8") for part in parts)
+              encoded = re.sub(r"[^A-Za-z0-9+/=]", "", encoded)
+              encoded += "=" * (-len(encoded) % 4)
+              decoded = base64.b64decode(encoded, validate=False)
+              Path(output).write_bytes(decoded)
+              print(f"Decoded {len(parts)} parts from {pattern}: {len(encoded)} base64 chars -> {len(decoded)} bytes")
+
+          decode_parts("linux-port/payload/part-*", "/tmp/r31-linux.tar.gz")
+          decode_parts("linux-port/core/part-*", "/tmp/r31-core.tar.gz")
+          PY
           gzip -t /tmp/r31-linux.tar.gz
           gzip -t /tmp/r31-core.tar.gz
           tar -xzf /tmp/r31-linux.tar.gz -C /tmp/r31-linux
