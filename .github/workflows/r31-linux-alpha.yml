@@ -30,8 +30,22 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/r31-linux /tmp/r31-core
-          cat linux-port/payload/part-* | base64 --decode > /tmp/r31-linux.tar.gz
-          cat linux-port/core/part-* | base64 --decode > /tmp/r31-core.tar.gz
+          decode_parts() {
+            local pattern="$1"
+            local output="$2"
+            : > "$output"
+            local found=0
+            for part in $pattern; do
+              [[ -f "$part" ]] || continue
+              found=1
+              tr -d '\r\n\t ' < "$part" | base64 --decode >> "$output"
+            done
+            (( found == 1 )) || { echo "No payload chunks matched: $pattern" >&2; return 1; }
+          }
+          decode_parts 'linux-port/payload/part-*' /tmp/r31-linux.tar.gz
+          decode_parts 'linux-port/core/part-*' /tmp/r31-core.tar.gz
+          gzip -t /tmp/r31-linux.tar.gz
+          gzip -t /tmp/r31-core.tar.gz
           tar -xzf /tmp/r31-linux.tar.gz -C /tmp/r31-linux
           tar -xzf /tmp/r31-core.tar.gz -C /tmp/r31-core
           test -s /tmp/r31-linux/electron/window-manager.cjs
