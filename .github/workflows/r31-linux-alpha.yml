@@ -1,6 +1,9 @@
 name: Build r31 Linux alpha
 
 on:
+  push:
+    branches:
+      - integration/upstream-0.1.36-arch-fedora-r31
   pull_request:
     branches: [main]
   workflow_dispatch:
