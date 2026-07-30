@@ -1,0 +1,218 @@
+name: Build r31 Linux alpha
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-arch-alpha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Reconstruct Linux port payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r31-linux /tmp/r31-core
+          cat linux-port/payload/part-* | base64 --decode > /tmp/r31-linux.tar.gz
+          cat linux-port/core/part-* | base64 --decode > /tmp/r31-core.tar.gz
+          tar -xzf /tmp/r31-linux.tar.gz -C /tmp/r31-linux
+          tar -xzf /tmp/r31-core.tar.gz -C /tmp/r31-core
+          test -s /tmp/r31-linux/electron/window-manager.cjs
+          test -s /tmp/r31-core/electron/main.cjs
+
+      - name: Apply Linux core changes onto upstream 0.1.36
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=5b70715f0958f01ab5d0b79124760c016c9410cd
+          mkdir -p /tmp/r31-base /tmp/r31-conflicts
+          merge_one() {
+            local file="$1"
+            mkdir -p "/tmp/r31-base/$(dirname "$file")"
+            if git cat-file -e "$BASE:$file" 2>/dev/null && [[ -f "$file" ]]; then
+              git show "$BASE:$file" > "/tmp/r31-base/$file"
+              set +e
+              git merge-file -p "$file" "/tmp/r31-base/$file" "/tmp/r31-core/$file" > "$file.merged"
+              rc=$?
+              set -e
+              mv "$file.merged" "$file"
+              if (( rc > 0 )); then
+                cp "$file" "/tmp/r31-conflicts/$(basename "$file").conflict"
+                echo "Merge conflict in $file" >&2
+              elif (( rc < 0 )); then
+                echo "Merge failure in $file" >&2
+                exit 2
+              fi
+            else
+              cp -a "/tmp/r31-core/$file" "$file"
+            fi
+          }
+          for file in \
+            electron/main.cjs \
+            electron/capture.cjs \
+            electron/preload.cjs \
+            electron/config-preload.cjs \
+            electron/mining-preload.cjs; do
+            merge_one "$file"
+          done
+          cp -a /tmp/r31-core/electron/browser-widget.cjs electron/browser-widget.cjs
+          cp -a /tmp/r31-linux/electron/linux electron/
+          cp -a /tmp/r31-linux/electron/hotkeys.cjs electron/hotkeys.cjs
+          cp -a /tmp/r31-linux/electron/window-manager.cjs electron/window-manager.cjs
+          cp -a /tmp/r31-linux/electron/rapidocr-client.cjs electron/rapidocr-client.cjs
+          cp -a /tmp/r31-linux/electron/rapidocr-worker.cjs electron/rapidocr-worker.cjs
+          if compgen -G '/tmp/r31-conflicts/*' >/dev/null; then
+            printf '\nUnresolved merge markers:\n' >&2
+            grep -R -n '^<<<<<<<\|^=======\|^>>>>>>>' /tmp/r31-conflicts >&2 || true
+            exit 1
+          fi
+
+      - name: Apply r31 input and Linux defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('electron/main.cjs')
+          s = p.read_text()
+          replacements = {
+            'let registeredInteractKey = "F";': 'let registeredInteractKey = "RightAlt";',
+            'let registeredInteractKey = "F"': 'let registeredInteractKey = "RightAlt"',
+            'default F': 'default Right Alt',
+            'default F)': 'default Right Alt)',
+            'Hold F': 'Hold Right Alt',
+            'held-F': 'held-Right-Alt',
+          }
+          for a,b in replacements.items(): s=s.replace(a,b)
+          p.write_text(s)
+
+          pkg = Path('package.json')
+          import json
+          d=json.loads(pkg.read_text())
+          d['version']='0.1.36-r31-alpha.1'
+          d['productName']='ArchVerse Overlay'
+          pkg.write_text(json.dumps(d, indent=2)+'\n')
+          PY
+          if grep -R -n '^<<<<<<<\|^=======\|^>>>>>>>' electron; then exit 1; fi
+          node --check electron/main.cjs
+          node --check electron/capture.cjs
+          node --check electron/hotkeys.cjs
+          node --check electron/window-manager.cjs
+          node --check electron/rapidocr-client.cjs
+          node --check electron/rapidocr-worker.cjs
+          grep -n 'RightAlt' electron/main.cjs
+          ! grep -n 'registeredInteractKey = "F"' electron/main.cjs
+
+      - name: Install and build upstream server
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run build:server
+
+      - name: Assemble Arch/CachyOS alpha
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/ArchVerse-Overlay-0.1.36-r31-alpha.1"
+          mkdir -p "$OUT/app" "$OUT/bin" "$OUT/docs"
+          cp -a electron "$OUT/app/"
+          cp -a build/server "$OUT/app/"
+          mkdir -p "$OUT/app/build"
+          cp -a build/icon.png "$OUT/app/build/icon.png"
+          node - "$OUT/app/package.json" <<'NODE'
+          const fs=require('node:fs');
+          const out=process.argv[2];
+          const src=require('./package.json');
+          fs.writeFileSync(out, JSON.stringify({
+            name:'archverse-overlay', version:'0.1.36-r31-alpha.1',
+            description:'Community Linux port of SC Overlay', main:'electron/main.cjs', type:'module',
+            dependencies:{
+              '@gutenye/ocr-node':src.dependencies['@gutenye/ocr-node'],
+              'electron-updater':src.dependencies['electron-updater'],
+              'uiohook-napi':src.dependencies['uiohook-napi']
+            }
+          }, null, 2)+'\n');
+          NODE
+          cp -a /tmp/r31-linux/sc-blueprint-tracker "$OUT/bin/sc-blueprint-tracker"
+          cp -a /tmp/r31-linux/install-cachyos.sh "$OUT/install-cachyos.sh"
+          cp -a /tmp/r31-linux/uninstall-cachyos.sh "$OUT/uninstall-cachyos.sh"
+          cp -a /tmp/r31-linux/doctor.sh "$OUT/doctor.sh"
+          cp -a /tmp/r31-linux/install-input-access.sh "$OUT/install-input-access.sh"
+          cp -a LICENSE.md "$OUT/LICENSE.md"
+          [[ -f FORK-NOTICE.md ]] && cp FORK-NOTICE.md "$OUT/FORK-NOTICE.md" || true
+          cp LINUX-PORT-PLAN.md "$OUT/docs/"
+          cp docs/R31-INPUT-DESIGN.md "$OUT/docs/"
+          python3 - "$OUT/install-cachyos.sh" "$OUT/doctor.sh" <<'PY'
+          from pathlib import Path
+          import sys
+          ip=Path(sys.argv[1]); s=ip.read_text()
+          s=s.replace('0.1.33-r30.2-rapidocr-worker-isolation','0.1.36-r31-alpha.1')
+          s=s.replace("data.holdToInteract = true;", "data.holdToInteract = true;\ndata.interactHotkey = 'RightAlt';")
+          s=s.replace('Hold F + click', 'Hold Right Alt + click')
+          s=s.replace('archverse-overlay-r30.2.log','archverse-overlay-r31-alpha1.log')
+          s=s.replace('r30.2', 'r31 alpha 1')
+          ip.write_text(s)
+          dp=Path(sys.argv[2]); d=dp.read_text().replace('0.1.33-r30 diagnostics','0.1.36-r31 alpha 1 diagnostics')
+          dp.write_text(d)
+          PY
+          cat > "$OUT/README.md" <<'DOC'
+          # ArchVerse Overlay 0.1.36-r31 alpha 1
+
+          First Arch/CachyOS integration test of upstream SC Overlay 0.1.36 with the ArchVerse Linux portability layer.
+
+          Input design:
+          - F is reserved for Star Citizen.
+          - Hold Right Alt to interact with overlay widgets.
+          - Ctrl+Alt+M arranges widgets.
+          - Escape restores click-through.
+
+          This is an alpha. Keep the previous r30.2 archive available as a rollback.
+
+          Install:
+              ./install-cachyos.sh --clean-install
+
+          Launch with logging:
+              sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha1.log
+          DOC
+          cat > "$OUT/verify-alpha.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+          for f in app/electron/main.cjs app/electron/capture.cjs app/electron/window-manager.cjs app/electron/rapidocr-client.cjs app/electron/rapidocr-worker.cjs app/server/sc-overlay-server.mjs install-cachyos.sh bin/sc-blueprint-tracker; do
+            [[ -s "$root/$f" ]] || { echo "missing $f" >&2; exit 1; }
+          done
+          find "$root/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          grep -q 'RightAlt' "$root/app/electron/main.cjs"
+          ! grep -q 'registeredInteractKey = "F"' "$root/app/electron/main.cjs"
+          bash -n "$root/install-cachyos.sh" "$root/bin/sc-blueprint-tracker" "$root/doctor.sh"
+          echo 'r31 alpha static verification passed.'
+          SH
+          chmod +x "$OUT"/*.sh "$OUT/bin/sc-blueprint-tracker"
+          "$OUT/verify-alpha.sh"
+          tar -czf "$RUNNER_TEMP/ArchVerse-Overlay-0.1.36-r31-alpha.1-arch.tar.gz" -C "$RUNNER_TEMP" "$(basename "$OUT")"
+          (cd "$RUNNER_TEMP" && sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.1-arch.tar.gz > ArchVerse-Overlay-0.1.36-r31-alpha.1-arch.tar.gz.sha256)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.1-arch
+          path: |
+            ${{ runner.temp }}/ArchVerse-Overlay-0.1.36-r31-alpha.1-arch.tar.gz
+            ${{ runner.temp }}/ArchVerse-Overlay-0.1.36-r31-alpha.1-arch.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
