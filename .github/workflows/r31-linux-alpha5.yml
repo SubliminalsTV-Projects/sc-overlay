@@ -1,0 +1,48 @@
+name: Build r31 Linux alpha 5
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.36-arch-fedora-r31
+    paths:
+      - .github/workflows/r31-linux-alpha5.yml
+      - linux-port/build-r31-alpha5.sh
+      - linux-port/r31-alpha2-hover-pid.patch
+      - linux-port/r31-alpha3-dom-widget-hit.patch
+      - linux-port/r31-alpha4-main-handshake.patch
+      - linux-port/r31-alpha4-renderer-regions.patch
+      - linux-port/r31-alpha5-latched-cursor-shiftf6.patch
+      - test/r31-alpha2-session-binding.test.cjs
+      - test/r31-alpha4-region-handshake.test.cjs
+      - test/r31-alpha5-latched-interaction.test.cjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-arch-alpha5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build and verify Alpha 5
+        shell: bash
+        run: bash linux-port/build-r31-alpha5.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.5-arch
+          path: |
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.5-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.5-arch.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
