@@ -48,7 +48,7 @@ jobs:
           set -euo pipefail
           BASE=5b70715f0958f01ab5d0b79124760c016c9410cd
           mkdir -p /tmp/r31-base/electron /tmp/r31-conflicts
-          for file in electron/main.cjs electron/capture.cjs electron/preload.cjs electron/config-preload.cjs electron/mining-preload.cjs; do
+          for file in electron/main.cjs electron/capture.cjs electron/preload.cjs; do
             git show "$BASE:$file" > "/tmp/r31-base/$file"
             set +e
             git merge-file -p "$file" "/tmp/r31-base/$file" "/tmp/r31-core/$file" > "/tmp/r31-conflicts/$(basename "$file").conflict"
