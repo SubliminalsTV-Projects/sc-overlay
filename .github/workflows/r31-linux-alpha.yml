@@ -58,7 +58,7 @@ jobs:
           test -s /tmp/r31-linux/electron/linux/star-citizen-session.cjs
           test -s /tmp/r31-core/electron/main.cjs
 
-      - name: Apply Linux core and alpha 2 fixes
+      - name: Apply Linux core and alpha 3 DOM classification fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -107,8 +107,10 @@ jobs:
 
           git apply --check linux-port/r31-alpha2-hover-pid.patch
           git apply linux-port/r31-alpha2-hover-pid.patch
+          git apply --check linux-port/r31-alpha3-dom-widget-hit.patch
+          git apply linux-port/r31-alpha3-dom-widget-hit.patch
 
-      - name: Apply alpha 2 package metadata and validate runtime
+      - name: Apply alpha 3 package metadata and validate runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -118,7 +120,7 @@ jobs:
 
           pkg = Path('package.json')
           data = json.loads(pkg.read_text())
-          data['version'] = '0.1.36-r31-alpha.2'
+          data['version'] = '0.1.36-r31-alpha.3'
           data['productName'] = 'ArchVerse Overlay'
           pkg.write_text(json.dumps(data, indent=2) + '\n')
           PY
@@ -126,6 +128,7 @@ jobs:
           if grep -R -n '^<<<<<<<\|^=======\|^>>>>>>>' electron; then exit 1; fi
           node --check electron/main.cjs
           node --check electron/capture.cjs
+          node --check electron/preload.cjs
           node --check electron/hotkeys.cjs
           node --check electron/window-manager.cjs
           node --check electron/linux/star-citizen-session.cjs
@@ -134,8 +137,11 @@ jobs:
           grep -n 'let registeredInteractKey = "F"' electron/main.cjs
           ! grep -n 'let registeredInteractKey = "RightAlt"' electron/main.cjs
           grep -n 'startFHoverPolling' electron/main.cjs
+          grep -n 'applyFHoverClassification' electron/main.cjs
+          grep -n 'overlay:probe-point' electron/preload.cjs
+          grep -n 'document.elementsFromPoint' overlay/missions.html
           grep -n 'directly (Wine detached from Gamescope ancestry)' electron/linux/star-citizen-session.cjs
-          node --test test/r31-alpha2-session-binding.test.cjs
+          node --test test/r31-alpha2-session-binding.test.cjs test/r31-alpha3-dom-widget-hit.test.cjs
 
       - name: Install and build upstream server
         shell: bash
@@ -145,11 +151,11 @@ jobs:
           npm run typecheck
           npm run build:server
 
-      - name: Assemble Arch/CachyOS alpha 2
+      - name: Assemble Arch/CachyOS alpha 3
         shell: bash
         run: |
           set -euo pipefail
-          OUT="$RUNNER_TEMP/ArchVerse-Overlay-0.1.36-r31-alpha.2"
+          OUT="$RUNNER_TEMP/ArchVerse-Overlay-0.1.36-r31-alpha.3"
           mkdir -p "$OUT/app" "$OUT/bin" "$OUT/docs"
           cp -a electron "$OUT/app/"
           cp -a build/server "$OUT/app/"
@@ -162,7 +168,7 @@ jobs:
           const src = require('./package.json');
           fs.writeFileSync(out, JSON.stringify({
             name: 'archverse-overlay',
-            version: '0.1.36-r31-alpha.2',
+            version: '0.1.36-r31-alpha.3',
             description: 'Community Linux port of SC Overlay',
             main: 'electron/main.cjs',
             type: 'module',
@@ -190,27 +196,30 @@ jobs:
 
           installer = Path(sys.argv[1])
           text = installer.read_text()
-          text = text.replace('0.1.33-r30.2-rapidocr-worker-isolation', '0.1.36-r31-alpha.2')
+          text = text.replace('0.1.33-r30.2-rapidocr-worker-isolation', '0.1.36-r31-alpha.3')
           text = text.replace("data.holdToInteract = true;", "data.holdToInteract = true;\ndata.interactHotkey = 'F';")
           text = text.replace('Hold F + click', 'Hold F while the pointer is over a widget + click')
-          text = text.replace('archverse-overlay-r30.2.log', 'archverse-overlay-r31-alpha2.log')
-          text = text.replace('r30.2', 'r31 alpha 2')
+          text = text.replace('archverse-overlay-r30.2.log', 'archverse-overlay-r31-alpha3.log')
+          text = text.replace('r30.2', 'r31 alpha 3')
           installer.write_text(text)
 
           doctor = Path(sys.argv[2])
           doctor.write_text(doctor.read_text().replace(
-              '0.1.33-r30 diagnostics', '0.1.36-r31 alpha 2 diagnostics'))
+              '0.1.33-r30 diagnostics', '0.1.36-r31 alpha 3 diagnostics'))
           PY
 
           cat > "$OUT/README.md" <<'DOC'
-          # ArchVerse Overlay 0.1.36-r31 alpha 2
+          # ArchVerse Overlay 0.1.36-r31 alpha 3
 
-          Arch/CachyOS test build for hover-gated F interaction and direct Star Citizen PID binding.
+          Arch/CachyOS test build for exact DOM-classified F interaction and direct Star Citizen PID binding.
 
           Input behavior:
-          - Hold F while the pointer is over a visible widget to interact.
+          - Hold F while the pointer is over a developer-classified overlay surface to interact.
+          - Mission & BP Tracker is classified as #panel.
+          - Mining, Journal, Twitch Chat, Loot Split, Event Tracker, Web Page, and Infographic Viewer are .widget wrappers.
+          - SC Feed and Unlock Alerts become interactive only while live, moving, or configuring.
           - Pressing F over empty transparent canvas leaves Star Citizen focused.
-          - Leaving every widget or releasing F restores click-through and the prior window focus.
+          - Leaving every classified widget or releasing F restores click-through and the prior window focus.
           - Right Alt is no longer used as the Linux interaction key.
           - Ctrl+Alt+M arranges widgets.
           - Escape restores click-through.
@@ -225,7 +234,7 @@ jobs:
               ./install-cachyos.sh --clean-install
 
           Launch with logging:
-              sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha2.log
+              sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha3.log
           DOC
 
           cat > "$OUT/verify-alpha.sh" <<'SH'
@@ -248,21 +257,24 @@ jobs:
           grep -q 'let registeredInteractKey = "F"' "$root/app/electron/main.cjs"
           ! grep -q 'let registeredInteractKey = "RightAlt"' "$root/app/electron/main.cjs"
           grep -q 'startFHoverPolling' "$root/app/electron/main.cjs"
+          grep -q 'applyFHoverClassification' "$root/app/electron/main.cjs"
+          grep -q 'overlay:probe-point' "$root/app/electron/preload.cjs"
+          grep -q 'document.elementsFromPoint' "$root/app/server/overlay/missions.html"
           grep -q 'directly (Wine detached from Gamescope ancestry)' "$root/app/electron/linux/star-citizen-session.cjs"
           bash -n "$root/install-cachyos.sh" "$root/bin/sc-blueprint-tracker" "$root/doctor.sh"
-          echo 'r31 alpha 2 static verification passed.'
+          echo 'r31 alpha 3 static verification passed.'
           SH
 
           chmod +x "$OUT"/*.sh "$OUT/bin/sc-blueprint-tracker"
           "$OUT/verify-alpha.sh"
-          tar -czf "$RUNNER_TEMP/ArchVerse-Overlay-0.1.36-r31-alpha.2-arch.tar.gz" -C "$RUNNER_TEMP" "$(basename "$OUT")"
-          (cd "$RUNNER_TEMP" && sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.2-arch.tar.gz > ArchVerse-Overlay-0.1.36-r31-alpha.2-arch.tar.gz.sha256)
+          tar -czf "$RUNNER_TEMP/ArchVerse-Overlay-0.1.36-r31-alpha.3-arch.tar.gz" -C "$RUNNER_TEMP" "$(basename "$OUT")"
+          (cd "$RUNNER_TEMP" && sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.3-arch.tar.gz > ArchVerse-Overlay-0.1.36-r31-alpha.3-arch.tar.gz.sha256)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-Overlay-0.1.36-r31-alpha.2-arch
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.3-arch
           path: |
-            ${{ runner.temp }}/ArchVerse-Overlay-0.1.36-r31-alpha.2-arch.tar.gz
-            ${{ runner.temp }}/ArchVerse-Overlay-0.1.36-r31-alpha.2-arch.tar.gz.sha256
+            ${{ runner.temp }}/ArchVerse-Overlay-0.1.36-r31-alpha.3-arch.tar.gz
+            ${{ runner.temp }}/ArchVerse-Overlay-0.1.36-r31-alpha.3-arch.tar.gz.sha256
           if-no-files-found: error
           retention-days: 14
