@@ -13,6 +13,10 @@ const { execFile } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { getStarCitizenSessionBinder } = require("./linux/star-citizen-session.cjs");
+const { createRapidOcrClient } = require("./rapidocr-client.cjs");
+
+const scSession = getStarCitizenSessionBinder();
 
 const POLL_MS = 3000;
 // Ore scanning is a live feedback loop — you scan a rock and want to hear what it is NOW — so the
@@ -26,8 +30,16 @@ const FAST_WINDOW_MS = 20000;
 // The kiosk render fades in over ~1-2s. This is the wait the 3s tick was implicitly giving it.
 const SETTLE_MS = 3000;
 
-// Return the FOREGROUND window's process name AND its screen rectangle. The rect lets us capture
-// the monitor the game is actually on (not a blind sources[0]) — critical on multi-monitor rigs.
+// RapidOCR is isolated in a disposable Node child process. A native sharp/libvips
+// assertion can abort that worker, but not Electron or the overlay. The client also
+// serializes requests, enforces a hard timeout, and disables RapidOCR for the rest of
+// the session after a worker crash; Tesseract continues automatically.
+const rapidOcrClient = createRapidOcrClient({ logger: console });
+process.once("exit", () => rapidOcrClient.close());
+
+// Return the foreground window process name AND its screen rectangle. On Linux/XWayland,
+// query the active X11 window so the privacy gate still guarantees that screenshots are taken
+// only while Star Citizen itself is focused.
 const fgPs1 = path.join(os.tmpdir(), "sc-fgwin.ps1");
 let fgPs1Written = false;
 function writeFgPs1() {
@@ -49,32 +61,299 @@ function writeFgPs1() {
   ].join("\n"));
   fgPs1Written = true;
 }
-// Prefer the long-lived watcher (foreground.cjs): it already knows the answer, so the common case
-// costs nothing. The spawn below is now only the cold-start / helper-died fallback — it used to
-// run on EVERY tick, i.e. ~20 PowerShell launches a minute for one HWND.
-const fgWatch = require("./foreground.cjs");
+function cleanX11Field(value) {
+  const text = String(value || "").trim();
+  return /^(?:\(?null\)?|WM_CLASS:\s*not found\.?|[^:]+:\s*not found\.?)$/i.test(text) ? "" : text;
+}
+
+// Bind each launch to the exact StarCitizen.exe -> Gamescope ancestor chain. This prevents a
+// stale Gamescope process (or the RSI launcher) from arming OCR and avoids hard-coding a PID that
+// changes every launch. KWin may still expose an anonymous XWayland root while the real Gamescope
+// surface is active; that fallback is accepted only while this exact bound process tree is alive.
+function classifyLinuxForeground(values, {
+  session = scSession.current(),
+  processName = null,
+  belongsToSession = (pid) => scSession.belongsToSession(pid, session),
+} = {}) {
+  const pid = String(values?.PID || "").trim();
+  const title = cleanX11Field(values?.TITLE);
+  const className = cleanX11Field(values?.CLASS);
+  let resolvedProcess = String(processName || "");
+  if (!resolvedProcess && /^\d+$/.test(pid)) {
+    try { resolvedProcess = fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim(); } catch {}
+  }
+  const blob = `${title} ${className} ${resolvedProcess}`.trim();
+  const boundPid = !!session && /^\d+$/.test(pid) && belongsToSession(Number(pid));
+  const gameIdentity = /Star\s*Citizen|StarCitizen(?:\.exe)?|StarCitizen[/\\]LIVE/i.test(blob);
+  const gamescopeIdentity = /gamescope(?:-wl)?/i.test(blob);
+  const directGame = !!session && (
+    (boundPid && (/^StarCitizen(?:\.exe)?$/i.test(resolvedProcess) || gamescopeIdentity || gameIdentity)) ||
+    (!pid && gamescopeIdentity && gameIdentity)
+  );
+  const anonymousXwaylandRoot = !!session && !pid && !blob;
+  const x = Number(values?.X), y = Number(values?.Y), w = Number(values?.WIDTH), h = Number(values?.HEIGHT);
+  const rect = Number.isFinite(x) && Number.isFinite(y) && w > 0 && h > 0 ? { x, y, width: w, height: h } : null;
+  const sessionInfo = session ? {
+    gamePid: session.gamePid,
+    gamescopePid: session.gamescopePid,
+    launcherPid: session.launcherPid || null,
+  } : null;
+
+  if (directGame) return { name: "StarCitizen", title, className, rect, gate: "pid-bound-active-window", session: sessionInfo };
+  if (anonymousXwaylandRoot) {
+    // Null deliberately selects the configured primary monitor rather than the 6360x2560 XWayland
+    // root. A named browser/terminal/overlay surface never reaches this branch.
+    return { name: "StarCitizen", title, className, rect: null, gate: "pid-bound-anonymous-wayland", session: sessionInfo };
+  }
+  return { name: resolvedProcess, title, className, rect, gate: session ? "not-bound-game-surface" : "no-bound-game-session", session: sessionInfo };
+}
+
 function foregroundWindow() {
-  if (fgWatch.ready()) return Promise.resolve(fgWatch.foreground());
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      try { writeFgPs1(); } catch { return resolve({ name: "", rect: null, gate: "unavailable" }); }
+      execFile("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fgPs1], { windowsHide: true, timeout: 4000 }, (err, out) => {
+        if (err) return resolve({ name: "", rect: null, gate: "unavailable" });
+        const p = String(out).trim().split("|");
+        const x = +p[1], y = +p[2], w = +p[3], h = +p[4];
+        resolve({ name: p[0] || "", rect: w > 0 && h > 0 ? { x, y, width: w, height: h } : null, gate: "win32-active-window" });
+      });
+    });
+  }
+
+  const session = scSession.current();
+  if (!session) return Promise.resolve({ name: "", rect: null, gate: "no-bound-game-session", session: null });
   return new Promise((resolve) => {
-    try { writeFgPs1(); } catch { return resolve({ name: "", rect: null }); }
-    execFile("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fgPs1], { windowsHide: true, timeout: 4000 }, (err, out) => {
-      if (err) return resolve({ name: "", rect: null });
-      const p = String(out).trim().split("|");
-      const x = +p[1], y = +p[2], w = +p[3], hh = +p[4];
-      resolve({ name: p[0] || "", rect: w > 0 && hh > 0 ? { x, y, width: w, height: hh } : null });
+    const script = [
+      'wid=$(xdotool getactivewindow 2>/dev/null || true)',
+      'pid=""; title=""; class=""',
+      'if [ -n "$wid" ]; then pid=$(xdotool getwindowpid "$wid" 2>/dev/null || true); title=$(xdotool getwindowname "$wid" 2>/dev/null | tr "\\n" " " || true); class=$(xprop -id "$wid" WM_CLASS 2>/dev/null | tr "\\n" " " || true); fi',
+      'printf "PID=%s\\nTITLE=%s\\nCLASS=%s\\n" "$pid" "$title" "$class"',
+      'if [ -n "$wid" ]; then xdotool getwindowgeometry --shell "$wid" 2>/dev/null || true; fi',
+    ].join('; ');
+    execFile("sh", ["-lc", script], { timeout: 2500 }, (_err, out) => {
+      const values = {};
+      for (const line of String(out || "").split(/\r?\n/)) {
+        const m = line.match(/^([A-Z]+)=(.*)$/);
+        if (m) values[m[1]] = m[2];
+      }
+      resolve(classifyLinuxForeground(values, { session }));
     });
   });
 }
 
 // Capture the display the GAME window is on (matched by display_id), at that monitor's full
-// resolution → nativeImage. Falls back to the primary / sources[0] if the match fails.
-async function captureGame(winRect) {
-  const disp = winRect ? screen.getDisplayMatching(winRect) : screen.getPrimaryDisplay();
+// resolution → nativeImage. KDE Wayland frequently gives Electron an empty/KMS-denied thumbnail;
+// the v2 calibration proved Spectacle can capture this exact desktop reliably, so r24 uses it as
+// the primary Wayland backend and retains desktopCapturer as the X11/fallback backend.
+const spectacleCapturePath = path.join(os.tmpdir(), `sc-overlay-spectacle-${process.pid}.png`);
+const HOST_SESSION_TYPE = String(process.env.SC_TRACKER_HOST_XDG_SESSION_TYPE || process.env.XDG_SESSION_TYPE || "").toLowerCase();
+const HOST_WAYLAND_DISPLAY = String(process.env.SC_TRACKER_HOST_WAYLAND_DISPLAY || process.env.WAYLAND_DISPLAY || "");
+const HOST_IS_WAYLAND = process.platform === "linux" && (HOST_SESSION_TYPE === "wayland" || !!HOST_WAYLAND_DISPLAY);
+let lastBackendWarning = "";
+
+function runFile(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, options, (err, stdout, stderr) => {
+      if (err) {
+        const detail = String(stderr || stdout || err.message || err).trim();
+        const wrapped = new Error(detail || String(err));
+        wrapped.code = err.code;
+        return reject(wrapped);
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function captureWarning(message) {
+  const text = String(message || "").trim();
+  if (!text || text === lastBackendWarning) return;
+  lastBackendWarning = text;
+  console.warn(`[screen-read] capture backend fallback: ${text}`);
+}
+function spectacleEnvironment() {
+  const env = { ...process.env };
+  const copy = (dst, src) => {
+    const value = process.env[src];
+    if (value) env[dst] = value;
+  };
+  copy("WAYLAND_DISPLAY", "SC_TRACKER_HOST_WAYLAND_DISPLAY");
+  copy("DISPLAY", "SC_TRACKER_HOST_DISPLAY");
+  copy("XDG_RUNTIME_DIR", "SC_TRACKER_HOST_XDG_RUNTIME_DIR");
+  copy("DBUS_SESSION_BUS_ADDRESS", "SC_TRACKER_HOST_DBUS_SESSION_BUS_ADDRESS");
+  if (HOST_IS_WAYLAND) {
+    env.XDG_SESSION_TYPE = "wayland";
+    env.QT_QPA_PLATFORM = "wayland";
+  }
+  // These variables are intentionally applied to Electron's software renderer, but inheriting
+  // them into a Qt screenshot process can prevent Spectacle from connecting to KWin/Wayland.
+  delete env.GDK_BACKEND;
+  delete env.ELECTRON_OZONE_PLATFORM_HINT;
+  delete env.LIBGL_ALWAYS_SOFTWARE;
+  delete env.MESA_LOADER_DRIVER_OVERRIDE;
+  delete env.ANGLE_DEFAULT_PLATFORM;
+  return env;
+}
+async function waitForCaptureFile(filePath, timeoutMs = 2500) {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    try {
+      if (fs.statSync(filePath).size > 0) return true;
+    } catch {}
+    await delay(100);
+  }
+  return false;
+}
+async function captureWithSpectacle(disp) {
+  try { fs.unlinkSync(spectacleCapturePath); } catch {}
+  await runFile("spectacle", ["-b", "-n", "-o", spectacleCapturePath], {
+    timeout: 20_000,
+    env: spectacleEnvironment(),
+  });
+  if (!(await waitForCaptureFile(spectacleCapturePath))) {
+    throw new Error("Spectacle returned before a screenshot file became available");
+  }
+  const full = nativeImage.createFromPath(spectacleCapturePath);
+  if (!full || full.isEmpty()) throw new Error("Spectacle created no usable screenshot");
+
+  const displays = screen.getAllDisplays();
+  const left = Math.min(...displays.map((d) => d.bounds.x));
+  const top = Math.min(...displays.map((d) => d.bounds.y));
+  const right = Math.max(...displays.map((d) => d.bounds.x + d.bounds.width));
+  const bottom = Math.max(...displays.map((d) => d.bounds.y + d.bounds.height));
+  const virtualW = Math.max(1, right - left), virtualH = Math.max(1, bottom - top);
+  const size = full.getSize();
+  const sx = size.width / virtualW, sy = size.height / virtualH;
+  const crop = {
+    x: Math.max(0, Math.round((disp.bounds.x - left) * sx)),
+    y: Math.max(0, Math.round((disp.bounds.y - top) * sy)),
+    width: Math.max(8, Math.round(disp.bounds.width * sx)),
+    height: Math.max(8, Math.round(disp.bounds.height * sy)),
+  };
+  crop.width = Math.min(crop.width, size.width - crop.x);
+  crop.height = Math.min(crop.height, size.height - crop.y);
+  if (crop.width < 8 || crop.height < 8) {
+    throw new Error(`Spectacle monitor crop invalid: ${JSON.stringify(crop)} from ${size.width}x${size.height}`);
+  }
+  const image = full.crop(crop);
+  const outSize = image.getSize();
+  lastBackendWarning = "";
+  return {
+    image,
+    width: outSize.width,
+    height: outSize.height,
+    method: "spectacle-wayland",
+    sourceName: "KDE Spectacle full-desktop crop",
+    sourceSize: size,
+  };
+}
+async function captureWithGamescopeWindow(disp) {
+  const canvasW = Math.max(640, Number(process.env.SC_OVERLAY_CANVAS_WIDTH) || 6360);
+  const canvasH = Math.max(360, Number(process.env.SC_OVERLAY_CANVAS_HEIGHT) || 2160);
+  const sources = await desktopCapturer.getSources({
+    types: ["window"],
+    thumbnailSize: { width: canvasW, height: canvasH },
+    fetchWindowIcons: false,
+  });
+  const candidates = sources.filter((source) => {
+    const name = String(source.name || "").trim();
+    return !source.thumbnail.isEmpty() && (/gamescope/i.test(name) || /^Star\s*Citizen$/i.test(name));
+  });
+  if (!candidates.length) {
+    const names = sources.slice(0, 8).map((source) => source.name || "(unnamed)").join(", ");
+    throw new Error(`no Gamescope/Star Citizen window source${names ? `; visible sources: ${names}` : ""}`);
+  }
+  candidates.sort((a, b) => {
+    const rank = (source) => {
+      const name = String(source.name || "");
+      if (/gamescope/i.test(name) && /star\s*citizen/i.test(name)) return 3;
+      if (/^Star\s*Citizen$/i.test(name.trim())) return 2;
+      if (/gamescope/i.test(name)) return 1;
+      return 0;
+    };
+    const aGame = rank(a), bGame = rank(b);
+    if (aGame !== bGame) return bGame - aGame;
+    const as = a.thumbnail.getSize(), bs = b.thumbnail.getSize();
+    return (bs.width * bs.height) - (as.width * as.height);
+  });
+  const source = candidates[0];
+  const full = source.thumbnail;
+  const size = full.getSize();
+  const displays = screen.getAllDisplays();
+  const left = Math.min(...displays.map((d) => d.bounds.x));
+  const top = Math.min(...displays.map((d) => d.bounds.y));
+  const xScale = size.width / canvasW;
+  const yScale = size.height / canvasH;
+  const crop = {
+    x: Math.max(0, Math.round((disp.bounds.x - left) * xScale)),
+    y: Math.max(0, Math.round((disp.bounds.y - top) * yScale)),
+    width: Math.max(8, Math.round(disp.bounds.width * xScale)),
+    height: Math.max(8, Math.round(Math.min(disp.bounds.height, canvasH) * yScale)),
+  };
+  crop.width = Math.min(crop.width, size.width - crop.x);
+  crop.height = Math.min(crop.height, size.height - crop.y);
+  if (crop.width < 8 || crop.height < 8) {
+    throw new Error(`Gamescope window crop invalid: ${JSON.stringify(crop)} from ${size.width}x${size.height}`);
+  }
+  const image = full.crop(crop);
+  const outSize = image.getSize();
+  return {
+    image,
+    width: outSize.width,
+    height: outSize.height,
+    method: "electron-gamescope-window",
+    sourceName: source.name || "gamescope",
+    sourceSize: size,
+  };
+}
+async function captureWithElectron(disp) {
   const width = Math.round(disp.size.width * disp.scaleFactor);
   const height = Math.round(disp.size.height * disp.scaleFactor);
   const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width, height } });
-  const src = sources.find((s) => s.display_id && String(s.display_id) === String(disp.id)) || sources[0];
-  return src ? { image: src.thumbnail, width, height } : null;
+  const exact = sources.find((source) => source.display_id && String(source.display_id) === String(disp.id));
+  const orderedDisplays = screen.getAllDisplays().slice().sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
+  const displayIndex = Math.max(0, orderedDisplays.findIndex((candidate) => String(candidate.id) === String(disp.id)));
+  const byOrdinal = sources.find((source) =>
+    new RegExp(`(?:screen|display)\\s*${displayIndex + 1}\\b`, "i").test(String(source.name || "")));
+  const source = exact || byOrdinal || sources[displayIndex] || sources[0];
+  if (!source || source.thumbnail.isEmpty()) throw new Error("desktopCapturer returned no usable screen source");
+  const size = source.thumbnail.getSize();
+  return {
+    image: source.thumbnail,
+    width: size.width || width,
+    height: size.height || height,
+    method: exact ? "electron-display-id" : "electron-screen-fallback",
+    sourceName: source.name || "(unnamed screen)",
+    sourceId: source.display_id || "",
+    sourceInventory: sources.map((item) => `${item.name || "(unnamed)"}#${item.display_id || "no-id"}`).join(", "),
+  };
+}
+async function captureGame(winRect) {
+  const disp = winRect ? screen.getDisplayMatching(winRect) : screen.getPrimaryDisplay();
+  const errors = [];
+
+  // The Electron shell is intentionally XWayland, but the desktop itself is KDE Wayland. Prefer a
+  // clean Gamescope window when the portal exposes it; otherwise restore the original Wayland/DBus
+  // environment for Spectacle. Only then fall back to Electron's screen list.
+  if (HOST_IS_WAYLAND) {
+    try { return await captureWithGamescopeWindow(disp); }
+    catch (e) { errors.push(`Gamescope window: ${e?.message || e}`); }
+    try { return await captureWithSpectacle(disp); }
+    catch (e) { errors.push(`Spectacle: ${e?.message || e}`); }
+  }
+  try {
+    const result = await captureWithElectron(disp);
+    if (errors.length) captureWarning(errors.join("; "));
+    return result;
+  } catch (e) {
+    errors.push(`Electron screen: ${e?.message || e}`);
+  }
+  if (process.platform === "linux" && !HOST_IS_WAYLAND) {
+    try { return await captureWithSpectacle(disp); }
+    catch (e) { errors.push(`Spectacle: ${e?.message || e}`); }
+  }
+  throw new Error(errors.join("; ") || "no screen-capture backend succeeded");
 }
 
 // The kiosk's item render + name + category all live in the upper-right of the screen. Cropping to
@@ -86,21 +365,608 @@ function rightPanelCrop(image, w, h) {
   return { img: image.crop({ x, y: 0, width: cw, height: ch }), w: cw, h: ch };
 }
 
-// RapidOCR (PP-OCR) reader — main-process only, ESM loaded lazily (model loads once, ~2s). Returns
-// the same {text,x,y,w,h} line shape the sidecar classifier expects, from the PP-OCR {text,box}.
-let _rapid = null;
-function getRapid() {
-  if (!_rapid) _rapid = import("@gutenye/ocr-node").then((m) => m.default.create());
-  return _rapid;
+// Dedicated Mining RESULTS-panel OCR. The completed rock analysis is a small HUD block to the
+// right of the reticle, so full-screen OCR is both slower and much noisier (chat, MFDs, missions).
+// Coordinates are normalized against the captured GAME display and therefore scale from the
+// 2048x1152 calibration sample to 3840x2160 and other 16:9 resolutions.
+const MINING_ROIS = Object.freeze({
+  panel:       { x: 0.625, y: 0.390, w: 0.170, h: 0.275, scale: 3.2 },
+  composition: { x: 0.640, y: 0.530, w: 0.150, h: 0.105, scale: 4.0 },
+  stats:       { x: 0.688, y: 0.455, w: 0.070, h: 0.075, scale: 6.0 },
+});
+// A ping/scan signature is much smaller than the completed RESULTS panel. Full-screen Tesseract
+// routinely misses it, so r29 uses two overlapping play-field crops, RapidOCR candidates, and a high-contrast numeric
+// pass over the focused crop. The threshold pass is important because the gray signature badge can
+// disappear into the asteroid field during sparse-text segmentation even while the digits remain
+// plainly visible to a person.
+const MINING_SIGNATURE_ROIS = Object.freeze({
+  focus: { x: 0.285, y: 0.235, w: 0.430, h: 0.390, scale: 3.8 },
+  wide:  { x: 0.175, y: 0.245, w: 0.650, h: 0.440, scale: 2.6 },
+});
+
+// Scan Mode is identified from the fixed radar-cone control left of the reticle. The six supplied
+// reference icons are the only valid cone angles Star Citizen displays: 2, 5, 11, 22, 45 and 90.
+// This is intentionally a separate recognition result from signature OCR. A valid ore signature can
+// update the widget, but target audio is permitted only when this detector confirms one of these
+// radar icons on the SAME captured frame.
+const SCAN_MODE_ANGLES = Object.freeze([2, 5, 11, 22, 45, 90]);
+const SCAN_MODE_TEMPLATE_DIR = path.join(__dirname, "assets", "scan-mode");
+// Fixed directly against the 3840x2160 primary display. The radar cone is always left of the
+// reticle; this crop excludes the UNKNOWN/distance text to its right and most cockpit MFD numbers.
+const SCAN_MODE_PRIMARY_ROI = Object.freeze({ name: "prospector-default", x: 0.455, y: 0.430, w: 0.075, h: 0.180, scale: 6.0 });
+// Cockpit FOV and HUD anchoring move the cone control by several percent between ships. The
+// Prospector remains the fast primary path; only after that crop fails do we probe a compact set
+// of neighboring positions. This avoids a costly full-screen search while covering Mole, ROC,
+// salvage, and general ship HUD layouts that place the scan control farther left or vertically.
+const SCAN_MODE_FALLBACK_ROIS = Object.freeze([
+  { name: "left-near",  x: 0.425, y: 0.430, w: 0.075, h: 0.180, scale: 6.0 },
+  { name: "left-far",   x: 0.390, y: 0.430, w: 0.085, h: 0.185, scale: 6.0 },
+  { name: "right-near", x: 0.485, y: 0.430, w: 0.075, h: 0.180, scale: 6.0 },
+  { name: "upper",      x: 0.455, y: 0.385, w: 0.075, h: 0.180, scale: 6.0 },
+  { name: "upper-left", x: 0.420, y: 0.385, w: 0.085, h: 0.185, scale: 6.0 },
+  { name: "lower",      x: 0.455, y: 0.475, w: 0.075, h: 0.180, scale: 6.0 },
+  { name: "lower-left", x: 0.420, y: 0.475, w: 0.085, h: 0.185, scale: 6.0 },
+  { name: "wide-left",  x: 0.360, y: 0.405, w: 0.105, h: 0.210, scale: 5.5 },
+]);
+// Last-resort search area for ships whose HUD places the degree label outside every fixed anchor.
+// RapidOCR proposes a few exact 2/5/11/22/45/90 text locations; template comparison still has to
+// confirm the surrounding icon, so unrelated cockpit numbers cannot activate Scan Mode by text alone.
+const SCAN_MODE_RAPID_SEARCH_ROI = Object.freeze({ name: "rapid-search-field", x: 0.260, y: 0.250, w: 0.500, h: 0.520, scale: 2.0 });
+let scanModeTemplateCache = null;
+
+function normalizedCrop(image, width, height, roi) {
+  const x = Math.max(0, Math.min(width - 1, Math.round(width * roi.x)));
+  const y = Math.max(0, Math.min(height - 1, Math.round(height * roi.y)));
+  const w = Math.max(8, Math.min(width - x, Math.round(width * roi.w)));
+  const h = Math.max(8, Math.min(height - y, Math.round(height * roi.h)));
+  const cropped = image.crop({ x, y, width: w, height: h });
+  const targetWidth = Math.min(1600, Math.max(w, Math.round(w * (roi.scale || 3))));
+  return { img: cropped.resize({ width: targetWidth, quality: "best" }), x, y, w, h };
+}
+
+function ocrTesseractText(imgPath, { psm = 6, whitelist = "" } = {}) {
+  return new Promise((resolve, reject) => {
+    const args = [path.resolve(imgPath), "stdout", "-l", "eng", "--psm", String(psm),
+      "-c", "preserve_interword_spaces=1"];
+    if (whitelist) args.push("-c", `tessedit_char_whitelist=${whitelist}`);
+    execFile("tesseract", args, { maxBuffer: 8 * 1024 * 1024, timeout: 8000 }, (err, stdout) => {
+      if (err) return reject(new Error(`Mining Tesseract PSM ${psm} failed: ${err.message || err}`));
+      resolve(String(stdout || "").trim());
+    });
+  });
+}
+
+async function preprocessHudImage(inputPath, outputPath) {
+  try {
+    await runFile("magick", [
+      inputPath,
+      "-colorspace", "Gray",
+      "-auto-level",
+      "-contrast-stretch", "1%x1%",
+      "-sharpen", "0x1",
+      "-strip",
+      outputPath,
+    ], { timeout: 10_000 });
+    return outputPath;
+  } catch {
+    // ImageMagick is installed by the r29 installer, but retaining the unprocessed crop keeps the
+    // reader functional if a user intentionally skips that dependency.
+    return inputPath;
+  }
+}
+
+async function preprocessSignatureThreshold(inputPath, outputPath) {
+  try {
+    // 70% was selected from the real 15,600 Torite diagnostic frame. It preserves the thin white
+    // digits while suppressing most rocks, HUD lines, and the blue-space background. Keep this as a
+    // separate pass rather than replacing grayscale: each catches signatures the other can miss.
+    await runFile("magick", [
+      inputPath,
+      "-colorspace", "Gray",
+      "-auto-level",
+      "-threshold", "70%",
+      "-strip",
+      outputPath,
+    ], { timeout: 10_000 });
+    return outputPath;
+  } catch {
+    return null;
+  }
+}
+
+function localNormalizedCrop(image, roi) {
+  const size = image.getSize();
+  const x = Math.max(0, Math.min(size.width - 1, Math.round(size.width * roi.x)));
+  const y = Math.max(0, Math.min(size.height - 1, Math.round(size.height * roi.y)));
+  const width = Math.max(8, Math.min(size.width - x, Math.round(size.width * roi.w)));
+  const height = Math.max(8, Math.min(size.height - y, Math.round(size.height * roi.h)));
+  return image.crop({ x, y, width, height });
+}
+
+async function prepareScanModeMask(inputPath, outputPath) {
+  try {
+    // Keep the colored radar cone plus its bright degree label while removing the dark space field.
+    // Open removes isolated asteroid specks; Close reconnects the thin HUD strokes before trimming.
+    await runFile("magick", [
+      inputPath,
+      "-colorspace", "sRGB",
+      "-alpha", "off",
+      "-fx", "(((g>0.30 && g>r*1.08 && g>b*0.90) || ((max(r,max(g,b))>0.50) && ((max(r,max(g,b))-min(r,min(g,b)))>0.08)) || min(r,min(g,b))>0.55) ? 1 : 0)",
+      "-threshold", "50%",
+      "-morphology", "Open", "Diamond:1",
+      "-morphology", "Close", "Rectangle:1x1",
+      "-trim", "+repage",
+      "-resize", "96x128!",
+      "-strip",
+      outputPath,
+    ], { timeout: 10_000 });
+    return outputPath;
+  } catch {
+    return null;
+  }
+}
+
+function compareScanModeMask(candidatePath, templatePath) {
+  return new Promise((resolve) => {
+    execFile("magick", ["compare", "-metric", "RMSE", candidatePath, templatePath, "null:"],
+      { timeout: 6000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+        // ImageMagick compare returns status 1 for a normal non-identical comparison.
+        const text = `${stderr || ""} ${stdout || ""}`;
+        const m = text.match(/\(([-+0-9.eE]+)\)/);
+        const normalized = m ? Number(m[1]) : NaN;
+        resolve(Number.isFinite(normalized) ? normalized : 1);
+      });
+  });
+}
+
+async function ensureScanModeTemplates() {
+  if (scanModeTemplateCache) return scanModeTemplateCache;
+  const rows = [];
+  for (const angle of SCAN_MODE_ANGLES) {
+    const source = path.join(SCAN_MODE_TEMPLATE_DIR, `${angle}.png`);
+    const prepared = path.join(os.tmpdir(), `sc-scan-mode-template-${process.pid}-${angle}.png`);
+    if (!fs.existsSync(source)) continue;
+    if (!fs.existsSync(prepared)) await prepareScanModeMask(source, prepared);
+    if (fs.existsSync(prepared)) rows.push({ angle, path: prepared });
+  }
+  scanModeTemplateCache = rows;
+  return rows;
+}
+
+function parseScanModeAngle(text) {
+  const compact = String(text || "").replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "");
+  return SCAN_MODE_ANGLES.includes(Number(compact)) ? Number(compact) : null;
+}
+
+async function rapidScanModeSearchRois(image, width, height) {
+  const search = normalizedCrop(image, width, height, SCAN_MODE_RAPID_SEARCH_ROI);
+  const rawPath = path.join(os.tmpdir(), `sc-mining-scan-mode-${process.pid}-rapid-search.png`);
+  fs.writeFileSync(rawPath, search.img.toPNG());
+  const lines = await ocrRapidLinesOptional(rawPath);
+  if (!lines.length) return [];
+
+  const rendered = search.img.getSize();
+  const sx = search.w / Math.max(1, rendered.width);
+  const sy = search.h / Math.max(1, rendered.height);
+  const proposals = [];
+  for (const row of lines) {
+    const angle = parseScanModeAngle(row.text);
+    if (!angle) continue;
+    const rw = Math.max(1, Number(row.w) || 1), rh = Math.max(1, Number(row.h) || 1);
+    // A cone-angle label is a short HUD token. Reject large OCR regions such as an MFD paragraph.
+    if (rw > rendered.width * 0.16 || rh > rendered.height * 0.16) continue;
+    const cx = search.x + (Number(row.x) + rw / 2) * sx;
+    const cy = search.y + (Number(row.y) + rh / 2) * sy;
+    const roiW = Math.max(0.080, Math.min(0.115, (rw * sx / width) * 5.5));
+    const roiH = Math.max(0.180, Math.min(0.230, (rh * sy / height) * 8.0));
+    proposals.push({
+      name: `rapid-hint-${angle}-${proposals.length + 1}`,
+      hintedAngle: angle,
+      x: Math.max(0, Math.min(1 - roiW, cx / width - roiW / 2)),
+      y: Math.max(0, Math.min(1 - roiH, cy / height - roiH / 2)),
+      w: roiW,
+      h: roiH,
+      scale: 6.0,
+      score: Number(row.confidence) || 0,
+    });
+  }
+  proposals.sort((a, b) => b.score - a.score);
+  return proposals.slice(0, 6);
+}
+
+async function scoreScanModeCandidate(image, width, height, roi, index, templates) {
+  const local = normalizedCrop(image, width, height, roi);
+  const rawPath = path.join(os.tmpdir(), `sc-mining-scan-mode-${process.pid}-${index}-raw.png`);
+  const maskPath = path.join(os.tmpdir(), `sc-mining-scan-mode-${process.pid}-${index}-mask.png`);
+  fs.writeFileSync(rawPath, local.img.toPNG());
+  const prepared = await prepareScanModeMask(rawPath, maskPath);
+  if (!prepared) return null;
+
+  const scored = await Promise.all(templates.map(async (template) => ({
+    angle: template.angle,
+    error: await compareScanModeMask(prepared, template.path),
+  })));
+  scored.sort((a, b) => a.error - b.error);
+  const best = scored[0] || { angle: null, error: 1 };
+  const second = scored[1] || { angle: null, error: 1 };
+  return {
+    name: roi.name || `candidate-${index}`,
+    roi,
+    rawPath,
+    maskPath: prepared,
+    best,
+    second,
+    matchMargin: Math.max(0, second.error - best.error),
+  };
+}
+
+function scanModeTemplateConfident(candidate) {
+  return !!candidate && candidate.best.error <= 0.40 && candidate.matchMargin >= 0.018;
+}
+
+async function readScanModeDegree(candidate) {
+  if (!candidate) return { text: "", angle: null, engine: "none" };
+  const [rapidLines, tesseractText] = await Promise.all([
+    ocrRapidLinesOptional(candidate.rawPath),
+    ocrTesseractText(candidate.maskPath, { psm: 11, whitelist: "0123456789" }).catch(() => ""),
+  ]);
+  const rapidText = rapidLines.map((row) => row.text).join(" ").trim();
+  const rapidAngle = parseScanModeAngle(rapidText);
+  const tesseractAngle = parseScanModeAngle(tesseractText);
+  if (rapidAngle) return { text: rapidText, angle: rapidAngle, engine: "rapidocr" };
+  if (tesseractAngle) return { text: String(tesseractText || "").trim(), angle: tesseractAngle, engine: "tesseract" };
+  return { text: [rapidText, String(tesseractText || "").trim()].filter(Boolean).join(" | "), angle: null, engine: rapidText ? "rapidocr" : "tesseract" };
+}
+
+async function readMiningScanMode(image, width, height, tempPaths) {
+  const templates = await ensureScanModeTemplates();
+  if (!templates.length) return { kind: "scan-mode", active: false, angle: null, confidence: 0, method: "templates-missing" };
+
+  const candidates = [];
+  const primary = await scoreScanModeCandidate(image, width, height, SCAN_MODE_PRIMARY_ROI, 0, templates);
+  if (primary) candidates.push(primary);
+
+  // Keep the common Prospector path inexpensive. Only search neighboring HUD anchors when the
+  // primary crop is not already a clear template match.
+  if (!scanModeTemplateConfident(primary)) {
+    for (let i = 0; i < SCAN_MODE_FALLBACK_ROIS.length; i++) {
+      const candidate = await scoreScanModeCandidate(image, width, height, SCAN_MODE_FALLBACK_ROIS[i], i + 1, templates);
+      if (candidate) candidates.push(candidate);
+      if (scanModeTemplateConfident(candidate) && candidate.best.error <= 0.34) break;
+    }
+  }
+
+  let searchHintCount = 0;
+  if (!candidates.some(scanModeTemplateConfident)) {
+    const hintedRois = await rapidScanModeSearchRois(image, width, height);
+    searchHintCount = hintedRois.length;
+    for (let i = 0; i < hintedRois.length; i++) {
+      const candidate = await scoreScanModeCandidate(
+        image, width, height, hintedRois[i], 100 + i, templates,
+      );
+      if (candidate) candidates.push(candidate);
+      if (scanModeTemplateConfident(candidate) && candidate.best.angle === hintedRois[i].hintedAngle) break;
+    }
+  }
+
+  candidates.sort((a, b) => a.best.error - b.best.error || b.matchMargin - a.matchMargin);
+  const selected = candidates[0] || null;
+  if (!selected) return { kind: "scan-mode", active: false, angle: null, confidence: 0, method: "mask-failed" };
+
+  // Preserve the chosen candidate under the stable diagnostic filenames.
+  try { fs.copyFileSync(selected.rawPath, tempPaths.scanModeRaw); } catch {}
+  try { fs.copyFileSync(selected.maskPath, tempPaths.scanModeMask); } catch {}
+
+  const degree = await readScanModeDegree(selected);
+  const templateConfident = scanModeTemplateConfident(selected);
+  const ocrConfirmed = !!degree.angle && selected.best.error <= 0.50 &&
+    (selected.best.angle === degree.angle || selected.matchMargin >= 0.012);
+  const active = templateConfident || ocrConfirmed;
+  const angle = active ? (degree.angle || selected.best.angle) : null;
+  return {
+    kind: "scan-mode",
+    active,
+    angle,
+    confidence: Math.max(0, Math.min(100, Math.round((1 - selected.best.error) * 100))),
+    templateError: Number(selected.best.error.toFixed(4)),
+    secondTemplateError: Number(selected.second.error.toFixed(4)),
+    matchMargin: Number(selected.matchMargin.toFixed(4)),
+    ocrText: degree.text,
+    ocrEngine: degree.engine,
+    method: ocrConfirmed
+      ? `${selected.name.startsWith("rapid-hint-") ? "rapidocr-guided" : "multi-roi"}-template+${degree.engine}`
+      : (selected.name === SCAN_MODE_PRIMARY_ROI.name
+        ? "primary-template-match"
+        : (selected.name.startsWith("rapid-hint-") ? "rapidocr-guided-template-match" : "multi-roi-template-match")),
+    roi: selected.roi,
+    roiName: selected.name,
+    candidatesChecked: candidates.length,
+    searchHintCount,
+    candidateScores: candidates.slice(0, 4).map((candidate) => ({
+      name: candidate.name,
+      angle: candidate.best.angle,
+      error: Number(candidate.best.error.toFixed(4)),
+      margin: Number(candidate.matchMargin.toFixed(4)),
+    })),
+  };
+}
+
+// Tesseract can skip a tiny scanner badge when it sees the entire asteroid field as one page. r29
+// first joins neighboring white digit strokes, asks ImageMagick for connected-component boxes, and
+// OCRs each plausible short text row in isolation. This turns the supplied 15,600 badge from an
+// empty full-crop result into a compact local read (typically 15,600, 15600, or 15400).
+function parseSignatureComponentBoxes(verbose, imageWidth, imageHeight) {
+  const boxes = [];
+  for (const line of String(verbose || "").split(/\r?\n/)) {
+    if (!/gray\(255\)|srgb\(255,255,255\)/i.test(line)) continue;
+    const match = line.match(/^\s*\d+:\s+(\d+)x(\d+)\+(-?\d+)\+(-?\d+)\s+/);
+    if (!match) continue;
+    const w = Number(match[1]), h = Number(match[2]), x = Number(match[3]), y = Number(match[4]);
+    if (![w, h, x, y].every(Number.isFinite)) continue;
+    if (w < 45 || w > 190 || h < 14 || h > 62) continue;
+    const aspect = w / Math.max(1, h);
+    if (aspect < 1.35 || aspect > 10) continue;
+    if (x < 0 || y < 0 || x + w > imageWidth || y + h > imageHeight) continue;
+    // Prefer the central play field but keep off-centre markers too. Sorting only limits worst-case
+    // OCR cost; it is not used as a recognition score by the server.
+    const cx = x + w / 2, cy = y + h / 2;
+    const centerDistance = Math.hypot(cx / imageWidth - 0.5, cy / imageHeight - 0.42);
+    boxes.push({ x, y, w, h, centerDistance });
+  }
+  boxes.sort((a, b) => a.centerDistance - b.centerDistance || b.w - a.w);
+  return boxes.slice(0, 18);
+}
+
+async function localizedSignatureReads(thresholdPath, imageWidth, imageHeight) {
+  let result;
+  try {
+    result = await runFile("magick", [
+      thresholdPath,
+      "-morphology", "Close", "Rectangle:9x1",
+      "-define", "connected-components:verbose=true",
+      "-connected-components", "8",
+      "null:",
+    ], { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 });
+  } catch {
+    return [];
+  }
+  const boxes = parseSignatureComponentBoxes(`${result.stdout || ""}\n${result.stderr || ""}`, imageWidth, imageHeight);
+  const lines = [];
+  for (let i = 0; i < boxes.length; i++) {
+    const box = boxes[i];
+    const pad = 8;
+    const x = Math.max(0, box.x - pad), y = Math.max(0, box.y - pad);
+    const right = Math.min(imageWidth, box.x + box.w + pad);
+    const bottom = Math.min(imageHeight, box.y + box.h + pad);
+    const w = right - x, h = bottom - y;
+    const candidatePath = path.join(os.tmpdir(), `sc-mining-signature-component-${process.pid}-${i}.png`);
+    try {
+      await runFile("magick", [
+        thresholdPath,
+        "-crop", `${w}x${h}+${x}+${y}`,
+        "+repage",
+        "-resize", "600%",
+        "-morphology", "Close", "Rectangle:1x1",
+        "-strip",
+        candidatePath,
+      ], { timeout: 8_000 });
+      const lineSets = await Promise.all([
+        ocrTesseractLines(candidatePath, { psm: 7, whitelist: "0123456789,." }).catch(() => []),
+        ocrTesseractLines(candidatePath, { psm: 11, whitelist: "0123456789,." }).catch(() => []),
+        ocrTesseractLines(candidatePath, { psm: 13, whitelist: "0123456789,." }).catch(() => []),
+      ]);
+      const seen = new Set();
+      for (const row of lineSets.flat()) {
+        const text = String(row?.text || "").trim();
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        lines.push({ text, x, y, w, h, confidence: Number(row?.confidence) || 0 });
+      }
+    } finally {
+      try { fs.unlinkSync(candidatePath); } catch {}
+    }
+  }
+  return lines;
+}
+
+async function readMiningAnalysis(image, width, height, tempPaths) {
+  const panel = normalizedCrop(image, width, height, MINING_ROIS.panel);
+  const composition = normalizedCrop(image, width, height, MINING_ROIS.composition);
+  const stats = normalizedCrop(image, width, height, MINING_ROIS.stats);
+  fs.writeFileSync(tempPaths.panelRaw, panel.img.toPNG());
+  fs.writeFileSync(tempPaths.compositionRaw, composition.img.toPNG());
+  fs.writeFileSync(tempPaths.statsRaw, stats.img.toPNG());
+  // Preserve grayscale copies for diagnostics, but keep the production RESULTS-panel OCR on the
+  // original HUD colors. The supplied Lindinium calibration frame showed that grayscale can erase
+  // thin orange/white characters where the bright rock sits behind the text. Signature OCR remains
+  // grayscale because those marker digits are isolated against the play field.
+  await Promise.all([
+    preprocessHudImage(tempPaths.panelRaw, tempPaths.panel),
+    preprocessHudImage(tempPaths.compositionRaw, tempPaths.composition),
+    preprocessHudImage(tempPaths.statsRaw, tempPaths.stats),
+  ]);
+  const [panelTextTess, sparseText, compositionTextTess, statsText, panelRapid, compositionRapid] = await Promise.all([
+    ocrTesseractText(tempPaths.panelRaw, { psm: 6 }),
+    ocrTesseractText(tempPaths.panelRaw, { psm: 11 }),
+    ocrTesseractText(tempPaths.compositionRaw, { psm: 6 }),
+    ocrTesseractText(tempPaths.statsRaw, { psm: 6, whitelist: "0123456789OQDILSZB|!,.%SCU" }),
+    ocrRapidLinesOptional(tempPaths.panelRaw),
+    ocrRapidLinesOptional(tempPaths.compositionRaw),
+  ]);
+  const rapidPanelText = panelRapid.map((row) => row.text).filter(Boolean).join("\n");
+  const rapidCompositionText = compositionRapid.map((row) => row.text).filter(Boolean).join("\n");
+  const panelText = [rapidPanelText, panelTextTess].filter(Boolean).join("\n");
+  const compositionText = [rapidCompositionText, compositionTextTess].filter(Boolean).join("\n");
+  return { panelText, sparseText, compositionText, statsText, roi: { panel, composition, stats }, ocrEngine: rapidPanelText ? "rapidocr+tesseract" : "tesseract" };
+}
+
+async function readMiningSignatures(image, width, height, tempPaths) {
+  const reads = [];
+  for (const [name, roi] of Object.entries(MINING_SIGNATURE_ROIS)) {
+    const crop = normalizedCrop(image, width, height, roi);
+    const rawPath = tempPaths[`${name}Raw`];
+    const grayPath = tempPaths[name];
+    fs.writeFileSync(rawPath, crop.img.toPNG());
+    const ocrPath = await preprocessHudImage(rawPath, grayPath);
+    const [lines, rapidLines] = await Promise.all([
+      ocrTesseractLines(ocrPath, { psm: 11 }),
+      ocrRapidLinesOptional(rawPath),
+    ]);
+    const cropSize = crop.img.getSize();
+    reads.push({
+      name,
+      sourceGroup: name,
+      markerLike: false,
+      w: cropSize.width,
+      h: cropSize.height,
+      lines: Array.isArray(lines) ? lines : (lines.lines || []),
+      rect: { x: crop.x, y: crop.y, w: crop.w, h: crop.h },
+    });
+    if (rapidLines.length) {
+      reads.push({
+        name: `${name}-rapidocr`,
+        sourceGroup: name,
+        markerLike: false,
+        w: cropSize.width,
+        h: cropSize.height,
+        lines: rapidLines,
+        rect: { x: crop.x, y: crop.y, w: crop.w, h: crop.h },
+      });
+    }
+
+    // The focused crop gets one additional numeric-only pass. On the supplied diagnostic frame,
+    // ordinary PSM 11 skipped a clearly visible 15,600 badge, while thresholded PSM 6 returned
+    // "15.600". The server normalizes both comma and period grouping and corrects a fused pin icon.
+    if (name === "focus") {
+      const thresholdPath = tempPaths.focusThreshold;
+      const prepared = await preprocessSignatureThreshold(ocrPath, thresholdPath);
+      if (prepared) {
+        const numeric = await ocrTesseractLines(prepared, {
+          psm: 6,
+          whitelist: "0123456789,.",
+        });
+        reads.push({
+          name: "focus-threshold",
+          sourceGroup: "focus",
+          markerLike: true,
+          w: cropSize.width,
+          h: cropSize.height,
+          lines: Array.isArray(numeric) ? numeric : (numeric.lines || []),
+          rect: { x: crop.x, y: crop.y, w: crop.w, h: crop.h },
+        });
+        const rapidNumeric = await ocrRapidLinesOptional(prepared);
+        if (rapidNumeric.length) {
+          reads.push({
+            name: "focus-threshold-rapidocr",
+            sourceGroup: "focus",
+            markerLike: true,
+            w: cropSize.width,
+            h: cropSize.height,
+            lines: rapidNumeric,
+            rect: { x: crop.x, y: crop.y, w: crop.w, h: crop.h },
+          });
+        }
+        const localized = await localizedSignatureReads(prepared, cropSize.width, cropSize.height);
+        reads.push({
+          name: "focus-components",
+          sourceGroup: "focus-components",
+          markerLike: true,
+          w: cropSize.width,
+          h: cropSize.height,
+          lines: localized,
+          rect: { x: crop.x, y: crop.y, w: crop.w, h: crop.h },
+        });
+      }
+    }
+  }
+  return { reads };
+}
+
+// RapidOCR (PP-OCR) is preferred for stylized text, but all native work runs in a
+// disposable Node child process. The Electron main process receives only plain OCR results.
+let _rapidWarningShown = false;
+function ocrTesseractLines(imgPath, { psm = 11, whitelist = "" } = {}) {
+  return new Promise((resolve, reject) => {
+    const args = [path.resolve(imgPath), "stdout", "-l", "eng", "--psm", String(psm),
+      "-c", "preserve_interword_spaces=1"];
+    if (whitelist) args.push("-c", `tessedit_char_whitelist=${whitelist}`);
+    args.push("tsv");
+    execFile("tesseract", args,
+      { maxBuffer: 16 * 1024 * 1024, timeout: 15000 }, (err, stdout) => {
+        if (err) return reject(new Error(`Tesseract OCR failed: ${err.message || err}`));
+        try {
+          const groups = new Map();
+          const rows = String(stdout || "").split(/\r?\n/);
+          for (let i = 1; i < rows.length; i++) {
+            if (!rows[i]) continue;
+            const c = rows[i].split("\t");
+            if (c.length < 12 || Number(c[0]) !== 5) continue;
+            const text = c.slice(11).join("\t").trim();
+            if (!text) continue;
+            const left = Number(c[6]), top = Number(c[7]), width = Number(c[8]), height = Number(c[9]);
+            const key = `${c[1]}:${c[2]}:${c[3]}:${c[4]}`;
+            let g = groups.get(key);
+            if (!g) {
+              g = { words: [], confidences: [], x0: left, y0: top, x1: left + width, y1: top + height };
+              groups.set(key, g);
+            }
+            g.words.push(text);
+            const confidence = Number(c[10]);
+            if (Number.isFinite(confidence) && confidence >= 0) g.confidences.push(confidence);
+            g.x0 = Math.min(g.x0, left); g.y0 = Math.min(g.y0, top);
+            g.x1 = Math.max(g.x1, left + width); g.y1 = Math.max(g.y1, top + height);
+          }
+          resolve([...groups.values()].map((g) => ({
+            text: g.words.join(" "),
+            x: g.x0,
+            y: g.y0,
+            w: g.x1 - g.x0,
+            h: g.y1 - g.y0,
+            confidence: g.confidences.length
+              ? g.confidences.reduce((sum, value) => sum + value, 0) / g.confidences.length
+              : 0,
+          })).sort((a, b) => a.y - b.y || a.x - b.x));
+        } catch (e) { reject(e); }
+      });
+  });
 }
 async function ocrRapidLines(imgPath) {
-  const ocr = await getRapid();
-  const res = await ocr.detect(imgPath);
-  return (res || []).map((r) => {
-    const xs = r.box.map((pt) => pt[0]), ys = r.box.map((pt) => pt[1]);
-    const x = Math.min(...xs), y = Math.min(...ys);
-    return { text: String(r.text || ""), x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
-  });
+  const detected = await rapidOcrClient.detect(imgPath);
+  const res = Array.isArray(detected) ? detected : (Array.isArray(detected?.texts) ? detected.texts : []);
+  return res.map((r) => {
+    const box = Array.isArray(r.box) ? r.box : [];
+    const xs = box.map((pt) => Number(pt?.[0])).filter(Number.isFinite);
+    const ys = box.map((pt) => Number(pt?.[1])).filter(Number.isFinite);
+    const frame = r?.frame && typeof r.frame === "object" ? r.frame : null;
+    const x = xs.length ? Math.min(...xs) : Number(frame?.left) || 0;
+    const y = ys.length ? Math.min(...ys) : Number(frame?.top) || 0;
+    return {
+      text: String(r.text || ""),
+      x,
+      y,
+      w: xs.length ? Math.max(...xs) - x : Number(frame?.width) || 0,
+      h: ys.length ? Math.max(...ys) - y : Number(frame?.height) || 0,
+      confidence: Number(r.score ?? r.confidence) || 0,
+    };
+  }).filter((row) => row.text.trim());
+}
+async function ocrRapidLinesOptional(imgPath) {
+  try {
+    return await ocrRapidLines(imgPath);
+  } catch (error) {
+    if (!_rapidWarningShown) {
+      _rapidWarningShown = true;
+      console.warn("[ocr] RapidOCR worker unavailable; continuing with Tesseract fallback:", error?.message || error);
+    }
+    return [];
+  }
+}
+
+function captureErrorMessage(error) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  try { const text = JSON.stringify(error); if (text && text !== "{}") return text; } catch {}
+  return String(error || "unknown screen-capture failure");
 }
 
 // Is an item actually rendered in the crop, or did we catch the fabricator mid-load (just the
@@ -282,16 +1148,40 @@ function startFabCapture({ port, configDir, onStatus }) {
   const shotsDir = path.join(configDir, "fab-shots"); // full uncropped frames (mineable)
   const tmpShot = path.join(os.tmpdir(), "sc-fab-shot.png");
   const tmpPanel = path.join(os.tmpdir(), "sc-fab-panel.png"); // upper-right crop fed to RapidOCR
+  const miningTemp = {
+    panelRaw: path.join(os.tmpdir(), "sc-mining-results-panel-raw.png"),
+    panel: path.join(os.tmpdir(), "sc-mining-results-panel-gray.png"),
+    compositionRaw: path.join(os.tmpdir(), "sc-mining-results-composition-raw.png"),
+    composition: path.join(os.tmpdir(), "sc-mining-results-composition-gray.png"),
+    statsRaw: path.join(os.tmpdir(), "sc-mining-results-stats-raw.png"),
+    stats: path.join(os.tmpdir(), "sc-mining-results-stats-gray.png"),
+    focusRaw: path.join(os.tmpdir(), "sc-mining-signature-focus-raw.png"),
+    focus: path.join(os.tmpdir(), "sc-mining-signature-focus-gray.png"),
+    focusThreshold: path.join(os.tmpdir(), "sc-mining-signature-focus-threshold.png"),
+    scanModeRaw: path.join(os.tmpdir(), "sc-mining-scan-mode-raw.png"),
+    scanModeMask: path.join(os.tmpdir(), "sc-mining-scan-mode-mask.png"),
+    wideRaw: path.join(os.tmpdir(), "sc-mining-signature-wide-raw.png"),
+    wide: path.join(os.tmpdir(), "sc-mining-signature-wide-gray.png"),
+  };
+  const ocrDebugDir = path.join(configDir, "ocr-debug");
   let busy = false;
   let busyAt = 0;             // when the current tick set busy (watchdog against a wedged loop)
-  const TICK_WATCHDOG_MS = 15000; // if a tick has "held" busy this long, it hung — force re-arm
+  const TICK_WATCHDOG_MS = 15000; // log a slow tick, but never overlap native OCR work
+  let lastSlowTickLogAt = 0;
   const FETCH_TIMEOUT_MS = 8000;  // any single request must give up so it can't latch the loop
   const DRAIN_MS = 6000;          // how often the retry-upload loop drains captured-but-unshared items
-  let lastContext = "";
-  // Context = the steady on-screen state (off/idle/watching/fabricator); reported only on change,
-  // drives the overlay diamond (fabricator -> gold). Events (settling/captured/mission) are discrete
-  // and fire every time without disturbing the context.
-  const emitContext = (state) => { if (state !== lastContext) { lastContext = state; onStatus?.({ state }); } };
+  let lastContextKey = "";
+  let scanCycle = 0;
+  let lastGateLog = "";
+  // Context = the steady screen-reader state. r24 includes the enabled feature flags, bound-session IDs, gate source,
+  // and successful cycle count so both widgets can show an honest heartbeat instead of appearing
+  // dormant. The key intentionally includes `cycle`, so a successful read refreshes the UI every
+  // poll; idle/off messages are still deduplicated.
+  const emitContext = (state, extra = {}) => {
+    const payload = { state, ...extra };
+    const key = JSON.stringify(payload);
+    if (key !== lastContextKey) { lastContextKey = key; onStatus?.(payload); }
+  };
   const emitEvent = (s) => { onStatus?.(s); };
   let lastMission = "";       // last mission title sent (throttle screen-read posts)
   let lastUnresolved = "";    // last unreadable kiosk item flagged (throttle the "can't read" note)
@@ -312,17 +1202,71 @@ function startFabCapture({ port, configDir, onStatus }) {
   let seededPending = false;  // have we reconciled the local capture folder vs the site's have-list?
   let remoteHave = null;      // set of items the site already has (dedup)
   let remoteHaveAt = 0;       // when remoteHave was last fetched
-  // If the site rejects the sync token (401), pause upload retries until the token changes.
-  let blockedToken = "";
-  let authNotifiedToken = "";
   const REMOTE_TTL_MS = 3 * 60_000; // re-fetch the site's have-list this often
+  // A failed capture should not hammer KDE's capture stack every three seconds. The launcher
+  // forces X11, but this cooldown also keeps manual/native-Wayland experiments readable.
+  let nextCaptureAttemptAt = 0;
+  let lastCaptureError = "";
+  let lastMiningFingerprint = "";
+  let lastSignatureFingerprint = "";
+  let lastScanModeFingerprint = "";
+  let lastCaptureDescription = "";
+  let noMiningReadCycles = 0;
 
-  const clearTokenBlockIfChanged = (token) => {
-    if (blockedToken && token && token !== blockedToken) {
-      blockedToken = "";
-      authNotifiedToken = "";
+
+  function saveOcrDebug(shot, cap, genericRead, analysisRead, signatureRead, signatureOcr = null, scanModeRead = null) {
+    try {
+      fs.mkdirSync(ocrDebugDir, { recursive: true });
+      fs.writeFileSync(path.join(ocrDebugDir, "latest-game-frame.jpg"), shot.toJPEG(82));
+      for (const [source, name] of [
+        [miningTemp.focusRaw, "latest-signature-focus-raw.png"],
+        [miningTemp.focus, "latest-signature-focus-gray.png"],
+        [miningTemp.focusThreshold, "latest-signature-focus-threshold.png"],
+        [miningTemp.scanModeRaw, "latest-scan-mode-raw.png"],
+        [miningTemp.scanModeMask, "latest-scan-mode-mask.png"],
+        [miningTemp.wideRaw, "latest-signature-wide-raw.png"],
+        [miningTemp.wide, "latest-signature-wide-gray.png"],
+        [miningTemp.panelRaw, "latest-analysis-panel-raw.png"],
+        [miningTemp.panel, "latest-analysis-panel-gray.png"],
+      ]) {
+        try { if (fs.existsSync(source)) fs.copyFileSync(source, path.join(ocrDebugDir, name)); } catch {}
+      }
+      fs.writeFileSync(path.join(ocrDebugDir, "latest-read.json"), JSON.stringify({
+        at: new Date().toISOString(),
+        capture: {
+          method: cap.method,
+          width: cap.width,
+          height: cap.height,
+          sourceName: cap.sourceName || null,
+          sourceId: cap.sourceId || null,
+          sourceInventory: cap.sourceInventory || null,
+          sourceSize: cap.sourceSize || null,
+        },
+        genericRead,
+        analysisRead,
+        signatureRead,
+        scanModeRead,
+        signatureOcr: signatureOcr ? {
+          reads: (signatureOcr.reads || []).map((read) => ({
+            name: read.name,
+            sourceGroup: read.sourceGroup || read.name,
+            markerLike: !!read.markerLike,
+            rect: read.rect || null,
+            lines: (read.lines || []).map((line) => ({
+              text: line.text,
+              x: line.x,
+              y: line.y,
+              w: line.w,
+              h: line.h,
+              confidence: line.confidence ?? null,
+            })),
+          })),
+        } : null,
+      }, null, 2) + "\n");
+    } catch (error) {
+      console.warn("[screen-read] unable to write OCR diagnostics:", error?.message || error);
     }
-  };
+  }
 
   // What does the site already have? Skip capturing those. Re-fetched every REMOTE_TTL_MS so a
   // server-side delete/replace (or a failed upload) becomes capturable again WITHOUT restarting.
@@ -347,24 +1291,14 @@ function startFabCapture({ port, configDir, onStatus }) {
         body: jpeg,
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      if (r.ok) { uploaded.add(item); remoteHave?.add(item); return "ok"; }
-      if (r.status === 401) {
-        blockedToken = token;
-        if (authNotifiedToken !== token) {
-          authNotifiedToken = token;
-          emitEvent({ state: "auth", reason: "invalid_token" });
-        }
-        console.error(`[fab-capture] upload ${item} -> HTTP 401 (invalid sync token)`);
-        return "auth";
-      }
+      if (r.ok) { uploaded.add(item); remoteHave?.add(item); return true; }
       console.error(`[fab-capture] upload ${item} -> HTTP ${r.status}`);
     } catch (e) { console.error("[fab-capture] upload error:", e && e.message); }
-    return "retry";
+    return false;
   }
 
   async function tick() {
     const cfg = readConfig(configDir);
-    clearTokenBlockIfChanged(cfg.syncToken || "");
     // Two independent opt-ins share one screen-read: image capture and pinned-mission OCR.
     // Either one arms the loop; each read is then gated by its own flag below.
     const fab = cfg.fabCapture === true;
@@ -372,33 +1306,64 @@ function startFabCapture({ port, configDir, onStatus }) {
     // The Mining Assistant (refinery timers + signature scanner) also reads the screen;
     // refinery/mineable reads are routed to its tracker server-side in /api/screen-read.
     const mining = cfg.miningAssistant === true;
-    // The foreground watcher is only worth running while something here is armed — with all three
-    // opt-ins off this loop does nothing but re-read a config file every 3s, and shouldn't be
-    // keeping a helper process alive to do it.
-    fgWatch.want("ocr", fab || miss || mining);
-    if (!fab && !miss && !mining) { emitContext("off"); return; }
-    // Watchdog: a single hung await (e.g. a fetch to the sidecar while it's restarting during an
-    // auto-update) must never latch the loop forever. If a prior tick has held `busy` well past
-    // any real tick, treat it as wedged and re-arm — otherwise the overlay freezes on its last
-    // message ("Reading the fabricator…") until the app restarts.
+    const features = { fabricator: fab, mission: miss, mining };
+    if (!fab && !miss && !mining) { emitContext("off", { features, reason: "all-readers-disabled" }); return; }
+    if (Date.now() < nextCaptureAttemptAt) {
+      emitContext("idle", { features, reason: "capture-backoff", retryAt: nextCaptureAttemptAt });
+      return;
+    }
+    // Never start a second capture/OCR cycle while the first still owns native image objects.
+    // The old watchdog cleared `busy` after 15 seconds, leaving the first async tick alive and
+    // allowing overlapping RapidOCR/sharp/libvips work. That can abort the whole Electron process.
+    // A slow tick is now reported and skipped; its own finally block is the only place that unlocks.
     if (busy) {
-      if (Date.now() - busyAt < TICK_WATCHDOG_MS) return;
-      console.warn("[fab-capture] tick watchdog: a prior tick hung — re-arming the loop");
-      busy = false;
+      const elapsed = Date.now() - busyAt;
+      if (elapsed >= TICK_WATCHDOG_MS && Date.now() - lastSlowTickLogAt >= TICK_WATCHDOG_MS) {
+        lastSlowTickLogAt = Date.now();
+        console.warn(`[fab-capture] prior OCR tick still running after ${Math.round(elapsed / 1000)}s; skipping overlap (RapidOCR queue=${rapidOcrClient.queueDepth()})`);
+      }
+      return;
     }
     const fg = await foregroundWindow();
-    if (!/^StarCitizen$/i.test(fg.name)) { emitContext("idle"); return; } // only ever look at SC
+    const boundSession = fg.session || scSession.summary();
+    if (!/^StarCitizen(?:\.exe)?$/i.test(fg.name)) {
+      emitContext("idle", { features, reason: "waiting-for-game", gate: fg.gate || "not-game", session: boundSession });
+      const gateMessage = `paused:${fg.gate || "not-game"}:${fg.name || "anonymous"}`;
+      if (gateMessage !== lastGateLog) {
+        lastGateLog = gateMessage;
+        console.log(`[screen-read] paused — Star Citizen is not the active surface (gate=${fg.gate || "not-game"}, active=${fg.name || "anonymous"})`);
+      }
+      return;
+    } // only ever look at SC
+    const gateMessage = `active:${fg.gate || "unknown"}`;
+    if (gateMessage !== lastGateLog) {
+      lastGateLog = gateMessage;
+      console.log(`[screen-read] active via ${fg.gate || "foreground-window"}` +
+        `${boundSession ? `; bound StarCitizen PID ${boundSession.gamePid} -> Gamescope PID ${boundSession.gamescopePid}` : ""}` +
+        `; mining=${mining ? "on" : "off"}, mission=${miss ? "on" : "off"}, fabricator=${fab ? "on" : "off"}`);
+    }
     busy = true;
     busyAt = Date.now();
+    emitEvent({ state: "reading", features, cycle: scanCycle + 1, gate: fg.gate || "foreground-window", session: boundSession });
     try {
       const have = fab ? await ensureRemoteHave() : null; // dedup set only needed for capture
       const cap = await captureGame(fg.rect); // the monitor the GAME is on, not a blind sources[0]
       const shot = cap && cap.image;
       if (!shot) return;
+      const captureDescription = `${cap.method || "unknown"}:${cap.width}x${cap.height}:${cap.sourceName || ""}:${cap.sourceId || ""}`;
+      if (captureDescription !== lastCaptureDescription) {
+        lastCaptureDescription = captureDescription;
+        console.log(`[screen-read] capture source ${cap.method || "unknown"} ${cap.width}x${cap.height}` +
+          `${cap.sourceName ? ` (${cap.sourceName})` : ""}` +
+          `${cap.sourceId ? ` display_id=${cap.sourceId}` : ""}`);
+        if (cap.sourceInventory && /fallback/.test(cap.method || "")) {
+          console.log(`[screen-read] Electron screen inventory: ${cap.sourceInventory}`);
+        }
+      }
       fs.writeFileSync(tmpShot, shot.toPNG());
       // Pass 1 — Windows OCR on the full game frame: the cheap "where am I" glance. It detects the
       // kiosk and serves the mission / mining reads (which work fine on it today).
-      const resp = await fetch(`http://localhost:${port}/api/screen-read`, {
+      const resp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: tmpShot }),
@@ -414,7 +1379,7 @@ function startFabCapture({ port, configDir, onStatus }) {
           const panel = rightPanelCrop(shot, cap.width, cap.height);
           fs.writeFileSync(tmpPanel, panel.img.toPNG());
           const lines = await ocrRapidLines(tmpPanel);
-          const r2 = await fetch(`http://localhost:${port}/api/screen-read`, {
+          const r2 = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ lines, w: panel.w, h: panel.h }),
@@ -422,7 +1387,88 @@ function startFabCapture({ port, configDir, onStatus }) {
           });
           const rr = await r2.json();
           if (rr.kind === "fabricator" && rr.item) { read = rr; renderSrc = panel.img; } // rr.crop is panel-relative
-        } catch (e) { console.warn("[fab-capture] RapidOCR re-read failed, using Windows OCR:", e && e.message); }
+        } catch (e) { console.warn("[fab-capture] secondary OCR re-read failed, using full-frame OCR:", e && e.message); }
+      }
+      // Completed mining scans and ping signatures have separate, tightly-cropped OCR paths.
+      // They run independently of the generic classifier: cockpit text can occasionally resemble a
+      // fabricator/refinery screen, and that false classification must never suppress Mining OCR.
+      let analysisRead = { kind: "none" };
+      let signatureRead = { kind: "none" };
+      let signatureOcr = null;
+      let scanModeRead = { kind: "scan-mode", active: false, angle: null, confidence: 0 };
+      if (mining) {
+        try {
+          scanModeRead = await readMiningScanMode(shot, cap.width, cap.height, miningTemp);
+          const scanModeResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "mining-scan-mode", ...scanModeRead }),
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
+          await scanModeResp.json().catch(() => ({}));
+          const scanFingerprint = `${scanModeRead.active ? 1 : 0}|${scanModeRead.angle || 0}|${scanModeRead.confidence || 0}`;
+          if (scanFingerprint !== lastScanModeFingerprint) {
+            lastScanModeFingerprint = scanFingerprint;
+            console.log(`[mining-scan-mode] ${scanModeRead.active ? `active ${scanModeRead.angle || "?"}°` : "inactive"}` +
+              ` confidence=${scanModeRead.confidence || 0}` +
+              `${scanModeRead.ocrText ? ` ocr=${JSON.stringify(scanModeRead.ocrText)}` : ""}`);
+          }
+        } catch (e) {
+          console.warn("[mining-scan-mode] detector failed:", e && e.message);
+        }
+
+        try {
+          const miningOcr = await readMiningAnalysis(shot, cap.width, cap.height, miningTemp);
+          const miningResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "mining-analysis", ...miningOcr }),
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
+          analysisRead = await miningResp.json();
+          if (analysisRead.kind === "mining-analysis") {
+            const fingerprint = [analysisRead.target || "?", analysisRead.mass || "?",
+              ...(analysisRead.composition || []).map((row) => `${row.material}:${row.percent ?? "?"}`)].join("|");
+            if (fingerprint !== lastMiningFingerprint) {
+              lastMiningFingerprint = fingerprint;
+              console.log(`[mining-ocr] analysis candidate: ${analysisRead.target || "unknown"}` +
+                `${analysisRead.mass ? `, mass ${analysisRead.mass}` : ""}` +
+                `${analysisRead.composition?.length ? `, ${analysisRead.composition.length} composition row(s)` : ""}`);
+            }
+          }
+        } catch (e) {
+          console.warn("[mining-ocr] dedicated panel read failed:", e && e.message);
+        }
+
+        // The signature pass is independent of the generic classifier. It runs unless a completed
+        // analysis was recognized on this frame, and the server confirms repeated non-target reads.
+        if (analysisRead.kind !== "mining-analysis" && read.kind !== "mineable") {
+          try {
+            signatureOcr = await readMiningSignatures(shot, cap.width, cap.height, miningTemp);
+            const signatureResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mode: "mining-signature", scanMode: scanModeRead, ...signatureOcr }),
+              signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            });
+            signatureRead = await signatureResp.json();
+            if (signatureRead.kind === "mineable") {
+              const fingerprint = `${signatureRead.signature}|${signatureRead.accepted ? "accepted" : `pending-${signatureRead.pendingCount || 0}`}`;
+              if (fingerprint !== lastSignatureFingerprint) {
+                lastSignatureFingerprint = fingerprint;
+                console.log(`[mining-signature] ${signatureRead.accepted ? "accepted" : "candidate"}` +
+                  ` ${Number(signatureRead.signature).toLocaleString()}` +
+                  ` confidence=${signatureRead.confidence ?? "?"}` +
+                  `${signatureRead.pendingCount ? ` confirmation=${signatureRead.pendingCount}/${signatureRead.required || 2}` : ""}` +
+                  `${signatureRead.matches?.length ? ` matches=${signatureRead.matches.map((m) => m.name).join(",")}` : " matches=none"}` +
+                  `${signatureRead.correction ? ` correction=${signatureRead.correction}` : ""}` +
+                  `${signatureRead.raw ? ` raw=${JSON.stringify(signatureRead.raw)}` : ""}`);
+              }
+            }
+          } catch (e) {
+            console.warn("[mining-signature] dedicated signature read failed:", e && e.message);
+          }
+        }
       }
       // Cadence. Scanning ore is a live feedback loop: you shoot a rock and want to hear what it
       // is immediately, so while the scan HUD is on screen the loop runs at FAST_MS. Everything
@@ -471,10 +1517,44 @@ function startFabCapture({ port, configDir, onStatus }) {
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
           });
         } catch (e) { console.warn("[mining] scan post failed:", e && e.message); }
+      }      // A kiosk on screen -> "fabricator" context (gold diamond) even if image capture is off;
+      // anything else while watching -> "watching". A successful cycle is surfaced every poll so
+      // the Mission Tracker and Mining Assistant both show that OCR is alive even when nothing new
+      // was recognized.
+      scanCycle += 1;
+      const miningKind = analysisRead.kind === "mining-analysis"
+        ? "mining-analysis"
+        : (signatureRead.kind === "mineable"
+          ? (signatureRead.accepted ? "mineable" : "mineable-pending")
+          : (read.kind === "mineable" ? "mineable" : "none"));
+      if (miningKind === "none") noMiningReadCycles += 1;
+      else noMiningReadCycles = 0;
+      const effectiveKind = read.kind && read.kind !== "none" ? read.kind : miningKind;
+      emitContext(read.kind === "fabricator" ? "fabricator" : "watching", {
+        features,
+        cycle: scanCycle,
+        gate: fg.gate || "foreground-window",
+        lastReadKind: effectiveKind || "none",
+        miningReadKind: miningKind,
+        signature: signatureRead.signature || null,
+        signatureAccepted: signatureRead.accepted === true,
+        signaturePendingCount: signatureRead.pendingCount || 0,
+        signatureRequired: signatureRead.required || 0,
+        scanModeActive: scanModeRead.active === true,
+        scanModeAngle: scanModeRead.angle || null,
+        scanModeConfidence: scanModeRead.confidence || 0,
+        captureMethod: cap.method || "unknown",
+        at: Date.now(),
+        session: boundSession,
+      });
+      if (scanCycle === 1 || scanCycle % 10 === 0) {
+        console.log(`[screen-read] cycle ${scanCycle} complete (kind=${effectiveKind || "none"}, gate=${fg.gate || "foreground-window"}, capture=${cap.method || "unknown"}, gamePid=${boundSession?.gamePid || "none"})`);
       }
-      // A kiosk on screen -> "fabricator" context (gold diamond) even if image capture is off;
-      // anything else while watching -> "watching".
-      emitContext(read.kind === "fabricator" ? "fabricator" : "watching");
+      // Keep one bounded diagnostic set instead of accumulating screenshots. It is refreshed on the
+      // first pass, whenever Mining recognizes something, and every tenth miss.
+      if (scanCycle === 1 || miningKind !== "none" || noMiningReadCycles % 10 === 0) {
+        saveOcrDebug(shot, cap, read, analysisRead, signatureRead, signatureOcr, scanModeRead);
+      }
       if (read.kind !== "fabricator") { lastUnresolved = ""; unresolvedTries = 0; lastHave = ""; lastRenderWait = ""; } // left the kiosk
       if (read.kind === "fabricator" && read.item) {
         lastUnresolved = ""; unresolvedTries = 0;
@@ -535,35 +1615,21 @@ function startFabCapture({ port, configDir, onStatus }) {
         fs.mkdirSync(shotsDir, { recursive: true });
         fs.writeFileSync(path.join(shotsDir, `${item}.jpg`), shot.toJPEG(85));
         let uploadedOk = false;
-        let authFail = false;
         if (cfg.syncToken) {
-          if (blockedToken && cfg.syncToken === blockedToken) {
-            authFail = true;
-            if (authNotifiedToken !== cfg.syncToken) {
-              authNotifiedToken = cfg.syncToken;
-              emitEvent({ state: "auth", reason: "invalid_token" });
-            }
-            // Token is known bad; queue locally and wait for a re-link rather than hammering.
-            missing.forEach((t) => pendingUploads.set(t, read.name));
-          } else {
-            // Share the one capture across every sibling that still lacks it (name collision).
-            const oks = await Promise.all(missing.map((t) => upload(t, jpeg, cfg.syncToken)));
-            uploadedOk = oks.every((v) => v === "ok");
-            authFail = oks.some((v) => v === "auth");
-            // Any sibling whose upload didn't land: keep the local JPEG and QUEUE it. The drain loop
-            // retries from disk until the server has it, so a transient failure (or a wedge) can't
-            // leave a captured item silently unshared — and the user isn't told "done" when it isn't.
-            missing.forEach((t, i) => { if (oks[i] !== "ok") pendingUploads.set(t, read.name); });
-          }
+          // Share the one capture across every sibling that still lacks it (name collision).
+          const oks = await Promise.all(missing.map((t) => upload(t, jpeg, cfg.syncToken)));
+          uploadedOk = oks.every(Boolean);
+          // Any sibling whose upload didn't land: keep the local JPEG and QUEUE it. The drain loop
+          // retries from disk until the server has it, so a transient failure (or a wedge) can't
+          // leave a captured item silently unshared — and the user isn't told "done" when it isn't.
+          missing.forEach((t, i) => { if (!oks[i]) pendingUploads.set(t, read.name); });
           const label = missing.length > 1 ? `${read.name} (${missing.length} sizes)` : `${read.name} (${item})`;
-          if (authFail) console.log(`[fab-capture] sync token invalid — queued locally until relink (${label})`);
-          else console.log(`[fab-capture] ${uploadedOk ? "uploaded" : "upload failed — queued for retry"} ${label}`);
+          console.log(`[fab-capture] ${uploadedOk ? "uploaded" : "upload failed — queued for retry"} ${label}`);
         } else {
           console.log(`[fab-capture] saved ${read.name} (${item}) — no sync token, not uploaded`);
         }
         // uploaded:true  => confirmed on the site. queued:true => saved + retrying (NOT done yet).
         emitEvent({ state: "captured", name: read.name, uploaded: uploadedOk, queued: !uploadedOk && !!cfg.syncToken });
-        if (authFail) emitEvent({ state: "auth", reason: "invalid_token" });
       } else if (read.kind === "fabricator" && fab) {
         // In the kiosk with image capture on, but the item name didn't resolve to a known
         // blueprint (still rendering in, or an item not in our dataset) — so there's nothing
@@ -584,7 +1650,7 @@ function startFabCapture({ port, configDir, onStatus }) {
         lastMission = read.titleRaw;
         emitEvent({ state: "mission", title: read.titleRaw });
         try {
-          await fetch(`http://localhost:${port}/api/missions/screen`, {
+          await fetch(`http://127.0.0.1:${port}/api/missions/screen`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ title: read.titleRaw }),
@@ -593,10 +1659,17 @@ function startFabCapture({ port, configDir, onStatus }) {
         } catch { /* best effort */ }
       }
     } catch (e) {
-      console.error("[fab-capture] tick error:", e && e.message);
+      const message = captureErrorMessage(e);
+      nextCaptureAttemptAt = Date.now() + 60_000;
+      if (message !== lastCaptureError) {
+        console.error(`[fab-capture] screen read failed: ${message}; retry paused for 60 seconds`);
+        lastCaptureError = message;
+      }
+      emitEvent({ state: "capture-error", message, features, cycle: scanCycle, retryAt: nextCaptureAttemptAt });
     } finally {
       lastTickMs = Date.now() - busyAt;
       busy = false;
+      lastSlowTickLogAt = 0;
     }
   }
 
@@ -607,9 +1680,7 @@ function startFabCapture({ port, configDir, onStatus }) {
   // by a past failure/wedge self-heal on the next launch instead of being silently lost.
   async function drainPending() {
     const cfg = readConfig(configDir);
-    clearTokenBlockIfChanged(cfg.syncToken || "");
     if (cfg.fabCapture !== true || !cfg.syncToken) return; // needs opt-in + a token to upload
-    if (blockedToken && cfg.syncToken === blockedToken) return; // known bad token; wait for re-link
     if (drainBusy) return;
     drainBusy = true;
     try {
@@ -630,13 +1701,10 @@ function startFabCapture({ port, configDir, onStatus }) {
         let jpeg;
         try { jpeg = fs.readFileSync(path.join(captureDir, `${it}.jpg`)); }
         catch { pendingUploads.delete(it); continue; } // local file gone — nothing to retry
-        const st = await upload(it, jpeg, cfg.syncToken);
-        if (st === "ok") {
+        if (await upload(it, jpeg, cfg.syncToken)) {
           pendingUploads.delete(it);
           emitEvent({ state: "shared", name, pending: pendingUploads.size });
           console.log(`[fab-capture] retry uploaded ${name || it} (${pendingUploads.size} still pending)`);
-        } else if (st === "auth") {
-          return; // token invalid: stop retry churn until token changes
         }
       }
     } catch (e) {
@@ -650,8 +1718,8 @@ function startFabCapture({ port, configDir, onStatus }) {
   timer.unref?.();
   const drainTimer = setInterval(drainPending, DRAIN_MS);
   drainTimer.unref?.();
-  console.log("[fab-capture] loop armed (opt-in via config.fabCapture)");
+  console.log("[screen-read] continuous OCR loop armed (3-second poll; mission, mining, or fabricator opt-in)");
   return () => { clearInterval(timer); clearInterval(drainTimer); };
 }
 
-module.exports = { startFabCapture, centerTighten, findScanGlyph, GLYPH };
+module.exports = { startFabCapture, centerTighten, findScanGlyph, GLYPH, __test: { classifyLinuxForeground, cleanX11Field } };

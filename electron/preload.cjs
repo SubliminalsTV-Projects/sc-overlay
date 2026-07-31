@@ -10,16 +10,21 @@ contextBridge.exposeInMainWorld("overlayApi", {
   // Report the page's interactive element client-rects so the shell can hit-test the cursor
   // against them (replaces forward:true mouse-forwarding). rects = [{x,y,w,h}, …].
   reportRegions: (rects) => ipcRenderer.send("overlay:regions", rects),
+  // A pointer press inside any shaped widget latches keyboard/mouse ownership to the overlay.
+  // The latch ends when the native Overlay Manager loses focus to Star Citizen/another window.
+  claimInteraction: (source) => ipcRenderer.send("overlay:claim-interaction", source || "widget"),
+  releaseInteraction: (reason) => ipcRenderer.send("overlay:release-interaction", reason || "transparent canvas clicked"),
   beginMove: () => ipcRenderer.send("overlay:begin-move"),
   endMove: () => ipcRenderer.send("overlay:end-move"),
   // Force this window interactive for the duration of a drag/resize gesture so it can't drop.
   dragLock: (on) => ipcRenderer.send("overlay:drag-lock", !!on),
   onMoveMode: (cb) => ipcRenderer.on("overlay:move-mode", (_e, on) => cb(!!on)),
-  // Foreground tracking, opt-in. Returns the current answer (true/false), or null if the helper
-  // hasn't reported yet — callers should treat null as "don't act on it".
+  // Foreground tracking (Windows) and Linux native interaction events.
   wantForeground: (on) => ipcRenderer.invoke("app:want-foreground", !!on),
   onGameFocus: (cb) => ipcRenderer.on("overlay:game-focus", (_e, on) => cb(!!on)),
-  // The app version (authoritative), for the "what's new" card.
+  onUnifiedInteraction: (cb) => ipcRenderer.on("overlay:unified-interaction", (_e, on) => cb(!!on)),
+  onMiningOnlyInteraction: (cb) => ipcRenderer.on("overlay:mining-only-interaction", (_e, on) => cb(!!on)),
+  onMiningMoveMode: (cb) => ipcRenderer.on("overlay:mining-move-mode", (_e, on) => cb(!!on)),  // The app version (authoritative), for the "what's new" card.
   getVersion: () => ipcRenderer.invoke("app:version"),
   // While a modal (what's-new card) is open, keep the HUD hover-interactive even when
   // "locked" — so the card is always closeable while the game runs.
@@ -56,46 +61,53 @@ contextBridge.exposeInMainWorld("overlayApi", {
   // their current visibility, enter/leave global arrange, and open the full settings window.
   setMining: (on) => ipcRenderer.send("app:set-mining", !!on),
   setNotepad: (on) => ipcRenderer.send("app:set-notepad", !!on),
+  setBrowser: (on) => ipcRenderer.send("app:set-browser", !!on),
+  setTwitchChat: (on) => ipcRenderer.send("app:set-twitch-chat", !!on),
   onNotepadVisible: (cb) => ipcRenderer.on("overlay:notepad-visible", (_e, s) => cb(s)),
   // Notepad typing mode: the overlay grabs keyboard focus + suspends the interact key so the
   // note field can be typed into over a focused game. onNotepadFocus fires once it's safe to
   // focus the field (the held interact key was released) so no stray character lands.
   notepadEditing: (on) => ipcRenderer.send("overlay:notepad-editing", !!on),
   onNotepadFocus: (cb) => ipcRenderer.on("overlay:notepad-focus", () => cb()),
-  // Twitch Chat widget: shell-owned visibility, same as the Notepad. Its channel field reuses the
-  // keyboard-grab above (the renderer routes the focus signal to whichever widget asked for it).
   setTwitchChat: (on) => ipcRenderer.send("app:set-twitchchat", !!on),
   onTwitchChatVisible: (cb) => ipcRenderer.on("overlay:twitchchat-visible", (_e, s) => cb(s)),
-  // SC Feed news notifier: shell-owned on/off (armed), same as the widgets above.
   setScFeed: (on) => ipcRenderer.send("app:set-scfeed", !!on),
   onScFeedVisible: (cb) => ipcRenderer.on("overlay:scfeed-visible", (_e, s) => cb(s)),
-  // Blueprint-unlock notifier (armed/disarmed like SC Feed).
   setUnlockAlert: (on) => ipcRenderer.send("app:set-unlockalert", !!on),
   onUnlockAlertVisible: (cb) => ipcRenderer.on("overlay:unlockalert-visible", (_e, s) => cb(s)),
   scFeedPickTone: () => ipcRenderer.invoke("scfeed:pick-tone"),
   scFeedClearTone: () => ipcRenderer.invoke("scfeed:clear-tone"),
-  // Party split widget: shell-owned visibility; its name fields reuse the keyboard-grab above.
   setParty: (on) => ipcRenderer.send("app:set-party", !!on),
   onPartyVisible: (cb) => ipcRenderer.on("overlay:party-visible", (_e, s) => cb(s)),
-  // Battaglia grind tracker: shell-owned visibility, same as the widgets above.
   setBattaglia: (on) => ipcRenderer.send("app:set-battaglia", !!on),
   onBattagliaVisible: (cb) => ipcRenderer.on("overlay:battaglia-visible", (_e, s) => cb(s)),
-  // Reveal one of the app's own data folders in Explorer (allow-listed in main).
   openDataFolder: (which) => ipcRenderer.send("app:open-data-folder", String(which)),
-  // Web Page widget + the Binding Chart WIDGET (the full-screen binding overlay is separate).
   setWebView: (on) => ipcRenderer.send("app:set-webview", !!on),
   onWebViewVisible: (cb) => ipcRenderer.on("overlay:webview-visible", (_e, s) => cb(s)),
   setBindingChart: (on) => ipcRenderer.send("app:set-bindingchart", !!on),
   onBindingChartVisible: (cb) => ipcRenderer.on("overlay:bindingchart-visible", (_e, s) => cb(s)),
-  onBindingChartReload: (cb) => ipcRenderer.on("overlay:bindingchart-reload", () => cb()),
-  widgetStates: () => ipcRenderer.invoke("app:widget-states"),
+  onBindingChartReload: (cb) => ipcRenderer.on("overlay:bindingchart-reload", () => cb()),  widgetStates: () => ipcRenderer.invoke("app:widget-states"),
   onWidgetStates: (cb) => ipcRenderer.on("overlay:widget-states", (_e, s) => cb(s)),
   arrange: (on) => ipcRenderer.send(on ? "overlay:begin-move" : "overlay:end-move"),
-  // The Mining window's cog was clicked → summon this shell's global cog too.
+  // The embedded Mining widget's cog summons the shared Overlay Manager cog.
   onSummonCog: (cb) => ipcRenderer.on("overlay:summon-cog", () => cb()),
-  // The cursor left every interactive region. The page can't see this for itself: once the window
-  // goes click-through it receives no mouse events at all, so no mouseleave ever arrives.
-  onCursorAway: (cb) => ipcRenderer.on("overlay:cursor-away", () => cb()),
+
+  // Low-resource browser and Twitch-chat WebContentsView controls. The renderer owns the
+  // draggable widget shells; the main process owns and positions the isolated web contents.
+  browserState: () => ipcRenderer.invoke("browser:state"),
+  onBrowserState: (cb) => ipcRenderer.on("browser:state", (_e, s) => cb(s)),
+  browserBounds: (bounds) => ipcRenderer.send("browser:bounds", bounds),
+  twitchChatBounds: (bounds) => ipcRenderer.send("browser:chat-bounds", bounds),
+  browserNavigate: (url) => ipcRenderer.send("browser:navigate", url),
+  browserBack: () => ipcRenderer.send("browser:back"),
+  browserForward: () => ipcRenderer.send("browser:forward"),
+  browserReload: () => ipcRenderer.send("browser:reload"),
+  browserStop: () => ipcRenderer.send("browser:stop"),
+  browserVisible: (on) => ipcRenderer.send("browser:set-visible", !!on),
+  twitchChatVisible: (on) => ipcRenderer.send("browser:set-chat-visible", !!on),
+  twitchChatChannel: (channel) => ipcRenderer.send("browser:set-channel", channel),
+  onFHover: (cb) => ipcRenderer.on("overlay:f-hover", (_e, s) => cb(s)),
+
   // ── Mining Assistant (now folded into this canvas as an iframe widget) ──────────
   // The embedded mining page reaches these through the parent (same-origin). Native tone
   // picker + clear (renderers can't open OS dialogs); a suppress-gated auto-show request;

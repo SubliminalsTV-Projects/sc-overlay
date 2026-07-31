@@ -84,10 +84,10 @@ jobs:
               cp -a "/tmp/r31-core/$file" "$file"
             fi
           }
+          # main.cjs, capture.cjs, and preload.cjs are manually resolved
+          # on this integration branch. Only carry forward the two
+          # conflict-free preload files from the proven Linux payload.
           for file in \
-            electron/main.cjs \
-            electron/capture.cjs \
-            electron/preload.cjs \
             electron/config-preload.cjs \
             electron/mining-preload.cjs; do
             merge_one "$file"
