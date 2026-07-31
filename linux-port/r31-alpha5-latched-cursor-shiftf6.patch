@@ -1,0 +1,291 @@
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -7,8 +7,9 @@
+ // parallel — the server serves both.
+ //
+ // Click-through is ON by default so the overlay never eats clicks meant for the
+-// desktop. The upstream Ctrl+Alt+M arrange command is the single move/resize workflow for every
+-// visible widget. Held-F interaction remains globally available for normal widget controls. The native
++// desktop. Shift+F6 is the Linux move/resize workflow for every visible widget. Pressing F while
++// hovering a classified widget opens a persistent interaction session so text entry does not require
++// holding F. The native
+ // Linux build uses one transparent Overlay Manager BrowserWindow for Blueprint, Mining, Notepad,
+ // and browser shells.
+ // Requires SC in BORDERLESS WINDOWED — overlays can't draw over exclusive fullscreen.
+@@ -206,6 +207,8 @@
+ let fHoverLastClassificationAt = 0;
+ let fHoverDirectProbeInFlight = false;
+ let overlayRegionSnapshotSignature = "";
++let interactionCursorWin = null;
++let interactionCursorLastPoint = null;
+ let miningAutoArm = false;
+ let miningMoveMode = false;
+ let miningOnlyInteraction = false;
+@@ -479,6 +482,7 @@
+     momentaryInteractionActive = false;
+     fHoverHeld = false;
+     modalOpen = false;
++    destroyInteractionCursor();
+   });
+ }
+ 
+@@ -527,6 +531,63 @@
+   overlayWindows.restorePreviousWindow();
+ }
+ 
++const INTERACTION_CURSOR_HTML = `<!doctype html><meta charset="utf-8"><style>
++html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;pointer-events:none}
++svg{display:block;width:28px;height:36px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.95))}
++</style><svg viewBox="0 0 28 36" aria-hidden="true"><path d="M2 2v25l6.8-6.2 5.4 12.1 5.2-2.3-5.4-11.8H24L2 2Z" fill="#fff" stroke="#05090c" stroke-width="2.2" stroke-linejoin="round"/></svg>`;
++
++function ensureInteractionCursorWindow() {
++  if (process.platform !== "linux") return null;
++  if (interactionCursorWin && !interactionCursorWin.isDestroyed()) return interactionCursorWin;
++  const win = new BrowserWindow({
++    width: 30, height: 38, frame: false, transparent: true, resizable: false, movable: false,
++    focusable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false,
++    type: "toolbar", fullscreenable: false,
++    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
++  });
++  try { win.setIgnoreMouseEvents(true); } catch {}
++  try { win.setAlwaysOnTop(true, "screen-saver"); } catch { try { win.setAlwaysOnTop(true); } catch {} }
++  try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch {}
++  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(INTERACTION_CURSOR_HTML)}`).catch(() => {});
++  win.on("closed", () => {
++    if (interactionCursorWin === win) interactionCursorWin = null;
++    interactionCursorLastPoint = null;
++  });
++  interactionCursorWin = win;
++  return win;
++}
++
++function showInteractionCursor(globalPoint = lastGlobalPointer) {
++  if (!globalPoint || !Number.isFinite(globalPoint.x) || !Number.isFinite(globalPoint.y)) return;
++  const win = ensureInteractionCursorWindow();
++  if (!win || win.isDestroyed()) return;
++  const point = { x: Math.round(globalPoint.x) - 2, y: Math.round(globalPoint.y) - 2 };
++  if (!interactionCursorLastPoint || point.x !== interactionCursorLastPoint.x || point.y !== interactionCursorLastPoint.y) {
++    interactionCursorLastPoint = point;
++    try { win.setBounds({ x: point.x, y: point.y, width: 30, height: 38 }, false); } catch {}
++  }
++  try { if (!win.isVisible()) win.showInactive(); } catch {}
++  try { win.moveTop(); } catch {}
++}
++
++function hideInteractionCursor() {
++  interactionCursorLastPoint = null;
++  try { if (interactionCursorWin && !interactionCursorWin.isDestroyed()) interactionCursorWin.hide(); } catch {}
++}
++
++function destroyInteractionCursor() {
++  interactionCursorLastPoint = null;
++  try { if (interactionCursorWin && !interactionCursorWin.isDestroyed()) interactionCursorWin.destroy(); } catch {}
++  interactionCursorWin = null;
++}
++
+ function overlayRegionAtPoint(globalPoint) {
+   if (!globalPoint || !overlayRegions.length) return null;
+   const canvas = fullDisplayBounds();
+@@ -605,6 +666,7 @@
+   reapplyOverlayInputShape();
+ 
+   if (next) {
++    showInteractionCursor(lastGlobalPointer);
+     // All visible overlay tools are DOM classifications inside one native Overlay Manager.
+     // Focus only after the renderer confirms the pointer is inside #panel, .widget, or active
+     // overlay chrome. This avoids guessing from stale geometry and keeps empty canvas harmless.
+@@ -615,6 +677,7 @@
+     const title = target?.title || nextKey;
+     console.log(`[f-hover] entered ${classification} key=${nextKey} title=${title}; overlay focused (${source})`);
+   } else {
++    if (!overlayInteractionLatched) hideInteractionCursor();
+     console.log(`[f-hover] left overlay widget classification; click-through restored (${source})`);
+     if (wasOverWidget && !moveMode && !modalOpen && !notepadEditing && !dragging) {
+       setTimeout(restoreLinuxPreviousWindow, 30);
+@@ -645,13 +708,33 @@
+ function startFHoverPolling() {
+   stopFHoverPolling();
+   const tick = () => {
+-    if (!fHoverHeld) return;
++    if (!fHoverHeld && !overlayInteractionLatched) return;
+     try {
+       const p = screen.getCursorScreenPoint();
+       if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) lastGlobalPointer = { x: p.x, y: p.y };
+     } catch {
+       lastGlobalPointer = overlayWindows.pointerLocation() || lastGlobalPointer;
+     }
++
++    if (fHoverHeld || overlayInteractionLatched) showInteractionCursor(lastGlobalPointer);
++
++    if (overlayInteractionLatched) {
++      const target = overlayRegionAtPoint(lastGlobalPointer);
++      if (target) {
++        fHoverTarget = target;
++        fHoverOverWidget = true;
++        return;
++      }
++      // Text fields deliberately retain the latch while typing even if the cursor wanders. Once
++      // editing ends, leaving every classified widget restores Star Citizen automatically.
++      if (notepadEditing || dragging || moveMode || modalOpen) return;
++      stopFHoverPolling();
++      hideInteractionCursor();
++      endFocusLatchedInteraction("pointer left classified widget", { suppressHeldKey: false });
++      setTimeout(restoreLinuxPreviousWindow, 30);
++      return;
++    }
++
+     if (lastGlobalPointer && overlay && !overlay.isDestroyed()) {
+       const canvas = fullDisplayBounds();
+       const seq = ++fHoverProbeSeq;
+@@ -663,12 +746,12 @@
+     updateFHoverHitFromRegions();
+   };
+   tick();
+-  fHoverPollTimer = setInterval(tick, 50);
++  fHoverPollTimer = setInterval(tick, 33);
+ }
+ function applyMouse() {
+   if (!overlay) return;
+   const interactive = LINUX_HARD_CLICK_THROUGH
+-    ? unifiedInteractionActive || interactiveTarget !== null || dragging || moveMode || modalOpen || notepadEditing || (fHoverHeld && fHoverOverWidget)
++    ? unifiedInteractionActive || interactiveTarget !== null || dragging || moveMode || modalOpen || notepadEditing || overlayInteractionLatched || (fHoverHeld && fHoverOverWidget)
+     : unifiedInteractionActive || interactiveTarget !== null || dragging || modalOpen || notepadEditing || holdInteract || momentaryInteractionActive || overlayInteractionLatched || (hovering && !locked);
+   setWindowPassthrough(overlay, !interactive);
+ }
+@@ -849,6 +932,10 @@
+   overlayInteractionClaimSource = "";
+   momentaryInteractionActive = false;
+   fHoverOverWidget = false;
++  fHoverTarget = null;
++  stopFHoverPolling();
++  hideInteractionCursor();
++  browserController?.setInteractionKeyHeld(false);
+   if (suppressHeldKey && fHoverHeld) fHoverSuppressedUntilRelease = true;
+ 
+   // End any keyboard-editing/drag mode that belonged to the overlay. The user's external click
+@@ -930,7 +1017,11 @@
+   if (!accel || typeof accel !== "string") return { ok: true };
+ 
+   const onDown = (source = "uiohook") => {
+-    if (notepadEditing || !fHoverEnabled || unifiedInteractionActive || fHoverSuppressedUntilRelease || fHoverHeld) return;
++    // Once a widget session is latched, F belongs to the focused widget (chat, web forms, etc.)
++    // instead of acting as another global toggle. Escape, leaving the widget, or external focus
++    // ends the session.
++    if (overlayInteractionLatched || notepadEditing || !fHoverEnabled || unifiedInteractionActive || fHoverSuppressedUntilRelease || fHoverHeld) return;
+     console.log(`[f-hover] ${accel} key-down received via ${source}`);
+     fHoverHeld = true;
+     browserController?.setInteractionKeyHeld(true);
+@@ -973,30 +1064,56 @@
+   };
+ 
+   const onUp = (source = "uiohook") => {
++    if (overlayInteractionLatched && !fHoverHeld) return; // duplicate uIOhook/evdev release
+     if (!fHoverHeld && !momentaryInteractionActive && !fHoverOverWidget && !fHoverSuppressedUntilRelease) return;
+     const hadWidgetFocus = fHoverOverWidget || momentaryInteractionActive;
+-    stopFHoverPolling();
+     fHoverHeld = false;
+     browserController?.setInteractionKeyHeld(false);
+     fHoverSuppressedUntilRelease = false;
+     momentaryInteractionActive = false;
+-    overlayInteractionLatched = false;
+-    overlayInteractionClaimSource = "";
+-    fHoverOverWidget = false;
+-    fHoverTarget = null;
+     fHoverLastClassificationAt = 0;
+-    interactiveTarget = null;
+-    locked = true;
+-    applyMouse();
+-    reapplyOverlayInputShape();
+-    try { overlay?.webContents.send("overlay:f-hover", { held: false, overWidget: false, latched: false }); } catch {}
+-    if (hadWidgetFocus && !moveMode && !modalOpen && !notepadEditing && !dragging) {
+-      setTimeout(restoreLinuxPreviousWindow, 30);
++
++    if (hadWidgetFocus && fHoverTarget) {
++      // F is an entry gate, not a key that must remain held. Keep only the classified widget
++      // interaction session alive so Twitch chat, Journal, Web Page forms, and other text inputs
++      // continue receiving keyboard input after F is released.
++      overlayInteractionLatched = true;
++      overlayInteractionClaimSource = `F over ${fHoverTarget.key || "widget"}`;
++      fHoverOverWidget = true;
++      interactiveTarget = null;
++      locked = false;
++      applyMouse();
++      reapplyOverlayInputShape();
++      showInteractionCursor(lastGlobalPointer);
++      try {
++        overlay?.webContents.send("overlay:f-hover", {
++          held: false, overWidget: true, latched: true,
++          key: fHoverTarget.key || null, classification: fHoverTarget.classification || null,
++        });
++      } catch {}
++      refreshTray();
++      console.log(`[focus-latch] ${accel} released via ${source}; ${fHoverTarget.title || fHoverTarget.key || "widget"} remains interactive`);
++      return;
+     }
++
++    stopFHoverPolling();
++    hideInteractionCursor();
++    overlayInteractionLatched = false;
++    overlayInteractionClaimSource = "";
++    fHoverOverWidget = false;
++    fHoverTarget = null;
++    interactiveTarget = null;
++    locked = true;
++    applyMouse();
++    reapplyOverlayInputShape();
++    try { overlay?.webContents.send("overlay:f-hover", { held: false, overWidget: false, latched: false }); } catch {}
++    if (!moveMode && !modalOpen && !notepadEditing && !dragging) setTimeout(restoreLinuxPreviousWindow, 30);
+     refreshTray();
+-    console.log(`[f-hover] ${accel} released via ${source}; click-through restored`);
++    console.log(`[f-hover] ${accel} released via ${source} outside a widget; click-through restored`);
+   };
+ 
+   const r = hotkeys.registerHold(accel, () => onDown("uiohook"), () => onUp("uiohook"));
+@@ -1023,9 +1140,9 @@
+ 
+ // ── actions ─────────────────────────────────────────────────────────────────
+ // Legacy unified-interaction support is retained only to close old sessions cleanly. New Linux
+-// sessions use the upstream Ctrl+Alt+M arrange mode plus held-F interaction; there is no dedicated
+-// Shift+F5/F6 interaction path.
++// sessions use Shift+F6 arrange mode plus F-to-enter widget interaction; there is no dedicated
++// Shift+F5 interaction path.
+ function beginUnifiedInteractionToggle() {
+   if (app.isQuitting) return;
+   if (overlayInteractionLatched || momentaryInteractionActive) {
+@@ -1639,9 +1756,7 @@
+     setupUpdater();
+     hotkeys.register("Control+Alt+L", toggleLock); // legacy Blueprint lock/unlock
+ 
+-    // The Linux-only Shift+F5/F6 shortcuts were removed. The original Ctrl+Alt+M arrange
+-    // command remains configurable below, and held-F remains the normal interaction gate.
+-
++    // Linux uses Shift+F6 for the shared arrange workflow. F remains the normal widget-entry gate.
+ 
+     // Configurable global hotkeys (live-rebindable from the config window), read from the
+     // persisted config: overlay show/hide (default F3) + binding-chart PNG (default Alt+F3).
+@@ -1650,7 +1765,7 @@
+     let bindKey = "Ctrl+F3";
+     let miningKey = "Shift+F3";
+     let interactKey = registeredInteractKey;
+-    let moveKey = "Ctrl+Alt+M";
++    let moveKey = "Shift+F6";
+     try {
+       const p = path.join(CONFIG_DIR, "config.json");
+       const c = JSON.parse(fs.readFileSync(p, "utf8"));
+@@ -1660,7 +1775,7 @@
+       if (typeof c.webViewHotkey === "string") registerWebViewHotkey(c.webViewHotkey);
+       if (typeof c.miningHotkey === "string") miningKey = c.miningHotkey;
+       if (process.platform !== "linux" && typeof c.interactHotkey === "string") interactKey = c.interactHotkey;
+-      if (typeof c.moveHotkey === "string") moveKey = c.moveHotkey;
++      if (process.platform !== "linux" && typeof c.moveHotkey === "string") moveKey = c.moveHotkey;
+       if (process.platform === "linux") fHoverEnabled = c.holdToInteract !== false;
+       else holdMode = c.holdToInteract === true;    } catch { /* defaults */ }
+     registerOverlayHotkey(overlayKey);
+@@ -1672,6 +1787,7 @@
+       registeredInteractKey = interactKey;
+     }
+     registerMoveHotkey(moveKey);
++    if (process.platform === "linux") void postConfig({ moveHotkey: "Shift+F6" });
+     // Learn our elevation state (async) so the tray can offer "Restart as administrator" when
+     // we're NOT elevated — the state hotkeys-over-a-focused-game depend on.
+     checkElevated().then(() => refreshTray());
