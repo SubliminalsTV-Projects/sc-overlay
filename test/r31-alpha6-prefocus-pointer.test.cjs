@@ -13,7 +13,7 @@ assert.match(main, /function refreshFHoverPointer/);
 assert.match(main, /preferLinux: true, reason: "F-down pre-focus"/);
 assert.match(main, /preferLinux: true, reason: "F-down region refresh"/);
 assert.match(main, /source = "xdotool-root"/);
-assert.match(main, /const needsRootPointer = process\.platform === "linux"/);
+assert.match(main, /const needs(?:Root|Game)Pointer = process\.platform === "linux"/);
 assert.match(main, /now - fHoverLinuxPointerSampleAt >= 100/);
 assert.match(
   main,
