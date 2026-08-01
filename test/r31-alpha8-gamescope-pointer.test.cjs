@@ -61,7 +61,10 @@ assert.equal(move.options.env, process.env, "host warp must not reuse the nested
 assert.match(manager, /gamescopePointerLocation\(\)[\s\S]*mapNestedPointerToCanvas\(nested, this\.canvasBounds\(\)\)/);
 assert.match(manager, /moveHostPointer\(point\) \{ return this\.focus\.moveHostPointer\(point\); \}/);
 assert.match(main, /point = overlayWindows\.gamescopePointerLocation\?\.\(\) \|\| null;[\s\S]*source = "gamescope-display";[\s\S]*Date\.now\(\) - fHoverHookPointerSampleAt <= 250/);
-assert.match(main, /lastGlobalPointerSource === "gamescope-display"[\s\S]{0,500}overlayWindows\.moveHostPointer\?\.\(lastGlobalPointer\)/);
+assert.match(
+  main,
+  /lastGlobalPointerSource === "gamescope-display"[\s\S]{0,500}(?:overlayWindows\.moveHostPointer\?\.\(lastGlobalPointer\)|beginFHoverHostHandoff\(lastGlobalPointer\))/,
+);
 assert.match(main, /let moveKey = "Shift\+F6"/);
 
 console.log("r31 alpha 8 Gamescope pointer test: passed");

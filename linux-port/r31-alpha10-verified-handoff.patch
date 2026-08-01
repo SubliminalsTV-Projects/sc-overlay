@@ -1,0 +1,193 @@
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -226,8 +226,13 @@
+ let fHoverHookPointerSampleAt = 0;
+ let fHoverPointerPhase = "game";
+ let fHoverMissStartedAt = 0;
++let fHoverHandoffAnchor = null;
++let fHoverHandoffSeq = 0;
++let fHoverHandoffWaitLogged = false;
+ const F_HOVER_HOST_SAMPLE_MS = 50;
+ const F_HOVER_LEAVE_GRACE_MS = 180;
++const F_HOVER_HANDOFF_TOLERANCE_PX = 32;
++const F_HOVER_HANDOFF_DELAYS_MS = [75, 175, 350];
+ let miningAutoArm = false;
+ let miningMoveMode = false;
+ let miningOnlyInteraction = false;
+@@ -627,6 +632,73 @@
+   return matches[0];
+ }
+
++function sameFHoverTarget(a, b) {
++  if (!a || !b) return false;
++  const aKey = String(a.key || a.id || "widget");
++  const bKey = String(b.key || b.id || "widget");
++  return aKey === bKey;
++}
++
++function resetFHoverHostHandoff() {
++  fHoverHandoffAnchor = null;
++  fHoverHandoffWaitLogged = false;
++  fHoverHandoffSeq += 1;
++}
++
++function acceptFHoverHostPoint(point, source = "host") {
++  if (fHoverPointerPhase !== "handoff" || !fHoverHandoffAnchor || !point) return false;
++  const x = Number(point.x);
++  const y = Number(point.y);
++  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
++  const dx = x - Number(fHoverHandoffAnchor.x);
++  const dy = y - Number(fHoverHandoffAnchor.y);
++  const closeToAnchor = Math.hypot(dx, dy) <= F_HOVER_HANDOFF_TOLERANCE_PX;
++  const candidateTarget = overlayRegionAtPoint({ x, y });
++  if (!closeToAnchor && !sameFHoverTarget(candidateTarget, fHoverTarget)) return false;
++
++  lastGlobalPointer = { x, y };
++  lastGlobalPointerSource = source;
++  fHoverPointerPhase = "host";
++  fHoverMissStartedAt = 0;
++  resetFHoverHostHandoff();
++  console.log(`[f-hover] host pointer handoff verified at ${x},${y} via ${source}`);
++  return true;
++}
++
++function sampleFHoverHostHandoff({ warp = false, reason = "poll" } = {}) {
++  if (process.platform !== "linux" || fHoverPointerPhase !== "handoff" || !fHoverHandoffAnchor) return false;
++  const anchor = { ...fHoverHandoffAnchor };
++  const moved = !warp || !!overlayWindows.moveHostPointer?.(anchor);
++  const point = overlayWindows.pointerLocation?.() || null;
++  if (point && acceptFHoverHostPoint(point, warp ? "xdotool-post-focus" : "xdotool-host")) return true;
++  if (warp && !fHoverHandoffWaitLogged) {
++    fHoverHandoffWaitLogged = true;
++    const actual = point && Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y))
++      ? `${Number(point.x)},${Number(point.y)}`
++      : "unavailable";
++    console.log(`[f-hover] host pointer handoff pending; requested ${anchor.x},${anchor.y}, host=${actual}, warp=${moved ? "accepted" : "failed"} (${reason})`);
++  }
++  return false;
++}
++
++function beginFHoverHostHandoff(point) {
++  const x = Number(point?.x);
++  const y = Number(point?.y);
++  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
++  fHoverPointerPhase = "handoff";
++  fHoverHandoffAnchor = { x, y };
++  fHoverHandoffWaitLogged = false;
++  const seq = ++fHoverHandoffSeq;
++  console.log(`[f-hover] host pointer handoff armed at ${x},${y}; waiting for overlay focus`);
++  for (const delay of F_HOVER_HANDOFF_DELAYS_MS) {
++    setTimeout(() => {
++      if (seq !== fHoverHandoffSeq || fHoverPointerPhase !== "handoff") return;
++      sampleFHoverHostHandoff({ warp: true, reason: `post-focus+${delay}ms` });
++    }, delay);
++  }
++  return true;
++}
++
+ function requestOverlayRegionSnapshot(reason = "shell") {
+   if (!overlay || overlay.isDestroyed() || overlay.webContents.isLoadingMainFrame()) return Promise.resolve(false);
+   const why = JSON.stringify(String(reason));
+@@ -663,6 +735,9 @@
+ }
+ function applyFHoverClassification(next, target = null, source = "regions") {
+   next = !!(fHoverHeld && !fHoverSuppressedUntilRelease && next);
++  // The nested Gamescope point is authoritative until the host pointer has been verified after
++  // focus. A stale host/uIOhook sample must not revoke the widget that F just entered.
++  if (!next && fHoverOverWidget && fHoverPointerPhase === "handoff") return;
+   if (!next && fHoverOverWidget) {
+     const now = Date.now();
+     if (!fHoverMissStartedAt) fHoverMissStartedAt = now;
+@@ -690,25 +765,15 @@
+     // Focus only after the renderer confirms the pointer is inside #panel, .widget, or active
+     // overlay chrome. This avoids guessing from stale geometry and keeps empty canvas harmless.
+     if (process.platform === "linux" && fHoverPointerPhase !== "host") {
+-      let hostReady = lastGlobalPointerSource !== "gamescope-display";
+-      if (lastGlobalPointerSource === "gamescope-display") {
+-        hostReady = !!overlayWindows.moveHostPointer?.(lastGlobalPointer);
+-        if (hostReady) {
+-          console.log(`[f-hover] synchronized host pointer to ${lastGlobalPointer.x},${lastGlobalPointer.y} before overlay focus`);
+-        } else {
+-          console.warn("[f-hover] host pointer synchronization failed; continuing with host-root tracking");
+-        }
++      // KDE Wayland can acknowledge an XWarpPointer request while Gamescope still owns focus but
++      // leave the compositor cursor unchanged. Focus first, then retry and verify the host point
++      // before allowing host/uIOhook coordinates to replace the nested Gamescope anchor.
++      if (lastGlobalPointerSource === "gamescope-display") beginFHoverHostHandoff(lastGlobalPointer);
++      else {
++        fHoverPointerPhase = "host";
++        resetFHoverHostHandoff();
+       }
+-      // This is a one-way handoff for the current interaction. Once Electron owns focus, the
+-      // Gamescope cursor freezes and the host X pointer becomes authoritative. Never switch back
+-      // to the nested display merely because one renderer classification misses.
+-      fHoverPointerPhase = "host";
+       fHoverLinuxPointerSampleAt = 0;
+-      if (hostReady) {
+-        fHoverHookPointer = { ...lastGlobalPointer };
+-        fHoverHookPointerSampleAt = Date.now();
+-        lastGlobalPointerSource = "host-handoff";
+-      }
+     }
+     focusLinuxInteractiveWindow("overlay");
+     const classification = target?.classification || "reported-region";
+@@ -807,7 +872,7 @@
+     const now = Date.now();
+     const needsGamePointer = process.platform === "linux"
+       && fHoverHeld
+-      && fHoverPointerPhase !== "host";
++      && fHoverPointerPhase === "game";
+     if (needsGamePointer) {
+       // Keep sampling the compositor/root pointer until the very first widget hit. Throttle the
+       // external xdotool query so an accidentally held F key cannot flood the Electron main loop.
+@@ -815,6 +880,13 @@
+         fHoverLinuxPointerSampleAt = now;
+         refreshFHoverPointer({ preferLinux: true });
+       }
++    } else if (process.platform === "linux" && fHoverPointerPhase === "handoff") {
++      // Keep classifying against the initial Gamescope anchor while polling for a verified host
++      // point. This prevents the stale host cursor from tearing down the session during focus.
++      if (now - fHoverLinuxPointerSampleAt >= F_HOVER_HOST_SAMPLE_MS) {
++        fHoverLinuxPointerSampleAt = now;
++        sampleFHoverHostHandoff();
++      }
+     } else if (process.platform === "linux") {
+       // uIOhook keeps lastGlobalPointer warm between these authoritative host-root samples.
+       // Fifty milliseconds is fast enough for precise controls without spawning xdotool at the
+@@ -1056,6 +1128,7 @@
+   fHoverTarget = null;
+   fHoverPointerPhase = "game";
+   fHoverMissStartedAt = 0;
++  resetFHoverHostHandoff();
+   stopFHoverPolling();
+   hideInteractionCursor();
+   browserController?.setInteractionKeyHeld(false);
+@@ -1152,6 +1225,12 @@
+       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+       fHoverHookPointer = { x, y };
+       fHoverHookPointerSampleAt = Date.now();
++      if (fHoverPointerPhase === "handoff") {
++        // Cache every hook point, but promote it only when it reaches the original widget. The
++        // first post-focus uIOhook event commonly contains the stale pre-Gamescope host point.
++        acceptFHoverHostPoint({ x, y }, "uiohook-host");
++        return;
++      }
+       lastGlobalPointer = { x, y };
+       lastGlobalPointerSource = "uiohook-global";
+     });
+@@ -1179,6 +1258,7 @@
+     fHoverTarget = null;
+     fHoverPointerPhase = "game";
+     fHoverMissStartedAt = 0;
++    resetFHoverHostHandoff();
+     fHoverProbeSeq = 0;
+     fHoverLastClassifiedSeq = 0;
+     fHoverLastClassificationAt = 0;
+@@ -1250,6 +1330,7 @@
+     fHoverTarget = null;
+     fHoverPointerPhase = "game";
+     fHoverMissStartedAt = 0;
++    resetFHoverHostHandoff();
+     interactiveTarget = null;
+     locked = true;
+     applyMouse();
