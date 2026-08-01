@@ -1,0 +1,101 @@
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -209,6 +209,7 @@
+ let overlayRegionSnapshotSignature = "";
+ let interactionCursorWin = null;
+ let interactionCursorLastPoint = null;
++let fHoverLinuxPointerSampleAt = 0;
+ let miningAutoArm = false;
+ let miningMoveMode = false;
+ let miningOnlyInteraction = false;
+@@ -693,15 +694,60 @@
+   if (fHoverPollTimer) clearInterval(fHoverPollTimer);
+   fHoverPollTimer = null;
+ }
++
++function refreshFHoverPointer({ preferLinux = false, reason = "" } = {}) {
++  let point = null;
++  let source = "";
++
++  // On KDE/XWayland, Electron's screen.getCursorScreenPoint() can report a stale point while
++  // the click-through Overlay Manager has never owned focus. xdotool queries the X root pointer
++  // directly and remains accurate before the first interaction/unlock.
++  if (process.platform === "linux" && preferLinux) {
++    point = overlayWindows.pointerLocation?.() || null;
++    if (point) source = "xdotool-root";
++  }
++
++  if (!point) {
++    try {
++      const p = screen.getCursorScreenPoint();
++      if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
++        point = { x: p.x, y: p.y };
++        source = "electron-screen";
++      }
++    } catch {}
++  }
++
++  if (!point && process.platform === "linux") {
++    point = overlayWindows.pointerLocation?.() || null;
++    if (point) source = "xdotool-fallback";
++  }
++
++  if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
++    lastGlobalPointer = { x: Number(point.x), y: Number(point.y) };
++    if (reason) console.log(`[f-hover] pointer ${lastGlobalPointer.x},${lastGlobalPointer.y} via ${source || "unknown"} (${reason})`);
++    return true;
++  }
++  if (reason) console.warn(`[f-hover] pointer location unavailable (${reason})`);
++  return false;
++}
+ function startFHoverPolling() {
+   stopFHoverPolling();
+   const tick = () => {
+     if (!fHoverHeld && !overlayInteractionLatched) return;
+-    try {
+-      const p = screen.getCursorScreenPoint();
+-      if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) lastGlobalPointer = { x: p.x, y: p.y };
+-    } catch {
+-      lastGlobalPointer = overlayWindows.pointerLocation() || lastGlobalPointer;
++    const now = Date.now();
++    const needsRootPointer = process.platform === "linux"
++      && fHoverHeld
++      && !fHoverOverWidget
++      && !overlayInteractionLatched;
++    if (needsRootPointer) {
++      // Keep sampling the compositor/root pointer until the very first widget hit. Throttle the
++      // external xdotool query so an accidentally held F key cannot flood the Electron main loop.
++      if (now - fHoverLinuxPointerSampleAt >= 100) {
++        fHoverLinuxPointerSampleAt = now;
++        refreshFHoverPointer({ preferLinux: true });
++      }
++    } else {
++      refreshFHoverPointer();
+     }
+ 
+     if (fHoverHeld || overlayInteractionLatched) showInteractionCursor(lastGlobalPointer);
+@@ -1036,6 +1082,7 @@
+     fHoverProbeSeq = 0;
+     fHoverLastClassifiedSeq = 0;
+     fHoverLastClassificationAt = 0;
++    fHoverLinuxPointerSampleAt = 0;
+     fHoverSuppressedUntilRelease = false;
+     interactiveTarget = null;
+     locked = true;
+@@ -1047,8 +1094,15 @@
+     try { overlay.webContents.send("overlay:f-hover", { held: true, overWidget: false, latched: false }); } catch {}
+     applyMouse();
+     reapplyOverlayInputShape();
++
++    // Prime from the X root pointer before any focus transition. Alpha 5 used Electron's cursor
++    // point here, which remained stale until Shift+F6 had focused the Overlay Manager once.
++    refreshFHoverPointer({ preferLinux: true, reason: "F-down pre-focus" });
++    updateFHoverHitFromRegions();
+     void requestOverlayRegionSnapshot("F-down").then(() => {
+-      if (fHoverHeld) updateFHoverHitFromRegions();
++      if (!fHoverHeld) return;
++      refreshFHoverPointer({ preferLinux: true, reason: "F-down region refresh" });
++      updateFHoverHitFromRegions();
+     });
+     startFHoverPolling();
+     refreshTray();
