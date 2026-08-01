@@ -19,7 +19,7 @@ assert.match(main, /fHoverHookPointer = \{ x, y \}/);
 assert.match(main, /lastGlobalPointer = \{ x, y \}/);
 assert.match(
   main,
-  /if \(fHoverHookPointer\) \{\s*point = \{ \.\.\.fHoverHookPointer \};\s*source = "uiohook-global";\s*\} else \{\s*point = overlayWindows\.pointerLocation\?\.\(\) \|\| null;\s*if \(point\) source = "xdotool-root";/,
+  /fHoverHookPointer && Date\.now\(\) - fHoverHookPointerSampleAt <= 250\) \{\s*point = \{ \.\.\.fHoverHookPointer \};\s*source = "uiohook-global";\s*\} else \{\s*point = overlayWindows\.pointerLocation\?\.\(\) \|\| null;\s*if \(point\) source = "xdotool-root";/,
 );
 assert.match(main, /source === "uiohook-global" && fHoverHookPointerSampleAt/);
 assert.match(main, /refreshFHoverPointer\(\{ preferLinux: true, reason: "F-down pre-focus" \}\)/);
