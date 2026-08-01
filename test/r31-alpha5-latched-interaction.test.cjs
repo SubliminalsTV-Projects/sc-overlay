@@ -11,8 +11,8 @@ const main = fs.readFileSync(path.join(root, "electron", "main.cjs"), "utf8");
 assert.match(main, /overlayInteractionLatched = true;[\s\S]{0,700}remains interactive/);
 assert.match(main, /overlayInteractionLatched \|\| \(fHoverHeld && fHoverOverWidget\)/);
 assert.match(main, /if \(overlayInteractionLatched \|\| notepadEditing/);
-assert.match(main, /pointer left classified widget/);
-assert.match(main, /Text fields deliberately retain the latch while typing/);
+assert.match(main, /(?:pointer left classified widget|coordinate misses never[\s\S]*revoke it)/);
+assert.match(main, /(?:Text fields deliberately retain the latch while typing|actual native focus transfer\/click outside)/);
 
 // A dedicated focusless, click-through cursor window must render above the Overlay Manager and
 // its native WebContentsViews while the game software cursor remains underneath.

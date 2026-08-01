@@ -27,7 +27,10 @@ const pollingEnd = main.indexOf("function applyMouse(", pollingStart);
 const polling = main.slice(pollingStart, pollingEnd);
 assert.match(polling, /needsGamePointer[\s\S]*fHoverPointerPhase (?:!== "host"|=== "game")/);
 assert.match(polling, /refreshFHoverPointer\(\{ preferHost: true \}\)/);
-assert.match(polling, /now - fHoverMissStartedAt < F_HOVER_LEAVE_GRACE_MS/);
+assert.match(
+  polling,
+  /(?:now - fHoverMissStartedAt < F_HOVER_LEAVE_GRACE_MS|coordinate misses never[\s\S]*revoke it)/,
+);
 
 assert.match(
   main,

@@ -1,0 +1,45 @@
+diff --git a/electron/main.cjs b/electron/main.cjs
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -920,15 +920,10 @@
+         fHoverOverWidget = true;
+         return;
+       }
+-      // Text fields deliberately retain the latch while typing even if the cursor wanders. Once
+-      // editing ends, leaving every classified widget restores Star Citizen automatically.
+-      if (notepadEditing || dragging || moveMode || modalOpen) return;
+-      if (!fHoverMissStartedAt) fHoverMissStartedAt = now;
+-      if (now - fHoverMissStartedAt < F_HOVER_LEAVE_GRACE_MS) return;
+-      stopFHoverPolling();
+-      hideInteractionCursor();
+-      endFocusLatchedInteraction("pointer left classified widget", { suppressHeldKey: false });
+-      setTimeout(restoreLinuxPreviousWindow, 30);
++      // A host-coordinate miss cannot distinguish a real departure from KDE/Gamescope pointer
++      // desynchronization. Once F has established widget ownership, coordinate misses never
++      // revoke it. Escape or an actual native focus transfer/click outside the shaped widget
++      // regions ends the session through the explicit release paths below.
+       return;
+     }
+
+@@ -1181,8 +1176,8 @@
+ }
+
+ function claimFocusLatchedInteraction(source = "widget") {
+-  // Linux interaction is hover-scoped. A widget click must not turn held-F into persistent
+-  // whole-canvas ownership after F is released or the pointer leaves the widget.
++  // The Linux F path establishes its own widget-shaped latch on key release. Renderer click
++  // claims remain disabled there so they cannot widen ownership to the transparent canvas.
+   if (process.platform === "linux" && fHoverEnabled) return;
+   if (unifiedInteractionActive || overlayInteractionLatched) return;
+   if (!momentaryInteractionActive && !fHoverHeld) return;
+@@ -1254,8 +1249,8 @@
+
+   const onDown = (source = "uiohook") => {
+     // Once a widget session is latched, F belongs to the focused widget (chat, web forms, etc.)
+-    // instead of acting as another global toggle. Escape, leaving the widget, or external focus
+-    // ends the session.
++    // instead of acting as another global toggle. Escape or an external click/focus transfer
++    // ends the session; coordinate misses alone never do.
+     if (overlayInteractionLatched || notepadEditing || !fHoverEnabled || unifiedInteractionActive || fHoverSuppressedUntilRelease || fHoverHeld) return;
+     console.log(`[f-hover] ${accel} key-down received via ${source}`);
+     fHoverHeld = true;
