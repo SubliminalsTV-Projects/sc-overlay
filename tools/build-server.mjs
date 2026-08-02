@@ -1,27 +1,43 @@
 /**
- * Bun-compile the overlay server (no window) into a standalone .exe + its runtime
- * assets, for the Electron app to spawn in production (no Node/tsx on the user's
- * machine). electron-builder ships build/server/ as an extraResource → resources/server.
+ * Build the overlay sidecar and copy its runtime assets.
  *
- *   npm run build:server  ->  build/server/{sc-overlay-server.exe, overlay/, data/}
+ * Windows keeps the upstream Bun-compiled standalone executable. Linux emits
+ * the NodeNext module tree because the ArchVerse launcher already ships Node
+ * and starts server/sc-overlay-server.mjs directly.
+ *
+ *   Windows -> build/server/{sc-overlay-server.exe, overlay/, data/}
+ *   Linux   -> build/server/{sc-overlay-server.mjs, *.js, overlay/, data/}
  */
 import { execSync } from "node:child_process";
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { basename } from "node:path";
 
 const out = "build/server";
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
-console.log("Compiling overlay server (bun) …");
-execSync(`bun build src/overlay-server.ts --compile --outfile ${out}/sc-overlay-server.exe`, {
-  stdio: "inherit",
-});
+if (process.platform === "win32") {
+  console.log("Compiling overlay server for Windows (bun) …");
+  execSync(`bun build src/overlay-server.ts --compile --outfile ${out}/sc-overlay-server.exe`, {
+    stdio: "inherit",
+  });
+} else {
+  console.log("Compiling overlay server for Linux/Node (tsc) …");
+  execSync(`npx tsc --outDir ${out} --declaration false --sourceMap false`, {
+    stdio: "inherit",
+  });
+  renameSync(`${out}/overlay-server.js`, `${out}/sc-overlay-server.mjs`);
+}
 
 for (const dir of ["overlay", "data"]) {
-  // Never ship overlay/config.json — it's the developer's personal config (erkul
-  // URLs + sync token). The server seeds from DEFAULTS and persists to %APPDATA%.
-  cpSync(dir, `${out}/${dir}`, { recursive: true, filter: (src) => basename(src) !== "config.json" });
+  // Never ship overlay/config.json — it may contain a developer's personal
+  // configuration. The server seeds defaults and writes runtime state under
+  // the user's config directory instead.
+  cpSync(dir, `${out}/${dir}`, {
+    recursive: true,
+    filter: (src) => basename(src) !== "config.json",
+  });
   console.log(`copied ${dir}/ -> ${out}/${dir}/`);
 }
+
 console.log("server bundle ->", out);

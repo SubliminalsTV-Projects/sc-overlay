@@ -1,0 +1,177 @@
+diff --git a/electron/main.cjs b/electron/main.cjs
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -14,6 +14,17 @@
+ // and browser shells.
+ // Requires SC in BORDERLESS WINDOWED — overlays can't draw over exclusive fullscreen.
+ 
++// A terminal or `tee` can disappear while the GUI keeps running. Node treats a later console
++// write to that closed pipe as an unhandled stream error unless the process owns an error
++// listener. Ignore only the normal broken-pipe case; preserve fail-fast behavior for anything
++// else so real stream failures are not hidden.
++for (const stream of [process.stdout, process.stderr]) {
++  stream?.on?.("error", (error) => {
++    if (error?.code === "EPIPE") return;
++    setImmediate(() => { throw error; });
++  });
++}
++
+ const { app, BrowserWindow, WebContentsView, session, Tray, Menu, nativeImage, screen, shell, ipcMain, dialog } = require("electron");
+ const { spawn } = require("node:child_process");
+ const http = require("node:http");
+@@ -213,6 +224,10 @@ let interactionCursorLastPoint = null;
+ let fHoverLinuxPointerSampleAt = 0;
+ let fHoverHookPointer = null;
+ let fHoverHookPointerSampleAt = 0;
++let fHoverPointerPhase = "game";
++let fHoverMissStartedAt = 0;
++const F_HOVER_HOST_SAMPLE_MS = 50;
++const F_HOVER_LEAVE_GRACE_MS = 180;
+ let miningAutoArm = false;
+ let miningMoveMode = false;
+ let miningOnlyInteraction = false;
+@@ -648,6 +663,13 @@ async function probeFHoverPointDirect(localPoint, seq) {
+ }
+ function applyFHoverClassification(next, target = null, source = "regions") {
+   next = !!(fHoverHeld && !fHoverSuppressedUntilRelease && next);
++  if (!next && fHoverOverWidget) {
++    const now = Date.now();
++    if (!fHoverMissStartedAt) fHoverMissStartedAt = now;
++    if (now - fHoverMissStartedAt < F_HOVER_LEAVE_GRACE_MS) return;
++  } else if (next) {
++    fHoverMissStartedAt = 0;
++  }
+   const nextKey = next ? String(target?.key || target?.id || "widget") : "";
+   const prevKey = fHoverOverWidget ? String(fHoverTarget?.key || fHoverTarget?.id || "widget") : "";
+   if (next === fHoverOverWidget && nextKey === prevKey) return;
+@@ -667,8 +689,26 @@ function applyFHoverClassification(next, target = null, source = "regions") {
+     // All visible overlay tools are DOM classifications inside one native Overlay Manager.
+     // Focus only after the renderer confirms the pointer is inside #panel, .widget, or active
+     // overlay chrome. This avoids guessing from stale geometry and keeps empty canvas harmless.
+-    if (lastGlobalPointerSource === "gamescope-display" && overlayWindows.moveHostPointer?.(lastGlobalPointer)) {
+-      console.log(`[f-hover] synchronized host pointer to ${lastGlobalPointer.x},${lastGlobalPointer.y} before overlay focus`);
++    if (process.platform === "linux" && fHoverPointerPhase !== "host") {
++      let hostReady = lastGlobalPointerSource !== "gamescope-display";
++      if (lastGlobalPointerSource === "gamescope-display") {
++        hostReady = !!overlayWindows.moveHostPointer?.(lastGlobalPointer);
++        if (hostReady) {
++          console.log(`[f-hover] synchronized host pointer to ${lastGlobalPointer.x},${lastGlobalPointer.y} before overlay focus`);
++        } else {
++          console.warn("[f-hover] host pointer synchronization failed; continuing with host-root tracking");
++        }
++      }
++      // This is a one-way handoff for the current interaction. Once Electron owns focus, the
++      // Gamescope cursor freezes and the host X pointer becomes authoritative. Never switch back
++      // to the nested display merely because one renderer classification misses.
++      fHoverPointerPhase = "host";
++      fHoverLinuxPointerSampleAt = 0;
++      if (hostReady) {
++        fHoverHookPointer = { ...lastGlobalPointer };
++        fHoverHookPointerSampleAt = Date.now();
++        lastGlobalPointerSource = "host-handoff";
++      }
+     }
+     focusLinuxInteractiveWindow("overlay");
+     const classification = target?.classification || "reported-region";
+@@ -701,7 +741,7 @@ function stopFHoverPolling() {
+   fHoverPollTimer = null;
+ }
+ 
+-function refreshFHoverPointer({ preferLinux = false, reason = "" } = {}) {
++function refreshFHoverPointer({ preferLinux = false, preferHost = false, reason = "" } = {}) {
+   let point = null;
+   let source = "";
+ 
+@@ -709,7 +749,18 @@ function refreshFHoverPointer({ preferLinux = false, reason = "" } = {}) {
+   // uIOhook pointer can remain frozen at the last Shift+F6 position, producing the two-cursor
+   // symptom seen in Alpha 7. Query Star Citizen's own DISPLAY first, map that coordinate onto
+   // the host overlay canvas, and retain only a fresh uIOhook sample as the desktop fallback.
+-  if (process.platform === "linux" && preferLinux) {
++  if (process.platform === "linux" && preferHost) {
++    // After the overlay receives focus, use the host X root in the same physical-pixel space as
++    // the 6360x2160 canvas. Electron screen coordinates can be scaled or rotated differently on
++    // mixed-orientation KDE desktops and caused Alpha 8's enter/leave oscillation.
++    point = overlayWindows.pointerLocation?.() || null;
++    if (point) {
++      source = "xdotool-host";
++    } else if (fHoverHookPointer) {
++      point = { ...fHoverHookPointer };
++      source = "uiohook-host";
++    }
++  } else if (process.platform === "linux" && preferLinux) {
+     point = overlayWindows.gamescopePointerLocation?.() || null;
+     if (point) {
+       source = "gamescope-display";
+@@ -754,17 +805,24 @@ function startFHoverPolling() {
+   const tick = () => {
+     if (!fHoverHeld && !overlayInteractionLatched) return;
+     const now = Date.now();
+-    const needsRootPointer = process.platform === "linux"
++    const needsGamePointer = process.platform === "linux"
+       && fHoverHeld
+-      && !fHoverOverWidget
+-      && !overlayInteractionLatched;
+-    if (needsRootPointer) {
++      && fHoverPointerPhase !== "host";
++    if (needsGamePointer) {
+       // Keep sampling the compositor/root pointer until the very first widget hit. Throttle the
+       // external xdotool query so an accidentally held F key cannot flood the Electron main loop.
+       if (now - fHoverLinuxPointerSampleAt >= 100) {
+         fHoverLinuxPointerSampleAt = now;
+         refreshFHoverPointer({ preferLinux: true });
+       }
++    } else if (process.platform === "linux") {
++      // uIOhook keeps lastGlobalPointer warm between these authoritative host-root samples.
++      // Fifty milliseconds is fast enough for precise controls without spawning xdotool at the
++      // 33ms renderer-probe cadence.
++      if (now - fHoverLinuxPointerSampleAt >= F_HOVER_HOST_SAMPLE_MS) {
++        fHoverLinuxPointerSampleAt = now;
++        refreshFHoverPointer({ preferHost: true });
++      }
+     } else {
+       refreshFHoverPointer();
+     }
+@@ -774,6 +832,7 @@ function startFHoverPolling() {
+     if (overlayInteractionLatched) {
+       const target = overlayRegionAtPoint(lastGlobalPointer);
+       if (target) {
++        fHoverMissStartedAt = 0;
+         fHoverTarget = target;
+         fHoverOverWidget = true;
+         return;
+@@ -781,6 +840,8 @@ function startFHoverPolling() {
+       // Text fields deliberately retain the latch while typing even if the cursor wanders. Once
+       // editing ends, leaving every classified widget restores Star Citizen automatically.
+       if (notepadEditing || dragging || moveMode || modalOpen) return;
++      if (!fHoverMissStartedAt) fHoverMissStartedAt = now;
++      if (now - fHoverMissStartedAt < F_HOVER_LEAVE_GRACE_MS) return;
+       stopFHoverPolling();
+       hideInteractionCursor();
+       endFocusLatchedInteraction("pointer left classified widget", { suppressHeldKey: false });
+@@ -993,6 +1054,8 @@ function endFocusLatchedInteraction(reason = "external focus", { suppressHeldKey
+   momentaryInteractionActive = false;
+   fHoverOverWidget = false;
+   fHoverTarget = null;
++  fHoverPointerPhase = "game";
++  fHoverMissStartedAt = 0;
+   stopFHoverPolling();
+   hideInteractionCursor();
+   browserController?.setInteractionKeyHeld(false);
+@@ -1114,6 +1177,8 @@ function registerInteractHotkey(accel) {
+     overlayInteractionClaimSource = "";
+     fHoverOverWidget = false;
+     fHoverTarget = null;
++    fHoverPointerPhase = "game";
++    fHoverMissStartedAt = 0;
+     fHoverProbeSeq = 0;
+     fHoverLastClassifiedSeq = 0;
+     fHoverLastClassificationAt = 0;
+@@ -1183,6 +1248,8 @@ function registerInteractHotkey(accel) {
+     overlayInteractionClaimSource = "";
+     fHoverOverWidget = false;
+     fHoverTarget = null;
++    fHoverPointerPhase = "game";
++    fHoverMissStartedAt = 0;
+     interactiveTarget = null;
+     locked = true;
+     applyMouse();

@@ -1,0 +1,160 @@
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -204,6 +204,8 @@
+ let fHoverProbeSeq = 0;
+ let fHoverLastClassifiedSeq = 0;
+ let fHoverLastClassificationAt = 0;
++let fHoverDirectProbeInFlight = false;
++let overlayRegionSnapshotSignature = "";
+ let miningAutoArm = false;
+ let miningMoveMode = false;
+ let miningOnlyInteraction = false;
+@@ -464,6 +466,12 @@
+     pushWidgetStates();
+     overlayWindows.showCanvasWindow("Overlay Manager", overlay, { inactive: true });
+     reapplyOverlayInputShape();
++    // The renderer is intentionally never focused at startup, and Chromium may throttle its
++    // passive region timer. Explicitly ask for classified geometry after the widget states have
++    // been restored so held-F works before Settings has ever been opened.
++    for (const delay of [0, 100, 500, 1500]) {
++      setTimeout(() => { void requestOverlayRegionSnapshot(`did-finish-load+${delay}ms`); }, delay);
++    }
+     try { overlay.moveTop(); } catch {}
+     if (interactiveTarget === "overlay") focusLinuxInteractiveWindow("overlay");
+   });  applyMouse();
+@@ -525,14 +533,77 @@
+ function restoreLinuxPreviousWindow() {
+   overlayWindows.restorePreviousWindow();
+ }
+ 
+-function pointIsInsideOverlayRegion(globalPoint) {
+-  if (!globalPoint || !overlayRegions.length) return false;
++function overlayRegionAtPoint(globalPoint) {
++  if (!globalPoint || !overlayRegions.length) return null;
+   const canvas = fullDisplayBounds();
+   const x = Number(globalPoint.x) - canvas.x;
+   const y = Number(globalPoint.y) - canvas.y;
+-  return overlayRegions.some((r) => x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h);
++  const matches = overlayRegions.filter((r) => x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h);
++  if (!matches.length) return null;
++  matches.sort((a, b) => {
++    const priority = Number(b.priority || 0) - Number(a.priority || 0);
++    if (priority) return priority;
++    return (a.w * a.h) - (b.w * b.h);
++  });
++  return matches[0];
++}
++
++function requestOverlayRegionSnapshot(reason = "shell") {
++  if (!overlay || overlay.isDestroyed() || overlay.webContents.isLoadingMainFrame()) return Promise.resolve(false);
++  const why = JSON.stringify(String(reason));
++  return overlay.webContents.executeJavaScript(
++    `(() => { try { return window.__overlayReportRegions?.(true, ${why}) ?? false; } catch { return false; } })()`,
++    true,
++  ).then(() => true).catch((error) => {
++    console.warn(`[f-hover] classified region snapshot request failed (${reason}): ${String(error)}`);
++    return false;
++  });
++}
++
++async function probeFHoverPointDirect(localPoint, seq) {
++  if (fHoverDirectProbeInFlight || !fHoverHeld || !overlay || overlay.isDestroyed()) return;
++  if (!localPoint || !Number.isFinite(localPoint.x) || !Number.isFinite(localPoint.y)) return;
++  fHoverDirectProbeInFlight = true;
++  try {
++    const x = JSON.stringify(Number(localPoint.x));
++    const y = JSON.stringify(Number(localPoint.y));
++    const result = await overlay.webContents.executeJavaScript(
++      `(() => { try { return window.__overlayClassifyPoint?.(${x}, ${y}) || { hit:false, classification:"renderer-not-ready" }; } catch { return { hit:false, classification:"renderer-error" }; } })()`,
++      true,
++    );
++    if (!fHoverHeld || seq < fHoverLastClassifiedSeq) return;
++    fHoverLastClassifiedSeq = seq;
++    fHoverLastClassificationAt = Date.now();
++    applyFHoverClassification(result?.hit === true, result, "direct-classified-region");
++  } catch (error) {
++    console.warn(`[f-hover] direct renderer classification failed: ${String(error)}`);
++    updateFHoverHitFromRegions();
++  } finally {
++    fHoverDirectProbeInFlight = false;
++  }
+ }
+ function applyFHoverClassification(next, target = null, source = "regions") {
+@@ -579,7 +650,8 @@
+   // Renderer DOM classification is authoritative. Geometry is retained only as a startup/failure
+   // fallback when the renderer has not answered a point probe recently.
+   if (Date.now() - fHoverLastClassificationAt < 250) return;
+-  applyFHoverClassification(pointIsInsideOverlayRegion(lastGlobalPointer), null, "region-fallback");
++  const target = overlayRegionAtPoint(lastGlobalPointer);
++  applyFHoverClassification(!!target, target, "classified-region-fallback");
+ }
+ function stopFHoverPolling() {
+@@ -596,17 +668,15 @@
+     }
+     if (lastGlobalPointer && overlay && !overlay.isDestroyed()) {
+       const canvas = fullDisplayBounds();
+       const seq = ++fHoverProbeSeq;
+-      try {
+-        overlay.webContents.send("overlay:probe-point", {
+-          seq,
+-          x: Number(lastGlobalPointer.x) - canvas.x,
+-          y: Number(lastGlobalPointer.y) - canvas.y,
+-        });
+-      } catch {}
++      void probeFHoverPointDirect({
++        x: Number(lastGlobalPointer.x) - canvas.x,
++        y: Number(lastGlobalPointer.y) - canvas.y,
++      }, seq);
+     }
+     updateFHoverHitFromRegions();
+   };
+   tick();
+-  fHoverPollTimer = setInterval(tick, 32);
++  fHoverPollTimer = setInterval(tick, 50);
+ }
+ function applyMouse() {
+@@ -919,6 +989,9 @@
+     applyMouse();
+     reapplyOverlayInputShape();
++    void requestOverlayRegionSnapshot("F-down").then(() => {
++      if (fHoverHeld) updateFHoverHitFromRegions();
++    });
+     startFHoverPolling();
+     refreshTray();
+     console.log(`[f-hover] ${accel} held; waiting for pointer to enter a widget`);
+@@ -1180,6 +1253,10 @@
+       sendBrowserVisible();
+       pushWidgetStates();
++      for (const delay of [0, 150, 500]) {
++        setTimeout(() => { void requestOverlayRegionSnapshot(`restored-after-config+${delay}ms`); }, delay);
++      }
+     }
+     if (restore.binding && bindingWin && !bindingWin.isDestroyed()) bindingWin.showInactive();
+   };
+@@ -1759,9 +1836,25 @@
+   // transparent canvas remains click-through to Star Citizen.
+   ipcMain.on("overlay:regions", (_e, rects) => {
+     overlayRegions = Array.isArray(rects)
+-      ? rects.map((r) => ({ x: Number(r.x), y: Number(r.y), w: Number(r.w), h: Number(r.h) }))
++      ? rects.map((r) => ({
++          x: Number(r.x), y: Number(r.y), w: Number(r.w), h: Number(r.h),
++          key: typeof r.key === "string" ? r.key : "widget",
++          title: typeof r.title === "string" ? r.title : (typeof r.key === "string" ? r.key : "widget"),
++          classification: typeof r.classification === "string" ? r.classification : "reported-region",
++          id: typeof r.id === "string" ? r.id : null,
++          classes: Array.isArray(r.classes) ? r.classes.map(String) : [],
++          priority: Number.isFinite(Number(r.priority)) ? Number(r.priority) : 0,
++        }))
+           .filter((r) => [r.x, r.y, r.w, r.h].every(Number.isFinite) && r.w > 1 && r.h > 1)
+       : [];
++    const signature = JSON.stringify(overlayRegions.map((r) => [
++      r.key, r.classification, Math.round(r.x), Math.round(r.y), Math.round(r.w), Math.round(r.h),
++    ]));
++    if (signature !== overlayRegionSnapshotSignature) {
++      overlayRegionSnapshotSignature = signature;
++      const labels = [...new Set(overlayRegions.map((r) => `${r.classification}:${r.key}`))].join(", ");
++      console.log(`[f-hover] classified region snapshot count=${overlayRegions.length}${labels ? ` [${labels}]` : ""}`);
++    }
+     if (fHoverHeld) updateFHoverHitFromRegions();
+     else if (momentaryInteractionActive || overlayInteractionLatched) applyMouse();
+   });

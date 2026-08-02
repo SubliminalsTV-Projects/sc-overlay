@@ -1,0 +1,216 @@
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -200,6 +200,10 @@
+ let fHoverSuppressedUntilRelease = false;
+ let fHoverEnabled = process.platform === "linux";
+ let fHoverPollTimer = null;
++let fHoverTarget = null;
++let fHoverProbeSeq = 0;
++let fHoverLastClassifiedSeq = 0;
++let fHoverLastClassificationAt = 0;
+ let miningAutoArm = false;
+ let miningMoveMode = false;
+ let miningOnlyInteraction = false;
+@@ -534,29 +538,49 @@
+   const y = Number(globalPoint.y) - canvas.y;
+   return overlayRegions.some((r) => x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h);
+ }
+-function updateFHoverHit() {
+-  const next = !!(fHoverHeld && !fHoverSuppressedUntilRelease && pointIsInsideOverlayRegion(lastGlobalPointer));
+-  if (next === fHoverOverWidget) return;
++function applyFHoverClassification(next, target = null, source = "regions") {
++  next = !!(fHoverHeld && !fHoverSuppressedUntilRelease && next);
++  const nextKey = next ? String(target?.key || target?.id || "widget") : "";
++  const prevKey = fHoverOverWidget ? String(fHoverTarget?.key || fHoverTarget?.id || "widget") : "";
++  if (next === fHoverOverWidget && nextKey === prevKey) return;
++
+   const wasOverWidget = fHoverOverWidget;
+   fHoverOverWidget = next;
++  fHoverTarget = next ? target : null;
+   momentaryInteractionActive = next;
+   overlayInteractionLatched = false;
+   overlayInteractionClaimSource = "";
+   locked = !next;
+   applyMouse();
+   reapplyOverlayInputShape();
++
+   if (next) {
+-    // Pressing F over empty canvas must never take focus from Star Citizen. Focus the canvas only
+-    // after the global pointer enters a renderer-reported visible widget rectangle.
++    // All visible overlay tools are DOM classifications inside one native Overlay Manager.
++    // Focus only after the renderer confirms the pointer is inside #panel, .widget, or active
++    // overlay chrome. This avoids guessing from stale geometry and keeps empty canvas harmless.
+     focusLinuxInteractiveWindow("overlay");
+-    console.log(`[f-hover] F held over widget; overlay interactive (regions=${overlayRegions.length})`);
++    const classification = target?.classification || "reported-region";
++    const title = target?.title || nextKey;
++    console.log(`[f-hover] entered ${classification} key=${nextKey} title=${title}; overlay focused (${source})`);
+   } else {
+-    console.log("[f-hover] pointer left widgets; click-through restored");
++    console.log(`[f-hover] left overlay widget classification; click-through restored (${source})`);
+     if (wasOverWidget && !moveMode && !modalOpen && !notepadEditing && !dragging) {
+       setTimeout(restoreLinuxPreviousWindow, 30);
+     }
+   }
+-  try { overlay?.webContents.send("overlay:f-hover", { held: fHoverHeld, overWidget: fHoverOverWidget, latched: false }); } catch {}
++  try {
++    overlay?.webContents.send("overlay:f-hover", {
++      held: fHoverHeld, overWidget: fHoverOverWidget, latched: false,
++      key: nextKey || null, classification: target?.classification || null,
++    });
++  } catch {}
++}
++
++function updateFHoverHitFromRegions() {
++  // Renderer DOM classification is authoritative. Geometry is retained only as a startup/failure
++  // fallback when the renderer has not answered a point probe recently.
++  if (Date.now() - fHoverLastClassificationAt < 250) return;
++  applyFHoverClassification(pointIsInsideOverlayRegion(lastGlobalPointer), null, "region-fallback");
+ }
+ function stopFHoverPolling() {
+   if (fHoverPollTimer) clearInterval(fHoverPollTimer);
+@@ -572,7 +596,18 @@
+     } catch {
+       lastGlobalPointer = overlayWindows.pointerLocation() || lastGlobalPointer;
+     }
+-    updateFHoverHit();
++    if (lastGlobalPointer && overlay && !overlay.isDestroyed()) {
++      const canvas = fullDisplayBounds();
++      const seq = ++fHoverProbeSeq;
++      try {
++        overlay.webContents.send("overlay:probe-point", {
++          seq,
++          x: Number(lastGlobalPointer.x) - canvas.x,
++          y: Number(lastGlobalPointer.y) - canvas.y,
++        });
++      } catch {}
++    }
++    updateFHoverHitFromRegions();
+   };
+   tick();
+   fHoverPollTimer = setInterval(tick, 32);
+@@ -866,6 +901,10 @@
+     overlayInteractionLatched = false;
+     overlayInteractionClaimSource = "";
+     fHoverOverWidget = false;
++    fHoverTarget = null;
++    fHoverProbeSeq = 0;
++    fHoverLastClassifiedSeq = 0;
++    fHoverLastClassificationAt = 0;
+     fHoverSuppressedUntilRelease = false;
+     interactiveTarget = null;
+     locked = true;
+@@ -893,6 +932,8 @@
+     overlayInteractionLatched = false;
+     overlayInteractionClaimSource = "";
+     fHoverOverWidget = false;
++    fHoverTarget = null;
++    fHoverLastClassificationAt = 0;
+     interactiveTarget = null;
+     locked = true;
+     applyMouse();
+@@ -1721,9 +1762,16 @@
+       ? rects.map((r) => ({ x: Number(r.x), y: Number(r.y), w: Number(r.w), h: Number(r.h) }))
+           .filter((r) => [r.x, r.y, r.w, r.h].every(Number.isFinite) && r.w > 1 && r.h > 1)
+       : [];
+-    if (fHoverHeld) updateFHoverHit();
++    if (fHoverHeld) updateFHoverHitFromRegions();
+     else if (momentaryInteractionActive || overlayInteractionLatched) applyMouse();
+   });
++  ipcMain.on("overlay:point-classification", (_e, result) => {
++    const seq = Number(result?.seq);
++    if (!fHoverHeld || !Number.isFinite(seq) || seq < fHoverLastClassifiedSeq) return;
++    fHoverLastClassifiedSeq = seq;
++    fHoverLastClassificationAt = Date.now();
++    applyFHoverClassification(result?.hit === true, result, "dom-classification");
++  });
+   ipcMain.on("overlay:claim-interaction", (_e, source) => claimFocusLatchedInteraction(source));
+   ipcMain.on("overlay:release-interaction", (_e, reason) => releaseFocusLatchToGame(reason || "transparent canvas clicked"));
+   ipcMain.on("browser:bounds", (_e, bounds) => browserController?.setBrowserBounds(bounds));
+--- a/electron/preload.cjs
++++ b/electron/preload.cjs
+@@ -10,6 +10,10 @@
+   // Report the page's interactive element client-rects so the shell can hit-test the cursor
+   // against them (replaces forward:true mouse-forwarding). rects = [{x,y,w,h}, …].
+   reportRegions: (rects) => ipcRenderer.send("overlay:regions", rects),
++  // The shell polls the global pointer while F is held. Ask the renderer which actual DOM
++  // classification is under that canvas-local point instead of relying only on stale rectangles.
++  onProbePoint: (cb) => ipcRenderer.on("overlay:probe-point", (_e, point) => cb(point)),
++  reportPointClassification: (result) => ipcRenderer.send("overlay:point-classification", result),
+   // A pointer press inside any shaped widget latches keyboard/mouse ownership to the overlay.
+   // The latch ends when the native Overlay Manager loses focus to Star Citizen/another window.
+   claimInteraction: (source) => ipcRenderer.send("overlay:claim-interaction", source || "widget"),
+--- a/overlay/missions.html
++++ b/overlay/missions.html
+@@ -3348,6 +3348,71 @@
+       reportRegions();
+     }
+ 
++    // Exact held-F hit classification. The developer UI is NOT a collection of native windows:
++    // Mission & BP Tracker is #panel, while Mining, Journal, Twitch Chat, SC Feed, Loot Split,
++    // Event Tracker, Web Page, and Infographic Viewer are .widget wrappers (w-<registry key>).
++    // Ask the DOM itself what is under the pointer so iframe content, grouped widgets, transforms,
++    // and native WebContentsView holes all resolve through their visible wrapper classification.
++    const pointTargetVisible = (el) => {
++      if (!el || !el.isConnected) return false;
++      const style = getComputedStyle(el);
++      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
++      const r = el.getBoundingClientRect();
++      return r.width > 1 && r.height > 1;
++    };
++    const notifierCanTakeFocus = (el) => !el.classList.contains("notifier")
++      || el.classList.contains("live")
++      || el.classList.contains("moving")
++      || el.classList.contains("cfgopen");
++    const classifyOverlayPoint = (x, y) => {
++      if (!Number.isFinite(x) || !Number.isFinite(y)
++          || x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
++        return { hit: false, classification: "transparent-canvas" };
++      }
++      for (const node of document.elementsFromPoint(x, y)) {
++        const widget = node.closest?.(".widget");
++        if (widget && pointTargetVisible(widget) && notifierCanTakeFocus(widget)) {
++          const key = widget.id.startsWith("w-") ? widget.id.slice(2) : (widget.dataset.widgetKey || "widget");
++          return {
++            hit: true,
++            key,
++            title: WBY[key]?.title || widget.querySelector(".wh-title")?.textContent?.trim() || key,
++            classification: ".widget",
++            id: widget.id || null,
++            classes: [...widget.classList],
++          };
++        }
++        const panel = node.closest?.("#panel");
++        if (panel && pointTargetVisible(panel)) {
++          return {
++            hit: true,
++            key: "blueprint",
++            title: WBY.blueprint?.title || "Mission & BP Tracker",
++            classification: "#panel",
++            id: "panel",
++            classes: [...panel.classList],
++          };
++        }
++        const chrome = node.closest?.("body.scanbox #scanBox, #globalCog, #hub.open, #cogMenu.open, #whatsnew.show, #arrangeScrim .ab");
++        if (chrome && pointTargetVisible(chrome)) {
++          return {
++            hit: true,
++            key: chrome.id || "overlay-chrome",
++            title: chrome.getAttribute("aria-label") || chrome.getAttribute("title") || chrome.id || "Overlay controls",
++            classification: "overlay-chrome",
++            id: chrome.id || null,
++            classes: [...chrome.classList],
++          };
++        }
++      }
++      return { hit: false, classification: "transparent-canvas" };
++    };
++    window.overlayApi.onProbePoint?.((point) => {
++      const seq = Number(point?.seq);
++      const result = classifyOverlayPoint(Number(point?.x), Number(point?.y));
++      window.overlayApi.reportPointClassification?.({ seq, ...result });
++    });
++
+     // "What's new" card. Auto-shows once per new version on launch AND is re-openable any time
+     // from the hub's "Patch notes" button (force=true ignores the per-version seen flag).
+     // Hover-interactive + flagged as a modal so it stays clickable to close even when locked.

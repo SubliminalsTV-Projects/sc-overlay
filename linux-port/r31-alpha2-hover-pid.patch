@@ -1,0 +1,326 @@
+diff -ruN ./electron/capture.cjs /tmp/r31-alpha2-new/electron/capture.cjs
+--- a/electron/capture.cjs	2026-07-31 03:30:19.236702294 +0000
++++ b/electron/capture.cjs	2026-07-31 03:30:19.240702294 +0000
+@@ -66,10 +66,10 @@
+   return /^(?:\(?null\)?|WM_CLASS:\s*not found\.?|[^:]+:\s*not found\.?)$/i.test(text) ? "" : text;
+ }
+ 
+-// Bind each launch to the exact StarCitizen.exe -> Gamescope ancestor chain. This prevents a
+-// stale Gamescope process (or the RSI launcher) from arming OCR and avoids hard-coding a PID that
+-// changes every launch. KWin may still expose an anonymous XWayland root while the real Gamescope
+-// surface is active; that fallback is accepted only while this exact bound process tree is alive.
++// Bind each launch to the exact StarCitizen.exe PID and /proc start time. When Gamescope remains
++// in the ancestor chain it is validated too; detached Wine launches retain the exact game-only
++// identity instead of leaving OCR permanently paused. KWin may still expose an anonymous XWayland
++// root; that fallback is accepted only while this exact bound game session is alive.
+ function classifyLinuxForeground(values, {
+   session = scSession.current(),
+   processName = null,
+@@ -1338,8 +1338,10 @@
+     const gateMessage = `active:${fg.gate || "unknown"}`;
+     if (gateMessage !== lastGateLog) {
+       lastGateLog = gateMessage;
+-      console.log(`[screen-read] active via ${fg.gate || "foreground-window"}` +
+-        `${boundSession ? `; bound StarCitizen PID ${boundSession.gamePid} -> Gamescope PID ${boundSession.gamescopePid}` : ""}` +
++      const sessionLabel = boundSession
++        ? `; bound StarCitizen PID ${boundSession.gamePid}${boundSession.gamescopePid ? ` -> Gamescope PID ${boundSession.gamescopePid}` : " (direct Wine PID)"}`
++        : "";
++      console.log(`[screen-read] active via ${fg.gate || "foreground-window"}` + sessionLabel +
+         `; mining=${mining ? "on" : "off"}, mission=${miss ? "on" : "off"}, fabricator=${fab ? "on" : "off"}`);
+     }
+     busy = true;
+diff -ruN ./electron/linux/star-citizen-session.cjs /tmp/r31-alpha2-new/electron/linux/star-citizen-session.cjs
+--- a/electron/linux/star-citizen-session.cjs	2026-07-31 03:30:19.236702294 +0000
++++ b/electron/linux/star-citizen-session.cjs	2026-07-31 03:30:19.240702294 +0000
+@@ -74,7 +74,7 @@
+     if (!info) return false;
+     const blob = `${info.comm}\n${info.cmdline.replace(/\0/g, " ")}`;
+     if (/StarCitizen_Launcher\.exe/i.test(blob)) return false;
+-    return /^StarCitizen\.exe$/i.test(info.comm)
++    return /^StarCitizen(?:\.exe)?$/i.test(info.comm)
+       || /(?:^|[/\\])Bin64[/\\]StarCitizen\.exe(?:\0|\s|$)/i.test(info.cmdline)
+       || /(?:^|[/\\])StarCitizen\.exe(?:\0|\s|$)/i.test(info.cmdline);
+   }
+@@ -116,17 +116,19 @@
+     const launcher = chain.find((info) => info.pid !== game.pid && this.isLauncherProcess(info)) || null;
+     const reaper = chain.find((info) => this.isGamescopeReaper(info)) || null;
+     const gamescope = chain.find((info) => this.isGamescopeProcess(info)) || null;
+-    if (!gamescope) return null;
++    // Wine may detach StarCitizen.exe from the wrapper after launcher startup. PID plus /proc
++    // start ticks remains an exact identity, so retain a direct game session rather than pausing
++    // OCR forever merely because Gamescope is no longer an ancestor.
+     return {
+-      id: `${gamescope.pid}:${gamescope.startTicks}:${game.pid}:${game.startTicks}`,
++      id: `${gamescope?.pid || 0}:${gamescope?.startTicks || 0}:${game.pid}:${game.startTicks}`,
+       gamePid: game.pid,
+       gameStartTicks: game.startTicks,
+       launcherPid: launcher?.pid || null,
+       reaperPid: reaper?.pid || null,
+-      gamescopePid: gamescope.pid,
+-      gamescopeStartTicks: gamescope.startTicks,
++      gamescopePid: gamescope?.pid || null,
++      gamescopeStartTicks: gamescope?.startTicks || 0,
+       gameCommand: game.cmdline.replace(/\0/g, " ").trim(),
+-      gamescopeCommand: gamescope.cmdline.replace(/\0/g, " ").trim(),
++      gamescopeCommand: gamescope?.cmdline?.replace(/\0/g, " ").trim() || "",
+       discoveredAt: Date.now(),
+     };
+   }
+@@ -149,10 +151,10 @@
+   validate(session = this.bound) {
+     if (!session || this.platform !== "linux") return false;
+     const game = this.readProcess(session.gamePid);
++    if (!game || game.startTicks !== session.gameStartTicks || !this.isGameProcess(game)) return false;
++    if (!session.gamescopePid) return true;
+     const gamescope = this.readProcess(session.gamescopePid);
+-    if (!game || !gamescope) return false;
+-    if (game.startTicks !== session.gameStartTicks || gamescope.startTicks !== session.gamescopeStartTicks) return false;
+-    if (!this.isGameProcess(game) || !this.isGamescopeProcess(gamescope)) return false;
++    if (!gamescope || gamescope.startTicks !== session.gamescopeStartTicks || !this.isGamescopeProcess(gamescope)) return false;
+     const chain = this.ancestors(game.pid);
+     return chain.some((info) => info.pid === session.gamescopePid && info.startTicks === session.gamescopeStartTicks);
+   }
+@@ -167,8 +169,9 @@
+     const found = this.discover();
+     if (found) {
+       this.bound = found;
+-      this.logger?.log?.(`[sc-session] bound StarCitizen.exe PID ${found.gamePid} to Gamescope PID ${found.gamescopePid}` +
+-        `${found.launcherPid ? ` via launcher PID ${found.launcherPid}` : ""}`);
++      this.logger?.log?.(found.gamescopePid
++        ? `[sc-session] bound StarCitizen.exe PID ${found.gamePid} to Gamescope PID ${found.gamescopePid}${found.launcherPid ? ` via launcher PID ${found.launcherPid}` : ""}`
++        : `[sc-session] bound StarCitizen.exe PID ${found.gamePid} directly (Wine detached from Gamescope ancestry)`);
+     }
+     return this.bound;
+   }
+@@ -181,9 +184,13 @@
+     const n = numericPid(pid);
+     if (!n || !session) return false;
+     if ([session.gamePid, session.launcherPid, session.reaperPid, session.gamescopePid].includes(n)) return true;
+-    // Some window managers expose a short-lived Wine/XWayland helper. Accept it only when its
+-    // ancestor path reaches this exact bound Gamescope instance; unrelated desktop apps fail.
+-    return this.ancestors(n, 16).some((info) => info.pid === session.gamescopePid && info.startTicks === session.gamescopeStartTicks);
++    // Some window managers expose a short-lived Wine/XWayland helper. For a wrapped session,
++    // require the exact Gamescope ancestor. For a detached Wine session, accept only a descendant
++    // of the exact game PID; unrelated desktop apps still fail the privacy gate.
++    if (session.gamescopePid) {
++      return this.ancestors(n, 16).some((info) => info.pid === session.gamescopePid && info.startTicks === session.gamescopeStartTicks);
++    }
++    return this.ancestors(n, 16).some((info) => info.pid === session.gamePid && info.startTicks === session.gameStartTicks);
+   }
+ 
+   summary(session = this.current()) {
+diff -ruN ./electron/main.cjs /tmp/r31-alpha2-new/electron/main.cjs
+--- a/electron/main.cjs	2026-07-31 03:30:19.236702294 +0000
++++ b/electron/main.cjs	2026-07-31 03:30:19.240702294 +0000
+@@ -537,17 +537,26 @@
+ function updateFHoverHit() {
+   const next = !!(fHoverHeld && !fHoverSuppressedUntilRelease && pointIsInsideOverlayRegion(lastGlobalPointer));
+   if (next === fHoverOverWidget) return;
++  const wasOverWidget = fHoverOverWidget;
+   fHoverOverWidget = next;
++  momentaryInteractionActive = next;
++  overlayInteractionLatched = false;
++  overlayInteractionClaimSource = "";
++  locked = !next;
+   applyMouse();
++  reapplyOverlayInputShape();
+   if (next) {
+-    // KWin/XWayland may not deliver the first click to an unfocused toolbar window. Focus the
+-    // shared canvas as soon as the held-F pointer enters a widget so its controls respond.
++    // Pressing F over empty canvas must never take focus from Star Citizen. Focus the canvas only
++    // after the global pointer enters a renderer-reported visible widget rectangle.
+     focusLinuxInteractiveWindow("overlay");
+-    console.log(`[f-hover] pointer entered widget; overlay interactive (regions=${overlayRegions.length})`);
++    console.log(`[f-hover] F held over widget; overlay interactive (regions=${overlayRegions.length})`);
+   } else {
+     console.log("[f-hover] pointer left widgets; click-through restored");
++    if (wasOverWidget && !moveMode && !modalOpen && !notepadEditing && !dragging) {
++      setTimeout(restoreLinuxPreviousWindow, 30);
++    }
+   }
+-  try { overlay?.webContents.send("overlay:f-hover", { held: fHoverHeld, overWidget: fHoverOverWidget }); } catch {}
++  try { overlay?.webContents.send("overlay:f-hover", { held: fHoverHeld, overWidget: fHoverOverWidget, latched: false }); } catch {}
+ }
+ function stopFHoverPolling() {
+   if (fHoverPollTimer) clearInterval(fHoverPollTimer);
+@@ -571,7 +580,7 @@
+ function applyMouse() {
+   if (!overlay) return;
+   const interactive = LINUX_HARD_CLICK_THROUGH
+-    ? unifiedInteractionActive || interactiveTarget !== null || holdInteract || dragging || moveMode || modalOpen || notepadEditing || momentaryInteractionActive || overlayInteractionLatched
++    ? unifiedInteractionActive || interactiveTarget !== null || dragging || moveMode || modalOpen || notepadEditing || (fHoverHeld && fHoverOverWidget)
+     : unifiedInteractionActive || interactiveTarget !== null || dragging || modalOpen || notepadEditing || holdInteract || momentaryInteractionActive || overlayInteractionLatched || (hovering && !locked);
+   setWindowPassthrough(overlay, !interactive);
+ }
+@@ -787,7 +796,7 @@
+   // Linux window because compositor click-to-focus and iframe/native-view clicks can briefly be
+   // reported as transparent-canvas presses. Keep input armed until the physical F key is released.
+   if (fHoverHeld) {
+-    console.log(`[focus-latch] ${reason} ignored while ${interactAccel || "RightAlt"} is held`);
++    console.log(`[focus-latch] ${reason} ignored while ${interactAccel || "F"} is held`);
+     return;
+   }
+   const hadInteraction = overlayInteractionLatched || momentaryInteractionActive;
+@@ -796,6 +805,9 @@
+ }
+ 
+ function claimFocusLatchedInteraction(source = "widget") {
++  // Linux interaction is hover-scoped. A widget click must not turn held-F into persistent
++  // whole-canvas ownership after F is released or the pointer leaves the widget.
++  if (process.platform === "linux" && fHoverEnabled) return;
+   if (unifiedInteractionActive || overlayInteractionLatched) return;
+   if (!momentaryInteractionActive && !fHoverHeld) return;
+ 
+@@ -839,67 +851,58 @@
+   if (!accel || typeof accel !== "string") return { ok: true };
+ 
+   const onDown = (source = "uiohook") => {
+-    if (notepadEditing || !fHoverEnabled || unifiedInteractionActive || overlayInteractionLatched || fHoverSuppressedUntilRelease || fHoverHeld) return;
+-    console.log(`[focus-latch] ${accel} key-down received via ${source}`);
+-    // The interaction key is intentionally focus-independent. It must work while Star Citizen,
+-    // the overlay, the desktop, or another application owns focus; evdev/uIOhook supplies the
+-    // physical key state outside Electron's focused renderer.
++    if (notepadEditing || !fHoverEnabled || unifiedInteractionActive || fHoverSuppressedUntilRelease || fHoverHeld) return;
++    console.log(`[f-hover] ${accel} key-down received via ${source}`);
+     fHoverHeld = true;
+     browserController?.setInteractionKeyHeld(true);
+     if (!overlayEnabled) setOverlayEnabled(true);
+     if (!overlay) createOverlay();
+     if (!overlay || overlay.isDestroyed()) return;
+-    const activate = () => {
+-      if (!overlay || overlay.isDestroyed() || !fHoverHeld || momentaryInteractionActive || overlayInteractionLatched) return;
+-      captureLinuxActiveWindow();
+-      momentaryInteractionActive = true;
+-      overlayInteractionLatched = false;
+-      overlayInteractionClaimSource = "";
+-      fHoverOverWidget = false;
+-      fHoverSuppressedUntilRelease = false;
+-      interactiveTarget = null;
+-      locked = true;
+-      sendEmbeddedMiningVisible({ on: miningVisible, arm: miningAutoArm, transient: false });
+-      sendNotepadVisible({ on: notepadVisible, transient: false });
+-      try { overlay.webContents.send("overlay:mining-only-interaction", false); } catch {}
+-      try { overlay.webContents.send("overlay:move-mode", false); } catch {}
+-      try { overlay.webContents.send("overlay:unified-interaction", false); } catch {}
+-      try { overlay.webContents.send("overlay:f-hover", { held: true, overWidget: false, latched: false }); } catch {}
+-      applyMouse();
+-      reapplyOverlayInputShape();
+-      refreshTray();
+-      console.log(`[focus-latch] ${accel} held; focus-independent overlay interaction armed`);
+-    };
+-    if (overlay.webContents.isLoadingMainFrame()) overlay.webContents.once("did-finish-load", activate);
+-    else activate();
++
++    // Capture the current owner, but do not focus or unlock the full transparent canvas. The
++    // pointer poll below grants input only after it enters a visible widget rectangle.
++    captureLinuxActiveWindow();
++    momentaryInteractionActive = false;
++    overlayInteractionLatched = false;
++    overlayInteractionClaimSource = "";
++    fHoverOverWidget = false;
++    fHoverSuppressedUntilRelease = false;
++    interactiveTarget = null;
++    locked = true;
++    sendEmbeddedMiningVisible({ on: miningVisible, arm: miningAutoArm, transient: false });
++    sendNotepadVisible({ on: notepadVisible, transient: false });
++    try { overlay.webContents.send("overlay:mining-only-interaction", false); } catch {}
++    try { overlay.webContents.send("overlay:move-mode", false); } catch {}
++    try { overlay.webContents.send("overlay:unified-interaction", false); } catch {}
++    try { overlay.webContents.send("overlay:f-hover", { held: true, overWidget: false, latched: false }); } catch {}
++    applyMouse();
++    reapplyOverlayInputShape();
++    startFHoverPolling();
++    refreshTray();
++    console.log(`[f-hover] ${accel} held; waiting for pointer to enter a widget`);
+   };
+ 
+   const onUp = (source = "uiohook") => {
+-    if (!fHoverHeld && !momentaryInteractionActive && !fHoverSuppressedUntilRelease) return;
++    if (!fHoverHeld && !momentaryInteractionActive && !fHoverOverWidget && !fHoverSuppressedUntilRelease) return;
++    const hadWidgetFocus = fHoverOverWidget || momentaryInteractionActive;
++    stopFHoverPolling();
+     fHoverHeld = false;
+     browserController?.setInteractionKeyHeld(false);
+-    if (fHoverSuppressedUntilRelease) {
+-      fHoverSuppressedUntilRelease = false;
+-      momentaryInteractionActive = false;
+-      if (!overlayInteractionLatched) { locked = true; applyMouse(); reapplyOverlayInputShape(); }
+-      console.log(`[focus-latch] ${accel} released via ${source}; held-key suppression cleared`);
+-      return;
+-    }
+-    if (overlayInteractionLatched) {
+-      momentaryInteractionActive = false;
+-      applyMouse();
+-      try { overlay?.webContents.send("overlay:f-hover", { held: false, overWidget: true, latched: true }); } catch {}
+-      console.log(`[focus-latch] ${accel} released via ${source} after widget click; overlay remains focused until Star Citizen is clicked`);
+-      return;
+-    }
++    fHoverSuppressedUntilRelease = false;
+     momentaryInteractionActive = false;
++    overlayInteractionLatched = false;
++    overlayInteractionClaimSource = "";
+     fHoverOverWidget = false;
++    interactiveTarget = null;
+     locked = true;
+     applyMouse();
+     reapplyOverlayInputShape();
+     try { overlay?.webContents.send("overlay:f-hover", { held: false, overWidget: false, latched: false }); } catch {}
++    if (hadWidgetFocus && !moveMode && !modalOpen && !notepadEditing && !dragging) {
++      setTimeout(restoreLinuxPreviousWindow, 30);
++    }
+     refreshTray();
+-    console.log(`[focus-latch] ${accel} released via ${source} without a widget click; overlay returned to click-through`);
++    console.log(`[f-hover] ${accel} released via ${source}; click-through restored`);
+   };
+ 
+   const r = hotkeys.registerHold(accel, () => onDown("uiohook"), () => onUp("uiohook"));
+@@ -907,7 +910,7 @@
+     evdevInteractController = startEvdevHoldKey({ accelerator: accel, onDown: () => onDown("evdev"), onUp: () => onUp("evdev") });
+   }
+   if (r.ok) interactAccel = accel;
+-  else console.warn(`[focus-latch] uIOhook could not register ${accel}: ${r.error || "unknown"}; evdev fallback will be used when available`);
++  else console.warn(`[f-hover] uIOhook could not register ${accel}: ${r.error || "unknown"}; evdev fallback will be used when available`);
+   return (r.ok || evdevInteractController?.supported) ? { ok: true } : r;
+ }
+ 
+@@ -1521,10 +1524,10 @@
+     // Attach the held interaction key before creating the always-on-top Overlay Manager. This
+     // ensures the low-level hook is already listening while Star Citizen still owns focus on the
+     // very first launch; held-F is ready before the overlay window is created.
+-    let registeredInteractKey = "RightAlt";
++    let registeredInteractKey = "F";
+     try {
+       const c = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "config.json"), "utf8"));
+-      if (c.interactHotkey) registeredInteractKey = c.interactHotkey;
++      if (process.platform !== "linux" && c.interactHotkey) registeredInteractKey = c.interactHotkey;
+       if (process.platform === "linux") fHoverEnabled = c.holdToInteract !== false;
+     } catch { /* defaults */ }
+     const earlyInteractResult = registerInteractHotkey(registeredInteractKey);
+@@ -1558,7 +1561,7 @@
+       if (typeof c.bindingHotkey === "string") bindKey = c.bindingHotkey;
+       if (typeof c.webViewHotkey === "string") registerWebViewHotkey(c.webViewHotkey);
+       if (typeof c.miningHotkey === "string") miningKey = c.miningHotkey;
+-      if (typeof c.interactHotkey === "string") interactKey = c.interactHotkey;
++      if (process.platform !== "linux" && typeof c.interactHotkey === "string") interactKey = c.interactHotkey;
+       if (typeof c.moveHotkey === "string") moveKey = c.moveHotkey;
+       if (process.platform === "linux") fHoverEnabled = c.holdToInteract !== false;
+       else holdMode = c.holdToInteract === true;    } catch { /* defaults */ }
+@@ -1677,7 +1680,7 @@
+   ipcMain.handle("set-mining-hotkey", (_e, accel) =>
+     registerMiningHotkey(typeof accel === "string" ? accel : ""));
+   ipcMain.handle("set-interact-hotkey", (_e, accel) =>
+-    registerInteractHotkey(typeof accel === "string" ? accel : ""));
++    registerInteractHotkey(process.platform === "linux" ? "F" : (typeof accel === "string" ? accel : "")));
+   ipcMain.handle("set-move-hotkey", (_e, accel) =>
+     registerMoveHotkey(typeof accel === "string" ? accel : ""));
+   ipcMain.handle("app:set-hold-mode", (_e, on) => {
+@@ -1718,7 +1721,8 @@
+       ? rects.map((r) => ({ x: Number(r.x), y: Number(r.y), w: Number(r.w), h: Number(r.h) }))
+           .filter((r) => [r.x, r.y, r.w, r.h].every(Number.isFinite) && r.w > 1 && r.h > 1)
+       : [];
+-    if (momentaryInteractionActive || overlayInteractionLatched) applyMouse();
++    if (fHoverHeld) updateFHoverHit();
++    else if (momentaryInteractionActive || overlayInteractionLatched) applyMouse();
+   });
+   ipcMain.on("overlay:claim-interaction", (_e, source) => claimFocusLatchedInteraction(source));
+   ipcMain.on("overlay:release-interaction", (_e, reason) => releaseFocusLatchToGame(reason || "transparent canvas clicked"));

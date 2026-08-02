@@ -1,0 +1,910 @@
+diff --git a/electron/capture.cjs b/electron/capture.cjs
+index 6b15871..aeec0cc 100644
+--- a/electron/capture.cjs
++++ b/electron/capture.cjs
+@@ -151,6 +151,13 @@ const HOST_SESSION_TYPE = String(process.env.SC_TRACKER_HOST_XDG_SESSION_TYPE ||
+ const HOST_WAYLAND_DISPLAY = String(process.env.SC_TRACKER_HOST_WAYLAND_DISPLAY || process.env.WAYLAND_DISPLAY || "");
+ const HOST_IS_WAYLAND = process.platform === "linux" && (HOST_SESSION_TYPE === "wayland" || !!HOST_WAYLAND_DISPLAY);
+ let lastBackendWarning = "";
++let preferredCaptureBackend = "";
++
++const CAPTURE_BACKENDS = Object.freeze({
++  gamescope: captureWithGamescopeWindow,
++  spectacle: captureWithSpectacle,
++  electron: captureWithElectron,
++});
+ 
+ function runFile(command, args, options = {}) {
+   return new Promise((resolve, reject) => {
+@@ -333,25 +340,28 @@ async function captureGame(winRect) {
+   const disp = winRect ? screen.getDisplayMatching(winRect) : screen.getPrimaryDisplay();
+   const errors = [];
+ 
+-  // The Electron shell is intentionally XWayland, but the desktop itself is KDE Wayland. Prefer a
+-  // clean Gamescope window when the portal exposes it; otherwise restore the original Wayland/DBus
+-  // environment for Spectacle. Only then fall back to Electron's screen list.
+-  if (HOST_IS_WAYLAND) {
+-    try { return await captureWithGamescopeWindow(disp); }
+-    catch (e) { errors.push(`Gamescope window: ${e?.message || e}`); }
+-    try { return await captureWithSpectacle(disp); }
+-    catch (e) { errors.push(`Spectacle: ${e?.message || e}`); }
+-  }
+-  try {
+-    const result = await captureWithElectron(disp);
+-    if (errors.length) captureWarning(errors.join("; "));
+-    return result;
+-  } catch (e) {
+-    errors.push(`Electron screen: ${e?.message || e}`);
+-  }
+-  if (process.platform === "linux" && !HOST_IS_WAYLAND) {
+-    try { return await captureWithSpectacle(disp); }
+-    catch (e) { errors.push(`Spectacle: ${e?.message || e}`); }
++  // Probe capture backends once, then reuse the winner for the session. Alpha 12 repeated the
++  // same known-failing Gamescope/portal attempts before every Spectacle frame, which added process
++  // creation and several seconds of avoidable latency to every OCR cycle.
++  const normalOrder = HOST_IS_WAYLAND
++    ? ["gamescope", "spectacle", "electron"]
++    : ["electron", ...(process.platform === "linux" ? ["spectacle"] : [])];
++  const order = preferredCaptureBackend
++    ? [preferredCaptureBackend, ...normalOrder.filter((name) => name !== preferredCaptureBackend)]
++    : normalOrder;
++  for (const name of order) {
++    try {
++      const result = await CAPTURE_BACKENDS[name](disp);
++      if (preferredCaptureBackend !== name) {
++        preferredCaptureBackend = name;
++        console.log(`[screen-read] capture backend cached for this session: ${name}`);
++      }
++      if (errors.length) captureWarning(errors.join("; "));
++      return result;
++    } catch (e) {
++      errors.push(`${name}: ${e?.message || e}`);
++      if (preferredCaptureBackend === name) preferredCaptureBackend = "";
++    }
+   }
+   throw new Error(errors.join("; ") || "no screen-capture backend succeeded");
+ }
+@@ -424,6 +434,31 @@ function normalizedCrop(image, width, height, roi) {
+   return { img: cropped.resize({ width: targetWidth, quality: "best" }), x, y, w, h };
+ }
+ 
++// A tiny, quantized luminance map is enough to tell whether a HUD region materially changed.
++// It stays inside Electron/nativeImage (no PNG encode, ImageMagick, Tesseract, or child process).
++function visualFingerprint(image, width, height, roi) {
++  const x = Math.max(0, Math.min(width - 1, Math.round(width * roi.x)));
++  const y = Math.max(0, Math.min(height - 1, Math.round(height * roi.y)));
++  const w = Math.max(8, Math.min(width - x, Math.round(width * roi.w)));
++  const h = Math.max(8, Math.min(height - y, Math.round(height * roi.h)));
++  const bitmap = image.crop({ x, y, width: w, height: h })
++    .resize({ width: 48, height: 27, quality: "fast" }).toBitmap();
++  const out = new Uint8Array(Math.floor(bitmap.length / 4));
++  for (let src = 0, dst = 0; src + 3 < bitmap.length; src += 4, dst += 1) {
++    out[dst] = Math.round((bitmap[src] + bitmap[src + 1] + bitmap[src + 2]) / (3 * 16));
++  }
++  return out;
++}
++
++function fingerprintDistance(a, b) {
++  if (!a || !b || a.length !== b.length || !a.length) return Infinity;
++  let total = 0;
++  for (let i = 0; i < a.length; i += 1) total += Math.abs(a[i] - b[i]);
++  // Fingerprint values are 4-bit luminance buckets. Normalize the mean delta to 0..1 so stage
++  // thresholds are resolution-independent percentages rather than magic bucket counts.
++  return total / (a.length * 15);
++}
++
+ function ocrTesseractText(imgPath, { psm = 6, whitelist = "" } = {}) {
+   return new Promise((resolve, reject) => {
+     const args = [path.resolve(imgPath), "stdout", "-l", "eng", "--psm", String(psm),
+@@ -1194,7 +1229,7 @@ function startFabCapture({ port, configDir, onStatus }) {
+   let pendingAt = 0;          // when we FIRST saw it — the settle is a duration, not a poll count
+   let fastUntil = 0;          // poll fast until this time (set while the scan HUD is on screen)
+   let lastTickMs = 0;         // how long the last poll actually took — the fast rate tunes off it
+-  let rate = POLL_MS;         // the interval currently armed, so we only re-arm on a real change
++  let rate = POLL_MS;         // completion-to-next-cycle delay; native OCR can never overlap itself
+   const uploaded = new Set(); // items pushed to the site this session
+   const pendingUploads = new Map(); // item UUID -> display name|null: captured locally but NOT yet
+   //                                   confirmed on the site; the drain loop retries until it lands
+@@ -1212,6 +1247,24 @@ function startFabCapture({ port, configDir, onStatus }) {
+   let lastScanModeFingerprint = "";
+   let lastCaptureDescription = "";
+   let noMiningReadCycles = 0;
++  const visualStages = new Map();
++  let cachedGenericRead = { kind: "none" };
++  let cachedGenericUsesPanel = false;
++  let cachedScanModeRead = { kind: "scan-mode", active: false, angle: null, confidence: 0 };
++  let cachedAnalysisRead = { kind: "none" };
++  let cachedSignatureRead = { kind: "none" };
++  let cachedSignatureOcr = null;
++  let lastMiningActiveAt = 0;
++
++  function shouldRunVisualStage(name, fingerprint, { threshold = 0.08, maxAgeMs = 6000 } = {}) {
++    const now = Date.now();
++    const previous = visualStages.get(name);
++    const changed = !previous || fingerprintDistance(previous.fingerprint, fingerprint) >= threshold;
++    const expired = !previous || now - previous.processedAt >= maxAgeMs;
++    if (!changed && !expired) return false;
++    visualStages.set(name, { fingerprint, processedAt: now });
++    return true;
++  }
+ 
+ 
+   function saveOcrDebug(shot, cap, genericRead, analysisRead, signatureRead, signatureOcr = null, scanModeRead = null) {
+@@ -1298,6 +1351,14 @@ function startFabCapture({ port, configDir, onStatus }) {
+   }
+ 
+   async function tick() {
++    const cycleStartedAt = Date.now();
++    const timings = {};
++    const skippedStages = [];
++    const timeStage = async (name, work) => {
++      const started = Date.now();
++      try { return await work(); }
++      finally { timings[name] = Date.now() - started; }
++    };
+     const cfg = readConfig(configDir);
+     // Two independent opt-ins share one screen-read: image capture and pinned-mission OCR.
+     // Either one arms the loop; each read is then gated by its own flag below.
+@@ -1324,7 +1385,7 @@ function startFabCapture({ port, configDir, onStatus }) {
+       }
+       return;
+     }
+-    const fg = await foregroundWindow();
++    const fg = await timeStage("foreground", () => foregroundWindow());
+     const boundSession = fg.session || scSession.summary();
+     if (!/^StarCitizen(?:\.exe)?$/i.test(fg.name)) {
+       emitContext("idle", { features, reason: "waiting-for-game", gate: fg.gate || "not-game", session: boundSession });
+@@ -1348,8 +1409,8 @@ function startFabCapture({ port, configDir, onStatus }) {
+     busyAt = Date.now();
+     emitEvent({ state: "reading", features, cycle: scanCycle + 1, gate: fg.gate || "foreground-window", session: boundSession });
+     try {
+-      const have = fab ? await ensureRemoteHave() : null; // dedup set only needed for capture
+-      const cap = await captureGame(fg.rect); // the monitor the GAME is on, not a blind sources[0]
++      const have = fab ? await timeStage("remote-have", () => ensureRemoteHave()) : null; // dedup only needed for capture
++      const cap = await timeStage("capture", () => captureGame(fg.rect)); // the monitor the GAME is on
+       const shot = cap && cap.image;
+       if (!shot) return;
+       const captureDescription = `${cap.method || "unknown"}:${cap.width}x${cap.height}:${cap.sourceName || ""}:${cap.sourceId || ""}`;
+@@ -1362,25 +1423,47 @@ function startFabCapture({ port, configDir, onStatus }) {
+           console.log(`[screen-read] Electron screen inventory: ${cap.sourceInventory}`);
+         }
+       }
+-      fs.writeFileSync(tmpShot, shot.toPNG());
+-      // Pass 1 — Windows OCR on the full game frame: the cheap "where am I" glance. It detects the
+-      // kiosk and serves the mission / mining reads (which work fine on it today).
+-      const resp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+-        method: "POST",
+-        headers: { "Content-Type": "application/json" },
+-        body: JSON.stringify({ path: tmpShot }),
+-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
++      // The generic full-frame OCR is needed only for mission/fabricator features. Alpha 12 ran it
++      // during Mining-only sessions too, then followed it with every specialized Mining pass.
++      let read = { kind: "none" };
++      let renderSrc = shot;
++      const genericFingerprint = (fab || miss)
++        ? visualFingerprint(shot, cap.width, cap.height, { x: 0.50, y: 0.0, w: 0.50, h: 1.0 })
++        : null;
++      const runGeneric = genericFingerprint && shouldRunVisualStage("generic", genericFingerprint, {
++        threshold: 0.07,
++        maxAgeMs: cfg.screenReaderProfile === "lightweight" ? 12_000 : 6000,
+       });
+-      let read = await resp.json();
+-      let renderSrc = shot; // where the item render is cropped FROM (full frame, or the panel below)
++      if (runGeneric) {
++        read = await timeStage("generic-ocr", async () => {
++          fs.writeFileSync(tmpShot, shot.toPNG());
++          const resp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
++            method: "POST",
++            headers: { "Content-Type": "application/json" },
++            body: JSON.stringify({ path: tmpShot }),
++            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
++          });
++          return resp.json();
++        });
++        cachedGenericRead = read;
++        cachedGenericUsesPanel = false;
++      } else if (genericFingerprint) {
++        read = cachedGenericRead;
++        skippedStages.push("generic-unchanged");
++      } else {
++        skippedStages.push("generic-disabled");
++      }
++      if (cachedGenericUsesPanel && read.kind === "fabricator") {
++        renderSrc = rightPanelCrop(shot, cap.width, cap.height).img;
++      }
+       // Pass 2 — dual-engine: once pass 1 says we're at a kiosk, re-read the item NAME with RapidOCR
+       // on the upper-right crop. It's far better at the stylized name tokens Windows OCR mangles
+       // ("MH1"->"MI-II", "Tier"->"Tie@"). Only runs in a kiosk (rare), so no cost during play.
+-      if (read.kind === "fabricator" && fab && cfg.rapidOcr !== false) {
++      if (runGeneric && read.kind === "fabricator" && fab && cfg.rapidOcr !== false) {
+         try {
+           const panel = rightPanelCrop(shot, cap.width, cap.height);
+           fs.writeFileSync(tmpPanel, panel.img.toPNG());
+-          const lines = await ocrRapidLines(tmpPanel);
++          const lines = await timeStage("fabricator-rapidocr", () => ocrRapidLines(tmpPanel));
+           const r2 = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+             method: "POST",
+             headers: { "Content-Type": "application/json" },
+@@ -1388,7 +1471,12 @@ function startFabCapture({ port, configDir, onStatus }) {
+             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+           });
+           const rr = await r2.json();
+-          if (rr.kind === "fabricator" && rr.item) { read = rr; renderSrc = panel.img; } // rr.crop is panel-relative
++          if (rr.kind === "fabricator" && rr.item) {
++            read = rr;
++            renderSrc = panel.img;
++            cachedGenericRead = read;
++            cachedGenericUsesPanel = true;
++          } // rr.crop is panel-relative
+         } catch (e) { console.warn("[fab-capture] secondary OCR re-read failed, using full-frame OCR:", e && e.message); }
+       }
+       // Completed mining scans and ping signatures have separate, tightly-cropped OCR paths.
+@@ -1399,76 +1487,109 @@ function startFabCapture({ port, configDir, onStatus }) {
+       let signatureOcr = null;
+       let scanModeRead = { kind: "scan-mode", active: false, angle: null, confidence: 0 };
+       if (mining) {
+-        try {
+-          scanModeRead = await readMiningScanMode(shot, cap.width, cap.height, miningTemp);
+-          const scanModeResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+-            method: "POST",
+-            headers: { "Content-Type": "application/json" },
+-            body: JSON.stringify({ mode: "mining-scan-mode", ...scanModeRead }),
+-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+-          });
+-          await scanModeResp.json().catch(() => ({}));
+-          const scanFingerprint = `${scanModeRead.active ? 1 : 0}|${scanModeRead.angle || 0}|${scanModeRead.confidence || 0}`;
+-          if (scanFingerprint !== lastScanModeFingerprint) {
+-            lastScanModeFingerprint = scanFingerprint;
+-            console.log(`[mining-scan-mode] ${scanModeRead.active ? `active ${scanModeRead.angle || "?"}°` : "inactive"}` +
+-              ` confidence=${scanModeRead.confidence || 0}` +
+-              `${scanModeRead.ocrText ? ` ocr=${JSON.stringify(scanModeRead.ocrText)}` : ""}`);
+-          }
+-        } catch (e) {
+-          console.warn("[mining-scan-mode] detector failed:", e && e.message);
+-        }
+-
+-        try {
+-          const miningOcr = await readMiningAnalysis(shot, cap.width, cap.height, miningTemp);
+-          const miningResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+-            method: "POST",
+-            headers: { "Content-Type": "application/json" },
+-            body: JSON.stringify({ mode: "mining-analysis", ...miningOcr }),
+-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+-          });
+-          analysisRead = await miningResp.json();
+-          if (analysisRead.kind === "mining-analysis") {
+-            const fingerprint = [analysisRead.target || "?", analysisRead.mass || "?",
+-              ...(analysisRead.composition || []).map((row) => `${row.material}:${row.percent ?? "?"}`)].join("|");
+-            if (fingerprint !== lastMiningFingerprint) {
+-              lastMiningFingerprint = fingerprint;
+-              console.log(`[mining-ocr] analysis candidate: ${analysisRead.target || "unknown"}` +
+-                `${analysisRead.mass ? `, mass ${analysisRead.mass}` : ""}` +
+-                `${analysisRead.composition?.length ? `, ${analysisRead.composition.length} composition row(s)` : ""}`);
++        const scanVisual = visualFingerprint(shot, cap.width, cap.height, { x: 0.35, y: 0.36, w: 0.26, h: 0.34 });
++        if (shouldRunVisualStage("scan-mode", scanVisual, { threshold: 0.08, maxAgeMs: 5000 })) {
++          try {
++            scanModeRead = await timeStage("scan-mode", () => readMiningScanMode(shot, cap.width, cap.height, miningTemp));
++            cachedScanModeRead = scanModeRead;
++            const scanModeResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
++              method: "POST",
++              headers: { "Content-Type": "application/json" },
++              body: JSON.stringify({ mode: "mining-scan-mode", ...scanModeRead }),
++              signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
++            });
++            await scanModeResp.json().catch(() => ({}));
++            const scanFingerprint = `${scanModeRead.active ? 1 : 0}|${scanModeRead.angle || 0}|${scanModeRead.confidence || 0}`;
++            if (scanFingerprint !== lastScanModeFingerprint) {
++              lastScanModeFingerprint = scanFingerprint;
++              console.log(`[mining-scan-mode] ${scanModeRead.active ? `active ${scanModeRead.angle || "?"}°` : "inactive"}` +
++                ` confidence=${scanModeRead.confidence || 0}` +
++                `${scanModeRead.ocrText ? ` ocr=${JSON.stringify(scanModeRead.ocrText)}` : ""}`);
+             }
++          } catch (e) {
++            console.warn("[mining-scan-mode] detector failed:", e && e.message);
+           }
+-        } catch (e) {
+-          console.warn("[mining-ocr] dedicated panel read failed:", e && e.message);
++        } else {
++          scanModeRead = cachedScanModeRead;
++          skippedStages.push("scan-mode-unchanged");
+         }
++        if (scanModeRead.active) lastMiningActiveAt = Date.now();
++        const miningLikelyActive = scanModeRead.active || Date.now() - lastMiningActiveAt < 8000;
+ 
+-        // The signature pass is independent of the generic classifier. It runs unless a completed
+-        // analysis was recognized on this frame, and the server confirms repeated non-target reads.
+-        if (analysisRead.kind !== "mining-analysis" && read.kind !== "mineable") {
++        const analysisVisual = visualFingerprint(shot, cap.width, cap.height, { x: 0.615, y: 0.375, w: 0.20, h: 0.31 });
++        if (shouldRunVisualStage("mining-analysis", analysisVisual, {
++          threshold: miningLikelyActive ? 0.04 : 0.12,
++          maxAgeMs: miningLikelyActive ? 4000 : 15_000,
++        })) {
+           try {
+-            signatureOcr = await readMiningSignatures(shot, cap.width, cap.height, miningTemp);
+-            const signatureResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
++            const miningOcr = await timeStage("mining-analysis", () => readMiningAnalysis(shot, cap.width, cap.height, miningTemp));
++            const miningResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+               method: "POST",
+               headers: { "Content-Type": "application/json" },
+-              body: JSON.stringify({ mode: "mining-signature", scanMode: scanModeRead, ...signatureOcr }),
++              body: JSON.stringify({ mode: "mining-analysis", ...miningOcr }),
+               signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+             });
+-            signatureRead = await signatureResp.json();
+-            if (signatureRead.kind === "mineable") {
+-              const fingerprint = `${signatureRead.signature}|${signatureRead.accepted ? "accepted" : `pending-${signatureRead.pendingCount || 0}`}`;
+-              if (fingerprint !== lastSignatureFingerprint) {
+-                lastSignatureFingerprint = fingerprint;
+-                console.log(`[mining-signature] ${signatureRead.accepted ? "accepted" : "candidate"}` +
+-                  ` ${Number(signatureRead.signature).toLocaleString()}` +
+-                  ` confidence=${signatureRead.confidence ?? "?"}` +
+-                  `${signatureRead.pendingCount ? ` confirmation=${signatureRead.pendingCount}/${signatureRead.required || 2}` : ""}` +
+-                  `${signatureRead.matches?.length ? ` matches=${signatureRead.matches.map((m) => m.name).join(",")}` : " matches=none"}` +
+-                  `${signatureRead.correction ? ` correction=${signatureRead.correction}` : ""}` +
+-                  `${signatureRead.raw ? ` raw=${JSON.stringify(signatureRead.raw)}` : ""}`);
++            analysisRead = await miningResp.json();
++            cachedAnalysisRead = analysisRead;
++            if (analysisRead.kind === "mining-analysis") {
++              lastMiningActiveAt = Date.now();
++              const fingerprint = [analysisRead.target || "?", analysisRead.mass || "?",
++                ...(analysisRead.composition || []).map((row) => `${row.material}:${row.percent ?? "?"}`)].join("|");
++              if (fingerprint !== lastMiningFingerprint) {
++                lastMiningFingerprint = fingerprint;
++                console.log(`[mining-ocr] analysis candidate: ${analysisRead.target || "unknown"}` +
++                  `${analysisRead.mass ? `, mass ${analysisRead.mass}` : ""}` +
++                  `${analysisRead.composition?.length ? `, ${analysisRead.composition.length} composition row(s)` : ""}`);
+               }
+             }
+           } catch (e) {
+-            console.warn("[mining-signature] dedicated signature read failed:", e && e.message);
++            console.warn("[mining-ocr] dedicated panel read failed:", e && e.message);
++          }
++        } else {
++          analysisRead = cachedAnalysisRead;
++          skippedStages.push("mining-analysis-unchanged");
++        }
++
++        // Signature OCR is the most expensive path. Run it immediately when its play-field region
++        // changes, frequently while Scan Mode is active, and only as a slow safety probe otherwise.
++        if (analysisRead.kind !== "mining-analysis" && read.kind !== "mineable") {
++          const signatureVisual = visualFingerprint(shot, cap.width, cap.height, { x: 0.17, y: 0.23, w: 0.66, h: 0.47 });
++          if (shouldRunVisualStage("mining-signature", signatureVisual, {
++            threshold: miningLikelyActive ? 0.04 : 0.14,
++            maxAgeMs: miningLikelyActive ? 3500 : 15_000,
++          })) {
++            try {
++              signatureOcr = await timeStage("mining-signature", () => readMiningSignatures(shot, cap.width, cap.height, miningTemp));
++              const signatureResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
++                method: "POST",
++                headers: { "Content-Type": "application/json" },
++                body: JSON.stringify({ mode: "mining-signature", scanMode: scanModeRead, ...signatureOcr }),
++                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
++              });
++              signatureRead = await signatureResp.json();
++              cachedSignatureRead = signatureRead;
++              cachedSignatureOcr = signatureOcr;
++              if (signatureRead.kind === "mineable") {
++                lastMiningActiveAt = Date.now();
++                const fingerprint = `${signatureRead.signature}|${signatureRead.accepted ? "accepted" : `pending-${signatureRead.pendingCount || 0}`}`;
++                if (fingerprint !== lastSignatureFingerprint) {
++                  lastSignatureFingerprint = fingerprint;
++                  console.log(`[mining-signature] ${signatureRead.accepted ? "accepted" : "candidate"}` +
++                    ` ${Number(signatureRead.signature).toLocaleString()}` +
++                    ` confidence=${signatureRead.confidence ?? "?"}` +
++                    `${signatureRead.pendingCount ? ` confirmation=${signatureRead.pendingCount}/${signatureRead.required || 2}` : ""}` +
++                    `${signatureRead.matches?.length ? ` matches=${signatureRead.matches.map((m) => m.name).join(",")}` : " matches=none"}` +
++                    `${signatureRead.correction ? ` correction=${signatureRead.correction}` : ""}` +
++                    `${signatureRead.raw ? ` raw=${JSON.stringify(signatureRead.raw)}` : ""}`);
++                }
++              }
++            } catch (e) {
++              console.warn("[mining-signature] dedicated signature read failed:", e && e.message);
++            }
++          } else {
++            signatureRead = cachedSignatureRead;
++            signatureOcr = cachedSignatureOcr;
++            skippedStages.push("mining-signature-unchanged");
+           }
+         }
+       }
+@@ -1477,7 +1598,7 @@ function startFabCapture({ port, configDir, onStatus }) {
+       // else — and the fabricator ABOVE ALL — stays at the slow rate, because rushing a kiosk
+       // risks grabbing a render mid-fade. A kiosk frame cancels fast mode outright.
+       if (read.kind === "fabricator") fastUntil = 0;
+-      else if (mining && read.scanHud) fastUntil = Date.now() + FAST_WINDOW_MS;
++      else if (mining && (read.scanHud || scanModeRead.active)) fastUntil = Date.now() + FAST_WINDOW_MS;
+       // Self-tuning, because this runs over a RUNNING GAME and a fixed rate is a guess about
+       // someone else's PC. A tick costs a screen grab plus an OCR (~230ms on Sub's machine with
+       // the warm worker, but a slower box could be several times that). Never let the loop occupy
+@@ -1487,10 +1608,7 @@ function startFabCapture({ port, configDir, onStatus }) {
+       const want = Date.now() < fastUntil ? floor : POLL_MS;
+       if (want !== rate) {
+         rate = want;
+-        clearInterval(timer);
+-        timer = setInterval(tick, rate);
+-        timer.unref?.();
+-        console.log(`[fab-capture] poll ${rate}ms${rate === FAST_MS ? " (scanning)" : ""}`);
++        console.log(`[fab-capture] next OCR cycle ${rate}ms after completion${rate === FAST_MS ? " (scanning)" : ""}`);
+       }
+ 
+       // A mining signature: the sidecar deliberately does NOT act on it until we've checked the
+@@ -1546,15 +1664,20 @@ function startFabCapture({ port, configDir, onStatus }) {
+         scanModeAngle: scanModeRead.angle || null,
+         scanModeConfidence: scanModeRead.confidence || 0,
+         captureMethod: cap.method || "unknown",
++        processingMs: Date.now() - cycleStartedAt,
++        stageTimings: { ...timings },
++        skippedStages: [...skippedStages],
++        nextDelayMs: rate,
+         at: Date.now(),
+         session: boundSession,
+       });
+       if (scanCycle === 1 || scanCycle % 10 === 0) {
+         console.log(`[screen-read] cycle ${scanCycle} complete (kind=${effectiveKind || "none"}, gate=${fg.gate || "foreground-window"}, capture=${cap.method || "unknown"}, gamePid=${boundSession?.gamePid || "none"})`);
+       }
+-      // Keep one bounded diagnostic set instead of accumulating screenshots. It is refreshed on the
+-      // first pass, whenever Mining recognizes something, and every tenth miss.
+-      if (scanCycle === 1 || miningKind !== "none" || noMiningReadCycles % 10 === 0) {
++      // Keep one bounded diagnostic set instead of encoding/writing a full frame on every cached
++      // recognition. Refresh on the first pass, a newly processed hit, or every thirtieth miss.
++      const miningStageRan = Number.isFinite(timings["mining-analysis"]) || Number.isFinite(timings["mining-signature"]);
++      if (scanCycle === 1 || (miningKind !== "none" && miningStageRan) || noMiningReadCycles % 30 === 0) {
+         saveOcrDebug(shot, cap, read, analysisRead, signatureRead, signatureOcr, scanModeRead);
+       }
+       if (read.kind !== "fabricator") { lastUnresolved = ""; unresolvedTries = 0; lastHave = ""; lastRenderWait = ""; } // left the kiosk
+@@ -1672,6 +1795,11 @@ function startFabCapture({ port, configDir, onStatus }) {
+       lastTickMs = Date.now() - busyAt;
+       busy = false;
+       lastSlowTickLogAt = 0;
++      const totalMs = Date.now() - cycleStartedAt;
++      if (totalMs >= TICK_WATCHDOG_MS) {
++        const detail = Object.entries(timings).map(([name, ms]) => `${name}=${ms}ms`).join(", ");
++        console.warn(`[screen-read] slow completion-scheduled cycle ${totalMs}ms${detail ? ` (${detail})` : ""}`);
++      }
+     }
+   }
+ 
+@@ -1716,12 +1844,31 @@ function startFabCapture({ port, configDir, onStatus }) {
+     }
+   }
+ 
+-  let timer = setInterval(tick, POLL_MS);
+-  timer.unref?.();
++  // Schedule the next capture only after the current cycle has completely released every image,
++  // OCR worker, and child process. A nominal 3-second rate can therefore never queue behind a
++  // 15-second cycle—the primary source of Alpha 12's repeated "prior tick still running" load.
++  let stopped = false;
++  let timer = null;
++  const scheduleNext = (delayMs = rate) => {
++    if (stopped) return;
++    clearTimeout(timer);
++    timer = setTimeout(async () => {
++      try { await tick(); }
++      finally { scheduleNext(Math.max(250, rate)); }
++    }, Math.max(0, delayMs));
++    timer.unref?.();
++  };
++  scheduleNext(0);
+   const drainTimer = setInterval(drainPending, DRAIN_MS);
+   drainTimer.unref?.();
+-  console.log("[screen-read] continuous OCR loop armed (3-second poll; mission, mining, or fabricator opt-in)");
+-  return () => { clearInterval(timer); clearInterval(drainTimer); };
++  console.log("[screen-read] completion-scheduled OCR loop armed (feature-gated; no overlapping cycles)");
++  return () => { stopped = true; clearTimeout(timer); clearInterval(drainTimer); };
+ }
+ 
+-module.exports = { startFabCapture, centerTighten, findScanGlyph, GLYPH, __test: { classifyLinuxForeground, cleanX11Field } };
+\ No newline at end of file
++module.exports = {
++  startFabCapture,
++  centerTighten,
++  findScanGlyph,
++  GLYPH,
++  __test: { classifyLinuxForeground, cleanX11Field, fingerprintDistance },
++};
+diff --git a/electron/config-preload.cjs b/electron/config-preload.cjs
+index d42c72a..f87edf8 100644
+--- a/electron/config-preload.cjs
++++ b/electron/config-preload.cjs
+@@ -27,4 +27,6 @@ contextBridge.exposeInMainWorld("overlayConfig", {
+   restartAsAdmin: () => ipcRenderer.invoke("app:restart-as-admin"),
+   onOverlayEnabledChanged: (cb) =>
+     ipcRenderer.on("overlay:enabled-changed", (_e, on) => cb(on)),
++  ocrStatus: () => ipcRenderer.invoke("app:ocr-status"),
++  onOcrStatus: (cb) => ipcRenderer.on("ocr:status", (_e, status) => cb(status)),
+ });
+diff --git a/electron/main.cjs b/electron/main.cjs
+index 146d5d2..5f37721 100644
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -213,6 +213,7 @@ let fHoverOverWidget = false;
+ let fHoverSuppressedUntilRelease = false;
+ let fHoverEnabled = process.platform === "linux";
+ let fHoverPollTimer = null;
++let fHoverMotionProbeScheduled = false;
+ let fHoverTarget = null;
+ let fHoverProbeSeq = 0;
+ let fHoverLastClassifiedSeq = 0;
+@@ -231,6 +232,7 @@ let fHoverHandoffSeq = 0;
+ let fHoverHandoffWaitLogged = false;
+ let fHoverHostHookAuthoritative = false;
+ const F_HOVER_HOST_SAMPLE_MS = 50;
++const F_HOVER_FALLBACK_POLL_MS = 100;
+ const F_HOVER_LEAVE_GRACE_MS = 180;
+ const F_HOVER_HANDOFF_TOLERANCE_PX = 32;
+ const F_HOVER_HANDOFF_DELAYS_MS = [75, 175, 350];
+@@ -804,6 +806,23 @@ function updateFHoverHitFromRegions() {
+   const target = overlayRegionAtPoint(lastGlobalPointer);
+   applyFHoverClassification(!!target, target, "classified-region-fallback");
+ }
++function scheduleFHoverMotionProbe() {
++  if (fHoverMotionProbeScheduled || !fHoverHeld || overlayInteractionLatched || fHoverPointerPhase !== "host") return;
++  fHoverMotionProbeScheduled = true;
++  setImmediate(() => {
++    fHoverMotionProbeScheduled = false;
++    if (!fHoverHeld || overlayInteractionLatched || fHoverPointerPhase !== "host") return;
++    if (lastGlobalPointer && overlay && !overlay.isDestroyed()) {
++      const canvas = fullDisplayBounds();
++      const seq = ++fHoverProbeSeq;
++      void probeFHoverPointDirect({
++        x: Number(lastGlobalPointer.x) - canvas.x,
++        y: Number(lastGlobalPointer.y) - canvas.y,
++      }, seq);
++    }
++    updateFHoverHitFromRegions();
++  });
++}
+ function stopFHoverPolling() {
+   if (fHoverPollTimer) clearInterval(fHoverPollTimer);
+   fHoverPollTimer = null;
+@@ -899,9 +918,8 @@ function startFHoverPolling() {
+         sampleFHoverHostHandoff();
+       }
+     } else if (process.platform === "linux") {
+-      // uIOhook keeps lastGlobalPointer warm between these authoritative host-root samples.
+-      // Fifty milliseconds is fast enough for precise controls without spawning xdotool at the
+-      // 33ms renderer-probe cadence.
++      // uIOhook handles normal pointer motion. This slower query is only a safety net for KDE /
++      // Gamescope handoff and environments where the compositor hook temporarily goes quiet.
+       if (now - fHoverLinuxPointerSampleAt >= F_HOVER_HOST_SAMPLE_MS) {
+         fHoverLinuxPointerSampleAt = now;
+         refreshFHoverPointer({ preferHost: true });
+@@ -938,7 +956,7 @@ function startFHoverPolling() {
+     updateFHoverHitFromRegions();
+   };
+   tick();
+-  fHoverPollTimer = setInterval(tick, 33);
++  fHoverPollTimer = setInterval(tick, F_HOVER_FALLBACK_POLL_MS);
+ }
+ function applyMouse() {
+   if (!overlay) return;
+@@ -1244,6 +1262,13 @@ function registerInteractHotkey(accel) {
+       }
+       lastGlobalPointer = { x, y };
+       lastGlobalPointerSource = "uiohook-global";
++      if (overlayInteractionLatched) {
++        // Once ownership is latched, movement only updates the synthetic cursor. Coordinate
++        // misses can never revoke Alpha 12's focus contract.
++        showInteractionCursor(lastGlobalPointer);
++        return;
++      }
++      scheduleFHoverMotionProbe();
+     });
+   }
+ 
+@@ -1329,6 +1354,7 @@ function registerInteractHotkey(accel) {
+           key: fHoverTarget.key || null, classification: fHoverTarget.classification || null,
+         });
+       } catch {}
++      stopFHoverPolling();
+       refreshTray();
+       console.log(`[focus-latch] ${accel} released via ${source}; ${fHoverTarget.title || fHoverTarget.key || "widget"} remains interactive`);
+       return;
+@@ -2055,11 +2081,19 @@ if (!app.requestSingleInstanceLock()) {
+     sendBindingChartVisible({ on: bindingChartVisible });
+     sendBrowserVisible();
+     pushWidgetStates();
+-    postConfig({ miningAssistant: miningVisible });    // Opt-in fabricator screen-capture loop (config.fabCapture). No-op until enabled.
++    // Screen readers are explicit feature opt-ins. Showing or hiding the Mining widget must not
++    // silently enable or disable OCR.
++    let latestOcrStatus = { state: "off", reason: "starting", at: Date.now() };
++    ipcMain.handle("app:ocr-status", () => latestOcrStatus);
++    // Opt-in fabricator / mission / mining screen-capture loop. No-op until enabled.
+     startFabCapture({
+       port: PORT,
+       configDir: CONFIG_DIR,
+-      onStatus: (s) => { try { overlay?.webContents.send("overlay:ocr", s); } catch { /* window gone */ } },
++      onStatus: (s) => {
++        latestOcrStatus = { ...s, at: Number(s?.at) || Date.now() };
++        try { overlay?.webContents.send("overlay:ocr", latestOcrStatus); } catch { /* window gone */ }
++        try { configWin?.webContents.send("ocr:status", latestOcrStatus); } catch { /* window gone */ }
++      },
+     });
+   });
+ 
+diff --git a/overlay/changelog.json b/overlay/changelog.json
+index 66ed44f..f209800 100644
+--- a/overlay/changelog.json
++++ b/overlay/changelog.json
+@@ -1,4 +1,14 @@
+ {
++  "0.1.36-r31-alpha.13": {
++    "date": "2026-08-02T00:00:00Z",
++    "notes": [
++      "Alpha 13 makes screen reading dramatically lighter: OCR cycles cannot overlap, unchanged HUD regions are skipped, and Mining no longer runs unrelated mission or fabricator OCR.",
++      "The working Linux capture method is remembered for the session, so KDE and Gamescope are not probed repeatedly after a backend succeeds.",
++      "Screen reading is now opt-in for fresh installs. Settings offers Lightweight, Balanced, and Mining profiles plus a live status line with capture and timing information.",
++      "Widget-region reporting and normal pointer tracking are event-driven. The Alpha 12 F-key ownership behavior is preserved: releasing F over a widget keeps it interactive until Escape or a genuine external click/focus transfer.",
++      "The Linux build and release pipeline is consolidated into one tested Alpha 13 workflow, with tar.gz, zip, and SHA-256 release assets."
++    ]
++  },
+   "0.1.36": {
+     "date": "2026-07-30T05:33:31Z",
+     "notes": [
+diff --git a/overlay/config.html b/overlay/config.html
+index 0777f8a..68ad983 100644
+--- a/overlay/config.html
++++ b/overlay/config.html
+@@ -63,6 +63,10 @@
+   .saved.show { opacity: 1; }
+   .hkbtn { min-width: 170px; }
+   .hkbtn.capturing { border-color: var(--amber); color: var(--amber); background: rgba(255,178,49,.12); }
++  .ocr-profiles { display:flex; gap:8px; margin:10px 0 8px; }
++  .ocr-profiles button { flex:1; min-width:0; }
++  .ocr-profiles button.selected { border-color:var(--amber); color:var(--amber); background:rgba(255,178,49,.12); }
++  .ocr-live { margin-top:10px; padding:9px 11px; border:1px solid var(--line); border-radius:var(--radius-sm); background:rgba(0,0,0,.16); }
+   /* Themed dropdown (native <select> renders unstyled otherwise). */
+   select { -webkit-appearance: none; appearance: none; background: var(--field); border: 1px solid var(--line);
+     color: var(--text); padding: 9px 34px 9px 12px; font-family: var(--font-body); font-size: 14px;
+@@ -215,15 +219,26 @@
+ 
+   <div class="card">
+     <div class="label">Screen reading (OCR)</div>
+-    <div class="hint" style="margin-top:0">Uses Windows' built-in text recognition, only while Star Citizen is focused.</div>
++    <div class="hint" style="margin-top:0">Reads selected HUD panels locally while Star Citizen is focused. More readers use more CPU.</div>
++    <div class="ocr-profiles" aria-label="Screen reading profile">
++      <button type="button" id="ocrProfileLightweight" onclick="applyScreenProfile('lightweight')">Lightweight</button>
++      <button type="button" id="ocrProfileBalanced" onclick="applyScreenProfile('balanced')">Balanced</button>
++      <button type="button" id="ocrProfileMining" onclick="applyScreenProfile('mining')">Mining</button>
++    </div>
++    <div class="hint" id="ocrProfileStatus">Lightweight — screen reading is off.</div>
+     <div class="setrow">
+       <label class="opt"><input type="checkbox" id="missionOcr" /> Detect the mission I'm tracking in-game</label>
+       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Reads the tracked-mission panel so the overlay knows which mission you've actually selected — ground truth the game log can't give. No account needed.</span></span>
+     </div>
++    <div class="setrow">
++      <label class="opt"><input type="checkbox" id="miningAssistant" /> Recognize mining scans and refinery panels</label>
++      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Runs the specialized Mining readers only when enabled. Unchanged HUD regions are skipped and the expensive signature reader backs off when Scan Mode is not visible.</span></span>
++    </div>
+     <div class="setrow">
+       <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
+       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's catalog — only items we don't have yet. You're credited on the contributor leaderboard. Needs a sync token.</span></span>
+     </div>
++    <div class="hint ocr-live" id="ocrLiveStatus">Screen reader status: starting…</div>
+   </div>
+ 
+   <div class="card">
+@@ -578,6 +593,8 @@
+     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
+     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
+     document.getElementById("missionOcr").checked = !!cfg.missionOcr;
++    document.getElementById("miningAssistant").checked = !!cfg.miningAssistant;
++    renderScreenProfile();
+     document.getElementById("miningAutoShow").checked = !!cfg.miningAutoShow;
+     document.getElementById("shareLogs").checked = !!cfg.shareLogs;
+     document.getElementById("theme").value = cfg.theme || "mobiglas";
+@@ -672,6 +689,8 @@
+       syncEnabled: document.getElementById("syncEnabled").checked,
+       fabCapture: document.getElementById("fabCapture").checked,
+       missionOcr: document.getElementById("missionOcr").checked,
++      miningAssistant: document.getElementById("miningAssistant").checked,
++      screenReaderProfile: currentScreenProfile(),
+       miningAutoShow: document.getElementById("miningAutoShow").checked,
+       shareLogs: document.getElementById("shareLogs").checked,
+       theme: document.getElementById("theme").value,
+@@ -701,6 +720,52 @@
+     await loadCfg();
+   }
+ 
++  function currentScreenProfile() {
++    const mission = document.getElementById("missionOcr").checked;
++    const mining = document.getElementById("miningAssistant").checked;
++    const fab = document.getElementById("fabCapture").checked;
++    if (!mission && !mining && !fab) return "lightweight";
++    if (mission && !mining && !fab) return "balanced";
++    if (!mission && mining && !fab) return "mining";
++    return "custom";
++  }
++  function renderScreenProfile() {
++    const profile = currentScreenProfile();
++    for (const name of ["Lightweight", "Balanced", "Mining"]) {
++      document.getElementById("ocrProfile" + name).classList.toggle("selected", profile === name.toLowerCase());
++    }
++    const descriptions = {
++      lightweight: "Lightweight — screen reading is off.",
++      balanced: "Balanced — mission recognition is enabled.",
++      mining: "Mining — scan and refinery recognition are enabled.",
++      custom: "Custom — selected readers run independently.",
++    };
++    document.getElementById("ocrProfileStatus").textContent = descriptions[profile];
++  }
++  async function applyScreenProfile(profile) {
++    document.getElementById("missionOcr").checked = profile === "balanced";
++    document.getElementById("miningAssistant").checked = profile === "mining";
++    document.getElementById("fabCapture").checked = false;
++    renderScreenProfile();
++    await save();
++  }
++
++  function renderOcrStatus(status) {
++    const el = document.getElementById("ocrLiveStatus");
++    if (!el || !status) return;
++    const names = {
++      off: "off", idle: "waiting", reading: "reading the screen", watching: "watching",
++      settling: "waiting for an item render", fabricator: "fabricator detected",
++      mission: "mission recognized", captured: "item captured", shared: "item shared",
++    };
++    const detail = [];
++    if (status.captureMethod) detail.push(status.captureMethod);
++    if (Number.isFinite(status.processingMs)) detail.push(status.processingMs + " ms");
++    if (status.skippedStages?.length) detail.push(status.skippedStages.length + " unchanged stage(s) skipped");
++    el.textContent = "Screen reader status: " + (names[status.state] || status.state || "unknown") +
++      (detail.length ? " — " + detail.join(" · ") : "");
++  }
++
+   async function detectLog() {
+     const d = document.getElementById("detected");
+     d.textContent = "Scanning for your Star Citizen install…";
+@@ -900,8 +965,8 @@
+   // Auto-save the plain checkboxes the instant they're toggled, so a change can never be lost by
+   // closing/scrolling away without clicking Save. (Theme, hotkeys, hold-to-interact and the file
+   // pickers already save on change; the sync token stays manual so a half-typed token isn't sent.)
+-  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
+-    .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
++  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAssistant", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
++    .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", () => { renderScreenProfile(); save(); }); });
+   // The sync field shows the truncated saved key; clear it on focus so a new token pastes
+   // cleanly, and restore the preview on blur if nothing was typed.
+   const syncTokenEl = document.getElementById("syncToken");
+@@ -914,9 +979,13 @@
+       const c = await (await fetch("/api/config")).json();
+       document.getElementById("missionOcr").checked = !!c.missionOcr;
+       document.getElementById("fabCapture").checked = !!c.fabCapture;
++      document.getElementById("miningAssistant").checked = !!c.miningAssistant;
++      renderScreenProfile();
+     } catch { /* ignore */ }
+   });
+   loadCfg();
++  if (window.overlayConfig?.ocrStatus) window.overlayConfig.ocrStatus().then(renderOcrStatus).catch(() => {});
++  window.overlayConfig?.onOcrStatus?.(renderOcrStatus);
+   initOverlayToggle();
+ 
+   // Partner promos — pulled live from subliminal.gg so they stay in sync with the site's
+@@ -996,7 +1065,7 @@
+       add("Dataset", d.data.patch);
+       add("Data folder", d.data.userDir + (d.data.userDirWritable ? "" : "  NOT WRITABLE — nothing can save"));
+       add("Sync", d.sync.enabled ? "on, token " + d.sync.token : "off");
+-      add("Screen reading", "fabricator=" + d.screenReading.fabCapture + " mission=" + d.screenReading.missionOcr +
++      add("Screen reading", "profile=" + d.screenReading.profile + " fabricator=" + d.screenReading.fabCapture + " mission=" + d.screenReading.missionOcr +
+         " mining=" + d.screenReading.miningAssistant + " shareLogs=" + d.screenReading.shareLogs);
+       add("Display", "hwAccel=" + d.display.hwAccel + " amdCompat=" + d.display.amdCompat + " skin=" + d.display.theme);
+       add("Twitch", "channel=" + d.twitch.chatChannel + " signed in as " + d.twitch.signedInAs);
+diff --git a/overlay/missions.html b/overlay/missions.html
+index 297abb8..ccd0bf6 100644
+--- a/overlay/missions.html
++++ b/overlay/missions.html
+@@ -3308,9 +3308,8 @@
+     ab.addEventListener("mouseleave", () => { abLeaveT = setTimeout(() => window.overlayApi.hover(false), 150); });
+     $("arrangeDone").addEventListener("click", () => window.overlayApi.endMove());
+ 
+-    // Report interactive element rects to the shell (~10×/s) so pollCursor() can hit-test the
+-    // cursor against them — REPLACES forward:true mouse-forwarding (which stuttered the whole
+-    // cursor when elevated). Inactive elements are display:none → 0-size → filtered out.
++    // Report interactive element rects to the shell when layout actually changes. Inactive
++    // elements are display:none → 0-size → filtered out.
+     if (window.overlayApi.reportRegions) {
+       // `.widget` covers every registry widget at once (a hidden one is display:none → 0-size →
+       // filtered out below). Mining's iframe is sized snugly to its panel by the embedded page,
+@@ -3387,7 +3386,7 @@
+       // minutes at a time (they move on drag/resize/show/hide/hover), so this was ten identical
+       // IPC messages a second, forever.
+       let lastRegions = "";
+-      const reportRegions = (force = false, _reason = "timer") => {
++      const reportRegions = (force = false, _reason = "layout-change") => {
+         const rects = collectOverlayRegions();
+         const sig = JSON.stringify(rects);
+         if (!force && sig === lastRegions) return rects.length;
+@@ -3396,8 +3395,37 @@
+         return rects.length;
+       };
+       window.__overlayReportRegions = reportRegions;
+-      setInterval(reportRegions, 100);
+-      reportRegions();
++      let regionFrame = 0;
++      const scheduleRegionReport = (reason = "layout-change") => {
++        if (regionFrame) return;
++        regionFrame = requestAnimationFrame(() => {
++          regionFrame = 0;
++          reportRegions(false, reason);
++        });
++      };
++      const resized = new WeakSet();
++      const regionResizeObserver = new ResizeObserver(() => scheduleRegionReport("resize-observer"));
++      const observeRegionNodes = () => {
++        document.querySelectorAll(RSEL).forEach((el) => {
++          if (resized.has(el)) return;
++          resized.add(el);
++          regionResizeObserver.observe(el);
++        });
++      };
++      const regionMutationObserver = new MutationObserver(() => {
++        observeRegionNodes();
++        scheduleRegionReport("mutation-observer");
++      });
++      regionMutationObserver.observe(document.body, {
++        subtree: true, childList: true, attributes: true,
++        attributeFilter: ["class", "style", "hidden"],
++      });
++      window.addEventListener("resize", () => scheduleRegionReport("window-resize"));
++      document.addEventListener("transitionend", () => scheduleRegionReport("transition-end"), true);
++      document.addEventListener("animationend", () => scheduleRegionReport("animation-end"), true);
++      document.fonts?.ready?.then(() => scheduleRegionReport("fonts-ready"));
++      observeRegionNodes();
++      reportRegions(true, "startup");
+       const classifyOverlayPoint = (x, y) => {
+         if (!Number.isFinite(x) || !Number.isFinite(y)
+             || x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
+diff --git a/src/overlay-server.ts b/src/overlay-server.ts
+index 40b7bcf..f820c03 100644
+--- a/src/overlay-server.ts
++++ b/src/overlay-server.ts
+@@ -87,6 +87,9 @@ interface Config {
+   /** Mining Assistant: arms the capture loop to read the Refinement Center (job timers)
+    *  and the mining scanner signature. Opt-in; read by electron/capture.cjs each poll. */
+   miningAssistant: boolean;
++  /** Plain-language screen-reader preset. The individual feature booleans remain authoritative;
++   *  "custom" means the user changed one of them independently. */
++  screenReaderProfile: "lightweight" | "balanced" | "mining" | "custom";
+   /** Where the signature number is hunted, as fractions of the frame. Null = the default band.
+    *  Set by dragging the "scan read area" box (Mining Scanner cog) — the only way to cope with a
+    *  HUD that doesn't sit where we assume. */
+@@ -222,6 +225,7 @@ const DEFAULTS: Config = {
+   fabCapture: false,
+   missionOcr: false,
+   miningAssistant: false,
++  screenReaderProfile: "lightweight",
+   scanRegion: null,
+   miningAutoShow: false,
+   miningOpen: false,
+@@ -1341,8 +1345,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+     // so a user returning a day later has often skipped a few versions and would otherwise only
+     // see the newest. `version`/`seen` still govern whether the card shows (on a version bump).
+     const cmpDesc = (a: string, b: string) => {
+-      const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+-      for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
++      const parts = (v: string) => {
++        const m = v.match(/^(\d+)\.(\d+)\.(\d+)(?:-r(\d+)-alpha\.(\d+))?$/);
++        return m ? m.slice(1).map((n) => Number(n || 0)) : [0, 0, 0, 0, 0];
++      };
++      const pa = parts(a), pb = parts(b);
++      for (let i = 0; i < 5; i++) if (pa[i] !== pb[i]) return pb[i] - pa[i];
+       return 0;
+     };
+     const entries = Object.keys(cl).sort(cmpDesc).slice(0, 5).map((v) => ({ version: v, notes: clNotes(cl[v]), date: clDate(cl[v]) }));
+@@ -1403,6 +1411,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+     if (typeof body.fabCapture === "boolean") config.fabCapture = body.fabCapture;
+     if (typeof body.missionOcr === "boolean") config.missionOcr = body.missionOcr;
+     if (typeof body.miningAssistant === "boolean") config.miningAssistant = body.miningAssistant;
++    if (["lightweight", "balanced", "mining", "custom"].includes(body.screenReaderProfile))
++      config.screenReaderProfile = body.screenReaderProfile;
+     // The dragged scan region. `null` resets to the default band. Stored as fractions, and only
+     // if it's usable: a region dragged off-frame or collapsed to nothing would silently stop all
+     // scanning, and "my scanner died and I don't know why" is the worst outcome here.
+@@ -1696,6 +1706,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+       data: { patch: tracker.view().patch ?? "(none loaded)", userDir, userDirWritable },
+       sync: { enabled: config.syncEnabled === true, token: syncToken },
+       screenReading: {
++        profile: config.screenReaderProfile,
+         fabCapture: config.fabCapture === true,
+         missionOcr: config.missionOcr === true,
+         miningAssistant: config.miningAssistant === true,

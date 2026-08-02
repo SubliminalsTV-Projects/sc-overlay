@@ -1,0 +1,244 @@
+diff --git a/electron/linux/focus-controller.cjs b/electron/linux/focus-controller.cjs
+--- a/electron/linux/focus-controller.cjs
++++ b/electron/linux/focus-controller.cjs
+@@ -4,12 +4,57 @@
+ const fs = require("node:fs");
+ const { getStarCitizenSessionBinder } = require("./star-citizen-session.cjs");
+ 
++function parseProcessEnvironment(raw) {
++  const values = {};
++  for (const entry of Buffer.from(raw || "").toString("utf8").split("\0")) {
++    const splitAt = entry.indexOf("=");
++    if (splitAt <= 0) continue;
++    values[entry.slice(0, splitAt)] = entry.slice(splitAt + 1);
++  }
++  return values;
++}
++
++function shellNumber(text, key) {
++  const match = String(text || "").match(new RegExp(`^${key}=(-?\\d+)$`, "m"));
++  return match ? Number(match[1]) : NaN;
++}
++
++function parseNestedPointer(pointerText, geometryText) {
++  const x = shellNumber(pointerText, "X");
++  const y = shellNumber(pointerText, "Y");
++  const width = shellNumber(geometryText, "WIDTH");
++  const height = shellNumber(geometryText, "HEIGHT");
++  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
++  return { x, y, width, height };
++}
++
++function mapNestedPointerToCanvas(pointer, canvas) {
++  if (!pointer || !canvas) return null;
++  const x = Number(pointer.x), y = Number(pointer.y);
++  const sourceWidth = Number(pointer.width), sourceHeight = Number(pointer.height);
++  const canvasX = Number(canvas.x), canvasY = Number(canvas.y);
++  const canvasWidth = Number(canvas.width), canvasHeight = Number(canvas.height);
++  if (![x, y, sourceWidth, sourceHeight, canvasX, canvasY, canvasWidth, canvasHeight].every(Number.isFinite)
++      || sourceWidth <= 0 || sourceHeight <= 0 || canvasWidth <= 0 || canvasHeight <= 0) return null;
++  const localX = Math.max(0, Math.min(sourceWidth - 1, x));
++  const localY = Math.max(0, Math.min(sourceHeight - 1, y));
++  return {
++    x: Math.max(canvasX, Math.min(canvasX + canvasWidth - 1, Math.round(canvasX + (localX * canvasWidth / sourceWidth)))),
++    y: Math.max(canvasY, Math.min(canvasY + canvasHeight - 1, Math.round(canvasY + (localY * canvasHeight / sourceHeight)))),
++  };
++}
++
+ class LinuxFocusController {
+-  constructor({ logger = console, platform = process.platform, sessionBinder = null } = {}) {
++  constructor({ logger = console, platform = process.platform, sessionBinder = null, commandRunner = execFileSync, fileReader = fs.readFileSync } = {}) {
+     this.logger = logger;
+     this.platform = platform;
+     this.sessionBinder = sessionBinder || getStarCitizenSessionBinder({ logger, platform });
++    this.commandRunner = commandRunner;
++    this.fileReader = fileReader;
+     this.restoreWindowId = null;
++    this.gamescopePointerContext = null;
++    this.gamescopePointerRetryAt = 0;
++    this.gamescopePointerFailureSession = null;
+   }
+ 
+ 
+@@ -24,6 +69,77 @@
+     } catch { return null; }
+   }
+ 
++  resolveGamescopePointerContext(session) {
++    if (!session) return null;
++    if (this.gamescopePointerContext?.sessionId === session.id) return this.gamescopePointerContext;
++    if (Date.now() < this.gamescopePointerRetryAt) return null;
++
++    const pids = [...new Set([session.gamePid, session.launcherPid, session.reaperPid]
++      .map(Number).filter((pid) => Number.isInteger(pid) && pid > 0))];
++    for (const pid of pids) {
++      try {
++        const procEnv = parseProcessEnvironment(this.fileReader(`/proc/${pid}/environ`));
++        if (!procEnv.DISPLAY) continue;
++        const nestedEnv = { ...process.env, DISPLAY: procEnv.DISPLAY };
++        if (procEnv.XAUTHORITY) nestedEnv.XAUTHORITY = procEnv.XAUTHORITY;
++        else delete nestedEnv.XAUTHORITY;
++        if (procEnv.XDG_RUNTIME_DIR) nestedEnv.XDG_RUNTIME_DIR = procEnv.XDG_RUNTIME_DIR;
++        const geometryText = String(this.commandRunner("xdotool", ["getdisplaygeometry", "--shell"], {
++          encoding: "utf8", timeout: 1200, stdio: ["ignore", "pipe", "ignore"], env: nestedEnv,
++        }));
++        const width = shellNumber(geometryText, "WIDTH");
++        const height = shellNumber(geometryText, "HEIGHT");
++        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) continue;
++        this.gamescopePointerContext = {
++          sessionId: session.id, pid, display: procEnv.DISPLAY, env: nestedEnv,
++          geometryText, width, height,
++        };
++        this.gamescopePointerFailureSession = null;
++        this.logger?.log?.(`[gamescope-pointer] using Star Citizen DISPLAY ${procEnv.DISPLAY} from PID ${pid} (${width}x${height})`);
++        return this.gamescopePointerContext;
++      } catch {}
++    }
++    this.gamescopePointerContext = null;
++    this.gamescopePointerRetryAt = Date.now() + 1000;
++    if (this.gamescopePointerFailureSession !== session.id) {
++      this.gamescopePointerFailureSession = session.id;
++      this.logger?.warn?.(`[gamescope-pointer] nested DISPLAY unavailable for Star Citizen PID ${session.gamePid}; using host pointer fallbacks`);
++    }
++    return null;
++  }
++
++  gamescopePointerLocation() {
++    if (this.platform !== "linux") return null;
++    const session = this.starCitizenSession();
++    if (!session) {
++      this.gamescopePointerContext = null;
++      return null;
++    }
++    const context = this.resolveGamescopePointerContext(session);
++    if (!context) return null;
++    try {
++      const pointerText = String(this.commandRunner("xdotool", ["getmouselocation", "--shell"], {
++        encoding: "utf8", timeout: 1200, stdio: ["ignore", "pipe", "ignore"], env: context.env,
++      }));
++      const point = parseNestedPointer(pointerText, context.geometryText);
++      return point ? { ...point, display: context.display, gamePid: session.gamePid } : null;
++    } catch {
++      this.gamescopePointerContext = null;
++      this.gamescopePointerRetryAt = Date.now() + 250;
++      return null;
++    }
++  }
++
++  moveHostPointer(point) {
++    if (this.platform !== "linux" || !point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return false;
++    try {
++      this.commandRunner("xdotool", ["mousemove", "--sync", "--", String(Math.round(Number(point.x))), String(Math.round(Number(point.y)))], {
++        encoding: "utf8", timeout: 1200, stdio: ["ignore", "ignore", "ignore"], env: process.env,
++      });
++      return true;
++    } catch { return false; }
++  }
++
+   activeWindowDetails() {
+     if (this.platform !== "linux") return null;
+     try {
+@@ -200,4 +316,8 @@
+   }
+ }
+ 
+-module.exports = { LinuxFocusController };
++module.exports = {
++  LinuxFocusController,
++  mapNestedPointerToCanvas,
++  __test: { parseProcessEnvironment, parseNestedPointer, mapNestedPointerToCanvas },
++};
+diff --git a/electron/window-manager.cjs b/electron/window-manager.cjs
+--- a/electron/window-manager.cjs
++++ b/electron/window-manager.cjs
+@@ -4,7 +4,7 @@
+ // deliberately isolated in electron/linux so future upstream merges do not touch widget code.
+ 
+ const { buildLayout, parseKScreenDoctor, parseXRandRListMonitors, parseXRandRQuery, rectUnion } = require("./linux/desktop-layout.cjs");
+-const { LinuxFocusController } = require("./linux/focus-controller.cjs");
++const { LinuxFocusController, mapNestedPointerToCanvas } = require("./linux/focus-controller.cjs");
+ 
+ class OverlayWindowManager {
+   constructor({ BrowserWindow, screen, app, env = process.env, logger = console } = {}) {
+@@ -122,6 +122,12 @@
+   isOwnOverlayWindow(details) { return this.focus.isOwnOverlayWindow(details); }
+   activeWindowDetails() { return this.focus.activeWindowDetails(); }
+   pointerLocation() { return this.focus.pointerLocation(); }
++  gamescopePointerLocation() {
++    const nested = this.focus.gamescopePointerLocation();
++    const point = mapNestedPointerToCanvas(nested, this.canvasBounds());
++    return point && nested ? { ...point, display: nested.display, sourceWidth: nested.width, sourceHeight: nested.height, gamePid: nested.gamePid } : null;
++  }
++  moveHostPointer(point) { return this.focus.moveHostPointer(point); }
+   focusWindow(win) { this.focus.focus(win); }
+   restorePreviousWindow() { this.focus.restore(); }
+ 
+diff --git a/electron/main.cjs b/electron/main.cjs
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -193,6 +193,7 @@
+ let browserController = null;
+ let overlayRegions = [];
+ let lastGlobalPointer = null;
++let lastGlobalPointerSource = "";
+ let fHoverHeld = false;
+ let momentaryInteractionActive = false;
+ let overlayInteractionLatched = false;
+@@ -666,6 +667,9 @@
+     // All visible overlay tools are DOM classifications inside one native Overlay Manager.
+     // Focus only after the renderer confirms the pointer is inside #panel, .widget, or active
+     // overlay chrome. This avoids guessing from stale geometry and keeps empty canvas harmless.
++    if (lastGlobalPointerSource === "gamescope-display" && overlayWindows.moveHostPointer?.(lastGlobalPointer)) {
++      console.log(`[f-hover] synchronized host pointer to ${lastGlobalPointer.x},${lastGlobalPointer.y} before overlay focus`);
++    }
+     focusLinuxInteractiveWindow("overlay");
+     const classification = target?.classification || "reported-region";
+     const title = target?.title || nextKey;
+@@ -701,12 +705,15 @@
+   let point = null;
+   let source = "";
+ 
+-  // uIOhook already owns the global keyboard hook used for F. Its mouse stream uses the same
+-  // root coordinate space as the widget canvas and stays live while Star Citizen owns focus.
+-  // Prefer the latest hook sample so the first F press does not depend on Electron focus or a
+-  // synchronous helper process. xdotool remains the stationary-pointer/startup fallback.
++  // Gamescope owns a nested XWayland cursor while Star Citizen has focus. The host X root and
++  // uIOhook pointer can remain frozen at the last Shift+F6 position, producing the two-cursor
++  // symptom seen in Alpha 7. Query Star Citizen's own DISPLAY first, map that coordinate onto
++  // the host overlay canvas, and retain only a fresh uIOhook sample as the desktop fallback.
+   if (process.platform === "linux" && preferLinux) {
+-    if (fHoverHookPointer) {
++    point = overlayWindows.gamescopePointerLocation?.() || null;
++    if (point) {
++      source = "gamescope-display";
++    } else if (fHoverHookPointer && Date.now() - fHoverHookPointerSampleAt <= 250) {
+       point = { ...fHoverHookPointer };
+       source = "uiohook-global";
+     } else {
+@@ -732,6 +739,7 @@
+ 
+   if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+     lastGlobalPointer = { x: Number(point.x), y: Number(point.y) };
++    lastGlobalPointerSource = source || "unknown";
+     const sampleAge = source === "uiohook-global" && fHoverHookPointerSampleAt
+       ? ` age=${Math.max(0, Date.now() - fHoverHookPointerSampleAt)}ms`
+       : "";
+@@ -1082,6 +1090,7 @@
+       fHoverHookPointer = { x, y };
+       fHoverHookPointerSampleAt = Date.now();
+       lastGlobalPointer = { x, y };
++      lastGlobalPointerSource = "uiohook-global";
+     });
+   }
+ 
+@@ -1121,8 +1130,8 @@
+     applyMouse();
+     reapplyOverlayInputShape();
+ 
+-    // Prime from the warm global hook sample before any focus transition. xdotool remains the
+-    // fallback when no mouse movement has been observed since startup.
++    // Prime from the cursor owned by Star Citizen's nested Gamescope/XWayland display before any
++    // focus transition. Fresh uIOhook and host-root coordinates remain fallbacks outside Gamescope.
+     refreshFHoverPointer({ preferLinux: true, reason: "F-down pre-focus" });
+     updateFHoverHitFromRegions();
+     void requestOverlayRegionSnapshot("F-down").then(() => {

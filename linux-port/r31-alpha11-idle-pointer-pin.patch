@@ -1,0 +1,88 @@
+diff --git a/electron/main.cjs b/electron/main.cjs
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -229,6 +229,7 @@
+ let fHoverHandoffAnchor = null;
+ let fHoverHandoffSeq = 0;
+ let fHoverHandoffWaitLogged = false;
++let fHoverHostHookAuthoritative = false;
+ const F_HOVER_HOST_SAMPLE_MS = 50;
+ const F_HOVER_LEAVE_GRACE_MS = 180;
+ const F_HOVER_HANDOFF_TOLERANCE_PX = 32;
+@@ -659,6 +660,7 @@
+   lastGlobalPointer = { x, y };
+   lastGlobalPointerSource = source;
+   fHoverPointerPhase = "host";
++  fHoverHostHookAuthoritative = source.startsWith("uiohook");
+   fHoverMissStartedAt = 0;
+   resetFHoverHostHandoff();
+   console.log(`[f-hover] host pointer handoff verified at ${x},${y} via ${source}`);
+@@ -686,6 +688,7 @@
+   const y = Number(point?.y);
+   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+   fHoverPointerPhase = "handoff";
++  fHoverHostHookAuthoritative = false;
+   fHoverHandoffAnchor = { x, y };
+   fHoverHandoffWaitLogged = false;
+   const seq = ++fHoverHandoffSeq;
+@@ -818,11 +821,19 @@
+     // After the overlay receives focus, use the host X root in the same physical-pixel space as
+     // the 6360x2160 canvas. Electron screen coordinates can be scaled or rotated differently on
+     // mixed-orientation KDE desktops and caused Alpha 8's enter/leave oscillation.
+-    point = overlayWindows.pointerLocation?.() || null;
+-    if (point) {
+-      source = "xdotool-host";
+-    } else if (fHoverHookPointer) {
+-      point = { ...fHoverHookPointer };
+-      source = "uiohook-host";
++    // Once the compositor hook produces a verified post-focus motion event, keep that stream
++    // authoritative even while the mouse is idle. KDE XWayland's root pointer can freeze or jump
++    // back to the warp anchor after motion stops, which made Alpha 10 repeatedly drop the latch.
++    if (fHoverHostHookAuthoritative && fHoverHookPointer) {
++      point = { ...fHoverHookPointer };
++      source = "uiohook-host-pinned";
++    } else {
++      point = overlayWindows.pointerLocation?.() || null;
++      if (point) {
++        source = "xdotool-host";
++      } else if (fHoverHookPointer) {
++        point = { ...fHoverHookPointer };
++        source = "uiohook-host";
++      }
+     }
+   } else if (process.platform === "linux" && preferLinux) {
+@@ -1127,6 +1138,7 @@
+   fHoverOverWidget = false;
+   fHoverTarget = null;
+   fHoverPointerPhase = "game";
++  fHoverHostHookAuthoritative = false;
+   fHoverMissStartedAt = 0;
+   resetFHoverHostHandoff();
+   stopFHoverPolling();
+@@ -1231,6 +1243,10 @@
+         acceptFHoverHostPoint({ x, y }, "uiohook-host");
+         return;
+       }
++      if (fHoverPointerPhase === "host" && !fHoverHostHookAuthoritative) {
++        fHoverHostHookAuthoritative = true;
++        console.log("[f-hover] compositor mouse stream pinned for idle-safe widget interaction");
++      }
+       lastGlobalPointer = { x, y };
+       lastGlobalPointerSource = "uiohook-global";
+     });
+@@ -1257,6 +1273,7 @@
+     fHoverOverWidget = false;
+     fHoverTarget = null;
+     fHoverPointerPhase = "game";
++    fHoverHostHookAuthoritative = false;
+     fHoverMissStartedAt = 0;
+     resetFHoverHostHandoff();
+     fHoverProbeSeq = 0;
+@@ -1329,6 +1346,7 @@
+     fHoverOverWidget = false;
+     fHoverTarget = null;
+     fHoverPointerPhase = "game";
++    fHoverHostHookAuthoritative = false;
+     fHoverMissStartedAt = 0;
+     resetFHoverHostHandoff();
+     interactiveTarget = null;

@@ -1,0 +1,68 @@
+name: Capture r31 merge conflicts
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.36-arch-fedora-r31
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture-conflicts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct transported sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r31-linux /tmp/r31-core
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, glob, re
+          def decode(pattern, output):
+              parts = sorted(glob.glob(pattern))
+              if not parts:
+                  raise SystemExit(f'No parts matched {pattern}')
+              encoded = ''.join(Path(p).read_text() for p in parts)
+              encoded = re.sub(r'[^A-Za-z0-9+/=]', '', encoded)
+              encoded += '=' * (-len(encoded) % 4)
+              Path(output).write_bytes(base64.b64decode(encoded, validate=False))
+          decode('linux-port/payload/part-*', '/tmp/r31-linux.tar.gz')
+          decode('linux-port/core/part-*', '/tmp/r31-core.tar.gz')
+          PY
+          gzip -t /tmp/r31-linux.tar.gz
+          gzip -t /tmp/r31-core.tar.gz
+          tar -xzf /tmp/r31-linux.tar.gz -C /tmp/r31-linux
+          tar -xzf /tmp/r31-core.tar.gz -C /tmp/r31-core
+
+      - name: Produce conflict files
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=5b70715f0958f01ab5d0b79124760c016c9410cd
+          mkdir -p /tmp/r31-base/electron /tmp/r31-conflicts
+          for file in electron/main.cjs electron/capture.cjs electron/preload.cjs; do
+            git show "$BASE:$file" > "/tmp/r31-base/$file"
+            set +e
+            git merge-file -p "$file" "/tmp/r31-base/$file" "/tmp/r31-core/$file" > "/tmp/r31-conflicts/$(basename "$file").conflict"
+            rc=$?
+            set -e
+            printf '%s %s\n' "$rc" "$file" >> /tmp/r31-conflicts/status.txt
+            cp "$file" "/tmp/r31-conflicts/$(basename "$file").upstream"
+            cp "/tmp/r31-base/$file" "/tmp/r31-conflicts/$(basename "$file").base"
+            cp "/tmp/r31-core/$file" "/tmp/r31-conflicts/$(basename "$file").linux"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r31-merge-conflicts
+          path: /tmp/r31-conflicts
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,93 @@
+name: Build and release r31 Linux alpha 13
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.36-arch-fedora-r31
+    tags:
+      - v0.1.36-r31-alpha.13
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r31-alpha13-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arch-alpha13:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Build and verify Alpha 13
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: bash linux-port/build-r31-alpha5.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.13-arch
+          path: |
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  release-alpha13:
+    if: github.event_name == 'push'
+    needs: build-arch-alpha13
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.13-arch
+          path: dist
+
+      - name: Publish Alpha 13 GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.36-r31-alpha.13
+          target_commitish: ${{ github.sha }}
+          name: ArchVerse Overlay 0.1.36-r31 Alpha 13
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            Alpha 13 is the focused efficiency and first-run usability release.
+
+            Highlights:
+            - Completion-scheduled OCR: native OCR cycles can no longer overlap.
+            - Visual change detection skips unchanged generic, Scan Mode, mining-analysis, and signature stages.
+            - Mining-only mode no longer runs unrelated mission/fabricator OCR.
+            - The successful Gamescope, Spectacle, or Electron capture backend is cached for the session.
+            - Lightweight, Balanced, and Mining profiles make OCR cost explicit; new installs default to Lightweight.
+            - Live capture method, processing time, and skipped-stage status in Settings.
+            - Event-driven widget-region and pointer updates, preserving Alpha 12's F-key interaction ownership contract.
+            - Production OCR/input dependencies are bundled; installation no longer downloads npm packages.
+
+            Install:
+            1. Download the .tar.gz or .zip asset and extract it.
+            2. Run `./install-cachyos.sh --clean-install`.
+            3. Do not add `--reset-layout` if you want to preserve your existing widget positions.
+
+            Keep Alpha 12 available as the rollback point while testing this prerelease.
+          files: |
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.zip
+            dist/SHA256SUMS

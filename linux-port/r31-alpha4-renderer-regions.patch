@@ -1,0 +1,167 @@
+--- a/overlay/missions.html
++++ b/overlay/missions.html
+@@ -3331,82 +3331,111 @@
+       // hit-test the rest of the time.
+       const RSEL = "body.scanbox #scanBox, #panel, #globalCog, #hub, #cogMenu, #whatsnew, #arrangeScrim .ab, .widget:not(.notifier), .widget.notifier.live, .widget.notifier.moving, .widget.notifier.cfgopen, .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead, #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead";
++      const pointTargetVisible = (el) => {
++        if (!el || !el.isConnected) return false;
++        const style = getComputedStyle(el);
++        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
++        const r = el.getBoundingClientRect();
++        return r.width > 1 && r.height > 1;
++      };
++      const notifierCanTakeFocus = (el) => !el.classList.contains("notifier")
++        || el.classList.contains("live")
++        || el.classList.contains("moving")
++        || el.classList.contains("cfgopen");
++      const describeRegionElement = (el) => {
++        const widget = el.closest?.(".widget");
++        if (widget && pointTargetVisible(widget) && notifierCanTakeFocus(widget)) {
++          const key = widget.id.startsWith("w-") ? widget.id.slice(2) : (widget.dataset.widgetKey || "widget");
++          return {
++            key,
++            title: WBY[key]?.title || widget.querySelector(".wh-title")?.textContent?.trim() || key,
++            classification: widget.classList.contains("notifier") ? ".widget.notifier" : ".widget",
++            id: widget.id || null,
++            classes: [...widget.classList],
++            priority: widget.classList.contains("notifier") ? 35 : 30,
++          };
++        }
++        const panel = el.closest?.("#panel");
++        if (panel && pointTargetVisible(panel)) {
++          return {
++            key: "blueprint", title: WBY.blueprint?.title || "Mission & BP Tracker",
++            classification: "#panel", id: "panel", classes: [...panel.classList], priority: 25,
++          };
++        }
++        const chrome = el.closest?.("body.scanbox #scanBox, #globalCog, #hub, #cogMenu, #whatsnew, #arrangeScrim .ab");
++        if (chrome && pointTargetVisible(chrome)) {
++          return {
++            key: chrome.id || "overlay-chrome",
++            title: chrome.getAttribute("aria-label") || chrome.getAttribute("title") || chrome.id || "Overlay controls",
++            classification: "overlay-chrome", id: chrome.id || null,
++            classes: [...chrome.classList], priority: 50,
++          };
++        }
++        return null;
++      };
++      const collectOverlayRegions = () => {
++        const rects = [];
++        document.querySelectorAll(RSEL).forEach((el) => {
++          const meta = describeRegionElement(el);
++          if (!meta) return;
++          const r = el.getBoundingClientRect();
++          if (r.width > 1 && r.height > 1) {
++            rects.push({ x: r.left, y: r.top, w: r.width, h: r.height, ...meta });
++          }
++        });
++        return rects;
++      };
+       // Only cross the process boundary when the answer actually changed. The rects are stable for
+       // minutes at a time (they move on drag/resize/show/hide/hover), so this was ten identical
+       // IPC messages a second, forever.
+       let lastRegions = "";
+-      const reportRegions = () => {
+-        const rects = [];
+-        document.querySelectorAll(RSEL).forEach((el) => {
+-          const r = el.getBoundingClientRect();
+-          if (r.width > 1 && r.height > 1) rects.push({ x: r.left, y: r.top, w: r.width, h: r.height });
+-        });
++      const reportRegions = (force = false, _reason = "timer") => {
++        const rects = collectOverlayRegions();
+         const sig = JSON.stringify(rects);
+-        if (sig === lastRegions) return;
++        if (!force && sig === lastRegions) return rects.length;
+         lastRegions = sig;
+         window.overlayApi.reportRegions(rects);
++        return rects.length;
+       };
++      window.__overlayReportRegions = reportRegions;
+       setInterval(reportRegions, 100);
+       reportRegions();
+-    }
+-
+-    // Exact held-F hit classification. The developer UI is NOT a collection of native windows:
+-    // Mission & BP Tracker is #panel, while Mining, Journal, Twitch Chat, SC Feed, Loot Split,
+-    // Event Tracker, Web Page, and Infographic Viewer are .widget wrappers (w-<registry key>).
+-    // Ask the DOM itself what is under the pointer so iframe content, grouped widgets, transforms,
+-    // and native WebContentsView holes all resolve through their visible wrapper classification.
+-    const pointTargetVisible = (el) => {
+-      if (!el || !el.isConnected) return false;
+-      const style = getComputedStyle(el);
+-      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+-      const r = el.getBoundingClientRect();
+-      return r.width > 1 && r.height > 1;
+-    };
+-    const notifierCanTakeFocus = (el) => !el.classList.contains("notifier")
+-      || el.classList.contains("live")
+-      || el.classList.contains("moving")
+-      || el.classList.contains("cfgopen");
+-    const classifyOverlayPoint = (x, y) => {
+-      if (!Number.isFinite(x) || !Number.isFinite(y)
+-          || x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
+-        return { hit: false, classification: "transparent-canvas" };
+-      }
+-      for (const node of document.elementsFromPoint(x, y)) {
+-        const widget = node.closest?.(".widget");
+-        if (widget && pointTargetVisible(widget) && notifierCanTakeFocus(widget)) {
+-          const key = widget.id.startsWith("w-") ? widget.id.slice(2) : (widget.dataset.widgetKey || "widget");
+-          return {
+-            hit: true,
+-            key,
+-            title: WBY[key]?.title || widget.querySelector(".wh-title")?.textContent?.trim() || key,
+-            classification: ".widget",
+-            id: widget.id || null,
+-            classes: [...widget.classList],
+-          };
+-        }
+-        const panel = node.closest?.("#panel");
+-        if (panel && pointTargetVisible(panel)) {
+-          return {
+-            hit: true,
+-            key: "blueprint",
+-            title: WBY.blueprint?.title || "Mission & BP Tracker",
+-            classification: "#panel",
+-            id: "panel",
+-            classes: [...panel.classList],
+-          };
+-        }
+-        const chrome = node.closest?.("body.scanbox #scanBox, #globalCog, #hub.open, #cogMenu.open, #whatsnew.show, #arrangeScrim .ab");
+-        if (chrome && pointTargetVisible(chrome)) {
+-          return {
+-            hit: true,
+-            key: chrome.id || "overlay-chrome",
+-            title: chrome.getAttribute("aria-label") || chrome.getAttribute("title") || chrome.id || "Overlay controls",
+-            classification: "overlay-chrome",
+-            id: chrome.id || null,
+-            classes: [...chrome.classList],
+-          };
+-        }
+-      }
+-      return { hit: false, classification: "transparent-canvas" };
+-    };
+-    window.overlayApi.onProbePoint?.((point) => {
+-      const seq = Number(point?.seq);
+-      const result = classifyOverlayPoint(Number(point?.x), Number(point?.y));
+-      window.overlayApi.reportPointClassification?.({ seq, ...result });
+-    });
++      const classifyOverlayPoint = (x, y) => {
++        if (!Number.isFinite(x) || !Number.isFinite(y)
++            || x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
++          return { hit: false, classification: "transparent-canvas" };
++        }
++        const matches = collectOverlayRegions().filter((r) =>
++          x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h);
++        if (!matches.length) return { hit: false, classification: "transparent-canvas" };
++        matches.sort((a, b) => (b.priority - a.priority) || ((a.w * a.h) - (b.w * b.h)));
++        return { hit: true, ...matches[0] };
++      };
++      window.__overlayClassifyPoint = classifyOverlayPoint;
++      window.overlayApi.onProbePoint?.((point) => {
++        const seq = Number(point?.seq);
++        const result = classifyOverlayPoint(Number(point?.x), Number(point?.y));
++        window.overlayApi.reportPointClassification?.({ seq, ...result });
++      });
++    }
+ 
+     // "What's new" card. Auto-shows once per new version on launch AND is re-openable any time

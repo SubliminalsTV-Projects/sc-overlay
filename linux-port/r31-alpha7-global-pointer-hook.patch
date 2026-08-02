@@ -1,0 +1,60 @@
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -212,2 +212,4 @@
+ let fHoverLinuxPointerSampleAt = 0;
++let fHoverHookPointer = null;
++let fHoverHookPointerSampleAt = 0;
+ let miningAutoArm = false;
+@@ -702,7 +704,13 @@
+-  // On KDE/XWayland, Electron's screen.getCursorScreenPoint() can report a stale point while
+-  // the click-through Overlay Manager has never owned focus. xdotool queries the X root pointer
+-  // directly and remains accurate before the first interaction/unlock.
++  // uIOhook already owns the global keyboard hook used for F. Its mouse stream uses the same
++  // root coordinate space as the widget canvas and stays live while Star Citizen owns focus.
++  // Prefer the latest hook sample so the first F press does not depend on Electron focus or a
++  // synchronous helper process. xdotool remains the stationary-pointer/startup fallback.
+   if (process.platform === "linux" && preferLinux) {
+-    point = overlayWindows.pointerLocation?.() || null;
+-    if (point) source = "xdotool-root";
++    if (fHoverHookPointer) {
++      point = { ...fHoverHookPointer };
++      source = "uiohook-global";
++    } else {
++      point = overlayWindows.pointerLocation?.() || null;
++      if (point) source = "xdotool-root";
++    }
+   }
+@@ -726,3 +734,6 @@
+     lastGlobalPointer = { x: Number(point.x), y: Number(point.y) };
+-    if (reason) console.log(`[f-hover] pointer ${lastGlobalPointer.x},${lastGlobalPointer.y} via ${source || "unknown"} (${reason})`);
++    const sampleAge = source === "uiohook-global" && fHoverHookPointerSampleAt
++      ? ` age=${Math.max(0, Date.now() - fHoverHookPointerSampleAt)}ms`
++      : "";
++    if (reason) console.log(`[f-hover] pointer ${lastGlobalPointer.x},${lastGlobalPointer.y} via ${source || "unknown"}${sampleAge} (${reason})`);
+     return true;
+@@ -1060,3 +1071,18 @@
+   if (!accel || typeof accel !== "string") return { ok: true };
+-
++
++  // Keep a focus-independent pointer sample warm before F is pressed. Alpha 6 queried xdotool
++  // at key-down; that fixed Electron's stale pre-focus point but still made the first hit depend
++  // on a just-in-time subprocess. The already-running uIOhook backend can provide the point as
++  // the mouse moves over Star Citizen without ever focusing or unlocking the overlay.
++  if (process.platform === "linux" && typeof hotkeys.onMouseMove === "function") {
++    stopPointerWatch = hotkeys.onMouseMove((event) => {
++      const x = Number(event?.x);
++      const y = Number(event?.y);
++      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
++      fHoverHookPointer = { x, y };
++      fHoverHookPointerSampleAt = Date.now();
++      lastGlobalPointer = { x, y };
++    });
++  }
++
+   const onDown = (source = "uiohook") => {
+@@ -1098,3 +1124,3 @@
+-    // Prime from the X root pointer before any focus transition. Alpha 5 used Electron's cursor
+-    // point here, which remained stale until Shift+F6 had focused the Overlay Manager once.
++    // Prime from the warm global hook sample before any focus transition. xdotool remains the
++    // fallback when no mouse movement has been observed since startup.
+     refreshFHoverPointer({ preferLinux: true, reason: "F-down pre-focus" });
