@@ -1,18 +1,21 @@
-# r31 alpha build status
+# r31 Alpha 13 status
 
-This branch targets ArchVerse Overlay 0.1.36-r31.
+This branch targets ArchVerse Overlay 0.1.36-r31 for Arch Linux and CachyOS.
 
-The first alpha checkpoint is intentionally limited to Arch Linux/CachyOS so the existing test system can validate the upstream rebase and Linux runtime before Fedora packaging is added.
+Alpha 13 is the focused efficiency and first-run usability checkpoint. It keeps Alpha 12's
+explicit Linux interaction ownership contract while reducing idle polling and native OCR work.
 
-Alpha 1 gates:
+Release gates:
 
-- upstream 0.1.36 server and web assets build;
-- Linux Electron core changes merge without unresolved markers;
-- Gamescope/session and multi-monitor Linux modules are present;
-- RapidOCR runs through the isolated worker client;
-- F is not the overlay interaction key;
-- Right Alt is the default hold-to-interact key;
-- Ctrl+Alt+M remains arrange mode;
-- an installable archive and SHA-256 file are produced by CI.
+- all Alpha 2–13 Linux interaction and efficiency regression tests pass;
+- TypeScript typechecking and the eight server test files pass;
+- OCR cycles are completion-scheduled and visually unchanged stages are skipped;
+- mission, mining, and fabricator readers are opt-in on fresh installs;
+- Lightweight, Balanced, and Mining profiles plus live OCR status are exposed in Settings;
+- the successful capture backend is cached for the session;
+- widget-region and normal host-pointer updates are event-driven;
+- the exact production OCR/input dependency tree is bundled in the archive;
+- both tar.gz and zip assets, plus SHA-256 checksums, are produced;
+- the tag `v0.1.36-r31-alpha.13` publishes a GitHub prerelease.
 
-Stable `main` is not changed by this build.
+Alpha 12 remains the rollback checkpoint. Stable `main` is not changed by this release.

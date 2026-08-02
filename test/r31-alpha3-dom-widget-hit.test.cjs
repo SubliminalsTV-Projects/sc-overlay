@@ -22,14 +22,15 @@ assert.match(missions, /key: "notepad", page: "notepad\.html", title: "Journal"/
 assert.match(missions, /key: "twitchChat", page: "twitchchat\.html", title: "Twitch Chat"/);
 assert.match(missions, /key: "scFeed", page: "scfeed\.html", title: "SC Feed"/);
 assert.match(missions, /classification: "#panel"/);
-assert.match(missions, /classification: "\.widget"/);
+assert.match(missions, /classification: widget\.classList\.contains\("notifier"\) \? "\.widget\.notifier" : "\.widget"/);
 
-// Alpha 3 asks the live DOM, including iframe wrappers, rather than trusting only cached rects.
+// The current classifier derives the live rectangles from the DOM, including iframe wrappers,
+// and probes that classified snapshot without requiring the click-through renderer to focus.
 assert.match(preload, /overlay:probe-point/);
 assert.match(preload, /overlay:point-classification/);
-assert.match(missions, /document\.elementsFromPoint\(x, y\)/);
-assert.match(missions, /node\.closest\?\.\("\.widget"\)/);
-assert.match(missions, /node\.closest\?\.\("#panel"\)/);
+assert.match(missions, /const collectOverlayRegions = \(\) =>/);
+assert.match(missions, /const matches = collectOverlayRegions\(\)\.filter/);
+assert.match(missions, /el\.closest\?\.\("\.widget"\)/);
 assert.match(main, /applyFHoverClassification/);
 assert.match(main, /focusLinuxInteractiveWindow\("overlay"\)/);
 assert.match(main, /dom-classification/);

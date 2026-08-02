@@ -21,7 +21,9 @@ assert.match(main, /focusable: false, skipTaskbar: true, alwaysOnTop: true/);
 assert.match(main, /win\.setIgnoreMouseEvents\(true\)/);
 assert.match(main, /win\.setAlwaysOnTop\(true, "screen-saver"\)/);
 assert.match(main, /function showInteractionCursor\(globalPoint = lastGlobalPointer\)/);
-assert.match(main, /setInterval\(tick, 33\)/);
+assert.match(main, /F_HOVER_FALLBACK_POLL_MS = 100/);
+assert.match(main, /setInterval\(tick, F_HOVER_FALLBACK_POLL_MS\)/);
+assert.match(main, /scheduleFHoverMotionProbe\(\)/);
 assert.match(main, /destroyInteractionCursor\(\)/);
 
 // Linux arrange mode is fixed to Shift+F6 and persisted so the config UI reflects reality.

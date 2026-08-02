@@ -4,12 +4,12 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-TMP_ROOT="${RUNNER_TEMP:-/tmp}/r31-alpha5-build"
+TMP_ROOT="${RUNNER_TEMP:-/tmp}/r31-alpha13-build"
 LINUX_DIR="$TMP_ROOT/linux"
 CORE_DIR="$TMP_ROOT/core"
 BASE_DIR="$TMP_ROOT/base"
 CONFLICT_DIR="$TMP_ROOT/conflicts"
-OUT="$TMP_ROOT/ArchVerse-Overlay-0.1.36-r31-alpha.5"
+OUT="$TMP_ROOT/ArchVerse-Overlay-0.1.36-r31-alpha.13"
 DIST="$ROOT/dist"
 BASE=5b70715f0958f01ab5d0b79124760c016c9410cd
 
@@ -33,14 +33,14 @@ def decode_parts(pattern: str, output: str) -> None:
     Path(output).write_bytes(decoded)
     print(f"Decoded {len(parts)} parts from {pattern}: {len(decoded)} bytes")
 
-decode_parts("linux-port/payload/part-*", "/tmp/r31-alpha5-linux.tar.gz")
-decode_parts("linux-port/core/part-*", "/tmp/r31-alpha5-core.tar.gz")
+decode_parts("linux-port/payload/part-*", "/tmp/r31-alpha13-linux.tar.gz")
+decode_parts("linux-port/core/part-*", "/tmp/r31-alpha13-core.tar.gz")
 PY
 
-gzip -t /tmp/r31-alpha5-linux.tar.gz
-gzip -t /tmp/r31-alpha5-core.tar.gz
-tar -xzf /tmp/r31-alpha5-linux.tar.gz -C "$LINUX_DIR"
-tar -xzf /tmp/r31-alpha5-core.tar.gz -C "$CORE_DIR"
+gzip -t /tmp/r31-alpha13-linux.tar.gz
+gzip -t /tmp/r31-alpha13-core.tar.gz
+tar --no-same-owner -xzf /tmp/r31-alpha13-linux.tar.gz -C "$LINUX_DIR"
+tar --no-same-owner -xzf /tmp/r31-alpha13-core.tar.gz -C "$CORE_DIR"
 test -s "$LINUX_DIR/electron/window-manager.cjs"
 test -s "$LINUX_DIR/electron/linux/star-citizen-session.cjs"
 test -s "$CORE_DIR/electron/main.cjs"
@@ -85,10 +85,23 @@ fi
 
 for patch in \
   linux-port/r31-alpha2-hover-pid.patch \
-  linux-port/r31-alpha3-dom-widget-hit.patch \
+  linux-port/r31-alpha3-dom-widget-hit.patch; do
+  git apply --check "$patch"
+  git apply "$patch"
+done
+
+for patch in \
   linux-port/r31-alpha4-main-handshake.patch \
   linux-port/r31-alpha4-renderer-regions.patch \
-  linux-port/r31-alpha5-latched-cursor-shiftf6.patch; do
+  linux-port/r31-alpha5-latched-cursor-shiftf6.patch \
+  linux-port/r31-alpha6-prefocus-pointer.patch \
+  linux-port/r31-alpha7-global-pointer-hook.patch \
+  linux-port/r31-alpha8-gamescope-pointer.patch \
+  linux-port/r31-alpha9-stable-interaction.patch \
+  linux-port/r31-alpha10-verified-handoff.patch \
+  linux-port/r31-alpha11-idle-pointer-pin.patch \
+  linux-port/r31-alpha12-explicit-interaction-ownership.patch \
+  linux-port/r31-alpha13-efficiency.patch; do
   git apply --recount --check "$patch"
   git apply --recount "$patch"
 done
@@ -98,7 +111,7 @@ from pathlib import Path
 import json
 pkg = Path("package.json")
 data = json.loads(pkg.read_text())
-data["version"] = "0.1.36-r31-alpha.5"
+data["version"] = "0.1.36-r31-alpha.13"
 data["productName"] = "ArchVerse Overlay"
 pkg.write_text(json.dumps(data, indent=2) + "\n")
 PY
@@ -112,13 +125,13 @@ node --check electron/window-manager.cjs
 node --check electron/linux/star-citizen-session.cjs
 node --check electron/rapidocr-client.cjs
 node --check electron/rapidocr-worker.cjs
-node --test \
-  test/r31-alpha2-session-binding.test.cjs \
-  test/r31-alpha4-region-handshake.test.cjs \
-  test/r31-alpha5-latched-interaction.test.cjs
+node --test test/r31-alpha*.test.cjs
 
-npm ci --no-audit --no-fund
+# The source build only needs TypeScript/esbuild. Skipping package lifecycle scripts avoids
+# downloading an unused Electron binary; production native/runtime scripts run in OUT/app below.
+NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$TMP_ROOT/npm-cache}" npm ci --ignore-scripts --no-audit --no-fund
 npm run typecheck
+node --import tsx --test src/*.test.ts
 npm run build:server
 
 mkdir -p "$OUT/app" "$OUT/bin" "$OUT/docs"
@@ -133,7 +146,7 @@ const out = process.argv[2];
 const src = require("./package.json");
 fs.writeFileSync(out, JSON.stringify({
   name: "archverse-overlay",
-  version: "0.1.36-r31-alpha.5",
+  version: "0.1.36-r31-alpha.13",
   description: "Community Linux port of SC Overlay",
   main: "electron/main.cjs",
   type: "module",
@@ -145,6 +158,29 @@ fs.writeFileSync(out, JSON.stringify({
 }, null, 2) + "\n");
 NODE
 
+# Ship the exact production runtime resolved during CI. Installation should be file-copy work,
+# not a lengthy, failure-prone npm download on a player's gaming machine.
+(
+  cd "$OUT/app"
+  NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$TMP_ROOT/npm-cache}" npm install --omit=dev --no-audit --no-fund --package-lock=true
+  # This is an x86_64 Arch/CachyOS artifact. npm's ONNX/uiohook packages include every desktop
+  # platform and architecture, so discard the unreachable binaries before compression.
+  rm -rf \
+    node_modules/onnxruntime-node/bin/napi-v6/darwin \
+    node_modules/onnxruntime-node/bin/napi-v6/win32 \
+    node_modules/onnxruntime-node/bin/napi-v6/linux/arm64 \
+    node_modules/uiohook-napi/prebuilds/darwin-arm64 \
+    node_modules/uiohook-napi/prebuilds/darwin-x64 \
+    node_modules/uiohook-napi/prebuilds/linux-arm64 \
+    node_modules/uiohook-napi/prebuilds/linux-loong64 \
+    node_modules/uiohook-napi/prebuilds/win32-arm64 \
+    node_modules/uiohook-napi/prebuilds/win32-x64
+  if [[ "${NPM_CONFIG_IGNORE_SCRIPTS:-false}" != "true" ]]; then
+    node -e "import('@gutenye/ocr-node')"
+    node -e "require.resolve('uiohook-napi')"
+  fi
+)
+
 cp -a "$LINUX_DIR/sc-blueprint-tracker" "$OUT/bin/sc-blueprint-tracker"
 cp -a "$LINUX_DIR/install-cachyos.sh" "$OUT/install-cachyos.sh"
 cp -a "$LINUX_DIR/uninstall-cachyos.sh" "$OUT/uninstall-cachyos.sh"
@@ -154,6 +190,8 @@ cp -a LICENSE.md "$OUT/LICENSE.md"
 [[ -f FORK-NOTICE.md ]] && cp FORK-NOTICE.md "$OUT/FORK-NOTICE.md" || true
 cp LINUX-PORT-PLAN.md "$OUT/docs/"
 cp docs/R31-INPUT-DESIGN.md "$OUT/docs/"
+mkdir -p "$OUT/tests"
+cp test/r31-alpha*.test.cjs "$OUT/tests/"
 
 python3 - "$OUT/install-cachyos.sh" "$OUT/doctor.sh" <<'PY'
 from pathlib import Path
@@ -161,30 +199,64 @@ import sys
 
 installer = Path(sys.argv[1])
 text = installer.read_text()
-text = text.replace("0.1.33-r30.2-rapidocr-worker-isolation", "0.1.36-r31-alpha.5")
-text = text.replace(
-    "data.holdToInteract = true;",
-    "data.holdToInteract = true;\ndata.interactHotkey = 'F';\ndata.moveHotkey = 'Shift+F6';",
-)
+text = text.replace("0.1.33-r30.2-rapidocr-worker-isolation", "0.1.36-r31-alpha.13")
+old_defaults = """data.holdToInteract = true;
+data.missionOcr = true;
+data.miningAssistant = true;"""
+new_defaults = """if (typeof data.holdToInteract !== 'boolean') data.holdToInteract = true;
+if (typeof data.interactHotkey !== 'string') data.interactHotkey = 'F';
+if (typeof data.moveHotkey !== 'string') data.moveHotkey = 'Shift+F6';
+if (typeof data.missionOcr !== 'boolean') data.missionOcr = false;
+if (typeof data.miningAssistant !== 'boolean') data.miningAssistant = false;
+if (typeof data.fabCapture !== 'boolean') data.fabCapture = false;
+if (typeof data.screenReaderProfile !== 'string') data.screenReaderProfile = 'lightweight';"""
+if old_defaults not in text:
+    raise SystemExit("installer OCR defaults were not found")
+text = text.replace(old_defaults, new_defaults, 1)
+text = text.replace("packages=(electron42 nodejs npm ", "packages=(electron42 nodejs ")
+text = text.replace("for cmd in node npm tesseract", "for cmd in node tesseract")
+runtime_start = text.index("RAPID_OCR_READY=0")
+runtime_end = text.index("\nfor file in ", runtime_start)
+runtime_check = """RAPID_OCR_READY=0
+printf 'Checking the bundled Linux RapidOCR runtime...\\n'
+if (cd "$INSTALL_DIR/app" && node -e "import('@gutenye/ocr-node').then(() => process.exit(0)).catch(() => process.exit(1))"); then
+  RAPID_OCR_READY=1
+  printf 'RapidOCR runtime ready.\\n'
+else
+  printf 'Warning: bundled RapidOCR could not be imported; Tesseract fallback will be used.\\n' >&2
+fi
+"""
+text = text[:runtime_start] + runtime_check + text[runtime_end:]
 text = text.replace("Hold F + click", "Press F while the pointer is over a classified widget")
-text = text.replace("archverse-overlay-r30.2.log", "archverse-overlay-r31-alpha5.log")
-text = text.replace("r30.2", "r31 alpha 5")
+text = text.replace(
+    "  Press F while the pointer is over a classified widget = interact with widget controls from any focused window\n"
+    "  Ctrl+Alt+M     = move/arrange all visible widgets (upstream workflow)",
+    "  F              = enter interaction while the pointer is over a widget\n"
+    "  Shift+F6       = move/arrange all visible widgets",
+)
+text = text.replace("archverse-overlay-r30.2.log", "archverse-overlay-r31-alpha13.log")
+text = text.replace("r30.2", "r31 alpha 13")
 installer.write_text(text)
 
 doctor = Path(sys.argv[2])
 doctor.write_text(doctor.read_text().replace(
-    "0.1.33-r30 diagnostics", "0.1.36-r31 alpha 5 diagnostics"))
+    "0.1.33-r30 diagnostics", "0.1.36-r31 alpha 13 diagnostics"))
 PY
 
 cat > "$OUT/README.md" <<'DOC'
-# ArchVerse Overlay 0.1.36-r31 alpha 5
+# ArchVerse Overlay 0.1.36-r31 alpha 13
 
-Arch/CachyOS test build for startup-safe widget interaction, persistent text-entry focus, and direct Star Citizen PID binding.
+Arch/CachyOS efficiency release with opt-in OCR profiles and the proven Alpha 12 interaction contract.
 
 Input behavior:
+- Before first focus, the interaction pointer follows Star Citizen's nested Gamescope/XWayland cursor.
+- After a widget is entered, the overlay focuses first and verifies the host pointer before changing coordinate sources.
+- While that handoff is pending, stale host samples cannot cancel the initial widget latch.
+- After compositor motion is verified, that point remains authoritative while the mouse is idle.
+- After F is released, coordinate misses cannot revoke interaction ownership; Escape or an external click ends it.
 - Move the pointer over a classified overlay widget and press F once.
 - Releasing F leaves that widget interactive, so Twitch Chat, Journal, Web Page forms, and other text inputs can be used normally.
-- The session ends when the pointer leaves every widget, Escape is pressed, or another window takes focus.
+- The session remains interactive across coordinate misses until Escape is pressed or another window takes focus.
 - A dedicated focusless cursor surface is rendered above the Overlay Manager and native WebContentsViews.
 - F over empty transparent canvas leaves Star Citizen focused.
 - Shift+F6 enters or exits arrange mode for all widgets.
@@ -193,6 +265,10 @@ Input behavior:
 Screen reader behavior:
 - Uses strict StarCitizen.exe -> Gamescope validation when that ancestry exists.
 - Falls back to the exact StarCitizen.exe PID and /proc start time when Wine detaches.
+- Lightweight is the fresh-install default; mission, mining, and fabricator reading are explicit opt-ins.
+- OCR stages run only after the previous cycle finishes and skip visually unchanged HUD regions.
+- The successful capture backend is cached for the session.
+- Settings shows the current capture method, processing time, and skipped-stage count.
 
 This is an alpha. Keep the previous working archive available for rollback.
 
@@ -200,7 +276,7 @@ Install:
     ./install-cachyos.sh --clean-install
 
 Launch with logging:
-    sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha5.log
+    sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha13.log
 DOC
 
 cat > "$OUT/verify-alpha.sh" <<'SH'
@@ -215,6 +291,10 @@ for f in \
   app/electron/rapidocr-client.cjs \
   app/electron/rapidocr-worker.cjs \
   app/server/sc-overlay-server.mjs \
+  app/node_modules/uiohook-napi/package.json \
+  app/node_modules/@gutenye/ocr-node/package.json \
+  app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node \
+  app/node_modules/uiohook-napi/prebuilds/linux-x64/uiohook-napi.node \
   install-cachyos.sh \
   bin/sc-blueprint-tracker; do
   [[ -s "$root/$f" ]] || { echo "missing $f" >&2; exit 1; }
@@ -227,19 +307,48 @@ grep -q 'overlayInteractionLatched = true' "$root/app/electron/main.cjs"
 grep -q 'function ensureInteractionCursorWindow' "$root/app/electron/main.cjs"
 grep -q 'win.setAlwaysOnTop(true, "screen-saver")' "$root/app/electron/main.cjs"
 grep -q 'requestOverlayRegionSnapshot' "$root/app/electron/main.cjs"
+grep -q 'function refreshFHoverPointer' "$root/app/electron/main.cjs"
+grep -q 'xdotool-root' "$root/app/electron/main.cjs"
+grep -q 'F-down pre-focus' "$root/app/electron/main.cjs"
+grep -q 'fHoverHookPointer = { x, y }' "$root/app/electron/main.cjs"
+grep -q 'uiohook-global' "$root/app/electron/main.cjs"
+grep -q 'stopPointerWatch = hotkeys.onMouseMove' "$root/app/electron/main.cjs"
+grep -q 'gamescope-display' "$root/app/electron/main.cjs"
+grep -q 'moveHostPointer' "$root/app/electron/main.cjs"
+grep -q 'getdisplaygeometry' "$root/app/electron/linux/focus-controller.cjs"
+grep -q 'gamescopePointerLocation' "$root/app/electron/window-manager.cjs"
+grep -q 'preferHost: true' "$root/app/electron/main.cjs"
+grep -q 'F_HOVER_LEAVE_GRACE_MS' "$root/app/electron/main.cjs"
+grep -q 'error?.code === "EPIPE"' "$root/app/electron/main.cjs"
+grep -q 'beginFHoverHostHandoff' "$root/app/electron/main.cjs"
+grep -q 'host pointer handoff verified' "$root/app/electron/main.cjs"
+grep -q 'uiohook-host-pinned' "$root/app/electron/main.cjs"
+grep -q 'coordinate misses never' "$root/app/electron/main.cjs"
+! grep -q 'pointer left classified widget' "$root/app/electron/main.cjs"
+grep -q 'completion-scheduled OCR loop armed' "$root/app/electron/capture.cjs"
+grep -q 'capture backend cached for this session' "$root/app/electron/capture.cjs"
+grep -q 'screenReaderProfile' "$root/app/server/sc-overlay-server.mjs"
+grep -q 'new MutationObserver' "$root/app/server/overlay/missions.html"
+! grep -q 'setInterval(reportRegions, 100)' "$root/app/server/overlay/missions.html"
+! grep -q 'data.missionOcr = true' "$root/install-cachyos.sh"
 grep -q 'window.__overlayReportRegions' "$root/app/server/overlay/missions.html"
 grep -q 'directly (Wine detached from Gamescope ancestry)' "$root/app/electron/linux/star-citizen-session.cjs"
 bash -n "$root/install-cachyos.sh" "$root/bin/sc-blueprint-tracker" "$root/doctor.sh"
-echo 'r31 alpha 5 static verification passed.'
+node "$root/tests/r31-alpha13-efficiency.test.cjs" "$root"
+echo 'r31 alpha 13 static verification passed.'
 SH
 
 chmod +x "$OUT"/*.sh "$OUT/bin/sc-blueprint-tracker"
 "$OUT/verify-alpha.sh"
 
-tar -czf "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.5-arch.tar.gz" -C "$TMP_ROOT" "$(basename "$OUT")"
+tar -czf "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.tar.gz" -C "$TMP_ROOT" "$(basename "$OUT")"
+(
+  cd "$TMP_ROOT"
+  zip -qr "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.zip" "$(basename "$OUT")"
+)
 (
   cd "$DIST"
-  sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.5-arch.tar.gz > ArchVerse-Overlay-0.1.36-r31-alpha.5-arch.tar.gz.sha256
+  sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.tar.gz ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.zip > SHA256SUMS
 )
 
-echo "Alpha 5 package created in $DIST"
+echo "Alpha 13 package created in $DIST"
