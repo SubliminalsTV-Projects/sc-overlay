@@ -1,0 +1,780 @@
+diff --git a/electron/capture.cjs b/electron/capture.cjs
+index aeec0cc..8858f70 100644
+--- a/electron/capture.cjs
++++ b/electron/capture.cjs
+@@ -30,6 +30,18 @@ const FAST_WINDOW_MS = 20000;
+ // The kiosk render fades in over ~1-2s. This is the wait the 3s tick was implicitly giving it.
+ const SETTLE_MS = 3000;
+ 
++// Native OCR/image libraries otherwise size their own thread pools from the host CPU. On a
++// 24-thread 9900X3D, one RapidOCR request plus ImageMagick plus Tesseract could fan out across
++// nearly the whole processor. Keep every native subprocess bounded; the persistent ONNX worker
++// has its own two-thread ceiling in rapidocr-worker.cjs.
++const OCR_NATIVE_ENV = Object.freeze({
++  ...process.env,
++  OMP_THREAD_LIMIT: process.env.OMP_THREAD_LIMIT || "1",
++  OMP_NUM_THREADS: process.env.OMP_NUM_THREADS || "1",
++  MAGICK_THREAD_LIMIT: process.env.MAGICK_THREAD_LIMIT || "1",
++  VIPS_CONCURRENCY: process.env.VIPS_CONCURRENCY || "1",
++});
++
+ // RapidOCR is isolated in a disposable Node child process. A native sharp/libvips
+ // assertion can abort that worker, but not Electron or the overlay. The client also
+ // serializes requests, enforces a hard timeout, and disables RapidOCR for the rest of
+@@ -161,7 +173,7 @@ const CAPTURE_BACKENDS = Object.freeze({
+ 
+ function runFile(command, args, options = {}) {
+   return new Promise((resolve, reject) => {
+-    execFile(command, args, options, (err, stdout, stderr) => {
++    execFile(command, args, { env: OCR_NATIVE_ENV, ...options }, (err, stdout, stderr) => {
+       if (err) {
+         const detail = String(stderr || stdout || err.message || err).trim();
+         const wrapped = new Error(detail || String(err));
+@@ -464,7 +476,7 @@ function ocrTesseractText(imgPath, { psm = 6, whitelist = "" } = {}) {
+     const args = [path.resolve(imgPath), "stdout", "-l", "eng", "--psm", String(psm),
+       "-c", "preserve_interword_spaces=1"];
+     if (whitelist) args.push("-c", `tessedit_char_whitelist=${whitelist}`);
+-    execFile("tesseract", args, { maxBuffer: 8 * 1024 * 1024, timeout: 8000 }, (err, stdout) => {
++    execFile("tesseract", args, { env: OCR_NATIVE_ENV, maxBuffer: 8 * 1024 * 1024, timeout: 8000 }, (err, stdout) => {
+       if (err) return reject(new Error(`Mining Tesseract PSM ${psm} failed: ${err.message || err}`));
+       resolve(String(stdout || "").trim());
+     });
+@@ -544,7 +556,7 @@ async function prepareScanModeMask(inputPath, outputPath) {
+ function compareScanModeMask(candidatePath, templatePath) {
+   return new Promise((resolve) => {
+     execFile("magick", ["compare", "-metric", "RMSE", candidatePath, templatePath, "null:"],
+-      { timeout: 6000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
++      { env: OCR_NATIVE_ENV, timeout: 6000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+         // ImageMagick compare returns status 1 for a normal non-identical comparison.
+         const text = `${stderr || ""} ${stdout || ""}`;
+         const m = text.match(/\(([-+0-9.eE]+)\)/);
+@@ -597,6 +609,7 @@ async function rapidScanModeSearchRois(image, width, height) {
+     proposals.push({
+       name: `rapid-hint-${angle}-${proposals.length + 1}`,
+       hintedAngle: angle,
++      hintedText: String(row.text || "").trim(),
+       x: Math.max(0, Math.min(1 - roiW, cx / width - roiW / 2)),
+       y: Math.max(0, Math.min(1 - roiH, cy / height - roiH / 2)),
+       w: roiW,
+@@ -641,21 +654,43 @@ function scanModeTemplateConfident(candidate) {
+ 
+ async function readScanModeDegree(candidate) {
+   if (!candidate) return { text: "", angle: null, engine: "none" };
+-  const [rapidLines, tesseractText] = await Promise.all([
+-    ocrRapidLinesOptional(candidate.rawPath),
+-    ocrTesseractText(candidate.maskPath, { psm: 11, whitelist: "0123456789" }).catch(() => ""),
+-  ]);
++  const rapidLines = await ocrRapidLinesOptional(candidate.rawPath);
+   const rapidText = rapidLines.map((row) => row.text).join(" ").trim();
+   const rapidAngle = parseScanModeAngle(rapidText);
+-  const tesseractAngle = parseScanModeAngle(tesseractText);
+   if (rapidAngle) return { text: rapidText, angle: rapidAngle, engine: "rapidocr" };
++  // Tesseract is a fallback, not a second engine that always runs in parallel.
++  const tesseractText = await ocrTesseractText(candidate.maskPath, { psm: 11, whitelist: "0123456789" }).catch(() => "");
++  const tesseractAngle = parseScanModeAngle(tesseractText);
+   if (tesseractAngle) return { text: String(tesseractText || "").trim(), angle: tesseractAngle, engine: "tesseract" };
+   return { text: [rapidText, String(tesseractText || "").trim()].filter(Boolean).join(" | "), angle: null, engine: rapidText ? "rapidocr" : "tesseract" };
+ }
+ 
+ async function readMiningScanMode(image, width, height, tempPaths) {
+   const templates = await ensureScanModeTemplates();
+-  if (!templates.length) return { kind: "scan-mode", active: false, angle: null, confidence: 0, method: "templates-missing" };
++  // Alpha 13 referenced six template files that were never present in either source payload or
++  // release artifact. Rather than silently returning confidence=0 and then starting the expensive
++  // 15-second safety OCR, use one bounded RapidOCR pass over the central HUD. Only Star Citizen's
++  // valid cone angles with a strong OCR score can open the mining state machine.
++  if (!templates.length) {
++    const hinted = await rapidScanModeSearchRois(image, width, height);
++    const selected = hinted.find((row) => Number(row.score) >= 0.70) || null;
++    const confidence = selected
++      ? Math.max(0, Math.min(100, Math.round((Number(selected.score) <= 1 ? Number(selected.score) * 100 : Number(selected.score)))))
++      : 0;
++    return {
++      kind: "scan-mode",
++      active: !!selected,
++      angle: selected?.hintedAngle || null,
++      confidence,
++      ocrText: selected?.hintedText || "",
++      ocrEngine: "rapidocr",
++      method: selected ? "rapidocr-angle-gate" : "rapidocr-angle-not-found",
++      roi: selected || SCAN_MODE_RAPID_SEARCH_ROI,
++      roiName: selected?.name || SCAN_MODE_RAPID_SEARCH_ROI.name,
++      candidatesChecked: hinted.length,
++      searchHintCount: hinted.length,
++    };
++  }
+ 
+   const candidates = [];
+   const primary = await scoreScanModeCandidate(image, width, height, SCAN_MODE_PRIMARY_ROI, 0, templates);
+@@ -749,7 +784,9 @@ function parseSignatureComponentBoxes(verbose, imageWidth, imageHeight) {
+     boxes.push({ x, y, w, h, centerDistance });
+   }
+   boxes.sort((a, b) => a.centerDistance - b.centerDistance || b.w - a.w);
+-  return boxes.slice(0, 18);
++  // A latest-frame state machine does not benefit from OCRing eighteen candidates from a frame
++  // that is already several seconds old. Keep only the four best-centered rows.
++  return boxes.slice(0, 4);
+ }
+ 
+ async function localizedSignatureReads(thresholdPath, imageWidth, imageHeight) {
+@@ -785,11 +822,11 @@ async function localizedSignatureReads(thresholdPath, imageWidth, imageHeight) {
+         "-strip",
+         candidatePath,
+       ], { timeout: 8_000 });
+-      const lineSets = await Promise.all([
+-        ocrTesseractLines(candidatePath, { psm: 7, whitelist: "0123456789,." }).catch(() => []),
+-        ocrTesseractLines(candidatePath, { psm: 11, whitelist: "0123456789,." }).catch(() => []),
+-        ocrTesseractLines(candidatePath, { psm: 13, whitelist: "0123456789,." }).catch(() => []),
+-      ]);
++      const primary = await ocrTesseractLines(candidatePath, { psm: 7, whitelist: "0123456789,." }).catch(() => []);
++      const lineSets = [primary];
++      if (!primary.length) {
++        lineSets.push(await ocrTesseractLines(candidatePath, { psm: 11, whitelist: "0123456789,." }).catch(() => []));
++      }
+       const seen = new Set();
+       for (const row of lineSets.flat()) {
+         const text = String(row?.text || "").trim();
+@@ -820,16 +857,25 @@ async function readMiningAnalysis(image, width, height, tempPaths) {
+     preprocessHudImage(tempPaths.compositionRaw, tempPaths.composition),
+     preprocessHudImage(tempPaths.statsRaw, tempPaths.stats),
+   ]);
+-  const [panelTextTess, sparseText, compositionTextTess, statsText, panelRapid, compositionRapid] = await Promise.all([
+-    ocrTesseractText(tempPaths.panelRaw, { psm: 6 }),
+-    ocrTesseractText(tempPaths.panelRaw, { psm: 11 }),
+-    ocrTesseractText(tempPaths.compositionRaw, { psm: 6 }),
+-    ocrTesseractText(tempPaths.statsRaw, { psm: 6, whitelist: "0123456789OQDILSZB|!,.%SCU" }),
++  // RapidOCR is the primary reader. Alpha 13 always launched both engines over every panel,
++  // multiplying CPU use even when RapidOCR had already produced a confident read.
++  const [panelRapid, compositionRapid] = await Promise.all([
+     ocrRapidLinesOptional(tempPaths.panelRaw),
+     ocrRapidLinesOptional(tempPaths.compositionRaw),
+   ]);
+   const rapidPanelText = panelRapid.map((row) => row.text).filter(Boolean).join("\n");
+   const rapidCompositionText = compositionRapid.map((row) => row.text).filter(Boolean).join("\n");
++  const fallbackTasks = [
++    ocrTesseractText(tempPaths.statsRaw, { psm: 6, whitelist: "0123456789OQDILSZB|!,.%SCU" }),
++  ];
++  if (!rapidPanelText) fallbackTasks.push(ocrTesseractText(tempPaths.panelRaw, { psm: 6 }));
++  if (!rapidPanelText) fallbackTasks.push(ocrTesseractText(tempPaths.panelRaw, { psm: 11 }));
++  if (!rapidCompositionText) fallbackTasks.push(ocrTesseractText(tempPaths.compositionRaw, { psm: 6 }));
++  const fallback = await Promise.all(fallbackTasks);
++  const statsText = fallback.shift() || "";
++  const panelTextTess = rapidPanelText ? "" : (fallback.shift() || "");
++  const sparseText = rapidPanelText ? "" : (fallback.shift() || "");
++  const compositionTextTess = rapidCompositionText ? "" : (fallback.shift() || "");
+   const panelText = [rapidPanelText, panelTextTess].filter(Boolean).join("\n");
+   const compositionText = [rapidCompositionText, compositionTextTess].filter(Boolean).join("\n");
+   return { panelText, sparseText, compositionText, statsText, roi: { panel, composition, stats }, ocrEngine: rapidPanelText ? "rapidocr+tesseract" : "tesseract" };
+@@ -837,16 +883,23 @@ async function readMiningAnalysis(image, width, height, tempPaths) {
+ 
+ async function readMiningSignatures(image, width, height, tempPaths) {
+   const reads = [];
++  const plausibleNumeric = (lines) => (lines || []).some((row) => {
++    const digits = String(row?.text || "").replace(/\D/g, "");
++    return digits.length >= 4 && digits.length <= 9;
++  });
++  let signatureCandidateSeen = false;
+   for (const [name, roi] of Object.entries(MINING_SIGNATURE_ROIS)) {
++    if (name === "wide" && signatureCandidateSeen) break;
+     const crop = normalizedCrop(image, width, height, roi);
+     const rawPath = tempPaths[`${name}Raw`];
+     const grayPath = tempPaths[name];
+     fs.writeFileSync(rawPath, crop.img.toPNG());
+     const ocrPath = await preprocessHudImage(rawPath, grayPath);
+-    const [lines, rapidLines] = await Promise.all([
+-      ocrTesseractLines(ocrPath, { psm: 11 }),
+-      ocrRapidLinesOptional(rawPath),
+-    ]);
++    const rapidLines = await ocrRapidLinesOptional(rawPath);
++    const lines = plausibleNumeric(rapidLines)
++      ? []
++      : await ocrTesseractLines(ocrPath, { psm: 11 }).catch(() => []);
++    signatureCandidateSeen ||= plausibleNumeric(rapidLines) || plausibleNumeric(lines);
+     const cropSize = crop.img.getSize();
+     reads.push({
+       name,
+@@ -872,14 +925,15 @@ async function readMiningSignatures(image, width, height, tempPaths) {
+     // The focused crop gets one additional numeric-only pass. On the supplied diagnostic frame,
+     // ordinary PSM 11 skipped a clearly visible 15,600 badge, while thresholded PSM 6 returned
+     // "15.600". The server normalizes both comma and period grouping and corrects a fused pin icon.
+-    if (name === "focus") {
++    if (name === "focus" && !signatureCandidateSeen) {
+       const thresholdPath = tempPaths.focusThreshold;
+       const prepared = await preprocessSignatureThreshold(ocrPath, thresholdPath);
+       if (prepared) {
+-        const numeric = await ocrTesseractLines(prepared, {
+-          psm: 6,
+-          whitelist: "0123456789,.",
+-        });
++        const rapidNumeric = await ocrRapidLinesOptional(prepared);
++        const numeric = plausibleNumeric(rapidNumeric)
++          ? []
++          : await ocrTesseractLines(prepared, { psm: 6, whitelist: "0123456789,." }).catch(() => []);
++        signatureCandidateSeen ||= plausibleNumeric(rapidNumeric) || plausibleNumeric(numeric);
+         reads.push({
+           name: "focus-threshold",
+           sourceGroup: "focus",
+@@ -889,7 +943,6 @@ async function readMiningSignatures(image, width, height, tempPaths) {
+           lines: Array.isArray(numeric) ? numeric : (numeric.lines || []),
+           rect: { x: crop.x, y: crop.y, w: crop.w, h: crop.h },
+         });
+-        const rapidNumeric = await ocrRapidLinesOptional(prepared);
+         if (rapidNumeric.length) {
+           reads.push({
+             name: "focus-threshold-rapidocr",
+@@ -901,7 +954,10 @@ async function readMiningSignatures(image, width, height, tempPaths) {
+             rect: { x: crop.x, y: crop.y, w: crop.w, h: crop.h },
+           });
+         }
+-        const localized = await localizedSignatureReads(prepared, cropSize.width, cropSize.height);
++        const localized = signatureCandidateSeen
++          ? []
++          : await localizedSignatureReads(prepared, cropSize.width, cropSize.height);
++        signatureCandidateSeen ||= plausibleNumeric(localized);
+         reads.push({
+           name: "focus-components",
+           sourceGroup: "focus-components",
+@@ -927,7 +983,7 @@ function ocrTesseractLines(imgPath, { psm = 11, whitelist = "" } = {}) {
+     if (whitelist) args.push("-c", `tessedit_char_whitelist=${whitelist}`);
+     args.push("tsv");
+     execFile("tesseract", args,
+-      { maxBuffer: 16 * 1024 * 1024, timeout: 15000 }, (err, stdout) => {
++      { env: OCR_NATIVE_ENV, maxBuffer: 16 * 1024 * 1024, timeout: 15000 }, (err, stdout) => {
+         if (err) return reject(new Error(`Tesseract OCR failed: ${err.message || err}`));
+         try {
+           const groups = new Map();
+@@ -1504,6 +1560,7 @@ function startFabCapture({ port, configDir, onStatus }) {
+               lastScanModeFingerprint = scanFingerprint;
+               console.log(`[mining-scan-mode] ${scanModeRead.active ? `active ${scanModeRead.angle || "?"}°` : "inactive"}` +
+                 ` confidence=${scanModeRead.confidence || 0}` +
++                `${scanModeRead.method ? ` method=${scanModeRead.method}` : ""}` +
+                 `${scanModeRead.ocrText ? ` ocr=${JSON.stringify(scanModeRead.ocrText)}` : ""}`);
+             }
+           } catch (e) {
+@@ -1514,12 +1571,12 @@ function startFabCapture({ port, configDir, onStatus }) {
+           skippedStages.push("scan-mode-unchanged");
+         }
+         if (scanModeRead.active) lastMiningActiveAt = Date.now();
+-        const miningLikelyActive = scanModeRead.active || Date.now() - lastMiningActiveAt < 8000;
++        const miningLikelyActive = scanModeRead.active || Date.now() - lastMiningActiveAt < 6000;
+ 
+         const analysisVisual = visualFingerprint(shot, cap.width, cap.height, { x: 0.615, y: 0.375, w: 0.20, h: 0.31 });
+-        if (shouldRunVisualStage("mining-analysis", analysisVisual, {
++        if (miningLikelyActive && shouldRunVisualStage("mining-analysis", analysisVisual, {
+           threshold: miningLikelyActive ? 0.04 : 0.12,
+-          maxAgeMs: miningLikelyActive ? 4000 : 15_000,
++          maxAgeMs: 5000,
+         })) {
+           try {
+             const miningOcr = await timeStage("mining-analysis", () => readMiningAnalysis(shot, cap.width, cap.height, miningTemp));
+@@ -1547,16 +1604,16 @@ function startFabCapture({ port, configDir, onStatus }) {
+           }
+         } else {
+           analysisRead = cachedAnalysisRead;
+-          skippedStages.push("mining-analysis-unchanged");
++          skippedStages.push(miningLikelyActive ? "mining-analysis-unchanged" : "mining-analysis-inactive");
+         }
+ 
+-        // Signature OCR is the most expensive path. Run it immediately when its play-field region
+-        // changes, frequently while Scan Mode is active, and only as a slow safety probe otherwise.
+-        if (analysisRead.kind !== "mining-analysis" && read.kind !== "mineable") {
++        // Signature OCR is the most expensive path. It is forbidden until the bounded Scan Mode
++        // gate succeeds; Alpha 13's 15-second safety probe was the main source of sustained load.
++        if (miningLikelyActive && analysisRead.kind !== "mining-analysis" && read.kind !== "mineable") {
+           const signatureVisual = visualFingerprint(shot, cap.width, cap.height, { x: 0.17, y: 0.23, w: 0.66, h: 0.47 });
+           if (shouldRunVisualStage("mining-signature", signatureVisual, {
+-            threshold: miningLikelyActive ? 0.04 : 0.14,
+-            maxAgeMs: miningLikelyActive ? 3500 : 15_000,
++            threshold: 0.05,
++            maxAgeMs: 5000,
+           })) {
+             try {
+               signatureOcr = await timeStage("mining-signature", () => readMiningSignatures(shot, cap.width, cap.height, miningTemp));
+@@ -1591,6 +1648,10 @@ function startFabCapture({ port, configDir, onStatus }) {
+             signatureOcr = cachedSignatureOcr;
+             skippedStages.push("mining-signature-unchanged");
+           }
++        } else if (!miningLikelyActive) {
++          signatureRead = { kind: "none" };
++          signatureOcr = null;
++          skippedStages.push("mining-signature-inactive");
+         }
+       }
+       // Cadence. Scanning ore is a live feedback loop: you shoot a rock and want to hear what it
+diff --git a/electron/rapidocr-client.cjs b/electron/rapidocr-client.cjs
+index 1899eca..7ff1265 100644
+--- a/electron/rapidocr-client.cjs
++++ b/electron/rapidocr-client.cjs
+@@ -11,6 +11,7 @@ function createRapidOcrClient({
+   workerPath = path.join(__dirname, "rapidocr-worker.cjs"),
+   nodePath = process.env.SC_TRACKER_NODE_BIN || "node",
+   timeoutMs = Number(process.env.SC_TRACKER_RAPIDOCR_TIMEOUT_MS) || 15_000,
++  maxQueue = Math.max(1, Number(process.env.SC_TRACKER_RAPIDOCR_MAX_QUEUE) || 2),
+   logger = console,
+   inheritStdio = true,
+ } = {}) {
+@@ -52,6 +53,10 @@ function createRapidOcrClient({
+       execPath: nodePath,
+       env: {
+         ...process.env,
++        SC_TRACKER_OCR_THREADS: process.env.SC_TRACKER_OCR_THREADS || "2",
++        OMP_THREAD_LIMIT: process.env.OMP_THREAD_LIMIT || "1",
++        OMP_NUM_THREADS: process.env.OMP_NUM_THREADS || "1",
++        MAGICK_THREAD_LIMIT: process.env.MAGICK_THREAD_LIMIT || "1",
+         VIPS_CONCURRENCY: process.env.VIPS_CONCURRENCY || "1",
+         MALLOC_ARENA_MAX: process.env.MALLOC_ARENA_MAX || "2",
+       },
+@@ -126,6 +131,9 @@ function createRapidOcrClient({
+   }
+ 
+   function detect(imgPath) {
++    if (queued >= maxQueue) {
++      return Promise.reject(new Error(`RapidOCR latest-frame queue is full (${queued}/${maxQueue})`));
++    }
+     queued += 1;
+     const run = tail.then(() => requestDetect(imgPath), () => requestDetect(imgPath));
+     tail = run.catch(() => {}).finally(() => { queued = Math.max(0, queued - 1); });
+diff --git a/electron/rapidocr-worker.cjs b/electron/rapidocr-worker.cjs
+index 3a58c79..989fb4a 100644
+--- a/electron/rapidocr-worker.cjs
++++ b/electron/rapidocr-worker.cjs
+@@ -4,11 +4,23 @@
+ // assertion can never abort the Electron overlay. The parent serializes requests,
+ // applies a hard timeout, and falls back to Tesseract if this worker exits.
+ 
++const os = require("node:os");
++
++const OCR_THREADS = Math.max(1, Math.min(2, Number(process.env.SC_TRACKER_OCR_THREADS) || 2));
++try { os.setPriority(0, 10); } catch { /* best effort: normal priority is still functional */ }
++
+ let ocrPromise = null;
+ 
+ function getOcr() {
+   if (!ocrPromise) {
+-    ocrPromise = import("@gutenye/ocr-node").then((module) => module.default.create());
++    ocrPromise = import("@gutenye/ocr-node").then((module) => module.default.create({
++      onnxOptions: {
++        intraOpNumThreads: OCR_THREADS,
++        interOpNumThreads: 1,
++        executionMode: "sequential",
++        graphOptimizationLevel: "all",
++      },
++    }));
+   }
+   return ocrPromise;
+ }
+diff --git a/overlay/changelog.json b/overlay/changelog.json
+index f209800..21d6ea9 100644
+--- a/overlay/changelog.json
++++ b/overlay/changelog.json
+@@ -1,4 +1,15 @@
+ {
++  "0.1.36-r31-alpha.14": {
++    "date": "2026-08-02T06:24:14Z",
++    "notes": [
++      "Settings profiles now control the screen reader that actually runs. Alpha 13 saved Settings and OCR choices to two different files; Alpha 14 moves both onto the same canonical config, backs up the legacy file, and verifies the applied profile before saying Saved.",
++      "Screen reading is CPU-budgeted. RapidOCR uses at most two ONNX threads at lower priority, while Tesseract and ImageMagick use one thread each instead of multiplying their thread pools across the entire processor.",
++      "Mining OCR stays dormant until Scan Mode is detected. The missing Alpha 13 image-template dependency and its 15-second inactive safety scan are gone; a single bounded cone-angle read opens the Mining Analysis and Signature stages.",
++      "RapidOCR is now the primary reader and fallback OCR runs only when the first read is insufficient. Localized signature fallback is capped at four candidates instead of as many as eighteen candidates times three modes.",
++      "Linux now prefers hardware OpenGL, which reduced Electron rendering CPU by about 60% in the Alpha 13 benchmark. Software llvmpipe remains available as Safe Mode with SC_TRACKER_RENDER_MODE=software.",
++      "The proven F-key interaction ownership behavior from Alpha 12 and Alpha 13 is unchanged."
++    ]
++  },
+   "0.1.36-r31-alpha.13": {
+     "date": "2026-08-02T00:00:00Z",
+     "notes": [
+diff --git a/overlay/config.html b/overlay/config.html
+index 68ad983..adf0e07 100644
+--- a/overlay/config.html
++++ b/overlay/config.html
+@@ -61,6 +61,7 @@
+   a:hover { text-decoration: underline; }
+   .saved { color: var(--amber); font-size: 13px; margin-left: 10px; opacity: 0; transition: opacity .2s; }
+   .saved.show { opacity: 1; }
++  .save-error { color:#ff7b7b; font-size:13px; margin-left:10px; display:none; }
+   .hkbtn { min-width: 170px; }
+   .hkbtn.capturing { border-color: var(--amber); color: var(--amber); background: rgba(255,178,49,.12); }
+   .ocr-profiles { display:flex; gap:8px; margin:10px 0 8px; }
+@@ -513,6 +514,7 @@
+   <div style="margin-top:20px; display:flex; align-items:center;">
+     <button class="amber" id="saveBtn" onclick="save()">Save</button>
+     <span class="saved" id="saved">Saved ✓</span>
++    <span class="save-error" id="saveError"></span>
+   </div>
+ 
+   <div class="hint" style="margin-top:18px; opacity:0.7">
+@@ -711,7 +713,32 @@
+       body.syncEnabled = true;
+       document.getElementById("syncEnabled").checked = true;
+     }
+-    await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
++    const errorEl = document.getElementById("saveError");
++    if (errorEl) { errorEl.style.display = "none"; errorEl.textContent = ""; }
++    let savedResponse;
++    try {
++      const response = await fetch("/api/config", {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify(body),
++      });
++      savedResponse = await response.json();
++      const applied = savedResponse?.screenReading || {};
++      const verified = response.ok && savedResponse?.ok === true &&
++        applied.fabCapture === body.fabCapture &&
++        applied.missionOcr === body.missionOcr &&
++        applied.miningAssistant === body.miningAssistant &&
++        applied.profile === body.screenReaderProfile;
++      if (!verified) throw new Error(savedResponse?.detail || savedResponse?.error || "saved values did not verify");
++    } catch (error) {
++      const b = document.getElementById("saveBtn");
++      if (b) { b.textContent = "Save failed"; setTimeout(() => { b.textContent = "Save"; }, 2400); }
++      if (errorEl) {
++        errorEl.textContent = "Settings were not applied: " + (error?.message || error);
++        errorEl.style.display = "inline";
++      }
++      return;
++    }
+     document.getElementById("syncToken").value = "";
+     // Unmissable confirmation: flip the Save button to a green "Saved ✓" for ~1.6s (+ keep the toast).
+     const b = document.getElementById("saveBtn");
+@@ -1064,10 +1091,11 @@
+       add("  watching", d.gameLog.watching);
+       add("Dataset", d.data.patch);
+       add("Data folder", d.data.userDir + (d.data.userDirWritable ? "" : "  NOT WRITABLE — nothing can save"));
++      add("Config file", d.data.configPath || "(not reported)");
+       add("Sync", d.sync.enabled ? "on, token " + d.sync.token : "off");
+       add("Screen reading", "profile=" + d.screenReading.profile + " fabricator=" + d.screenReading.fabCapture + " mission=" + d.screenReading.missionOcr +
+         " mining=" + d.screenReading.miningAssistant + " shareLogs=" + d.screenReading.shareLogs);
+-      add("Display", "hwAccel=" + d.display.hwAccel + " amdCompat=" + d.display.amdCompat + " skin=" + d.display.theme);
++      add("Display", "renderer=" + (d.display.rendererMode || "default") + " hwAccel=" + d.display.hwAccel + " amdCompat=" + d.display.amdCompat + " skin=" + d.display.theme);
+       add("Twitch", "channel=" + d.twitch.chatChannel + " signed in as " + d.twitch.signedInAs);
+     }
+     // Elevation matters because in-game hotkeys silently do nothing without it (UIPI over an
+diff --git a/src/overlay-server.ts b/src/overlay-server.ts
+index f820c03..17bcd2c 100644
+--- a/src/overlay-server.ts
++++ b/src/overlay-server.ts
+@@ -1,7 +1,7 @@
+ import { createServer, type ServerResponse } from "node:http";
+ import { networkInterfaces } from "node:os";
+ import { writeFile } from "node:fs/promises";
+-import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
++import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync, rmSync, writeFileSync } from "node:fs";
+ import { extname, join, dirname } from "node:path";
+ 
+ import { resolveLoadout, type Build } from "./erkul.js";
+@@ -60,8 +60,34 @@ const PORT = Number(process.env.PORT) || 8778;
+ // The installed app lives under Program Files (read-only); writing config.json
+ // there threw EPERM and crashed the whole server. This matches where the mission
+ // tracker already keeps collected.json.
+-const userDir = join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");
++const legacyUserDir = join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");
++const userDir = process.env.SC_TRACKER_CONFIG_DIR || legacyUserDir;
+ const configPath = join(userDir, "config.json");
++const legacyConfigPath = join(legacyUserDir, "config.json");
++const alpha14MigrationMarker = join(userDir, ".alpha14-config-path-migrated");
++
++// Alpha 13 accidentally let the settings service write $HOME/sc-blueprint-tracker/config.json
++// while Electron and the OCR loop read $XDG_CONFIG_HOME/sc-blueprint-tracker/config.json. On the
++// first Alpha 14 start, merge the sidecar-owned legacy values into the canonical file exactly
++// once. The old file is kept untouched and a second backup is placed beside the canonical config.
++function migrateAlpha13ConfigPath(): void {
++  if (legacyConfigPath === configPath || existsSync(alpha14MigrationMarker) || !existsSync(legacyConfigPath)) return;
++  try {
++    const legacy = JSON.parse(readFileSync(legacyConfigPath, "utf8"));
++    let canonical: Record<string, unknown> = {};
++    try {
++      if (existsSync(configPath)) canonical = JSON.parse(readFileSync(configPath, "utf8"));
++    } catch { /* a corrupt canonical file is replaced by the readable Alpha 13 settings */ }
++    mkdirSync(userDir, { recursive: true });
++    writeFileSync(join(userDir, "config.alpha13-legacy.bak.json"), JSON.stringify(legacy, null, 2));
++    writeFileSync(configPath, JSON.stringify({ ...canonical, ...legacy }, null, 2));
++    writeFileSync(alpha14MigrationMarker, `${new Date().toISOString()}\nlegacy=${legacyConfigPath}\ncanonical=${configPath}\n`);
++    console.log(`[config] migrated Alpha 13 settings from ${legacyConfigPath} to ${configPath}`);
++  } catch (error) {
++    console.error("[config] Alpha 13 path migration failed; legacy file was left untouched:", String(error));
++  }
++}
++migrateAlpha13ConfigPath();
+ // Read-only default that ships with the app; only used to seed a first run.
+ const seedConfigPath = join(overlayDir, "config.json");
+ // Writable copy of the datasets: bundled pools are seeded in, and any pools the
+@@ -325,12 +351,17 @@ function detectGameLogs(): { path: string; channel: string; mtimeMs: number }[]
+ 
+ // Save to the writable user dir; a write failure must never crash the server
+ // (an EPERM writing under Program Files is exactly what took it down before).
+-const saveConfig = async (): Promise<void> => {
++let lastConfigSaveError = "";
++const saveConfig = async (): Promise<boolean> => {
+   try {
+     mkdirSync(userDir, { recursive: true });
+     await writeFile(configPath, JSON.stringify(config, null, 2));
++    lastConfigSaveError = "";
++    return true;
+   } catch (e) {
++    lastConfigSaveError = String(e);
+     console.error("[config] save failed:", String(e));
++    return false;
+   }
+ };
+ 
+@@ -1304,11 +1335,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+     // URL that works from a phone/second device on the same network (localhost only works on
+     // this PC). null if we can't find one (no LAN / VPN-only).
+     const lanHost = (() => {
+-      for (const iface of Object.values(networkInterfaces())) {
+-        for (const a of iface ?? []) {
+-          if (a.family === "IPv4" && !a.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a.address)) return a.address;
++      try {
++        for (const iface of Object.values(networkInterfaces())) {
++          for (const a of iface ?? []) {
++            if (a.family === "IPv4" && !a.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a.address)) return a.address;
++          }
+         }
+-      }
++      } catch { /* network enumeration can be denied in a sandbox; Settings must still load */ }
+       return null;
+     })();
+     const urls = await Promise.all(
+@@ -1331,7 +1364,18 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+     const { syncToken, twitchUserToken, twitchRefreshToken: _refresh, ...rest } = config;
+     const syncTokenPreview = syncToken ? `${syncToken.slice(0, 9)}…${syncToken.slice(-4)}` : "";
+     res.writeHead(200, { "Content-Type": "application/json" });
+-    res.end(JSON.stringify({ ...rest, premium: entitled(), hasSyncToken: !!syncToken, syncTokenPreview, hasTwitchLogin: !!twitchUserToken, resolved: urls, lanHost, port: PORT }));
++    res.end(JSON.stringify({
++      ...rest,
++      premium: entitled(),
++      hasSyncToken: !!syncToken,
++      syncTokenPreview,
++      hasTwitchLogin: !!twitchUserToken,
++      resolved: urls,
++      lanHost,
++      port: PORT,
++      configPath,
++      runtimeRendererMode: process.env.SC_TRACKER_RENDER_MODE || "default",
++    }));
+     return;
+   }
+ 
+@@ -1495,7 +1539,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+       config.overlayTwist = Math.max(-35, Math.min(35, Math.round(body.overlayTwist)));
+     if (typeof body.overlayScale === "number" && isFinite(body.overlayScale))
+       config.overlayScale = Math.max(50, Math.min(200, Math.round(body.overlayScale)));
+-    await saveConfig();
++    const configSaved = await saveConfig();
++    if (!configSaved) {
++      res.writeHead(500, { "Content-Type": "application/json" });
++      res.end(JSON.stringify({ ok: false, error: "config_save_failed", detail: lastConfigSaveError, configPath }));
++      return;
++    }
+     // Push the new prefs to every open overlay (incl. OBS browser-source) live.
+     broadcastMissions();
+     // The Mining Assistant window shares the same appearance (theme + skew + scale).
+@@ -1511,7 +1560,16 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+     // Push prefs (e.g. the time-format toggle) to any open overlay immediately.
+     broadcastMissions();
+     res.writeHead(200, { "Content-Type": "application/json" });
+-    res.end(JSON.stringify({ ok: true }));
++    res.end(JSON.stringify({
++      ok: true,
++      configPath,
++      screenReading: {
++        profile: config.screenReaderProfile,
++        fabCapture: config.fabCapture === true,
++        missionOcr: config.missionOcr === true,
++        miningAssistant: config.miningAssistant === true,
++      },
++    }));
+     return;
+   }
+ 
+@@ -1703,7 +1761,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+     res.end(JSON.stringify({
+       app: { version: APP_VERSION || "unknown", sidecarPort: PORT, uptimeMinutes: Math.round(process.uptime() / 60) },
+       gameLog: { path: logPath || "(not set)", ...logStat, watching: watcher ? "yes" : "no" },
+-      data: { patch: tracker.view().patch ?? "(none loaded)", userDir, userDirWritable },
++      data: { patch: tracker.view().patch ?? "(none loaded)", userDir, configPath, userDirWritable },
+       sync: { enabled: config.syncEnabled === true, token: syncToken },
+       screenReading: {
+         profile: config.screenReaderProfile,
+@@ -1712,7 +1770,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+         miningAssistant: config.miningAssistant === true,
+         shareLogs: config.shareLogs === true,
+       },
+-      display: { hwAccel: config.hwAccel === true, amdCompat: config.amdCompat === true, theme: config.theme || "mobiglas" },
++      display: {
++        hwAccel: config.hwAccel === true,
++        amdCompat: config.amdCompat === true,
++        rendererMode: process.env.SC_TRACKER_RENDER_MODE || "default",
++        theme: config.theme || "mobiglas",
++      },
+       twitch: { chatChannel: config.twitchChannel || "(none)", signedInAs: config.twitchUserLogin || "(not signed in)" },
+     }));
+     return;
+diff --git a/test/alpha14-config-e2e.cjs b/test/alpha14-config-e2e.cjs
+new file mode 100644
+index 0000000..7b3cf4f
+--- /dev/null
++++ b/test/alpha14-config-e2e.cjs
+@@ -0,0 +1,101 @@
++"use strict";
++
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const os = require("node:os");
++const path = require("node:path");
++const { spawn } = require("node:child_process");
++
++const root = path.resolve(process.argv[2] || path.join(__dirname, ".."));
++const serverPath = [
++  path.join(root, "build/server/sc-overlay-server.mjs"),
++  path.join(root, "app/server/sc-overlay-server.mjs"),
++].find((candidate) => fs.existsSync(candidate));
++assert.ok(serverPath, "built sidecar is required for the Alpha 14 config end-to-end test");
++
++const temp = fs.mkdtempSync(path.join(os.tmpdir(), "archverse-alpha14-config-"));
++const home = path.join(temp, "home");
++const canonicalDir = path.join(temp, "xdg", "sc-blueprint-tracker");
++const legacyDir = path.join(home, "sc-blueprint-tracker");
++fs.mkdirSync(canonicalDir, { recursive: true });
++fs.mkdirSync(legacyDir, { recursive: true });
++
++// Reproduce the Alpha 13 split: OCR reads canonical/all-on while Settings writes legacy/mining.
++fs.writeFileSync(path.join(canonicalDir, "config.json"), JSON.stringify({
++  urls: [], missionOcr: true, miningAssistant: true, fabCapture: true,
++  screenReaderProfile: "custom", syncEnabled: false,
++}));
++fs.writeFileSync(path.join(legacyDir, "config.json"), JSON.stringify({
++  urls: [], missionOcr: false, miningAssistant: true, fabCapture: false,
++  screenReaderProfile: "mining", syncEnabled: false,
++}));
++
++const port = 19000 + (process.pid % 1000);
++const env = {
++  ...process.env,
++  HOME: home,
++  PORT: String(port),
++  APP_VERSION: "0.1.36-r31-alpha.14-test",
++  SC_TRACKER_CONFIG_DIR: canonicalDir,
++};
++delete env.APPDATA;
++const logs = [];
++const child = spawn(process.execPath, [serverPath], { cwd: path.dirname(serverPath), env, stdio: ["ignore", "pipe", "pipe"] });
++child.stdout.on("data", (chunk) => logs.push(String(chunk)));
++child.stderr.on("data", (chunk) => logs.push(String(chunk)));
++
++const base = `http://127.0.0.1:${port}`;
++async function waitForServer() {
++  const deadline = Date.now() + 15_000;
++  while (Date.now() < deadline) {
++    if (child.exitCode !== null) throw new Error(`sidecar exited early (${child.exitCode})\n${logs.join("")}`);
++    try {
++      const response = await fetch(`${base}/api/config`);
++      if (response.ok) return response.json();
++    } catch { /* startup */ }
++    await new Promise((resolve) => setTimeout(resolve, 100));
++  }
++  throw new Error(`sidecar did not start\n${logs.join("")}`);
++}
++
++(async () => {
++  try {
++    const migrated = await waitForServer();
++    assert.equal(migrated.configPath, path.join(canonicalDir, "config.json"));
++    assert.equal(migrated.screenReaderProfile, "mining");
++    assert.equal(migrated.missionOcr, false);
++    assert.equal(migrated.miningAssistant, true);
++    assert.equal(migrated.fabCapture, false);
++    assert.ok(fs.existsSync(path.join(canonicalDir, "config.alpha13-legacy.bak.json")));
++
++    const response = await fetch(`${base}/api/config`, {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        screenReaderProfile: "lightweight",
++        missionOcr: false,
++        miningAssistant: false,
++        fabCapture: false,
++      }),
++    });
++    const applied = await response.json();
++    assert.equal(response.status, 200);
++    assert.deepEqual(applied.screenReading, {
++      profile: "lightweight",
++      fabCapture: false,
++      missionOcr: false,
++      miningAssistant: false,
++    });
++
++    const persisted = JSON.parse(fs.readFileSync(path.join(canonicalDir, "config.json"), "utf8"));
++    assert.equal(persisted.screenReaderProfile, "lightweight");
++    assert.equal(persisted.miningAssistant, false);
++    console.log("r31 alpha 14 config path end-to-end test: passed");
++  } finally {
++    child.kill("SIGTERM");
++    fs.rmSync(temp, { recursive: true, force: true });
++  }
++})().catch((error) => {
++  console.error(error?.stack || error);
++  process.exitCode = 1;
++});
+diff --git a/test/r31-alpha14-resource-budget.test.cjs b/test/r31-alpha14-resource-budget.test.cjs
+new file mode 100644
+index 0000000..1a48757
+--- /dev/null
++++ b/test/r31-alpha14-resource-budget.test.cjs
+@@ -0,0 +1,54 @@
++"use strict";
++
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const path = require("node:path");
++
++const root = process.argv[2] || path.resolve(__dirname, "..");
++const sourceLayout = fs.existsSync(path.join(root, "electron/capture.cjs"));
++const read = (sourceFile, packagedFile) => fs.readFileSync(path.join(root, sourceLayout ? sourceFile : packagedFile), "utf8");
++const capture = read("electron/capture.cjs", "app/electron/capture.cjs");
++const rapidClient = read("electron/rapidocr-client.cjs", "app/electron/rapidocr-client.cjs");
++const rapidWorker = read("electron/rapidocr-worker.cjs", "app/electron/rapidocr-worker.cjs");
++const main = read("electron/main.cjs", "app/electron/main.cjs");
++const configPage = read("overlay/config.html", "app/server/overlay/config.html");
++const server = read("src/overlay-server.ts", "app/server/sc-overlay-server.mjs");
++
++// Settings, sidecar, Electron, and the capture loop must share one physical config path.
++assert.match(server, /const userDir = process\.env\.SC_TRACKER_CONFIG_DIR \|\| legacyUserDir/);
++assert.match(server, /migrateAlpha13ConfigPath\(\)/);
++assert.match(server, /config\.alpha13-legacy\.bak\.json/);
++assert.match(server, /config_save_failed/);
++assert.match(server, /configPath,[\s\S]*screenReading:/);
++assert.match(configPage, /saved values did not verify/);
++assert.match(configPage, /applied\.miningAssistant === body\.miningAssistant/);
++assert.match(configPage, /add\("Config file", d\.data\.configPath/);
++
++// Native libraries are bounded independently so nested thread pools cannot consume the host.
++assert.match(capture, /OMP_THREAD_LIMIT: process\.env\.OMP_THREAD_LIMIT \|\| "1"/);
++assert.match(capture, /MAGICK_THREAD_LIMIT: process\.env\.MAGICK_THREAD_LIMIT \|\| "1"/);
++assert.match(rapidClient, /SC_TRACKER_OCR_THREADS: process\.env\.SC_TRACKER_OCR_THREADS \|\| "2"/);
++assert.match(rapidClient, /RapidOCR latest-frame queue is full/);
++assert.match(rapidWorker, /intraOpNumThreads: OCR_THREADS/);
++assert.match(rapidWorker, /interOpNumThreads: 1/);
++assert.match(rapidWorker, /executionMode: "sequential"/);
++assert.match(rapidWorker, /setPriority\(0, 10\)/);
++
++// The missing Alpha 13 template assets no longer force an always-inactive detector. One bounded
++// angle read opens the state machine; analysis/signature work is forbidden while it is dormant.
++assert.match(capture, /rapidocr-angle-gate/);
++assert.match(capture, /selected = hinted\.find\(\(row\) => Number\(row\.score\) >= 0\.70\)/);
++assert.match(capture, /miningLikelyActive && shouldRunVisualStage\("mining-analysis"/);
++assert.match(capture, /if \(miningLikelyActive && analysisRead\.kind !== "mining-analysis"/);
++assert.match(capture, /mining-signature-inactive/);
++assert.doesNotMatch(capture, /slow safety probe otherwise/);
++assert.doesNotMatch(capture, /maxAgeMs: miningLikelyActive \? 3500 : 15_000/);
++assert.match(capture, /return boxes\.slice\(0, 4\)/);
++assert.doesNotMatch(capture, /psm: 13, whitelist: "0123456789,\."/);
++
++// Preserve the interaction ownership contract proven in Alpha 12 and retained in Alpha 13.
++assert.match(main, /overlayInteractionLatched = true/);
++assert.match(main, /coordinate misses never/);
++assert.doesNotMatch(main, /pointer left classified widget/);
++
++console.log("r31 alpha 14 config-path, OCR-budget, and interaction contract test: passed");

@@ -4,12 +4,12 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-TMP_ROOT="${RUNNER_TEMP:-/tmp}/r31-alpha13-build"
+TMP_ROOT="${RUNNER_TEMP:-/tmp}/r31-alpha14-build"
 LINUX_DIR="$TMP_ROOT/linux"
 CORE_DIR="$TMP_ROOT/core"
 BASE_DIR="$TMP_ROOT/base"
 CONFLICT_DIR="$TMP_ROOT/conflicts"
-OUT="$TMP_ROOT/ArchVerse-Overlay-0.1.36-r31-alpha.13"
+OUT="$TMP_ROOT/ArchVerse-Overlay-0.1.36-r31-alpha.14"
 DIST="$ROOT/dist"
 BASE=5b70715f0958f01ab5d0b79124760c016c9410cd
 
@@ -33,14 +33,14 @@ def decode_parts(pattern: str, output: str) -> None:
     Path(output).write_bytes(decoded)
     print(f"Decoded {len(parts)} parts from {pattern}: {len(decoded)} bytes")
 
-decode_parts("linux-port/payload/part-*", "/tmp/r31-alpha13-linux.tar.gz")
-decode_parts("linux-port/core/part-*", "/tmp/r31-alpha13-core.tar.gz")
+decode_parts("linux-port/payload/part-*", "/tmp/r31-alpha14-linux.tar.gz")
+decode_parts("linux-port/core/part-*", "/tmp/r31-alpha14-core.tar.gz")
 PY
 
-gzip -t /tmp/r31-alpha13-linux.tar.gz
-gzip -t /tmp/r31-alpha13-core.tar.gz
-tar --no-same-owner -xzf /tmp/r31-alpha13-linux.tar.gz -C "$LINUX_DIR"
-tar --no-same-owner -xzf /tmp/r31-alpha13-core.tar.gz -C "$CORE_DIR"
+gzip -t /tmp/r31-alpha14-linux.tar.gz
+gzip -t /tmp/r31-alpha14-core.tar.gz
+tar --no-same-owner -xzf /tmp/r31-alpha14-linux.tar.gz -C "$LINUX_DIR"
+tar --no-same-owner -xzf /tmp/r31-alpha14-core.tar.gz -C "$CORE_DIR"
 test -s "$LINUX_DIR/electron/window-manager.cjs"
 test -s "$LINUX_DIR/electron/linux/star-citizen-session.cjs"
 test -s "$CORE_DIR/electron/main.cjs"
@@ -101,7 +101,8 @@ for patch in \
   linux-port/r31-alpha10-verified-handoff.patch \
   linux-port/r31-alpha11-idle-pointer-pin.patch \
   linux-port/r31-alpha12-explicit-interaction-ownership.patch \
-  linux-port/r31-alpha13-efficiency.patch; do
+  linux-port/r31-alpha13-efficiency.patch \
+  linux-port/r31-alpha14-resource-budget.patch; do
   git apply --recount --check "$patch"
   git apply --recount "$patch"
 done
@@ -111,7 +112,7 @@ from pathlib import Path
 import json
 pkg = Path("package.json")
 data = json.loads(pkg.read_text())
-data["version"] = "0.1.36-r31-alpha.13"
+data["version"] = "0.1.36-r31-alpha.14"
 data["productName"] = "ArchVerse Overlay"
 pkg.write_text(json.dumps(data, indent=2) + "\n")
 PY
@@ -133,6 +134,7 @@ NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$TMP_ROOT/npm-cache}" npm ci --ignore-scri
 npm run typecheck
 node --import tsx --test src/*.test.ts
 npm run build:server
+node test/alpha14-config-e2e.cjs "$ROOT"
 
 mkdir -p "$OUT/app" "$OUT/bin" "$OUT/docs"
 cp -a electron "$OUT/app/"
@@ -146,7 +148,7 @@ const out = process.argv[2];
 const src = require("./package.json");
 fs.writeFileSync(out, JSON.stringify({
   name: "archverse-overlay",
-  version: "0.1.36-r31-alpha.13",
+  version: "0.1.36-r31-alpha.14",
   description: "Community Linux port of SC Overlay",
   main: "electron/main.cjs",
   type: "module",
@@ -192,14 +194,15 @@ cp LINUX-PORT-PLAN.md "$OUT/docs/"
 cp docs/R31-INPUT-DESIGN.md "$OUT/docs/"
 mkdir -p "$OUT/tests"
 cp test/r31-alpha*.test.cjs "$OUT/tests/"
+cp test/alpha14-config-e2e.cjs "$OUT/tests/"
 
-python3 - "$OUT/install-cachyos.sh" "$OUT/doctor.sh" <<'PY'
+python3 - "$OUT/install-cachyos.sh" "$OUT/doctor.sh" "$OUT/bin/sc-blueprint-tracker" <<'PY'
 from pathlib import Path
 import sys
 
 installer = Path(sys.argv[1])
 text = installer.read_text()
-text = text.replace("0.1.33-r30.2-rapidocr-worker-isolation", "0.1.36-r31-alpha.13")
+text = text.replace("0.1.33-r30.2-rapidocr-worker-isolation", "0.1.36-r31-alpha.14")
 old_defaults = """data.holdToInteract = true;
 data.missionOcr = true;
 data.miningAssistant = true;"""
@@ -234,19 +237,69 @@ text = text.replace(
     "  F              = enter interaction while the pointer is over a widget\n"
     "  Shift+F6       = move/arrange all visible widgets",
 )
-text = text.replace("archverse-overlay-r30.2.log", "archverse-overlay-r31-alpha13.log")
-text = text.replace("r30.2", "r31 alpha 13")
+text = text.replace("archverse-overlay-r30.2.log", "archverse-overlay-r31-alpha14.log")
+text = text.replace("r30.2", "r31 alpha 14")
 installer.write_text(text)
 
 doctor = Path(sys.argv[2])
 doctor.write_text(doctor.read_text().replace(
-    "0.1.33-r30 diagnostics", "0.1.36-r31 alpha 13 diagnostics"))
+    "0.1.33-r30 diagnostics", "0.1.36-r31 alpha 14 diagnostics"))
+
+launcher = Path(sys.argv[3])
+launcher_text = launcher.read_text()
+old_mode = 'RENDER_MODE="${SC_TRACKER_RENDER_MODE:-software}"'
+if old_mode not in launcher_text:
+    raise SystemExit("launcher renderer default was not found")
+launcher_text = launcher_text.replace(
+    old_mode,
+    'AUTO_RENDER_MODE=0\n'
+    'if [[ -z "${SC_TRACKER_RENDER_MODE:-}" ]]; then AUTO_RENDER_MODE=1; fi\n'
+    'RENDER_MODE="${SC_TRACKER_RENDER_MODE:-opengl}"',
+    1,
+)
+launcher_text = launcher_text.replace(
+    'export VIPS_CONCURRENCY="${VIPS_CONCURRENCY:-1}"\nexport MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"',
+    'export VIPS_CONCURRENCY="${VIPS_CONCURRENCY:-1}"\n'
+    'export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"\n'
+    'export SC_TRACKER_OCR_THREADS="${SC_TRACKER_OCR_THREADS:-2}"\n'
+    'export SC_TRACKER_RAPIDOCR_MAX_QUEUE="${SC_TRACKER_RAPIDOCR_MAX_QUEUE:-2}"\n'
+    'export OMP_THREAD_LIMIT="${OMP_THREAD_LIMIT:-1}"\n'
+    'export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"\n'
+    'export MAGICK_THREAD_LIMIT="${MAGICK_THREAD_LIMIT:-1}"',
+    1,
+)
+launcher_text = launcher_text.replace(
+    "# Default to Mesa llvmpipe so the transparent windows can paint reliably. This\n"
+    "# affects only SC Blueprint Tracker, not Star Citizen or the rest of the desktop.",
+    "# Prefer hardware OpenGL: Alpha 13 measurements reduced Electron rendering CPU by about\n"
+    "# 60%. Set SC_TRACKER_RENDER_MODE=software for the retained llvmpipe Safe Mode.",
+    1,
+)
+old_exec = 'printf \'[launcher] renderer mode: %s\\n\' "$RENDER_MODE" >&2\nexec "$ELECTRON_BIN" "${electron_flags[@]}" "$APP_DIR" "$@"'
+new_exec = '''printf '[launcher] renderer mode: %s\\n' "$RENDER_MODE" >&2
+if [[ "$AUTO_RENDER_MODE" == "1" && "$RENDER_MODE" == "opengl" ]]; then
+  set +e
+  "$ELECTRON_BIN" "${electron_flags[@]}" "$APP_DIR" "$@"
+  renderer_status=$?
+  set -e
+  if (( renderer_status != 0 )); then
+    printf '[launcher] OpenGL exited with status %s; retrying once in software Safe Mode.\\n' "$renderer_status" >&2
+    export SC_TRACKER_RENDER_MODE=software
+    exec "$SELF" "$@"
+  fi
+  exit 0
+fi
+exec "$ELECTRON_BIN" "${electron_flags[@]}" "$APP_DIR" "$@"'''
+if old_exec not in launcher_text:
+    raise SystemExit("launcher exec block was not found")
+launcher_text = launcher_text.replace(old_exec, new_exec, 1)
+launcher.write_text(launcher_text)
 PY
 
 cat > "$OUT/README.md" <<'DOC'
-# ArchVerse Overlay 0.1.36-r31 alpha 13
+# ArchVerse Overlay 0.1.36-r31 alpha 14
 
-Arch/CachyOS efficiency release with opt-in OCR profiles and the proven Alpha 12 interaction contract.
+Arch/CachyOS resource-budget release with a repaired config path, bounded OCR, and the proven Alpha 12 interaction contract.
 
 Input behavior:
 - Before first focus, the interaction pointer follows Star Citizen's nested Gamescope/XWayland cursor.
@@ -269,6 +322,10 @@ Screen reader behavior:
 - OCR stages run only after the previous cycle finishes and skip visually unchanged HUD regions.
 - The successful capture backend is cached for the session.
 - Settings shows the current capture method, processing time, and skipped-stage count.
+- Settings and the OCR loop now read the same canonical config file; Alpha 13's legacy file is migrated and backed up once.
+- RapidOCR is limited to two ONNX threads; Tesseract and ImageMagick are limited to one thread each.
+- Mining Analysis and Signature OCR stay dormant until the Scan Mode angle gate succeeds.
+- OpenGL is the Linux default; `SC_TRACKER_RENDER_MODE=software` remains the Safe Mode.
 
 This is an alpha. Keep the previous working archive available for rollback.
 
@@ -276,7 +333,7 @@ Install:
     ./install-cachyos.sh --clean-install
 
 Launch with logging:
-    sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha13.log
+    sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha14.log
 DOC
 
 cat > "$OUT/verify-alpha.sh" <<'SH'
@@ -328,6 +385,12 @@ grep -q 'coordinate misses never' "$root/app/electron/main.cjs"
 grep -q 'completion-scheduled OCR loop armed' "$root/app/electron/capture.cjs"
 grep -q 'capture backend cached for this session' "$root/app/electron/capture.cjs"
 grep -q 'screenReaderProfile' "$root/app/server/sc-overlay-server.mjs"
+grep -q 'process.env.SC_TRACKER_CONFIG_DIR' "$root/app/server/sc-overlay-server.mjs"
+grep -q 'rapidocr-angle-gate' "$root/app/electron/capture.cjs"
+grep -q 'intraOpNumThreads: OCR_THREADS' "$root/app/electron/rapidocr-worker.cjs"
+grep -q 'SC_TRACKER_OCR_THREADS:-2' "$root/bin/sc-blueprint-tracker"
+grep -q 'SC_TRACKER_RENDER_MODE:-opengl' "$root/bin/sc-blueprint-tracker"
+grep -q 'retrying once in software Safe Mode' "$root/bin/sc-blueprint-tracker"
 grep -q 'new MutationObserver' "$root/app/server/overlay/missions.html"
 ! grep -q 'setInterval(reportRegions, 100)' "$root/app/server/overlay/missions.html"
 ! grep -q 'data.missionOcr = true' "$root/install-cachyos.sh"
@@ -335,20 +398,22 @@ grep -q 'window.__overlayReportRegions' "$root/app/server/overlay/missions.html"
 grep -q 'directly (Wine detached from Gamescope ancestry)' "$root/app/electron/linux/star-citizen-session.cjs"
 bash -n "$root/install-cachyos.sh" "$root/bin/sc-blueprint-tracker" "$root/doctor.sh"
 node "$root/tests/r31-alpha13-efficiency.test.cjs" "$root"
-echo 'r31 alpha 13 static verification passed.'
+node "$root/tests/r31-alpha14-resource-budget.test.cjs" "$root"
+node "$root/tests/alpha14-config-e2e.cjs" "$root"
+echo 'r31 alpha 14 static and end-to-end verification passed.'
 SH
 
 chmod +x "$OUT"/*.sh "$OUT/bin/sc-blueprint-tracker"
 "$OUT/verify-alpha.sh"
 
-tar -czf "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.tar.gz" -C "$TMP_ROOT" "$(basename "$OUT")"
+tar -czf "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.tar.gz" -C "$TMP_ROOT" "$(basename "$OUT")"
 (
   cd "$TMP_ROOT"
-  zip -qr "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.zip" "$(basename "$OUT")"
+  zip -qr "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.zip" "$(basename "$OUT")"
 )
 (
   cd "$DIST"
-  sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.tar.gz ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.zip > SHA256SUMS
+  sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.tar.gz ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.zip > SHA256SUMS
 )
 
-echo "Alpha 13 package created in $DIST"
+echo "Alpha 14 package created in $DIST"

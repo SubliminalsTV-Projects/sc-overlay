@@ -1,11 +1,11 @@
-name: Build and release r31 Linux alpha 13
+name: Build and release r31 Linux alpha 14
 
 on:
   push:
     branches:
       - integration/upstream-0.1.36-arch-fedora-r31
     tags:
-      - v0.1.36-r31-alpha.13
+      - v0.1.36-r31-alpha.14
   pull_request:
     branches:
       - main
@@ -15,11 +15,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: r31-alpha13-${{ github.ref }}
+  group: r31-alpha14-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-arch-alpha13:
+  build-arch-alpha14:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -32,7 +32,7 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Build and verify Alpha 13
+      - name: Build and verify Alpha 14
         shell: bash
         env:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
@@ -40,54 +40,55 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-Overlay-0.1.36-r31-alpha.13-arch
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.14-arch
           path: |
-            dist/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.tar.gz
-            dist/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.zip
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.zip
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
 
-  release-alpha13:
+  release-alpha14:
     if: github.event_name == 'push'
-    needs: build-arch-alpha13
+    needs: build-arch-alpha14
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ArchVerse-Overlay-0.1.36-r31-alpha.13-arch
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.14-arch
           path: dist
 
-      - name: Publish Alpha 13 GitHub prerelease
+      - name: Publish Alpha 14 GitHub prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.36-r31-alpha.13
+          tag_name: v0.1.36-r31-alpha.14
           target_commitish: ${{ github.sha }}
-          name: ArchVerse Overlay 0.1.36-r31 Alpha 13
+          name: ArchVerse Overlay 0.1.36-r31 Alpha 14
           prerelease: true
           generate_release_notes: false
           body: |
-            Alpha 13 is the focused efficiency and first-run usability release.
+            Alpha 14 is the resource-budget and configuration-reliability release.
 
             Highlights:
-            - Completion-scheduled OCR: native OCR cycles can no longer overlap.
-            - Visual change detection skips unchanged generic, Scan Mode, mining-analysis, and signature stages.
-            - Mining-only mode no longer runs unrelated mission/fabricator OCR.
-            - The successful Gamescope, Spectacle, or Electron capture backend is cached for the session.
-            - Lightweight, Balanced, and Mining profiles make OCR cost explicit; new installs default to Lightweight.
-            - Live capture method, processing time, and skipped-stage status in Settings.
-            - Event-driven widget-region and pointer updates, preserving Alpha 12's F-key interaction ownership contract.
-            - Production OCR/input dependencies are bundled; installation no longer downloads npm packages.
+            - Settings, Electron, and the OCR loop now share one canonical config file.
+            - Alpha 13's misplaced settings are migrated once and backed up without deleting the legacy file.
+            - Save verifies the actual OCR profile flags before reporting success.
+            - RapidOCR/ONNX is capped at two threads and lower priority; Tesseract/ImageMagick are single-threaded.
+            - The missing-template Scan Mode bug is replaced by one bounded RapidOCR angle gate.
+            - Mining Analysis and Signature OCR remain dormant until Scan Mode is detected.
+            - The 15-second inactive Mining safety probe and broad process fan-out are removed.
+            - OpenGL is the Linux default; llvmpipe software rendering remains available as Safe Mode.
+            - Alpha 12/13's explicit F-key interaction ownership contract is preserved.
 
             Install:
             1. Download the .tar.gz or .zip asset and extract it.
             2. Run `./install-cachyos.sh --clean-install`.
             3. Do not add `--reset-layout` if you want to preserve your existing widget positions.
 
-            Keep Alpha 12 available as the rollback point while testing this prerelease.
+            Keep Alpha 13 available as the rollback point while testing this prerelease.
           files: |
-            dist/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.tar.gz
-            dist/ArchVerse-Overlay-0.1.36-r31-alpha.13-arch.zip
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.zip
             dist/SHA256SUMS
