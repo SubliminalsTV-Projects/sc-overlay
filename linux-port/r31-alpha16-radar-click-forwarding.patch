@@ -1,0 +1,1270 @@
+diff --git a/electron/main.cjs b/electron/main.cjs
+index 99081c8..a80e365 100644
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -228,8 +228,6 @@ let fHoverLastClassifiedSeq = 0;
+ let fHoverLastClassificationAt = 0;
+ let fHoverDirectProbeInFlight = false;
+ let overlayRegionSnapshotSignature = "";
+-let interactionCursorWin = null;
+-let interactionCursorLastPoint = null;
+ let fHoverLinuxPointerSampleAt = 0;
+ let fHoverHookPointer = null;
+ let fHoverHookPointerSampleAt = 0;
+@@ -239,11 +237,17 @@ let fHoverHandoffAnchor = null;
+ let fHoverHandoffSeq = 0;
+ let fHoverHandoffWaitLogged = false;
+ let fHoverHostHookAuthoritative = false;
++let stopMouseButtonWatch = null;
++let syntheticMouseMoveScheduled = false;
++let lastNativeMouseInput = null;
++const forwardedMouseButtons = new Map();
++const pendingMouseFallbacks = new Set();
+ const F_HOVER_HOST_SAMPLE_MS = 50;
+ const F_HOVER_FALLBACK_POLL_MS = 100;
+ const F_HOVER_LEAVE_GRACE_MS = 180;
+ const F_HOVER_HANDOFF_TOLERANCE_PX = 32;
+ const F_HOVER_HANDOFF_DELAYS_MS = [75, 175, 350];
++const F_CLICK_NATIVE_GRACE_MS = 28;
+ let miningAutoArm = false;
+ let miningMoveMode = false;
+ let miningOnlyInteraction = false;
+@@ -309,6 +313,9 @@ function ensureWebView() {
+   webView.webContents.on("did-stop-loading", report);
+   webView.webContents.on("did-navigate", report);
+   webView.webContents.on("did-navigate-in-page", report);
++  webView.webContents.on("before-mouse-event", (_event, mouse) => {
++    noteNativeMouseInput("web-page", mouse, webViewBounds);
++  });
+   webView.webContents.on("did-fail-load", (_e, code, desc, url, isMainFrame) => {
+     if (!isMainFrame) return;
+     try { overlay?.webContents.send("webview:state", { url, failed: `${desc} (${code})` }); } catch { /* gone */ }
+@@ -446,6 +453,7 @@ function createOverlay() {
+     session,
+     logger: console,
+     onInteractionClaim: (source) => claimFocusLatchedInteraction(`embedded-${source}`),
++    onNativeMouse: (source, mouse, bounds) => noteNativeMouseInput(`embedded-${source}`, mouse, bounds),
+     state: {
+       browserVisible,
+       chatVisible: twitchChatVisible,
+@@ -497,6 +505,9 @@ function createOverlay() {
+       lockAllOverlayWindowsFromEscape();
+     }
+   });
++  overlay.webContents.on("before-mouse-event", (_event, mouse) => {
++    noteNativeMouseInput("overlay", mouse);
++  });
+   // Holding F merely arms widget rectangles. The actual click focuses this native window; use
+   // that focus transition as a second, compositor-level latch signal in case the renderer's
+   // pointerdown event is consumed by click-to-focus policy.
+@@ -517,7 +528,7 @@ function createOverlay() {
+     momentaryInteractionActive = false;
+     fHoverHeld = false;
+     modalOpen = false;
+-    destroyInteractionCursor();
++    releaseForwardedMouseButtons("overlay closed");
+   });
+ }
+
+@@ -578,56 +589,6 @@ function restoreLinuxPreviousWindow() {
+   overlayWindows.restorePreviousWindow();
+ }
+
+-const INTERACTION_CURSOR_HTML = `<!doctype html><meta charset="utf-8"><style>
+-html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;pointer-events:none}
+-svg{display:block;width:28px;height:36px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.95))}
+-</style><svg viewBox="0 0 28 36" aria-hidden="true"><path d="M2 2v25l6.8-6.2 5.4 12.1 5.2-2.3-5.4-11.8H24L2 2Z" fill="#fff" stroke="#05090c" stroke-width="2.2" stroke-linejoin="round"/></svg>`;
+-
+-function ensureInteractionCursorWindow() {
+-  if (process.platform !== "linux") return null;
+-  if (interactionCursorWin && !interactionCursorWin.isDestroyed()) return interactionCursorWin;
+-  const win = new BrowserWindow({
+-    width: 30, height: 38, frame: false, transparent: true, resizable: false, movable: false,
+-    focusable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, show: false,
+-    type: "toolbar", fullscreenable: false,
+-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+-  });
+-  try { win.setIgnoreMouseEvents(true); } catch {}
+-  try { win.setAlwaysOnTop(true, "screen-saver"); } catch { try { win.setAlwaysOnTop(true); } catch {} }
+-  try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch {}
+-  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(INTERACTION_CURSOR_HTML)}`).catch(() => {});
+-  win.on("closed", () => {
+-    if (interactionCursorWin === win) interactionCursorWin = null;
+-    interactionCursorLastPoint = null;
+-  });
+-  interactionCursorWin = win;
+-  return win;
+-}
+-
+-function showInteractionCursor(globalPoint = lastGlobalPointer) {
+-  if (!globalPoint || !Number.isFinite(globalPoint.x) || !Number.isFinite(globalPoint.y)) return;
+-  const win = ensureInteractionCursorWindow();
+-  if (!win || win.isDestroyed()) return;
+-  const point = { x: Math.round(globalPoint.x) - 2, y: Math.round(globalPoint.y) - 2 };
+-  if (!interactionCursorLastPoint || point.x !== interactionCursorLastPoint.x || point.y !== interactionCursorLastPoint.y) {
+-    interactionCursorLastPoint = point;
+-    try { win.setBounds({ x: point.x, y: point.y, width: 30, height: 38 }, false); } catch {}
+-  }
+-  try { if (!win.isVisible()) win.showInactive(); } catch {}
+-  try { win.moveTop(); } catch {}
+-}
+-
+-function hideInteractionCursor() {
+-  interactionCursorLastPoint = null;
+-  try { if (interactionCursorWin && !interactionCursorWin.isDestroyed()) interactionCursorWin.hide(); } catch {}
+-}
+-
+-function destroyInteractionCursor() {
+-  interactionCursorLastPoint = null;
+-  try { if (interactionCursorWin && !interactionCursorWin.isDestroyed()) interactionCursorWin.destroy(); } catch {}
+-  interactionCursorWin = null;
+-}
+-
+ function overlayRegionAtPoint(globalPoint) {
+   if (!globalPoint || !overlayRegions.length) return null;
+   const canvas = fullDisplayBounds();
+@@ -643,6 +604,166 @@ function overlayRegionAtPoint(globalPoint) {
+   return matches[0];
+ }
+
++const INTERACTION_MOUSE_BUTTONS = Object.freeze({ 1: "left", 2: "right", 3: "middle" });
++
++function mouseInputModifiers(event) {
++  const modifiers = [];
++  if (event?.altKey) modifiers.push("alt");
++  if (event?.ctrlKey) modifiers.push("control");
++  if (event?.metaKey) modifiers.push("meta");
++  if (event?.shiftKey) modifiers.push("shift");
++  return modifiers;
++}
++
++function canvasPointFromGlobal(globalPoint) {
++  if (!globalPoint) return null;
++  const canvas = fullDisplayBounds();
++  const x = Number(globalPoint.x) - canvas.x;
++  const y = Number(globalPoint.y) - canvas.y;
++  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
++  return { x, y };
++}
++
++function interactionMouseDestination(canvasPoint) {
++  if (!canvasPoint || !overlay || overlay.isDestroyed()) return null;
++  const inside = (bounds) => bounds
++    && canvasPoint.x >= bounds.x && canvasPoint.y >= bounds.y
++    && canvasPoint.x < bounds.x + bounds.width && canvasPoint.y < bounds.y + bounds.height;
++  if (webViewPainted && webView?.webContents && inside(webViewBounds)) {
++    return { name: "web-page", webContents: webView.webContents, bounds: webViewBounds };
++  }
++  const embedded = browserController?.mouseDestinationAt?.(canvasPoint);
++  if (embedded) return embedded;
++  return {
++    name: "overlay",
++    webContents: overlay.webContents,
++    bounds: { x: 0, y: 0, width: fullDisplayBounds().width, height: fullDisplayBounds().height },
++  };
++}
++
++function dispatchInteractionMouse(destination, type, canvasPoint, button, event = {}) {
++  if (!destination?.webContents || destination.webContents.isDestroyed?.()) return false;
++  const bounds = destination.bounds || { x: 0, y: 0 };
++  const x = Math.round(canvasPoint.x - Number(bounds.x || 0));
++  const y = Math.round(canvasPoint.y - Number(bounds.y || 0));
++  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
++  const canvas = fullDisplayBounds();
++  const input = {
++    type,
++    x,
++    y,
++    globalX: Math.round(canvasPoint.x + canvas.x),
++    globalY: Math.round(canvasPoint.y + canvas.y),
++    modifiers: mouseInputModifiers(event),
++  };
++  if (button) input.button = button;
++  if (type === "mouseDown" || type === "mouseUp") {
++    input.clickCount = Math.max(1, Math.round(Number(event?.clicks) || 1));
++  }
++  try {
++    destination.webContents.sendInputEvent(input);
++    return true;
++  } catch (error) {
++    console.warn(`[f-click] ${type} injection failed for ${destination.name}: ${String(error)}`);
++    return false;
++  }
++}
++
++function noteNativeMouseInput(source, mouse, bounds = { x: 0, y: 0 }) {
++  if (mouse?.type !== "mouseDown" && mouse?.type !== "mouseUp") return;
++  const button = String(mouse.button || "");
++  const x = Number(bounds.x || 0) + Number(mouse.x);
++  const y = Number(bounds.y || 0) + Number(mouse.y);
++  if (!button || !Number.isFinite(x) || !Number.isFinite(y)) return;
++  lastNativeMouseInput = { type: mouse.type, button, x, y, source, at: Date.now() };
++}
++
++function nativeMouseReachedTarget(type, button, canvasPoint, since) {
++  const native = lastNativeMouseInput;
++  if (!native || native.type !== type || native.button !== button || native.at < since - 40) return null;
++  if (Math.hypot(native.x - canvasPoint.x, native.y - canvasPoint.y) > 8) return null;
++  return native;
++}
++
++function globalPointForMouseEvent(event) {
++  const eventPoint = { x: Number(event?.x), y: Number(event?.y) };
++  if (Number.isFinite(eventPoint.x) && Number.isFinite(eventPoint.y)
++      && (fHoverPointerPhase === "host" || !lastGlobalPointer)) return eventPoint;
++  return lastGlobalPointer ? { ...lastGlobalPointer } : null;
++}
++
++function scheduleForwardedMouseButton(phase, event) {
++  if (process.platform !== "linux") return;
++  if (!overlayInteractionLatched && !(fHoverHeld && fHoverOverWidget)) return;
++  const button = INTERACTION_MOUSE_BUTTONS[Number(event?.button)];
++  if (!button) return;
++  const globalPoint = globalPointForMouseEvent(event);
++  const canvasPoint = canvasPointFromGlobal(globalPoint);
++  if (!canvasPoint) return;
++  const region = overlayRegionAtPoint(globalPoint);
++  const existing = forwardedMouseButtons.get(button);
++  if (phase === "down" && !region) {
++    console.log(`[f-click] ${button} down ignored outside a classified widget at ${Math.round(globalPoint.x)},${Math.round(globalPoint.y)}`);
++    return;
++  }
++  const destination = phase === "up" && existing?.destination
++    ? existing.destination
++    : interactionMouseDestination(canvasPoint);
++  if (!destination) return;
++  const type = phase === "down" ? "mouseDown" : "mouseUp";
++  const startedAt = Date.now();
++  const state = existing || { button, destination, canvasPoint, region, syntheticDown: false };
++  state.canvasPoint = canvasPoint;
++  state.region = region || state.region;
++  if (phase === "down") forwardedMouseButtons.set(button, state);
++
++  const token = { timer: null };
++  token.timer = setTimeout(() => {
++    pendingMouseFallbacks.delete(token);
++    const native = nativeMouseReachedTarget(type, button, canvasPoint, startedAt);
++    if (native) {
++      console.log(`[f-click] ${button} ${phase} reached ${native.source} natively at ${Math.round(canvasPoint.x)},${Math.round(canvasPoint.y)}`);
++      if (phase === "up") forwardedMouseButtons.delete(button);
++      return;
++    }
++    if (phase === "down") dispatchInteractionMouse(destination, "mouseMove", canvasPoint, null, event);
++    const sent = dispatchInteractionMouse(destination, type, canvasPoint, button, event);
++    if (phase === "down" && sent) state.syntheticDown = true;
++    if (phase === "up") forwardedMouseButtons.delete(button);
++    const title = state.region?.title || state.region?.key || destination.name;
++    console.log(`[f-click] ${button} ${phase} ${sent ? "forwarded" : "failed"} to ${title}` +
++      ` at ${Math.round(canvasPoint.x)},${Math.round(canvasPoint.y)} (${destination.name})`);
++  }, F_CLICK_NATIVE_GRACE_MS);
++  pendingMouseFallbacks.add(token);
++}
++
++function scheduleForwardedMouseMove(event) {
++  if (syntheticMouseMoveScheduled || process.platform !== "linux") return;
++  if (!overlayInteractionLatched && !(fHoverHeld && fHoverOverWidget)) return;
++  syntheticMouseMoveScheduled = true;
++  setImmediate(() => {
++    syntheticMouseMoveScheduled = false;
++    if (!overlayInteractionLatched && !(fHoverHeld && fHoverOverWidget)) return;
++    const canvasPoint = canvasPointFromGlobal(globalPointForMouseEvent(event));
++    if (!canvasPoint) return;
++    const pressed = forwardedMouseButtons.values().next().value;
++    const destination = pressed?.destination || interactionMouseDestination(canvasPoint);
++    if (destination) dispatchInteractionMouse(destination, "mouseMove", canvasPoint, pressed?.button || null, event);
++  });
++}
++
++function releaseForwardedMouseButtons(reason = "interaction ended") {
++  for (const token of pendingMouseFallbacks) clearTimeout(token.timer);
++  pendingMouseFallbacks.clear();
++  for (const state of forwardedMouseButtons.values()) {
++    if (state.syntheticDown) {
++      dispatchInteractionMouse(state.destination, "mouseUp", state.canvasPoint, state.button, { clicks: 1 });
++    }
++  }
++  if (forwardedMouseButtons.size) console.log(`[f-click] cleared ${forwardedMouseButtons.size} pressed button(s): ${reason}`);
++  forwardedMouseButtons.clear();
++}
++
+ function sameFHoverTarget(a, b) {
+   if (!a || !b) return false;
+   const aKey = String(a.key || a.id || "widget");
+@@ -773,7 +894,6 @@ function applyFHoverClassification(next, target = null, source = "regions") {
+   reapplyOverlayInputShape();
+
+   if (next) {
+-    showInteractionCursor(lastGlobalPointer);
+     // All visible overlay tools are DOM classifications inside one native Overlay Manager.
+     // Focus only after the renderer confirms the pointer is inside #panel, .widget, or active
+     // overlay chrome. This avoids guessing from stale geometry and keeps empty canvas harmless.
+@@ -793,7 +913,6 @@ function applyFHoverClassification(next, target = null, source = "regions") {
+     const title = target?.title || nextKey;
+     console.log(`[f-hover] entered ${classification} key=${nextKey} title=${title}; overlay focused (${source})`);
+   } else {
+-    if (!overlayInteractionLatched) hideInteractionCursor();
+     console.log(`[f-hover] left overlay widget classification; click-through restored (${source})`);
+     if (wasOverWidget && !moveMode && !modalOpen && !notepadEditing && !dragging) {
+       setTimeout(restoreLinuxPreviousWindow, 30);
+@@ -936,8 +1055,6 @@ function startFHoverPolling() {
+       refreshFHoverPointer();
+     }
+
+-    if (fHoverHeld || overlayInteractionLatched) showInteractionCursor(lastGlobalPointer);
+-
+     if (overlayInteractionLatched) {
+       const target = overlayRegionAtPoint(lastGlobalPointer);
+       if (target) {
+@@ -1163,7 +1280,7 @@ function endFocusLatchedInteraction(reason = "external focus", { suppressHeldKey
+   fHoverMissStartedAt = 0;
+   resetFHoverHostHandoff();
+   stopFHoverPolling();
+-  hideInteractionCursor();
++  releaseForwardedMouseButtons(reason);
+   browserController?.setInteractionKeyHeld(false);
+   if (suppressHeldKey && fHoverHeld) fHoverSuppressedUntilRelease = true;
+
+@@ -1243,6 +1360,8 @@ function registerInteractHotkey(accel) {
+   if (interactAccel) hotkeys.unregister(interactAccel);
+   interactAccel = null;
+   if (stopPointerWatch) { stopPointerWatch(); stopPointerWatch = null; }
++  if (stopMouseButtonWatch) { stopMouseButtonWatch(); stopMouseButtonWatch = null; }
++  releaseForwardedMouseButtons("interaction hotkey rebound");
+   stopFHoverPolling();
+   if (evdevInteractController) { try { evdevInteractController.stop(); } catch {} evdevInteractController = null; }
+   if (!accel || typeof accel !== "string") return { ok: true };
+@@ -1271,14 +1390,20 @@ function registerInteractHotkey(accel) {
+       lastGlobalPointer = { x, y };
+       lastGlobalPointerSource = "uiohook-global";
+       if (overlayInteractionLatched) {
+-        // Once ownership is latched, movement only updates the synthetic cursor. Coordinate
+-        // misses can never revoke Alpha 12's focus contract.
+-        showInteractionCursor(lastGlobalPointer);
++        // Once ownership is latched, drive Chromium from the same compositor-global stream that
++        // classified the F entry point. KDE/Gamescope can otherwise draw one pointer while native
++        // XWayland button events arrive at another coordinate.
++        scheduleForwardedMouseMove(event);
+         return;
+       }
+       scheduleFHoverMotionProbe();
+     });
+   }
++  if (process.platform === "linux" && typeof hotkeys.onMouseButton === "function") {
++    stopMouseButtonWatch = hotkeys.onMouseButton((phase, event) => {
++      scheduleForwardedMouseButton(phase, event);
++    });
++  }
+
+   const onDown = (source = "uiohook") => {
+     // Once a widget session is latched, F belongs to the focused widget (chat, web forms, etc.)
+@@ -1355,7 +1480,6 @@ function registerInteractHotkey(accel) {
+       locked = false;
+       applyMouse();
+       reapplyOverlayInputShape();
+-      showInteractionCursor(lastGlobalPointer);
+       try {
+         overlay?.webContents.send("overlay:f-hover", {
+           held: false, overWidget: true, latched: true,
+@@ -1369,7 +1493,7 @@ function registerInteractHotkey(accel) {
+     }
+
+     stopFHoverPolling();
+-    hideInteractionCursor();
++    releaseForwardedMouseButtons("F released outside widget");
+     overlayInteractionLatched = false;
+     overlayInteractionClaimSource = "";
+     fHoverOverWidget = false;
+diff --git a/electron/hotkeys.cjs b/electron/hotkeys.cjs
+index 01a5661..9f6677d 100644
+--- a/electron/hotkeys.cjs
++++ b/electron/hotkeys.cjs
+@@ -22,8 +22,9 @@ const bindings = new Map();
+ const held = new Set();
+ // Physical modifier state is required to distinguish Right Control from Left Control.
+ const physicalHeld = new Set();
+-// Optional global pointer listeners are retained for older Linux interaction modes.
++// Global pointer listeners bridge Gamescope's nested cursor into Electron's host window.
+ const mouseMoveListeners = new Set();
++const mouseButtonListeners = new Set();
+
+ function compactCodes(values) {
+   return [...new Set(values.filter((v) => Number.isInteger(v)))];
+@@ -175,6 +176,12 @@ function onMousemove(e) {
+   }
+ }
+
++function onMousebutton(phase, e) {
++  for (const cb of mouseButtonListeners) {
++    try { cb(phase, e); } catch { /* listener threw — ignore */ }
++  }
++}
++
+ function onKeyup(e) {
+   physicalHeld.delete(e.keycode);
+   for (const [accel, b] of bindings) {
+@@ -192,6 +199,8 @@ function ensureStarted() {
+   uio.on("keydown", onKeydown);
+   uio.on("keyup", onKeyup);
+   uio.on("mousemove", onMousemove);
++  uio.on("mousedown", (event) => onMousebutton("down", event));
++  uio.on("mouseup", (event) => onMousebutton("up", event));
+   try {
+     uio.start();
+     started = true;
+@@ -271,6 +280,14 @@ function onMouseMove(cb) {
+   return () => mouseMoveListeners.delete(cb);
+ }
+
++function onMouseButton(cb) {
++  if (typeof cb !== "function") return () => {};
++  if (!hookLoaded) return () => {};
++  mouseButtonListeners.add(cb);
++  ensureStarted();
++  return () => mouseButtonListeners.delete(cb);
++}
++
+ function unregisterAll() {
+   for (const [, b] of bindings) {
+     if (b.fallback) {
+@@ -282,6 +299,7 @@ function unregisterAll() {
+   held.clear();
+   physicalHeld.clear();
+   mouseMoveListeners.clear();
++  mouseButtonListeners.clear();
+   if (hookLoaded && started) {
+     try { uio.stop(); } catch { /* ignore */ }
+     started = false;
+@@ -290,4 +308,4 @@ function unregisterAll() {
+
+ function isLowLevel() { return hookLoaded; }
+
+-module.exports = { register, registerLowLevel, registerHold, onMouseMove, unregister, unregisterAll, isLowLevel };
++module.exports = { register, registerLowLevel, registerHold, onMouseMove, onMouseButton, unregister, unregisterAll, isLowLevel };
+diff --git a/electron/browser-widget.cjs b/electron/browser-widget.cjs
+index 74a4790..ce724dd 100644
+--- a/electron/browser-widget.cjs
++++ b/electron/browser-widget.cjs
+@@ -51,7 +51,7 @@ function cleanChannel(value) {
+ }
+
+ class BrowserWidgetController {
+-  constructor({ WebContentsView, session, logger = console, state = {}, onInteractionClaim = null } = {}) {
++  constructor({ WebContentsView, session, logger = console, state = {}, onInteractionClaim = null, onNativeMouse = null } = {}) {
+     this.WebContentsView = WebContentsView;
+     this.sessionModule = session;
+     this.logger = logger;
+@@ -71,6 +71,7 @@ class BrowserWidgetController {
+     this.interactionKeyHeld = false;
+     this.onState = typeof state.onState === "function" ? state.onState : null;
+     this.onInteractionClaim = typeof onInteractionClaim === "function" ? onInteractionClaim : null;
++    this.onNativeMouse = typeof onNativeMouse === "function" ? onNativeMouse : null;
+   }
+
+   attach(parent) {
+@@ -131,6 +132,10 @@ class BrowserWidgetController {
+     view.webContents.on("focus", () => {
+       try { this.onInteractionClaim?.(kind); } catch {}
+     });
++    view.webContents.on("before-mouse-event", (_event, mouse) => {
++      const bounds = kind === "browser" ? this.browserBounds : this.chatBounds;
++      try { if (bounds) this.onNativeMouse?.(kind, mouse, bounds); } catch {}
++    });
+     return view;
+   }
+
+@@ -238,6 +243,19 @@ class BrowserWidgetController {
+   state() { return this.#emitState(); }
+   setInteractionKeyHeld(on) { this.interactionKeyHeld = !!on; }
+
++  mouseDestinationAt(point) {
++    const inside = (bounds) => bounds
++      && point && point.x >= bounds.x && point.y >= bounds.y
++      && point.x < bounds.x + bounds.width && point.y < bounds.y + bounds.height;
++    if (this.browserVisible && this.browserView?.webContents && inside(this.browserBounds)) {
++      return { name: "embedded-browser", webContents: this.browserView.webContents, bounds: this.browserBounds };
++    }
++    if (this.chatVisible && this.chatView?.webContents && inside(this.chatBounds)) {
++      return { name: "embedded-chat", webContents: this.chatView.webContents, bounds: this.chatBounds };
++    }
++    return null;
++  }
++
+
+   setBrowserBounds(bounds) {
+     this.browserBounds = cleanBounds(bounds);
+diff --git a/electron/capture.cjs b/electron/capture.cjs
+index 3d4065f..33f394a 100644
+--- a/electron/capture.cjs
++++ b/electron/capture.cjs
+@@ -15,7 +15,7 @@ const path = require("node:path");
+ const os = require("node:os");
+ const { getStarCitizenSessionBinder } = require("./linux/star-citizen-session.cjs");
+ const { createRapidOcrClient } = require("./rapidocr-client.cjs");
+-const { SCAN_MODE_HUD_GATE_ROI, scoreScanModeHudBitmap } = require("./scan-mode-gate.cjs");
++const { SCAN_MODE_RADAR_SEARCH_ROI, detectScanModeRadarIcon } = require("./scan-mode-gate.cjs");
+
+ const scSession = getStarCitizenSessionBinder();
+
+@@ -407,36 +407,6 @@ const MINING_SIGNATURE_ROIS = Object.freeze({
+   wide:  { x: 0.175, y: 0.245, w: 0.650, h: 0.440, scale: 2.6 },
+ });
+
+-// Scan Mode is identified from the fixed radar-cone control left of the reticle. The six supplied
+-// reference icons are the only valid cone angles Star Citizen displays: 2, 5, 11, 22, 45 and 90.
+-// This is intentionally a separate recognition result from signature OCR. A valid ore signature can
+-// update the widget, but target audio is permitted only when this detector confirms one of these
+-// radar icons on the SAME captured frame.
+-const SCAN_MODE_ANGLES = Object.freeze([2, 5, 11, 22, 45, 90]);
+-const SCAN_MODE_TEMPLATE_DIR = path.join(__dirname, "assets", "scan-mode");
+-// Fixed directly against the 3840x2160 primary display. The radar cone is always left of the
+-// reticle; this crop excludes the UNKNOWN/distance text to its right and most cockpit MFD numbers.
+-const SCAN_MODE_PRIMARY_ROI = Object.freeze({ name: "prospector-default", x: 0.455, y: 0.430, w: 0.075, h: 0.180, scale: 6.0 });
+-// Cockpit FOV and HUD anchoring move the cone control by several percent between ships. The
+-// Prospector remains the fast primary path; only after that crop fails do we probe a compact set
+-// of neighboring positions. This avoids a costly full-screen search while covering Mole, ROC,
+-// salvage, and general ship HUD layouts that place the scan control farther left or vertically.
+-const SCAN_MODE_FALLBACK_ROIS = Object.freeze([
+-  { name: "left-near",  x: 0.425, y: 0.430, w: 0.075, h: 0.180, scale: 6.0 },
+-  { name: "left-far",   x: 0.390, y: 0.430, w: 0.085, h: 0.185, scale: 6.0 },
+-  { name: "right-near", x: 0.485, y: 0.430, w: 0.075, h: 0.180, scale: 6.0 },
+-  { name: "upper",      x: 0.455, y: 0.385, w: 0.075, h: 0.180, scale: 6.0 },
+-  { name: "upper-left", x: 0.420, y: 0.385, w: 0.085, h: 0.185, scale: 6.0 },
+-  { name: "lower",      x: 0.455, y: 0.475, w: 0.075, h: 0.180, scale: 6.0 },
+-  { name: "lower-left", x: 0.420, y: 0.475, w: 0.085, h: 0.185, scale: 6.0 },
+-  { name: "wide-left",  x: 0.360, y: 0.405, w: 0.105, h: 0.210, scale: 5.5 },
+-]);
+-// Last-resort search area for ships whose HUD places the degree label outside every fixed anchor.
+-// RapidOCR proposes a few exact 2/5/11/22/45/90 text locations; template comparison still has to
+-// confirm the surrounding icon, so unrelated cockpit numbers cannot activate Scan Mode by text alone.
+-const SCAN_MODE_RAPID_SEARCH_ROI = Object.freeze({ name: "rapid-search-field", x: 0.260, y: 0.250, w: 0.500, h: 0.520, scale: 2.0 });
+-let scanModeTemplateCache = null;
+-
+ function normalizedCrop(image, width, height, roi) {
+   const x = Math.max(0, Math.min(width - 1, Math.round(width * roi.x)));
+   const y = Math.max(0, Math.min(height - 1, Math.round(height * roi.y)));
+@@ -447,19 +417,6 @@ function normalizedCrop(image, width, height, roi) {
+   return { img: cropped.resize({ width: targetWidth, quality: "best" }), x, y, w, h };
+ }
+
+-function readScanModeHudGate(image, width, height) {
+-  const x = Math.max(0, Math.min(width - 1, Math.round(width * SCAN_MODE_HUD_GATE_ROI.x)));
+-  const y = Math.max(0, Math.min(height - 1, Math.round(height * SCAN_MODE_HUD_GATE_ROI.y)));
+-  const w = Math.max(8, Math.min(width - x, Math.round(width * SCAN_MODE_HUD_GATE_ROI.w)));
+-  const h = Math.max(8, Math.min(height - y, Math.round(height * SCAN_MODE_HUD_GATE_ROI.h)));
+-  const crop = image.crop({ x, y, width: w, height: h });
+-  return {
+-    ...scoreScanModeHudBitmap(crop.toBitmap()),
+-    roi: SCAN_MODE_HUD_GATE_ROI,
+-    roiName: SCAN_MODE_HUD_GATE_ROI.name,
+-  };
+-}
+-
+ // A tiny, quantized luminance map is enough to tell whether a HUD region materially changed.
+ // It stays inside Electron/nativeImage (no PNG encode, ImageMagick, Tesseract, or child process).
+ function visualFingerprint(image, width, height, roi) {
+@@ -535,257 +492,27 @@ async function preprocessSignatureThreshold(inputPath, outputPath) {
+   }
+ }
+
+-function localNormalizedCrop(image, roi) {
+-  const size = image.getSize();
+-  const x = Math.max(0, Math.min(size.width - 1, Math.round(size.width * roi.x)));
+-  const y = Math.max(0, Math.min(size.height - 1, Math.round(size.height * roi.y)));
+-  const width = Math.max(8, Math.min(size.width - x, Math.round(size.width * roi.w)));
+-  const height = Math.max(8, Math.min(size.height - y, Math.round(size.height * roi.h)));
+-  return image.crop({ x, y, width, height });
+-}
+-
+-async function prepareScanModeMask(inputPath, outputPath) {
+-  try {
+-    // Keep the colored radar cone plus its bright degree label while removing the dark space field.
+-    // Open removes isolated asteroid specks; Close reconnects the thin HUD strokes before trimming.
+-    await runFile("magick", [
+-      inputPath,
+-      "-colorspace", "sRGB",
+-      "-alpha", "off",
+-      "-fx", "(((g>0.30 && g>r*1.08 && g>b*0.90) || ((max(r,max(g,b))>0.50) && ((max(r,max(g,b))-min(r,min(g,b)))>0.08)) || min(r,min(g,b))>0.55) ? 1 : 0)",
+-      "-threshold", "50%",
+-      "-morphology", "Open", "Diamond:1",
+-      "-morphology", "Close", "Rectangle:1x1",
+-      "-trim", "+repage",
+-      "-resize", "96x128!",
+-      "-strip",
+-      outputPath,
+-    ], { timeout: 10_000 });
+-    return outputPath;
+-  } catch {
+-    return null;
+-  }
+-}
+-
+-function compareScanModeMask(candidatePath, templatePath) {
+-  return new Promise((resolve) => {
+-    execFile("magick", ["compare", "-metric", "RMSE", candidatePath, templatePath, "null:"],
+-      { env: OCR_NATIVE_ENV, timeout: 6000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+-        // ImageMagick compare returns status 1 for a normal non-identical comparison.
+-        const text = `${stderr || ""} ${stdout || ""}`;
+-        const m = text.match(/\(([-+0-9.eE]+)\)/);
+-        const normalized = m ? Number(m[1]) : NaN;
+-        resolve(Number.isFinite(normalized) ? normalized : 1);
+-      });
+-  });
+-}
+-
+-async function ensureScanModeTemplates() {
+-  if (scanModeTemplateCache) return scanModeTemplateCache;
+-  const rows = [];
+-  for (const angle of SCAN_MODE_ANGLES) {
+-    const source = path.join(SCAN_MODE_TEMPLATE_DIR, `${angle}.png`);
+-    const prepared = path.join(os.tmpdir(), `sc-scan-mode-template-${process.pid}-${angle}.png`);
+-    if (!fs.existsSync(source)) continue;
+-    if (!fs.existsSync(prepared)) await prepareScanModeMask(source, prepared);
+-    if (fs.existsSync(prepared)) rows.push({ angle, path: prepared });
+-  }
+-  scanModeTemplateCache = rows;
+-  return rows;
+-}
+-
+-function parseScanModeAngle(text) {
+-  const compact = String(text || "").replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "");
+-  return SCAN_MODE_ANGLES.includes(Number(compact)) ? Number(compact) : null;
+-}
+-
+-async function rapidScanModeSearchRois(image, width, height) {
+-  const search = normalizedCrop(image, width, height, SCAN_MODE_RAPID_SEARCH_ROI);
+-  const rawPath = path.join(os.tmpdir(), `sc-mining-scan-mode-${process.pid}-rapid-search.png`);
+-  fs.writeFileSync(rawPath, search.img.toPNG());
+-  const lines = await ocrRapidLinesOptional(rawPath);
+-  if (!lines.length) return [];
+-
+-  const rendered = search.img.getSize();
+-  const sx = search.w / Math.max(1, rendered.width);
+-  const sy = search.h / Math.max(1, rendered.height);
+-  const proposals = [];
+-  for (const row of lines) {
+-    const angle = parseScanModeAngle(row.text);
+-    if (!angle) continue;
+-    const rw = Math.max(1, Number(row.w) || 1), rh = Math.max(1, Number(row.h) || 1);
+-    // A cone-angle label is a short HUD token. Reject large OCR regions such as an MFD paragraph.
+-    if (rw > rendered.width * 0.16 || rh > rendered.height * 0.16) continue;
+-    const cx = search.x + (Number(row.x) + rw / 2) * sx;
+-    const cy = search.y + (Number(row.y) + rh / 2) * sy;
+-    const roiW = Math.max(0.080, Math.min(0.115, (rw * sx / width) * 5.5));
+-    const roiH = Math.max(0.180, Math.min(0.230, (rh * sy / height) * 8.0));
+-    proposals.push({
+-      name: `rapid-hint-${angle}-${proposals.length + 1}`,
+-      hintedAngle: angle,
+-      hintedText: String(row.text || "").trim(),
+-      x: Math.max(0, Math.min(1 - roiW, cx / width - roiW / 2)),
+-      y: Math.max(0, Math.min(1 - roiH, cy / height - roiH / 2)),
+-      w: roiW,
+-      h: roiH,
+-      scale: 6.0,
+-      score: Number(row.confidence) || 0,
+-    });
+-  }
+-  proposals.sort((a, b) => b.score - a.score);
+-  return proposals.slice(0, 6);
+-}
+-
+-async function scoreScanModeCandidate(image, width, height, roi, index, templates) {
+-  const local = normalizedCrop(image, width, height, roi);
+-  const rawPath = path.join(os.tmpdir(), `sc-mining-scan-mode-${process.pid}-${index}-raw.png`);
+-  const maskPath = path.join(os.tmpdir(), `sc-mining-scan-mode-${process.pid}-${index}-mask.png`);
+-  fs.writeFileSync(rawPath, local.img.toPNG());
+-  const prepared = await prepareScanModeMask(rawPath, maskPath);
+-  if (!prepared) return null;
+-
+-  const scored = await Promise.all(templates.map(async (template) => ({
+-    angle: template.angle,
+-    error: await compareScanModeMask(prepared, template.path),
+-  })));
+-  scored.sort((a, b) => a.error - b.error);
+-  const best = scored[0] || { angle: null, error: 1 };
+-  const second = scored[1] || { angle: null, error: 1 };
+-  return {
+-    name: roi.name || `candidate-${index}`,
+-    roi,
+-    rawPath,
+-    maskPath: prepared,
+-    best,
+-    second,
+-    matchMargin: Math.max(0, second.error - best.error),
+-  };
+-}
+-
+-function scanModeTemplateConfident(candidate) {
+-  return !!candidate && candidate.best.error <= 0.40 && candidate.matchMargin >= 0.018;
+-}
+-
+-async function readScanModeDegree(candidate) {
+-  if (!candidate) return { text: "", angle: null, engine: "none" };
+-  const rapidLines = await ocrRapidLinesOptional(candidate.rawPath);
+-  const rapidText = rapidLines.map((row) => row.text).join(" ").trim();
+-  const rapidAngle = parseScanModeAngle(rapidText);
+-  if (rapidAngle) return { text: rapidText, angle: rapidAngle, engine: "rapidocr" };
+-  // Tesseract is a fallback, not a second engine that always runs in parallel.
+-  const tesseractText = await ocrTesseractText(candidate.maskPath, { psm: 11, whitelist: "0123456789" }).catch(() => "");
+-  const tesseractAngle = parseScanModeAngle(tesseractText);
+-  if (tesseractAngle) return { text: String(tesseractText || "").trim(), angle: tesseractAngle, engine: "tesseract" };
+-  return { text: [rapidText, String(tesseractText || "").trim()].filter(Boolean).join(" | "), angle: null, engine: rapidText ? "rapidocr" : "tesseract" };
+-}
+-
+-async function readMiningScanMode(image, width, height, tempPaths) {
+-  // The in-memory HUD gate is the primary detector. Unlike Alpha 14's broad RapidOCR pass, it
+-  // recognizes Scan Mode before a ping and without a target, creates no files or child processes,
+-  // and is unaffected by UNKNOWN/signature text moving through the asteroid field.
+-  const hudGate = readScanModeHudGate(image, width, height);
+-  if (hudGate.active) {
+-    return {
+-      kind: "scan-mode",
+-      active: true,
+-      angle: null,
+-      confidence: hudGate.confidence,
+-      method: "prospector-hud-color-gate",
+-      roi: hudGate.roi,
+-      roiName: hudGate.roiName,
+-      hudDensity: hudGate.hudDensity,
+-      brightDensity: hudGate.brightDensity,
+-      candidatesChecked: 1,
+-      searchHintCount: 0,
+-    };
+-  }
+-
+-  const templates = await ensureScanModeTemplates();
+-  // Alpha 13 referenced six template files that were never present in either source payload or
+-  // release artifact. The real-frame HUD gate above replaces Alpha 14's broad cone-angle OCR,
+-  // which missed the small 90-degree label and consumed CPU without ever opening the state machine.
+-  if (!templates.length) {
+-    return {
+-      kind: "scan-mode",
+-      active: false,
+-      angle: null,
+-      confidence: 0,
+-      method: "prospector-hud-color-absent",
+-      roi: hudGate.roi,
+-      roiName: hudGate.roiName,
+-      hudDensity: hudGate.hudDensity,
+-      brightDensity: hudGate.brightDensity,
+-      candidatesChecked: 1,
+-      searchHintCount: 0,
+-    };
+-  }
+-
+-  const candidates = [];
+-  const primary = await scoreScanModeCandidate(image, width, height, SCAN_MODE_PRIMARY_ROI, 0, templates);
+-  if (primary) candidates.push(primary);
+-
+-  // Keep the common Prospector path inexpensive. Only search neighboring HUD anchors when the
+-  // primary crop is not already a clear template match.
+-  if (!scanModeTemplateConfident(primary)) {
+-    for (let i = 0; i < SCAN_MODE_FALLBACK_ROIS.length; i++) {
+-      const candidate = await scoreScanModeCandidate(image, width, height, SCAN_MODE_FALLBACK_ROIS[i], i + 1, templates);
+-      if (candidate) candidates.push(candidate);
+-      if (scanModeTemplateConfident(candidate) && candidate.best.error <= 0.34) break;
+-    }
+-  }
+-
+-  let searchHintCount = 0;
+-  if (!candidates.some(scanModeTemplateConfident)) {
+-    const hintedRois = await rapidScanModeSearchRois(image, width, height);
+-    searchHintCount = hintedRois.length;
+-    for (let i = 0; i < hintedRois.length; i++) {
+-      const candidate = await scoreScanModeCandidate(
+-        image, width, height, hintedRois[i], 100 + i, templates,
+-      );
+-      if (candidate) candidates.push(candidate);
+-      if (scanModeTemplateConfident(candidate) && candidate.best.angle === hintedRois[i].hintedAngle) break;
+-    }
+-  }
+-
+-  candidates.sort((a, b) => a.best.error - b.best.error || b.matchMargin - a.matchMargin);
+-  const selected = candidates[0] || null;
+-  if (!selected) return { kind: "scan-mode", active: false, angle: null, confidence: 0, method: "mask-failed" };
+-
+-  // Preserve the chosen candidate under the stable diagnostic filenames.
+-  try { fs.copyFileSync(selected.rawPath, tempPaths.scanModeRaw); } catch {}
+-  try { fs.copyFileSync(selected.maskPath, tempPaths.scanModeMask); } catch {}
+-
+-  const degree = await readScanModeDegree(selected);
+-  const templateConfident = scanModeTemplateConfident(selected);
+-  const ocrConfirmed = !!degree.angle && selected.best.error <= 0.50 &&
+-    (selected.best.angle === degree.angle || selected.matchMargin >= 0.012);
+-  const active = templateConfident || ocrConfirmed;
+-  const angle = active ? (degree.angle || selected.best.angle) : null;
++async function readMiningScanMode(image, width, height) {
++  // Normalize once, then look only for the shared radar icon. Ship type, a fixed cockpit crop,
++  // target text, ping results, and OCR are deliberately absent from this decision path.
++  const normalizedWidth = 960;
++  const normalizedHeight = Math.max(240, Math.round(normalizedWidth * height / width));
++  const normalized = image.resize({ width: normalizedWidth, height: normalizedHeight, quality: "good" });
++  const result = detectScanModeRadarIcon(normalized.toBitmap(), normalizedWidth, normalizedHeight);
+   return {
+     kind: "scan-mode",
+-    active,
+-    angle,
+-    confidence: Math.max(0, Math.min(100, Math.round((1 - selected.best.error) * 100))),
+-    templateError: Number(selected.best.error.toFixed(4)),
+-    secondTemplateError: Number(selected.second.error.toFixed(4)),
+-    matchMargin: Number(selected.matchMargin.toFixed(4)),
+-    ocrText: degree.text,
+-    ocrEngine: degree.engine,
+-    method: ocrConfirmed
+-      ? `${selected.name.startsWith("rapid-hint-") ? "rapidocr-guided" : "multi-roi"}-template+${degree.engine}`
+-      : (selected.name === SCAN_MODE_PRIMARY_ROI.name
+-        ? "primary-template-match"
+-        : (selected.name.startsWith("rapid-hint-") ? "rapidocr-guided-template-match" : "multi-roi-template-match")),
+-    roi: selected.roi,
+-    roiName: selected.name,
+-    candidatesChecked: candidates.length,
+-    searchHintCount,
+-    candidateScores: candidates.slice(0, 4).map((candidate) => ({
+-      name: candidate.name,
+-      angle: candidate.best.angle,
+-      error: Number(candidate.best.error.toFixed(4)),
+-      margin: Number(candidate.matchMargin.toFixed(4)),
+-    })),
++    active: result.active,
++    angle: null,
++    confidence: result.confidence,
++    method: result.method,
++    roi: result.roi,
++    roiName: result.roiName,
++    referenceAngle: result.referenceAngle,
++    templateScore: result.templateScore,
++    templatePrecision: result.templatePrecision,
++    templateRecall: result.templateRecall,
++    candidatesChecked: result.candidatesChecked,
++    searchHintCount: 0,
+   };
+ }
+
+@@ -1585,10 +1312,10 @@ function startFabCapture({ port, configDir, onStatus }) {
+       let signatureOcr = null;
+       let scanModeRead = { kind: "scan-mode", active: false, angle: null, confidence: 0 };
+       if (mining) {
+-        const scanVisual = visualFingerprint(shot, cap.width, cap.height, SCAN_MODE_HUD_GATE_ROI);
++        const scanVisual = visualFingerprint(shot, cap.width, cap.height, SCAN_MODE_RADAR_SEARCH_ROI);
+         if (shouldRunVisualStage("scan-mode", scanVisual, { threshold: 0.035, maxAgeMs: 3000 })) {
+           try {
+-            scanModeRead = await timeStage("scan-mode", () => readMiningScanMode(shot, cap.width, cap.height, miningTemp));
++            scanModeRead = await timeStage("scan-mode", () => readMiningScanMode(shot, cap.width, cap.height));
+             cachedScanModeRead = scanModeRead;
+             const scanModeResp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
+               method: "POST",
+@@ -1597,14 +1324,13 @@ function startFabCapture({ port, configDir, onStatus }) {
+               signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+             });
+             await scanModeResp.json().catch(() => ({}));
+-            const scanFingerprint = `${scanModeRead.active ? 1 : 0}|${scanModeRead.angle || 0}|${scanModeRead.confidence || 0}`;
++            const scanFingerprint = `${scanModeRead.active ? 1 : 0}|${scanModeRead.confidence || 0}|${scanModeRead.referenceAngle || 0}`;
+             if (scanFingerprint !== lastScanModeFingerprint) {
+               lastScanModeFingerprint = scanFingerprint;
+-              const activeLabel = scanModeRead.angle ? `active ${scanModeRead.angle}°` : "active (HUD gate)";
+-              console.log(`[mining-scan-mode] ${scanModeRead.active ? activeLabel : "inactive"}` +
++              console.log(`[mining-scan-mode] ${scanModeRead.active ? "active (radar icon)" : "inactive"}` +
+                 ` confidence=${scanModeRead.confidence || 0}` +
+                 `${scanModeRead.method ? ` method=${scanModeRead.method}` : ""}` +
+-                `${scanModeRead.ocrText ? ` ocr=${JSON.stringify(scanModeRead.ocrText)}` : ""}`);
++                `${scanModeRead.templateScore ? ` score=${scanModeRead.templateScore}` : ""}`);
+             }
+           } catch (e) {
+             console.warn("[mining-scan-mode] detector failed:", e && e.message);
+diff --git a/electron/scan-mode-gate.cjs b/electron/scan-mode-gate.cjs
+index 7b6b465..7d458fb 100644
+--- a/electron/scan-mode-gate.cjs
++++ b/electron/scan-mode-gate.cjs
+@@ -1,53 +1,159 @@
+ "use strict";
+
+-// The Prospector's Scan Mode cone control is anchored just left of the center reticle. This tight
+-// normalized crop was calibrated from three real game frames at 3840x2160 and 2048x1152:
+-// normal mining cockpit, Scan Mode before any ping/target, and Scan Mode after a ping. The cone
+-// control is present in both Scan Mode states and absent from the normal cockpit state.
+-const SCAN_MODE_HUD_GATE_ROI = Object.freeze({
+-  name: "prospector-cone-control",
+-  x: 0.465,
+-  y: 0.500,
+-  w: 0.065,
+-  h: 0.100,
++// Scan Mode is a ship-independent game state. Every ship renders the same radar-cone icon in the
++// lower central HUD when the mode is open, although cockpit/FOV differences can move and scale it.
++// Search a broad normalized field for that icon instead of sampling a ship-specific pixel
++// crop. The six compact bit masks below were derived from the user-supplied 2/5/11/22/45/90-degree
++// radar references. They contain no screenshots and are decoded once, entirely in memory.
++const SCAN_MODE_RADAR_SEARCH_ROI = Object.freeze({
++  name: "radar-icon-search-field",
++  x: 0.20,
++  y: 0.46,
++  w: 0.60,
++  h: 0.32,
+ });
+
+-// Electron nativeImage bitmaps contain four bytes per pixel. The first three bytes are the color
+-// channels (their RGB/BGR order is deliberately irrelevant here) and the fourth is alpha. Star
+-// Citizen's cone control has both saturated cyan/yellow strokes and bright label pixels. Requiring
+-// both densities keeps blue space, dark asteroids, and the normal center reticle from opening the
+-// expensive mining OCR state machine.
+-function scoreScanModeHudBitmap(bitmap) {
+-  const pixels = Math.floor((bitmap?.length || 0) / 4);
+-  if (!pixels) {
+-    return { active: false, confidence: 0, hudDensity: 0, brightDensity: 0 };
++const RADAR_REFERENCE_BITS = Object.freeze([
++  { reference: 2, width: 47, height: 74, bits: "AAD8BwAAAAD+AQAAAAB+AAAAAAAcAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAEAAAAAD7nAAAA4J89BwAA/syODwDA4WbHEwDw8f9nNAD2/P8/LIDg//9/CCD4A+P/QAw+wIH/cIMD4AD+2XEAeAD8Rx0APAD8UQMAHgD4wAEADwA4cAEABwAMQAGAAwADwAHAAYAAwAHgACAA4AFwAAgA4AE4AAIA4AEcgAEA4AAOYAAA4AAHEAAAoIADBAAAoMAAAQAAoCDAAAAAoPAxAAAAoPwNAAAAoP8DAAAAYPgBAAAAMPABAAAAnPcAAADAz+MHAADw9/kBAADA8zwAAADgOQYAAADgAQMAAADwwQAAAABwPwAAAADQDwAAAADwAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAD48AAAAgD8fAAAA4N8PAAAA8O8HAAAA+PcDAAAA7PkAAAAA8PwBAAAAOHwAAAAAHh8AAACANwAAAADAPwAAAADwDwAAAAD4AwAA" },
++  { reference: 5, width: 48, height: 77, bits: "AADwHwAAAADwHwAAAADgBwAAAADAAwAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8/AAAAID//gYAAPB+zjMAABxuzpgAADvs/3gDwDj//4kFYPD//x8SEPgP/D8oDP4Aw99QBg+AA/yjjwPAA/jH/gDAA+BvfADAA4A/OADAAwAfXADAAwAOqADAAwAEwAHAAwACwAPAAwABgAPAA4AAAAXAA0AAAArAAyAAABTAAzAAADjAAxgAAHjAAwwAAPDAAwYAAODAAQMAAEBBAAEAAIDChwAAAAD1TwAAAAB+PwAAAAAePwAAAAAOfAAAAADGewAAAODn+wcAAPDn8wMAAIDncQAAAADPMQAAAAAPOAAAAAAdGAAAAAD+DwAAAAD8BwAAAAD4AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwwwEAAAD44wMAAAD88QMAAAD8+AMAAAA++AMAAAD++wEAAAD++wAAAAD++wMAAAD+8wEAAAD8+wAAAAD8AwAAAAD+AQAAAAD8AAAAAAB8AAAAAAA4AAAA" },
++  { reference: 11, width: 46, height: 75, bits: "AAAADwAAAAD/AQAAAMA/AAAAAMAHAAAAAOAAAAAAABAAAAAAAAAAAAAAAAAAAAAA4AcAAADA/3kAAAA+c88AAOD23LgAAB7+N5YA4IX/v5EAhP3/f1CA4P//f0gY/MDjbyiBB/jAf2x4AD6APzsHwA/Af38A8APADw8A/ADggQcAPgAw8AOADwAE4ADgA4ABUAD4ADAAKAA+AAYAFIAPgAAACuADEAAABfgAAgCAAj7AAADAgQ8YAADw4AMDAAB4eEAAAAA8BggAAAAeHwEAAAD3fwAAAID+DwAAAMCgAwAAADj+AQAAAM57BgAA8Pv4AAAA/j4PAABAPMcBAAAAHjAAAACADwQAAACg7wAAAADQHwAAAADYAwAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAejwcAAMDn8wEAAPj9fgAAAH6/HwAAgN/vBwAAwOf7AAAA8Pl+AAAAeD4fAAAAnu8BAACA5wMAAADg+QAAAAB4PgAAAACOBwAAAIDBAAAA" },
++  { reference: 22, width: 47, height: 74, bits: "AAD8BwAAAAD8AQAAAAB8AAAAAAAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAPAAAAAPfnAQAA2J97BgAA783NDwDg4f6GEwD48f9nFADD//8/JEDg//9/KBD44f//KAYf+A//6MMB/Af+2DsA/wO8xw+A/wH8wQPA/wB44AHgfwA4cAHwPwAEQAH4B8AAQAH8AzAAQAH+AQgAwAH/AAIA4IF/gAAA4ME/IAAA4OAfCAAA4PAPBgAAoPiDAQAAoPxgAAAAoPgZAAAA4P4FAAAA8O8BAAAAcPgBAAAAGPYAAAAAzm8AAADg5/sHAAD4+/wBAACgeQ4AAADgAQMAAADwgQEAAADgcwAAAADoHwAAAAD4AwAAAABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4MGDAwAA+PHjAwAA/vz5AQCAf//+AADAv39/AABg370fAACAB88fAADAgccPAADw4PEDAAA8cPgAAAD+/AMAAIB//wEAAMCffwAAAODHHwAA" },
++  { reference: 45, width: 48, height: 75, bits: "AAD8HwAAAAD4BwAAAADgAwAAAADAAQAAAACAAAAAAAAAAAAAAAAAAAAAAABABAAAAAB/7gEAAOBv9hwAAHhnbjoAAB5nbpgAgBn+f0wCQKj//w8FMPD//x8SCPyB938oBD7+///Rhgf////jyoH///Nn9cD//8E/OMD//4EffID//wEP/ID//wAG4ID//wACQAH//wABgAL/f4AAAAX/f8AAAAr/f2AAABT+fzAAADz+PxgAAHD+PwwAAPD8PwQAAOD9PwIAAMD/DwEAAICLhwEAAADl3wAAAAD6fwAAAAA8PQAAAAAMdAAAAACOewAAAMDv9w8AAODv8wMAAADvcwAAAADPcQAAAAAeMAAAAAA+OAAAAAD8HwAAAAD8BwAAAADwAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAO/HgAAAAP/vwAAIAHf/4AAIAHP/4AAIA3f/4AAIA//34AAMA///4AAMB//3wAAOB//z4AAOA//h4AAOA//wAAAAA8fwAAAAAcPwAAAAAMHgAA" },
++  { reference: 90, width: 51, height: 78, bits: "AADwPwAAAAAA/wEAAAAA8AcAAAAAAA8AAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD4/wAAAAD8/38AAAB8d+45AAB4uHPjAwDww/8bTgBgGP//MwuAwP///7EBA////x8UBPzw//9DMfj4//8/1OPg////R/3j////f8yH/////zcc//////9w/f////8D/f////8P4P////8/AP7/////AOD/////AwD+////DwDw////PwAA/////wAA8P///wMAAP///w8AAPD//z8AAID///8AAAD4//8DAACAf/wPAAAA+Ph/AAAAgP//AQAAAPD/AwAAAAADHwAAAAAc9gEAAADgfA8AAADw4/sPAADAv58/AAAA4HkcAAAAAM/hAAAAAPiAAwAAAIAPDgAAAAD0PwAAAADA/wAAAAAA+AEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMADDBAAAAA/+OEDAAD8458fAADwn//+AACA//z3BwAA/Pe/PwAA4L///QAAAP/97w8AAPjvfz4AAIB///sBAAD++98HAADwz38AAACAP/4BAAAA/OAHAAAAwAMeAAAA" },
++]);
++
++function decodeReference(row) {
++  const packed = Buffer.from(row.bits, "base64");
++  const mask = new Uint8Array(row.width * row.height);
++  for (let i = 0; i < mask.length; i += 1) mask[i] = (packed[i >> 3] >> (i & 7)) & 1;
++  return { reference: row.reference, width: row.width, height: row.height, mask };
++}
++
++const decodedReferences = RADAR_REFERENCE_BITS.map(decodeReference);
++
++function resizeReference(source, width, height) {
++  const mask = new Uint8Array(width * height);
++  for (let outY = 0; outY < height; outY += 1) {
++    for (let outX = 0; outX < width; outX += 1) {
++      const x0 = outX * source.width / width;
++      const x1 = (outX + 1) * source.width / width;
++      const y0 = outY * source.height / height;
++      const y1 = (outY + 1) * source.height / height;
++      let covered = 0;
++      let total = 0;
++      for (let y = Math.floor(y0); y < Math.ceil(y1); y += 1) {
++        for (let x = Math.floor(x0); x < Math.ceil(x1); x += 1) {
++          const overlap = Math.max(0, Math.min(x + 1, x1) - Math.max(x, x0))
++            * Math.max(0, Math.min(y + 1, y1) - Math.max(y, y0));
++          total += overlap;
++          covered += overlap * source.mask[y * source.width + x];
++        }
++      }
++      if (total && covered / total >= 0.12) mask[outY * width + outX] = 1;
++    }
++  }
++  const points = [];
++  for (let i = 0; i < mask.length; i += 1) if (mask[i]) points.push(i);
++  return { reference: source.reference, width, height, points, onPixels: points.length };
++}
++
++// Normalizing the capture to 960 pixels wide puts the icon at roughly 14-20 pixels high in the
++// supplied 4K frames. The wider range covers other HUD scales without a resolution-specific crop.
++const scaledReferences = decodedReferences.flatMap((source) => {
++  const rows = [];
++  for (let height = 14; height <= 34; height += 2) {
++    rows.push(resizeReference(source, Math.max(6, Math.round(height * source.width / source.height)), height));
++  }
++  return rows;
++});
++
++function isHudPixel(c0, c1, c2) {
++  const high = Math.max(c0, c1, c2);
++  const low = Math.min(c0, c1, c2);
++  return (high >= 100 && high - low >= 26) || low >= 135;
++}
++
++function detectScanModeRadarIcon(bitmap, width, height, roi = SCAN_MODE_RADAR_SEARCH_ROI) {
++  width = Math.floor(Number(width));
++  height = Math.floor(Number(height));
++  if (!Buffer.isBuffer(bitmap) && !(bitmap instanceof Uint8Array)) {
++    return { active: false, confidence: 0, method: "radar-icon-template-search", candidatesChecked: 0 };
+   }
++  if (width < 64 || height < 64 || bitmap.length < width * height * 4) {
++    return { active: false, confidence: 0, method: "radar-icon-template-search", candidatesChecked: 0 };
++  }
++
++  const hud = new Uint8Array(width * height);
++  for (let pixel = 0, offset = 0; pixel < hud.length; pixel += 1, offset += 4) {
++    hud[pixel] = isHudPixel(bitmap[offset], bitmap[offset + 1], bitmap[offset + 2]) ? 1 : 0;
++  }
++
++  const stride = width + 1;
++  const integral = new Int32Array(stride * (height + 1));
++  for (let y = 0; y < height; y += 1) {
++    let rowTotal = 0;
++    for (let x = 0; x < width; x += 1) {
++      rowTotal += hud[y * width + x];
++      integral[(y + 1) * stride + x + 1] = integral[y * stride + x + 1] + rowTotal;
++    }
++  }
++  const rectSum = (x, y, w, h) => integral[(y + h) * stride + x + w]
++    - integral[y * stride + x + w]
++    - integral[(y + h) * stride + x]
++    + integral[y * stride + x];
++
++  const left = Math.max(0, Math.round(width * roi.x));
++  const top = Math.max(0, Math.round(height * roi.y));
++  const right = Math.min(width, Math.round(width * (roi.x + roi.w)));
++  const bottom = Math.min(height, Math.round(height * (roi.y + roi.h)));
++  let best = null;
++  let candidatesChecked = 0;
+
+-  let hudPixels = 0;
+-  let brightPixels = 0;
+-  for (let offset = 0; offset + 3 < bitmap.length; offset += 4) {
+-    const c0 = bitmap[offset];
+-    const c1 = bitmap[offset + 1];
+-    const c2 = bitmap[offset + 2];
+-    const high = Math.max(c0, c1, c2);
+-    const low = Math.min(c0, c1, c2);
+-    const saturatedHud = high >= 100 && high - low >= 26;
+-    const paleHud = low >= 135;
+-    if (saturatedHud || paleHud) hudPixels += 1;
+-    if (high >= 145) brightPixels += 1;
++  for (const template of scaledReferences) {
++    const maxX = right - template.width;
++    const maxY = bottom - template.height;
++    for (let y = top; y <= maxY; y += 2) {
++      for (let x = left; x <= maxX; x += 2) {
++        const livePixels = rectSum(x, y, template.width, template.height);
++        if (livePixels < template.onPixels * 0.35 || livePixels > template.onPixels * 1.8) continue;
++        candidatesChecked += 1;
++        let intersection = 0;
++        for (const point of template.points) {
++          const pointY = Math.floor(point / template.width);
++          const pointX = point - pointY * template.width;
++          intersection += hud[(y + pointY) * width + x + pointX];
++        }
++        const recall = intersection / template.onPixels;
++        const precision = intersection / livePixels;
++        const score = (2 * intersection) / (template.onPixels + livePixels);
++        if (!best || score > best.score) {
++          best = { template, x, y, score, recall, precision, livePixels };
++        }
++      }
++    }
+   }
+
+-  const hudDensity = hudPixels / pixels;
+-  const brightDensity = brightPixels / pixels;
+-  const active = hudDensity >= 0.012 && brightDensity >= 0.0075;
+-  const hudScore = Math.max(0, Math.min(1, (hudDensity - 0.004) / 0.016));
+-  const brightScore = Math.max(0, Math.min(1, (brightDensity - 0.0015) / 0.0125));
++  const active = !!best && best.score >= 0.68 && best.precision >= 0.72 && best.recall >= 0.48;
++  const confidence = active
++    ? Math.max(1, Math.min(100, Math.round((best.score - 0.55) / 0.25 * 100)))
++    : 0;
+   return {
+     active,
+-    confidence: active ? Math.round(Math.min(hudScore, brightScore) * 100) : 0,
+-    hudDensity: Number(hudDensity.toFixed(5)),
+-    brightDensity: Number(brightDensity.toFixed(5)),
++    confidence,
++    method: "radar-icon-template-search",
++    referenceAngle: best?.template.reference || null,
++    templateScore: Number((best?.score || 0).toFixed(4)),
++    templatePrecision: Number((best?.precision || 0).toFixed(4)),
++    templateRecall: Number((best?.recall || 0).toFixed(4)),
++    candidatesChecked,
++    roi: best ? {
++      x: Number((best.x / width).toFixed(5)),
++      y: Number((best.y / height).toFixed(5)),
++      w: Number((best.template.width / width).toFixed(5)),
++      h: Number((best.template.height / height).toFixed(5)),
++    } : roi,
++    roiName: roi.name,
+   };
+ }
+
+-module.exports = { SCAN_MODE_HUD_GATE_ROI, scoreScanModeHudBitmap };
++module.exports = { SCAN_MODE_RADAR_SEARCH_ROI, RADAR_REFERENCE_BITS, detectScanModeRadarIcon };
+diff --git a/overlay/changelog.json b/overlay/changelog.json
+index eb33d8d..35b6948 100644
+--- a/overlay/changelog.json
++++ b/overlay/changelog.json
+@@ -1,4 +1,13 @@
+ {
++  "0.1.36-r31-alpha.16": {
++    "date": "2026-08-04T03:50:48Z",
++    "notes": [
++      "Scan Mode recognition is ship-independent. It searches the lower central HUD for the shared radar-cone icon at multiple positions and scales; ship type, Prospector HUD color, ping state, target text, and OCR are not inputs.",
++      "F interaction now forwards physical compositor mouse move/down/up events into the correct overlay WebContents when KDE or Gamescope fails to deliver a correctly positioned native click. Native clicks are detected first so working systems do not double-toggle controls.",
++      "The extra white interaction cursor window has been removed completely. Only the normal compositor/game pointer remains visible.",
++      "New f-click diagnostics report whether every button transition arrived natively or was forwarded, making any remaining input-routing fault observable in the next runtime log."
++    ]
++  },
+   "0.1.36-r31-alpha.15": {
+     "date": "2026-08-04T02:41:20Z",
+     "notes": [
+diff --git a/test/r31-alpha5-latched-interaction.test.cjs b/test/r31-alpha5-latched-interaction.test.cjs
+index 687a5e3..b5d7ece 100644
+--- a/test/r31-alpha5-latched-interaction.test.cjs
++++ b/test/r31-alpha5-latched-interaction.test.cjs
+@@ -14,21 +14,17 @@ assert.match(main, /if \(overlayInteractionLatched \|\| notepadEditing/);
+ assert.match(main, /(?:pointer left classified widget|coordinate misses never[\s\S]*revoke it)/);
+ assert.match(main, /(?:Text fields deliberately retain the latch while typing|actual native focus transfer\/click outside)/);
+
+-// A dedicated focusless, click-through cursor window must render above the Overlay Manager and
+-// its native WebContentsViews while the game software cursor remains underneath.
+-assert.match(main, /function ensureInteractionCursorWindow\(\)/);
+-assert.match(main, /focusable: false, skipTaskbar: true, alwaysOnTop: true/);
+-assert.match(main, /win\.setIgnoreMouseEvents\(true\)/);
+-assert.match(main, /win\.setAlwaysOnTop\(true, "screen-saver"\)/);
+-assert.match(main, /function showInteractionCursor\(globalPoint = lastGlobalPointer\)/);
++// Alpha 16 deliberately removes the old second-cursor BrowserWindow. Interaction stays latched,
++// but the user sees only the compositor/game pointer.
++assert.doesNotMatch(main, /INTERACTION_CURSOR_HTML|ensureInteractionCursorWindow|interactionCursorWin/);
+ assert.match(main, /F_HOVER_FALLBACK_POLL_MS = 100/);
+ assert.match(main, /setInterval\(tick, F_HOVER_FALLBACK_POLL_MS\)/);
+ assert.match(main, /scheduleFHoverMotionProbe\(\)/);
+-assert.match(main, /destroyInteractionCursor\(\)/);
++assert.match(main, /scheduleForwardedMouseMove\(event\)/);
+
+ // Linux arrange mode is fixed to Shift+F6 and persisted so the config UI reflects reality.
+ assert.match(main, /let moveKey = "Shift\+F6";/);
+ assert.match(main, /process\.platform !== "linux" && typeof c\.moveHotkey === "string"/);
+ assert.match(main, /postConfig\(\{ moveHotkey: "Shift\+F6" \}\)/);
+
+-console.log("r31 alpha 5 latched interaction, cursor, and Shift+F6 test: passed");
++console.log("r31 alpha 5 latched interaction and Shift+F6 test: passed");
+diff --git a/test/r31-alpha13-efficiency.test.cjs b/test/r31-alpha13-efficiency.test.cjs
+index 5374fe9..9f55a00 100644
+--- a/test/r31-alpha13-efficiency.test.cjs
++++ b/test/r31-alpha13-efficiency.test.cjs
+@@ -31,7 +31,7 @@ assert.match(capture, /if \(mining\) \{/);
+ // Normal pointer/layout changes are event-driven; slow polling remains only as a handoff fallback.
+ assert.match(main, /function scheduleFHoverMotionProbe\(\)/);
+ assert.match(main, /F_HOVER_FALLBACK_POLL_MS = 100/);
+-assert.match(main, /if \(overlayInteractionLatched\)[\s\S]{0,300}showInteractionCursor\(lastGlobalPointer\)/);
++assert.match(main, /if \(overlayInteractionLatched\)[\s\S]{0,500}scheduleForwardedMouseMove\(event\)/);
+ assert.doesNotMatch(missions, /setInterval\(reportRegions, 100\)/);
+ assert.match(missions, /new MutationObserver\(/);
+ assert.match(missions, /new ResizeObserver\(/);
+diff --git a/test/r31-alpha15-interaction-diagnostics.test.cjs b/test/r31-alpha15-interaction-diagnostics.test.cjs
+index db5a7a2..6dc5fe4 100644
+--- a/test/r31-alpha15-interaction-diagnostics.test.cjs
++++ b/test/r31-alpha15-interaction-diagnostics.test.cjs
+@@ -39,34 +39,48 @@ assert.match(capture, /ocrDebugSequence\+\+ % OCR_DEBUG_RECENT_LIMIT/);
+ assert.match(capture, /`frame-\$\{recentSlot\}\.jpg`/);
+ assert.match(capture, /`read-\$\{recentSlot\}\.json`/);
+
+-// Three user-supplied frames establish that Scan Mode exists before a ping or selected target.
+-// The detector uses the fixed cone control in memory and never depends on UNKNOWN/signature text.
+-assert.match(scanGate, /prospector-cone-control/);
+-assert.match(scanGate, /hudDensity >= 0\.012 && brightDensity >= 0\.0075/);
+-assert.match(capture, /prospector-hud-color-gate/);
+-assert.match(capture, /prospector-hud-color-absent/);
+-assert.match(capture, /visualFingerprint\(shot, cap\.width, cap\.height, SCAN_MODE_HUD_GATE_ROI\)/);
+-assert.doesNotMatch(capture, /method: selected \? "rapidocr-angle-gate"/);
++// Scan Mode is now a ship-independent search for the shared radar icon. It does not depend on
++// a Prospector crop, target/ping text, OCR, or temporary screenshot files.
++assert.match(scanGate, /radar-icon-search-field/);
++assert.match(scanGate, /radar-icon-template-search/);
++assert.match(capture, /SCAN_MODE_RADAR_SEARCH_ROI/);
++assert.match(capture, /detectScanModeRadarIcon/);
++assert.match(capture, /visualFingerprint\(shot, cap\.width, cap\.height, SCAN_MODE_RADAR_SEARCH_ROI\)/);
++assert.doesNotMatch(scanGate, /prospector/i);
++assert.doesNotMatch(capture, /prospector-hud-color/i);
+
+-const { scoreScanModeHudBitmap } = require(path.join(root, sourceLayout
++const { detectScanModeRadarIcon, RADAR_REFERENCE_BITS } = require(path.join(root, sourceLayout
+   ? "electron/scan-mode-gate.cjs"
+   : "app/electron/scan-mode-gate.cjs"));
+-const makeBitmap = (activePixels) => {
+-  const bitmap = Buffer.alloc(100 * 100 * 4);
+-  for (let i = 0; i < 100 * 100; i += 1) {
+-    bitmap[i * 4] = 35;
+-    bitmap[i * 4 + 1] = 45;
+-    bitmap[i * 4 + 2] = 55;
+-    bitmap[i * 4 + 3] = 255;
+-  }
+-  for (let i = 0; i < activePixels; i += 1) {
+-    bitmap[i * 4] = 30;
+-    bitmap[i * 4 + 1] = 185;
+-    bitmap[i * 4 + 2] = 220;
+-  }
+-  return bitmap;
+-};
+-assert.equal(scoreScanModeHudBitmap(makeBitmap(20)).active, false);
+-assert.equal(scoreScanModeHudBitmap(makeBitmap(200)).active, true);
++const width = 960, height = 540;
++const blank = Buffer.alloc(width * height * 4);
++for (let i = 0; i < width * height; i += 1) {
++  blank[i * 4] = 25;
++  blank[i * 4 + 1] = 35;
++  blank[i * 4 + 2] = 45;
++  blank[i * 4 + 3] = 255;
++}
++assert.equal(detectScanModeRadarIcon(blank, width, height).active, false);
+
++// Stamp a reduced supplied radar mask at a different generic HUD position. The matcher searches
++// for the icon; it is not told where the synthetic reference was placed.
++const radar = RADAR_REFERENCE_BITS.find((row) => row.reference === 90);
++const packed = Buffer.from(radar.bits, "base64");
++const sourceOn = (x, y) => {
++  const index = y * radar.width + x;
++  return (packed[index >> 3] >> (index & 7)) & 1;
++};
++const iconWidth = 10, iconHeight = 16, iconX = 610, iconY = 310;
++for (let y = 0; y < iconHeight; y += 1) {
++  for (let x = 0; x < iconWidth; x += 1) {
++    const sx = Math.min(radar.width - 1, Math.floor((x + 0.5) * radar.width / iconWidth));
++    const sy = Math.min(radar.height - 1, Math.floor((y + 0.5) * radar.height / iconHeight));
++    if (!sourceOn(sx, sy)) continue;
++    const offset = ((iconY + y) * width + iconX + x) * 4;
++    blank[offset] = 20;
++    blank[offset + 1] = 210;
++    blank[offset + 2] = 240;
++  }
++}
++assert.equal(detectScanModeRadarIcon(blank, width, height).active, true);
+ console.log("r31 alpha 15 Linux F and bounded OCR diagnostics test: passed");
+diff --git a/test/r31-alpha16-radar-and-click-forwarding.test.cjs b/test/r31-alpha16-radar-and-click-forwarding.test.cjs
+new file mode 100644
+index 0000000..657342a
+--- /dev/null
++++ b/test/r31-alpha16-radar-and-click-forwarding.test.cjs
+@@ -0,0 +1,47 @@
++"use strict";
++
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const path = require("node:path");
++
++const root = process.argv[2] || path.resolve(__dirname, "..");
++const sourceLayout = fs.existsSync(path.join(root, "electron/main.cjs"));
++const read = (sourceFile, packagedFile) =>
++  fs.readFileSync(path.join(root, sourceLayout ? sourceFile : packagedFile), "utf8");
++
++const main = read("electron/main.cjs", "app/electron/main.cjs");
++const hotkeys = read("electron/hotkeys.cjs", "app/electron/hotkeys.cjs");
++const browser = read("electron/browser-widget.cjs", "app/electron/browser-widget.cjs");
++const capture = read("electron/capture.cjs", "app/electron/capture.cjs");
++const scanGate = read("electron/scan-mode-gate.cjs", "app/electron/scan-mode-gate.cjs");
++
++// The low-level hook observes physical button down/up, not just pointer movement. Main delays its
++// fallback briefly, accepts a correctly positioned native event, and otherwise injects an explicit
++// move/down/up sequence into the correct WebContents.
++assert.match(hotkeys, /uio\.on\("mousedown", \(event\) => onMousebutton\("down", event\)\)/);
++assert.match(hotkeys, /uio\.on\("mouseup", \(event\) => onMousebutton\("up", event\)\)/);
++assert.match(hotkeys, /function onMouseButton\(cb\)/);
++assert.match(hotkeys, /module\.exports = \{[^}]*onMouseButton[^}]*\}/);
++assert.match(main, /stopMouseButtonWatch = hotkeys\.onMouseButton/);
++assert.match(main, /F_CLICK_NATIVE_GRACE_MS = 28/);
++assert.match(main, /nativeMouseReachedTarget\(type, button, canvasPoint, startedAt\)/);
++assert.match(main, /dispatchInteractionMouse\(destination, "mouseMove"/);
++assert.match(main, /dispatchInteractionMouse\(destination, type, canvasPoint, button/);
++assert.match(main, /\[f-click\].*forwarded/);
++assert.match(main, /releaseForwardedMouseButtons\(reason\)/);
++assert.match(main, /webContents\.on\("before-mouse-event"/);
++assert.match(browser, /mouseDestinationAt\(point\)/);
++assert.match(browser, /onNativeMouse/);
++
++// The old visible second-pointer window is gone completely.
++assert.doesNotMatch(main, /INTERACTION_CURSOR_HTML|ensureInteractionCursorWindow|interactionCursorWin/);
++
++// Scan activation depends only on a shared radar-icon match in a broad normalized field.
++assert.match(scanGate, /SCAN_MODE_RADAR_SEARCH_ROI/);
++assert.match(scanGate, /RADAR_REFERENCE_BITS/);
++assert.match(scanGate, /method: "radar-icon-template-search"/);
++assert.match(capture, /detectScanModeRadarIcon/);
++assert.doesNotMatch(scanGate, /prospector/i);
++assert.doesNotMatch(capture, /prospector-hud-color/i);
++
++console.log("r31 alpha 16 radar-icon and physical click-forwarding test: passed");

@@ -1,11 +1,11 @@
-name: Build and release r31 Linux alpha 15
+name: Build and release r31 Linux alpha 16
 
 on:
   push:
     branches:
       - integration/upstream-0.1.36-arch-fedora-r31
     tags:
-      - v0.1.36-r31-alpha.15
+      - v0.1.36-r31-alpha.16
   pull_request:
     branches:
       - main
@@ -15,11 +15,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: r31-alpha15-${{ github.ref }}
+  group: r31-alpha16-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-arch-alpha15:
+  build-arch-alpha16:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -32,7 +32,7 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Build and verify Alpha 15
+      - name: Build and verify Alpha 16
         shell: bash
         env:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
@@ -40,44 +40,45 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-Overlay-0.1.36-r31-alpha.15-arch
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.16-arch
           path: |
-            dist/ArchVerse-Overlay-0.1.36-r31-alpha.15-arch.tar.gz
-            dist/ArchVerse-Overlay-0.1.36-r31-alpha.15-arch.zip
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.16-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.16-arch.zip
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
 
-  release-alpha15:
+  release-alpha16:
     if: github.event_name == 'push'
-    needs: build-arch-alpha15
+    needs: build-arch-alpha16
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ArchVerse-Overlay-0.1.36-r31-alpha.15-arch
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.16-arch
           path: dist
 
-      - name: Publish Alpha 15 GitHub prerelease
+      - name: Publish Alpha 16 GitHub prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.36-r31-alpha.15
+          tag_name: v0.1.36-r31-alpha.16
           target_commitish: ${{ github.sha }}
-          name: ArchVerse Overlay 0.1.36-r31 Alpha 15
+          name: ArchVerse Overlay 0.1.36-r31 Alpha 16
           prerelease: true
           generate_release_notes: false
           body: |
-            Alpha 15 repairs Linux F interaction and Scan Mode recognition while preserving Alpha 14's resource budget.
+            Alpha 16 repairs the physical click route and makes Scan Mode detection ship-independent while preserving Alpha 14's resource budget.
 
             Highlights:
-            - Linux always registers and enables the physical F widget-entry gate.
-            - Migrated settings and live Settings controls can no longer disable F or leave the config inconsistent.
-            - Scan Mode is recognized from the fixed Prospector cone control before a ping, target, or signature exists.
-            - The Scan Mode gate is an in-memory color/brightness check and launches no OCR processes.
+            - F still establishes explicit widget ownership; physical mouse move/down/up is now forwarded when KDE/Gamescope does not deliver a correctly positioned native event.
+            - A short native-event grace period prevents duplicate clicks on systems where the ordinary path already works.
+            - The extra white interaction cursor window has been removed completely.
+            - Scan Mode is recognized only by finding the shared radar-cone icon in a broad normalized HUD field at multiple positions and scales.
+            - Ship type, a Prospector color crop, ping state, target text, and OCR are not inputs to the Scan Mode decision.
             - Mining Analysis and Signature OCR remain dormant outside Scan Mode.
-            - ArchVerse log lines include timestamps and diagnostics retain eight recent frame/result pairs.
+            - New f-click log entries report whether every physical button transition arrived natively or was forwarded.
             - Alpha 14's two-thread OCR budget, OpenGL default, and software Safe Mode are preserved.
 
             Install:
@@ -85,8 +86,8 @@ jobs:
             2. Run `./install-cachyos.sh --clean-install`.
             3. Do not add `--reset-layout` if you want to preserve your existing widget positions.
 
-            Keep Alpha 14 available as the rollback point while testing this prerelease.
+            Keep Alpha 15 available as the immediate rollback point while testing this prerelease.
           files: |
-            dist/ArchVerse-Overlay-0.1.36-r31-alpha.15-arch.tar.gz
-            dist/ArchVerse-Overlay-0.1.36-r31-alpha.15-arch.zip
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.16-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.16-arch.zip
             dist/SHA256SUMS
