@@ -1,0 +1,578 @@
+diff --git a/electron/capture.cjs b/electron/capture.cjs
+index 8858f70..3d4065f 100644
+--- a/electron/capture.cjs
++++ b/electron/capture.cjs
+@@ -15,6 +15,7 @@ const path = require("node:path");
+ const os = require("node:os");
+ const { getStarCitizenSessionBinder } = require("./linux/star-citizen-session.cjs");
+ const { createRapidOcrClient } = require("./rapidocr-client.cjs");
++const { SCAN_MODE_HUD_GATE_ROI, scoreScanModeHudBitmap } = require("./scan-mode-gate.cjs");
+
+ const scSession = getStarCitizenSessionBinder();
+
+@@ -446,6 +447,19 @@ function normalizedCrop(image, width, height, roi) {
+   return { img: cropped.resize({ width: targetWidth, quality: "best" }), x, y, w, h };
+ }
+
++function readScanModeHudGate(image, width, height) {
++  const x = Math.max(0, Math.min(width - 1, Math.round(width * SCAN_MODE_HUD_GATE_ROI.x)));
++  const y = Math.max(0, Math.min(height - 1, Math.round(height * SCAN_MODE_HUD_GATE_ROI.y)));
++  const w = Math.max(8, Math.min(width - x, Math.round(width * SCAN_MODE_HUD_GATE_ROI.w)));
++  const h = Math.max(8, Math.min(height - y, Math.round(height * SCAN_MODE_HUD_GATE_ROI.h)));
++  const crop = image.crop({ x, y, width: w, height: h });
++  return {
++    ...scoreScanModeHudBitmap(crop.toBitmap()),
++    roi: SCAN_MODE_HUD_GATE_ROI,
++    roiName: SCAN_MODE_HUD_GATE_ROI.name,
++  };
++}
++
+ // A tiny, quantized luminance map is enough to tell whether a HUD region materially changed.
+ // It stays inside Electron/nativeImage (no PNG encode, ImageMagick, Tesseract, or child process).
+ function visualFingerprint(image, width, height, roi) {
+@@ -666,29 +680,43 @@ async function readScanModeDegree(candidate) {
+ }
+
+ async function readMiningScanMode(image, width, height, tempPaths) {
++  // The in-memory HUD gate is the primary detector. Unlike Alpha 14's broad RapidOCR pass, it
++  // recognizes Scan Mode before a ping and without a target, creates no files or child processes,
++  // and is unaffected by UNKNOWN/signature text moving through the asteroid field.
++  const hudGate = readScanModeHudGate(image, width, height);
++  if (hudGate.active) {
++    return {
++      kind: "scan-mode",
++      active: true,
++      angle: null,
++      confidence: hudGate.confidence,
++      method: "prospector-hud-color-gate",
++      roi: hudGate.roi,
++      roiName: hudGate.roiName,
++      hudDensity: hudGate.hudDensity,
++      brightDensity: hudGate.brightDensity,
++      candidatesChecked: 1,
++      searchHintCount: 0,
++    };
++  }
++
+   const templates = await ensureScanModeTemplates();
+   // Alpha 13 referenced six template files that were never present in either source payload or
+-  // release artifact. Rather than silently returning confidence=0 and then starting the expensive
+-  // 15-second safety OCR, use one bounded RapidOCR pass over the central HUD. Only Star Citizen's
+-  // valid cone angles with a strong OCR score can open the mining state machine.
++  // release artifact. The real-frame HUD gate above replaces Alpha 14's broad cone-angle OCR,
++  // which missed the small 90-degree label and consumed CPU without ever opening the state machine.
+   if (!templates.length) {
+-    const hinted = await rapidScanModeSearchRois(image, width, height);
+-    const selected = hinted.find((row) => Number(row.score) >= 0.70) || null;
+-    const confidence = selected
+-      ? Math.max(0, Math.min(100, Math.round((Number(selected.score) <= 1 ? Number(selected.score) * 100 : Number(selected.score)))))
+-      : 0;
+     return {
+       kind: "scan-mode",
+-      active: !!selected,
+-      angle: selected?.hintedAngle || null,
+-      confidence,
+-      ocrText: selected?.hintedText || "",
+-      ocrEngine: "rapidocr",
+-      method: selected ? "rapidocr-angle-gate" : "rapidocr-angle-not-found",
+-      roi: selected || SCAN_MODE_RAPID_SEARCH_ROI,
+-      roiName: selected?.name || SCAN_MODE_RAPID_SEARCH_ROI.name,
+-      candidatesChecked: hinted.length,
+-      searchHintCount: hinted.length,
++      active: false,
++      angle: null,
++      confidence: 0,
++      method: "prospector-hud-color-absent",
++      roi: hudGate.roi,
++      roiName: hudGate.roiName,
++      hudDensity: hudGate.hudDensity,
++      brightDensity: hudGate.brightDensity,
++      candidatesChecked: 1,
++      searchHintCount: 0,
+     };
+   }
+
+@@ -1255,6 +1283,9 @@ function startFabCapture({ port, configDir, onStatus }) {
+     wide: path.join(os.tmpdir(), "sc-mining-signature-wide-gray.png"),
+   };
+   const ocrDebugDir = path.join(configDir, "ocr-debug");
++  const ocrDebugRecentDir = path.join(ocrDebugDir, "recent");
++  const OCR_DEBUG_RECENT_LIMIT = 8;
++  let ocrDebugSequence = 0;
+   let busy = false;
+   let busyAt = 0;             // when the current tick set busy (watchdog against a wedged loop)
+   const TICK_WATCHDOG_MS = 15000; // log a slow tick, but never overlap native OCR work
+@@ -1326,7 +1357,14 @@ function startFabCapture({ port, configDir, onStatus }) {
+   function saveOcrDebug(shot, cap, genericRead, analysisRead, signatureRead, signatureOcr = null, scanModeRead = null) {
+     try {
+       fs.mkdirSync(ocrDebugDir, { recursive: true });
+-      fs.writeFileSync(path.join(ocrDebugDir, "latest-game-frame.jpg"), shot.toJPEG(82));
++      fs.mkdirSync(ocrDebugRecentDir, { recursive: true });
++      const frameJpeg = shot.toJPEG(82);
++      fs.writeFileSync(path.join(ocrDebugDir, "latest-game-frame.jpg"), frameJpeg);
++      // Keep a fixed-size ring of earlier diagnostic frames. Alpha 14 stored only "latest", so an
++      // idle/on-foot cycle after a mining test could overwrite the failed Scan Mode evidence.
++      // Slot names are reused forever: disk use is bounded to eight JPEG/JSON pairs.
++      const recentSlot = String(ocrDebugSequence++ % OCR_DEBUG_RECENT_LIMIT).padStart(2, "0");
++      fs.writeFileSync(path.join(ocrDebugRecentDir, `frame-${recentSlot}.jpg`), frameJpeg);
+       for (const [source, name] of [
+         [miningTemp.focusRaw, "latest-signature-focus-raw.png"],
+         [miningTemp.focus, "latest-signature-focus-gray.png"],
+@@ -1340,8 +1378,9 @@ function startFabCapture({ port, configDir, onStatus }) {
+       ]) {
+         try { if (fs.existsSync(source)) fs.copyFileSync(source, path.join(ocrDebugDir, name)); } catch {}
+       }
+-      fs.writeFileSync(path.join(ocrDebugDir, "latest-read.json"), JSON.stringify({
++      const debugRead = {
+         at: new Date().toISOString(),
++        recentSlot,
+         capture: {
+           method: cap.method,
+           width: cap.width,
+@@ -1371,7 +1410,10 @@ function startFabCapture({ port, configDir, onStatus }) {
+             })),
+           })),
+         } : null,
+-      }, null, 2) + "\n");
++      };
++      const debugJson = JSON.stringify(debugRead, null, 2) + "\n";
++      fs.writeFileSync(path.join(ocrDebugDir, "latest-read.json"), debugJson);
++      fs.writeFileSync(path.join(ocrDebugRecentDir, `read-${recentSlot}.json`), debugJson);
+     } catch (error) {
+       console.warn("[screen-read] unable to write OCR diagnostics:", error?.message || error);
+     }
+@@ -1543,8 +1585,8 @@ function startFabCapture({ port, configDir, onStatus }) {
+       let signatureOcr = null;
+       let scanModeRead = { kind: "scan-mode", active: false, angle: null, confidence: 0 };
+       if (mining) {
+-        const scanVisual = visualFingerprint(shot, cap.width, cap.height, { x: 0.35, y: 0.36, w: 0.26, h: 0.34 });
+-        if (shouldRunVisualStage("scan-mode", scanVisual, { threshold: 0.08, maxAgeMs: 5000 })) {
++        const scanVisual = visualFingerprint(shot, cap.width, cap.height, SCAN_MODE_HUD_GATE_ROI);
++        if (shouldRunVisualStage("scan-mode", scanVisual, { threshold: 0.035, maxAgeMs: 3000 })) {
+           try {
+             scanModeRead = await timeStage("scan-mode", () => readMiningScanMode(shot, cap.width, cap.height, miningTemp));
+             cachedScanModeRead = scanModeRead;
+@@ -1558,7 +1600,8 @@ function startFabCapture({ port, configDir, onStatus }) {
+             const scanFingerprint = `${scanModeRead.active ? 1 : 0}|${scanModeRead.angle || 0}|${scanModeRead.confidence || 0}`;
+             if (scanFingerprint !== lastScanModeFingerprint) {
+               lastScanModeFingerprint = scanFingerprint;
+-              console.log(`[mining-scan-mode] ${scanModeRead.active ? `active ${scanModeRead.angle || "?"}°` : "inactive"}` +
++              const activeLabel = scanModeRead.angle ? `active ${scanModeRead.angle}°` : "active (HUD gate)";
++              console.log(`[mining-scan-mode] ${scanModeRead.active ? activeLabel : "inactive"}` +
+                 ` confidence=${scanModeRead.confidence || 0}` +
+                 `${scanModeRead.method ? ` method=${scanModeRead.method}` : ""}` +
+                 `${scanModeRead.ocrText ? ` ocr=${JSON.stringify(scanModeRead.ocrText)}` : ""}`);
+diff --git a/electron/main.cjs b/electron/main.cjs
+index 5f37721..99081c8 100644
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -25,6 +25,14 @@ for (const stream of [process.stdout, process.stderr]) {
+   });
+ }
+
++// Prefix application-owned log lines with an ISO timestamp. Chromium, Mesa, and Wine may still
++// write their own native diagnostics directly, but every ArchVerse state transition can now be
++// correlated with benchmark phases and configuration saves.
++for (const method of ["log", "warn", "error"]) {
++  const original = console[method].bind(console);
++  console[method] = (...args) => original(`[${new Date().toISOString()}]`, ...args);
++}
++
+ const { app, BrowserWindow, WebContentsView, session, Tray, Menu, nativeImage, screen, shell, ipcMain, dialog } = require("electron");
+ const { spawn } = require("node:child_process");
+ const http = require("node:http");
+@@ -2006,7 +2014,9 @@ if (!app.requestSingleInstanceLock()) {
+     try {
+       const c = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "config.json"), "utf8"));
+       if (process.platform !== "linux" && c.interactHotkey) registeredInteractKey = c.interactHotkey;
+-      if (process.platform === "linux") fHoverEnabled = c.holdToInteract !== false;
++      // Linux always uses F as the safe, focus-independent widget-entry gate. A migrated
++      // holdToInteract=false value must never disable the only normal interaction path.
++      if (process.platform === "linux") fHoverEnabled = true;
+     } catch { /* defaults */ }
+     const earlyInteractResult = registerInteractHotkey(registeredInteractKey);
+     if (earlyInteractResult.ok) console.log(`[hotkeys] interaction gate ${registeredInteractKey} registered before overlay creation`);
+@@ -2039,7 +2049,7 @@ if (!app.requestSingleInstanceLock()) {
+       if (typeof c.miningHotkey === "string") miningKey = c.miningHotkey;
+       if (process.platform !== "linux" && typeof c.interactHotkey === "string") interactKey = c.interactHotkey;
+       if (process.platform !== "linux" && typeof c.moveHotkey === "string") moveKey = c.moveHotkey;
+-      if (process.platform === "linux") fHoverEnabled = c.holdToInteract !== false;
++      if (process.platform === "linux") fHoverEnabled = true;
+       else holdMode = c.holdToInteract === true;    } catch { /* defaults */ }
+     registerOverlayHotkey(overlayKey);
+     registerBindingHotkey(bindKey);
+@@ -2170,22 +2180,11 @@ if (!app.requestSingleInstanceLock()) {
+     registerMoveHotkey(typeof accel === "string" ? accel : ""));
+   ipcMain.handle("app:set-hold-mode", (_e, on) => {
+     if (process.platform === "linux") {
+-      fHoverEnabled = !!on;
+-      if (!fHoverEnabled) {
+-        fHoverHeld = false;
+-        momentaryInteractionActive = false;
+-        overlayInteractionLatched = false;
+-        overlayInteractionClaimSource = "";
+-        fHoverOverWidget = false;
+-        fHoverSuppressedUntilRelease = false;
+-        browserController?.setInteractionKeyHeld(false);
+-        if (!unifiedInteractionActive) {
+-          interactiveTarget = null;
+-          locked = true;
+-        }
+-      }
++      // The Windows setting remains configurable, but Linux hard click-through requires one
++      // guaranteed way back into every widget. Ignore stale or live attempts to turn F off.
++      fHoverEnabled = true;
+       applyMouse();
+-      return fHoverEnabled;
++      return true;
+     }
+     holdMode = !!on;
+     if (!holdMode) holdInteract = false;
+diff --git a/electron/scan-mode-gate.cjs b/electron/scan-mode-gate.cjs
+new file mode 100644
+index 0000000..7b6b465
+--- /dev/null
++++ b/electron/scan-mode-gate.cjs
+@@ -0,0 +1,53 @@
++"use strict";
++
++// The Prospector's Scan Mode cone control is anchored just left of the center reticle. This tight
++// normalized crop was calibrated from three real game frames at 3840x2160 and 2048x1152:
++// normal mining cockpit, Scan Mode before any ping/target, and Scan Mode after a ping. The cone
++// control is present in both Scan Mode states and absent from the normal cockpit state.
++const SCAN_MODE_HUD_GATE_ROI = Object.freeze({
++  name: "prospector-cone-control",
++  x: 0.465,
++  y: 0.500,
++  w: 0.065,
++  h: 0.100,
++});
++
++// Electron nativeImage bitmaps contain four bytes per pixel. The first three bytes are the color
++// channels (their RGB/BGR order is deliberately irrelevant here) and the fourth is alpha. Star
++// Citizen's cone control has both saturated cyan/yellow strokes and bright label pixels. Requiring
++// both densities keeps blue space, dark asteroids, and the normal center reticle from opening the
++// expensive mining OCR state machine.
++function scoreScanModeHudBitmap(bitmap) {
++  const pixels = Math.floor((bitmap?.length || 0) / 4);
++  if (!pixels) {
++    return { active: false, confidence: 0, hudDensity: 0, brightDensity: 0 };
++  }
++
++  let hudPixels = 0;
++  let brightPixels = 0;
++  for (let offset = 0; offset + 3 < bitmap.length; offset += 4) {
++    const c0 = bitmap[offset];
++    const c1 = bitmap[offset + 1];
++    const c2 = bitmap[offset + 2];
++    const high = Math.max(c0, c1, c2);
++    const low = Math.min(c0, c1, c2);
++    const saturatedHud = high >= 100 && high - low >= 26;
++    const paleHud = low >= 135;
++    if (saturatedHud || paleHud) hudPixels += 1;
++    if (high >= 145) brightPixels += 1;
++  }
++
++  const hudDensity = hudPixels / pixels;
++  const brightDensity = brightPixels / pixels;
++  const active = hudDensity >= 0.012 && brightDensity >= 0.0075;
++  const hudScore = Math.max(0, Math.min(1, (hudDensity - 0.004) / 0.016));
++  const brightScore = Math.max(0, Math.min(1, (brightDensity - 0.0015) / 0.0125));
++  return {
++    active,
++    confidence: active ? Math.round(Math.min(hudScore, brightScore) * 100) : 0,
++    hudDensity: Number(hudDensity.toFixed(5)),
++    brightDensity: Number(brightDensity.toFixed(5)),
++  };
++}
++
++module.exports = { SCAN_MODE_HUD_GATE_ROI, scoreScanModeHudBitmap };
+diff --git a/overlay/changelog.json b/overlay/changelog.json
+index 21d6ea9..eb33d8d 100644
+--- a/overlay/changelog.json
++++ b/overlay/changelog.json
+@@ -1,4 +1,13 @@
+ {
++  "0.1.36-r31-alpha.15": {
++    "date": "2026-08-04T02:41:20Z",
++    "notes": [
++      "Linux F interaction is mandatory again. A migrated holdToInteract=false value, the Settings checkbox, or clearing the displayed hotkey can no longer disable the physical F widget-entry gate.",
++      "Scan Mode detection is calibrated from normal cockpit, no-ping/no-target Scan Mode, and pinged Scan Mode frames. It watches the fixed Prospector cone control in memory, so it works before a target exists and does not launch OCR just to decide whether scanning is active.",
++      "Mining Analysis and Signature OCR still remain dormant outside Scan Mode, preserving Alpha 14's large CPU reduction and OpenGL default.",
++      "ArchVerse-owned log entries now include timestamps, and OCR diagnostics retain eight recent frame/result pairs so a later idle capture cannot overwrite the frame needed to diagnose a miss."
++    ]
++  },
+   "0.1.36-r31-alpha.14": {
+     "date": "2026-08-02T06:24:14Z",
+     "notes": [
+diff --git a/overlay/config.html b/overlay/config.html
+index adf0e07..399d0d6 100644
+--- a/overlay/config.html
++++ b/overlay/config.html
+@@ -248,9 +248,9 @@
+       <label class="opt"><input type="checkbox" id="miningAutoShow" /> Pop the Mining Scanner open when I'm scanning or refining</label>
+       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Shows the Mining Scanner on its own when the scanner or Refinement Center is detected. Only a signature matching a known ore counts — debris and stray numbers won't pop it open. If you close it, it stays away for a bit before it can pop again.</span></span>
+     </div>
+-    <div class="setrow">
+-      <label class="opt"><input type="checkbox" id="holdToInteract" onchange="onHoldModeToggle()" /> Only let me click the overlay while I hold a key</label>
+-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">With this on, the overlay is click-through during gameplay — hold the interact key (set it under Hotkeys) and hover a widget to click it. Prevents accidental clicks mid-game.</span></span>
++    <div class="setrow" id="holdToInteractRow">
++      <label class="opt"><input type="checkbox" id="holdToInteract" onchange="onHoldModeToggle()" /> Use the interaction key as the overlay entry gate</label>
++      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip" id="holdToInteractTip">Hold the interaction key while moving into a widget. Once the widget becomes interactive, release the key and continue clicking, typing, or scrolling normally.</span></span>
+     </div>
+     <div class="setrow">
+       <div class="opt" style="flex-direction:column; align-items:stretch; gap:8px;">
+@@ -534,6 +534,7 @@
+
+ <script>
+   let cfg = { urls: [], activeUrl: null, logPath: "", autoSwitch: true, resolved: [] };
++  const IS_LINUX_DESKTOP = /Linux/i.test(navigator.userAgent || "");
+
+   // FREE: Mobiglas + Auto (match my ship). SUBSCRIBER: pinning a specific manufacturer regardless of ship.
+   const PREMIUM_THEMES = ["drake","anvil","greys","esperia","misc","banu","gatac","mirai","origin","aegis","crusader","rsi","kruger","argo"];
+@@ -588,8 +589,21 @@
+       const saved = cfg[which + "Hotkey"];
+       setHotkeyDisplay(which, typeof saved === "string" ? saved : HOTKEYS[which].def);
+     }
++    if (IS_LINUX_DESKTOP) {
++      setHotkeyDisplay("interact", "F");
++      document.getElementById("interactHotkeyBtn").disabled = true;
++      document.getElementById("interactHotkeyClear").style.display = "none";
++      document.getElementById("interactHotkeyHint").textContent =
++        "Linux keeps F as the permanent widget-entry key so the overlay cannot become unreachable.";
++    }
+     hotkeysLoaded = true;
+-    document.getElementById("holdToInteract").checked = !!cfg.holdToInteract;
++    const holdControl = document.getElementById("holdToInteract");
++    holdControl.checked = IS_LINUX_DESKTOP ? true : !!cfg.holdToInteract;
++    holdControl.disabled = IS_LINUX_DESKTOP;
++    if (IS_LINUX_DESKTOP) {
++      document.getElementById("holdToInteractTip").textContent =
++        "Linux always uses F as the safe widget-entry gate. Hold F while moving into a widget; after it becomes interactive, release F and keep clicking, typing, or scrolling normally.";
++    }
+     document.getElementById("revertThemeOnFoot").checked = !!cfg.revertThemeOnFoot;
+     document.body.classList.toggle("show-loadout", !!cfg.showLoadout);
+     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
+@@ -686,7 +700,7 @@
+       hwAccel: document.getElementById("hwAccel").checked,
+       amdCompat: document.getElementById("amdCompat").checked,
+       bindingPng: document.getElementById("bindingPng").value,
+-      holdToInteract: document.getElementById("holdToInteract").checked,
++      holdToInteract: IS_LINUX_DESKTOP ? true : document.getElementById("holdToInteract").checked,
+       revertThemeOnFoot: document.getElementById("revertThemeOnFoot").checked,
+       syncEnabled: document.getElementById("syncEnabled").checked,
+       fabCapture: document.getElementById("fabCapture").checked,
+@@ -702,7 +716,9 @@
+     // submitting the empty inputs it happens to be looking at.
+     if (hotkeysLoaded) {
+       for (const which of Object.keys(HOTKEYS)) {
+-        body[which + "Hotkey"] = document.getElementById(HOTKEYS[which].input).value.trim();
++        body[which + "Hotkey"] = IS_LINUX_DESKTOP && which === "interact"
++          ? "F"
++          : document.getElementById(HOTKEYS[which].input).value.trim();
+       }
+     }
+     const token = document.getElementById("syncToken").value.trim();
+@@ -817,6 +833,7 @@
+
+   // Opt-in hold-to-interact: apply live via the shell, and persist via save().
+   function onHoldModeToggle() {
++    if (IS_LINUX_DESKTOP) return;
+     const on = document.getElementById("holdToInteract").checked;
+     if (window.overlayConfig && window.overlayConfig.setHoldMode) window.overlayConfig.setHoldMode(on);
+     save();
+diff --git a/src/overlay-server.ts b/src/overlay-server.ts
+index 17bcd2c..a785175 100644
+--- a/src/overlay-server.ts
++++ b/src/overlay-server.ts
+@@ -287,7 +287,7 @@ const DEFAULTS: Config = {
+   miningHotkey: "Shift+F3",
+   webViewHotkey: "Ctrl+Shift+F3",
+   interactHotkey: "F",
+-  holdToInteract: false,
++  holdToInteract: true,
+   moveHotkey: "Ctrl+Alt+M",
+   timeRelative: true,
+   shareLogs: false,
+@@ -313,6 +313,22 @@ function loadConfig(): Config {
+ }
+ let config: Config = loadConfig();
+
++// The Linux overlay's hard click-through design always needs one guaranteed entry path. Alpha 14
++// could migrate holdToInteract=false from the split legacy config, leaving the UI and saved file
++// claiming that F was disabled even though Linux cannot safely operate without it. Repair the live
++// config and canonical file at startup; Windows keeps its configurable interaction behavior.
++if (process.platform === "linux" && (config.holdToInteract !== true || config.interactHotkey !== "F")) {
++  config.holdToInteract = true;
++  config.interactHotkey = "F";
++  try {
++    mkdirSync(userDir, { recursive: true });
++    writeFileSync(configPath, JSON.stringify(config, null, 2));
++    console.log(`[config] repaired mandatory Linux F interaction gate in ${configPath}`);
++  } catch (error) {
++    console.error("[config] unable to persist mandatory Linux F interaction gate:", String(error));
++  }
++}
++
+ /** Scan common Star Citizen install locations for per-channel game.log files, newest
+  *  first. SC installs as <root>\StarCitizen\<CHANNEL>\game.log (LIVE, PTU, EPTU,
+  *  TECH-PREVIEW, HOTFIX, GAME, …). The channel whose log was written most recently is
+@@ -1517,8 +1533,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
+     if (typeof body.overlayHotkey === "string") config.overlayHotkey = body.overlayHotkey.trim();
+     if (typeof body.miningHotkey === "string") config.miningHotkey = body.miningHotkey.trim();
+     if (typeof body.webViewHotkey === "string") config.webViewHotkey = body.webViewHotkey.trim();
+-    if (typeof body.interactHotkey === "string") config.interactHotkey = body.interactHotkey.trim();
+-    if (typeof body.holdToInteract === "boolean") config.holdToInteract = body.holdToInteract;
++    if (typeof body.interactHotkey === "string")
++      config.interactHotkey = process.platform === "linux" ? "F" : body.interactHotkey.trim();
++    if (typeof body.holdToInteract === "boolean")
++      config.holdToInteract = process.platform === "linux" ? true : body.holdToInteract;
+     if (typeof body.moveHotkey === "string") config.moveHotkey = body.moveHotkey.trim();
+     if (typeof body.timeRelative === "boolean") config.timeRelative = body.timeRelative;
+     if (typeof body.shareLogs === "boolean") config.shareLogs = body.shareLogs;
+diff --git a/test/alpha14-config-e2e.cjs b/test/alpha14-config-e2e.cjs
+index 7b3cf4f..2a421b8 100644
+--- a/test/alpha14-config-e2e.cjs
++++ b/test/alpha14-config-e2e.cjs
+@@ -28,6 +28,7 @@ fs.writeFileSync(path.join(canonicalDir, "config.json"), JSON.stringify({
+ fs.writeFileSync(path.join(legacyDir, "config.json"), JSON.stringify({
+   urls: [], missionOcr: false, miningAssistant: true, fabCapture: false,
+   screenReaderProfile: "mining", syncEnabled: false,
++  holdToInteract: false, interactHotkey: "",
+ }));
+
+ const port = 19000 + (process.pid % 1000);
+@@ -35,7 +36,7 @@ const env = {
+   ...process.env,
+   HOME: home,
+   PORT: String(port),
+-  APP_VERSION: "0.1.36-r31-alpha.14-test",
++  APP_VERSION: "0.1.36-r31-alpha.15-test",
+   SC_TRACKER_CONFIG_DIR: canonicalDir,
+ };
+ delete env.APPDATA;
+@@ -66,6 +67,8 @@ async function waitForServer() {
+     assert.equal(migrated.missionOcr, false);
+     assert.equal(migrated.miningAssistant, true);
+     assert.equal(migrated.fabCapture, false);
++    assert.equal(migrated.holdToInteract, true);
++    assert.equal(migrated.interactHotkey, "F");
+     assert.ok(fs.existsSync(path.join(canonicalDir, "config.alpha13-legacy.bak.json")));
+
+     const response = await fetch(`${base}/api/config`, {
+@@ -76,6 +79,8 @@ async function waitForServer() {
+         missionOcr: false,
+         miningAssistant: false,
+         fabCapture: false,
++        holdToInteract: false,
++        interactHotkey: "",
+       }),
+     });
+     const applied = await response.json();
+@@ -90,7 +95,9 @@ async function waitForServer() {
+     const persisted = JSON.parse(fs.readFileSync(path.join(canonicalDir, "config.json"), "utf8"));
+     assert.equal(persisted.screenReaderProfile, "lightweight");
+     assert.equal(persisted.miningAssistant, false);
+-    console.log("r31 alpha 14 config path end-to-end test: passed");
++    assert.equal(persisted.holdToInteract, true);
++    assert.equal(persisted.interactHotkey, "F");
++    console.log("r31 alpha 15 config and mandatory Linux F end-to-end test: passed");
+   } finally {
+     child.kill("SIGTERM");
+     fs.rmSync(temp, { recursive: true, force: true });
+diff --git a/test/r31-alpha14-resource-budget.test.cjs b/test/r31-alpha14-resource-budget.test.cjs
+index 1a48757..9570f1b 100644
+--- a/test/r31-alpha14-resource-budget.test.cjs
++++ b/test/r31-alpha14-resource-budget.test.cjs
+@@ -34,10 +34,9 @@ assert.match(rapidWorker, /interOpNumThreads: 1/);
+ assert.match(rapidWorker, /executionMode: "sequential"/);
+ assert.match(rapidWorker, /setPriority\(0, 10\)/);
+
+-// The missing Alpha 13 template assets no longer force an always-inactive detector. One bounded
+-// angle read opens the state machine; analysis/signature work is forbidden while it is dormant.
+-assert.match(capture, /rapidocr-angle-gate/);
+-assert.match(capture, /selected = hinted\.find\(\(row\) => Number\(row\.score\) >= 0\.70\)/);
++// The missing Alpha 13 template assets no longer force an always-inactive detector. A bounded
++// detector opens the state machine; analysis/signature work is forbidden while it is dormant.
++assert.match(capture, /readMiningScanMode/);
+ assert.match(capture, /miningLikelyActive && shouldRunVisualStage\("mining-analysis"/);
+ assert.match(capture, /if \(miningLikelyActive && analysisRead\.kind !== "mining-analysis"/);
+ assert.match(capture, /mining-signature-inactive/);
+diff --git a/test/r31-alpha15-interaction-diagnostics.test.cjs b/test/r31-alpha15-interaction-diagnostics.test.cjs
+new file mode 100644
+index 0000000..db5a7a2
+--- /dev/null
++++ b/test/r31-alpha15-interaction-diagnostics.test.cjs
+@@ -0,0 +1,72 @@
++"use strict";
++
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const path = require("node:path");
++
++const root = process.argv[2] || path.resolve(__dirname, "..");
++const sourceLayout = fs.existsSync(path.join(root, "electron/main.cjs"));
++const read = (sourceFile, packagedFile) =>
++  fs.readFileSync(path.join(root, sourceLayout ? sourceFile : packagedFile), "utf8");
++
++const main = read("electron/main.cjs", "app/electron/main.cjs");
++const capture = read("electron/capture.cjs", "app/electron/capture.cjs");
++const scanGate = read("electron/scan-mode-gate.cjs", "app/electron/scan-mode-gate.cjs");
++const configPage = read("overlay/config.html", "app/server/overlay/config.html");
++const server = read("src/overlay-server.ts", "app/server/sc-overlay-server.mjs");
++
++// Linux F is a required safety/entry path. No migrated config value or live Settings IPC call may
++// disable it, while Windows retains the existing configurable hold-mode behavior.
++assert.doesNotMatch(main, /fHoverEnabled = c\.holdToInteract !== false/);
++assert.match(main, /if \(process\.platform === "linux"\) fHoverEnabled = true/);
++assert.match(main, /app:set-hold-mode[\s\S]*?if \(process\.platform === "linux"\) \{[\s\S]*?fHoverEnabled = true;[\s\S]*?return true;/);
++assert.match(configPage, /const IS_LINUX_DESKTOP = \/Linux\/i\.test/);
++assert.match(configPage, /holdControl\.disabled = IS_LINUX_DESKTOP/);
++assert.match(configPage, /holdToInteract: IS_LINUX_DESKTOP \? true/);
++assert.match(configPage, /setHotkeyDisplay\("interact", "F"\)/);
++assert.match(configPage, /interactHotkeyBtn"\)\.disabled = true/);
++assert.match(configPage, /IS_LINUX_DESKTOP && which === "interact"/);
++assert.match(server, /holdToInteract: true/);
++assert.match(server, /repaired mandatory Linux F interaction gate/);
++assert.match(server, /config\.interactHotkey = "F"/);
++assert.match(server, /process\.platform === "linux" \? true : body\.holdToInteract/);
++
++// Application-owned logs are timestamped, and OCR evidence uses a fixed-size ring so a later idle
++// frame cannot erase the Scan Mode failure that the user is trying to report.
++assert.match(main, /new Date\(\)\.toISOString\(\)/);
++assert.match(capture, /const OCR_DEBUG_RECENT_LIMIT = 8/);
++assert.match(capture, /ocrDebugSequence\+\+ % OCR_DEBUG_RECENT_LIMIT/);
++assert.match(capture, /`frame-\$\{recentSlot\}\.jpg`/);
++assert.match(capture, /`read-\$\{recentSlot\}\.json`/);
++
++// Three user-supplied frames establish that Scan Mode exists before a ping or selected target.
++// The detector uses the fixed cone control in memory and never depends on UNKNOWN/signature text.
++assert.match(scanGate, /prospector-cone-control/);
++assert.match(scanGate, /hudDensity >= 0\.012 && brightDensity >= 0\.0075/);
++assert.match(capture, /prospector-hud-color-gate/);
++assert.match(capture, /prospector-hud-color-absent/);
++assert.match(capture, /visualFingerprint\(shot, cap\.width, cap\.height, SCAN_MODE_HUD_GATE_ROI\)/);
++assert.doesNotMatch(capture, /method: selected \? "rapidocr-angle-gate"/);
++
++const { scoreScanModeHudBitmap } = require(path.join(root, sourceLayout
++  ? "electron/scan-mode-gate.cjs"
++  : "app/electron/scan-mode-gate.cjs"));
++const makeBitmap = (activePixels) => {
++  const bitmap = Buffer.alloc(100 * 100 * 4);
++  for (let i = 0; i < 100 * 100; i += 1) {
++    bitmap[i * 4] = 35;
++    bitmap[i * 4 + 1] = 45;
++    bitmap[i * 4 + 2] = 55;
++    bitmap[i * 4 + 3] = 255;
++  }
++  for (let i = 0; i < activePixels; i += 1) {
++    bitmap[i * 4] = 30;
++    bitmap[i * 4 + 1] = 185;
++    bitmap[i * 4 + 2] = 220;
++  }
++  return bitmap;
++};
++assert.equal(scoreScanModeHudBitmap(makeBitmap(20)).active, false);
++assert.equal(scoreScanModeHudBitmap(makeBitmap(200)).active, true);
++
++console.log("r31 alpha 15 Linux F and bounded OCR diagnostics test: passed");

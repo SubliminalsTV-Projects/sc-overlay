@@ -4,12 +4,12 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-TMP_ROOT="${RUNNER_TEMP:-/tmp}/r31-alpha14-build"
+TMP_ROOT="${RUNNER_TEMP:-/tmp}/r31-alpha15-build"
 LINUX_DIR="$TMP_ROOT/linux"
 CORE_DIR="$TMP_ROOT/core"
 BASE_DIR="$TMP_ROOT/base"
 CONFLICT_DIR="$TMP_ROOT/conflicts"
-OUT="$TMP_ROOT/ArchVerse-Overlay-0.1.36-r31-alpha.14"
+OUT="$TMP_ROOT/ArchVerse-Overlay-0.1.36-r31-alpha.15"
 DIST="$ROOT/dist"
 BASE=5b70715f0958f01ab5d0b79124760c016c9410cd
 
@@ -33,14 +33,14 @@ def decode_parts(pattern: str, output: str) -> None:
     Path(output).write_bytes(decoded)
     print(f"Decoded {len(parts)} parts from {pattern}: {len(decoded)} bytes")
 
-decode_parts("linux-port/payload/part-*", "/tmp/r31-alpha14-linux.tar.gz")
-decode_parts("linux-port/core/part-*", "/tmp/r31-alpha14-core.tar.gz")
+decode_parts("linux-port/payload/part-*", "/tmp/r31-alpha15-linux.tar.gz")
+decode_parts("linux-port/core/part-*", "/tmp/r31-alpha15-core.tar.gz")
 PY
 
-gzip -t /tmp/r31-alpha14-linux.tar.gz
-gzip -t /tmp/r31-alpha14-core.tar.gz
-tar --no-same-owner -xzf /tmp/r31-alpha14-linux.tar.gz -C "$LINUX_DIR"
-tar --no-same-owner -xzf /tmp/r31-alpha14-core.tar.gz -C "$CORE_DIR"
+gzip -t /tmp/r31-alpha15-linux.tar.gz
+gzip -t /tmp/r31-alpha15-core.tar.gz
+tar --no-same-owner -xzf /tmp/r31-alpha15-linux.tar.gz -C "$LINUX_DIR"
+tar --no-same-owner -xzf /tmp/r31-alpha15-core.tar.gz -C "$CORE_DIR"
 test -s "$LINUX_DIR/electron/window-manager.cjs"
 test -s "$LINUX_DIR/electron/linux/star-citizen-session.cjs"
 test -s "$CORE_DIR/electron/main.cjs"
@@ -102,7 +102,8 @@ for patch in \
   linux-port/r31-alpha11-idle-pointer-pin.patch \
   linux-port/r31-alpha12-explicit-interaction-ownership.patch \
   linux-port/r31-alpha13-efficiency.patch \
-  linux-port/r31-alpha14-resource-budget.patch; do
+  linux-port/r31-alpha14-resource-budget.patch \
+  linux-port/r31-alpha15-scan-f-interaction.patch; do
   git apply --recount --check "$patch"
   git apply --recount "$patch"
 done
@@ -112,7 +113,7 @@ from pathlib import Path
 import json
 pkg = Path("package.json")
 data = json.loads(pkg.read_text())
-data["version"] = "0.1.36-r31-alpha.14"
+data["version"] = "0.1.36-r31-alpha.15"
 data["productName"] = "ArchVerse Overlay"
 pkg.write_text(json.dumps(data, indent=2) + "\n")
 PY
@@ -126,6 +127,7 @@ node --check electron/window-manager.cjs
 node --check electron/linux/star-citizen-session.cjs
 node --check electron/rapidocr-client.cjs
 node --check electron/rapidocr-worker.cjs
+node --check electron/scan-mode-gate.cjs
 node --test test/r31-alpha*.test.cjs
 
 # The source build only needs TypeScript/esbuild. Skipping package lifecycle scripts avoids
@@ -148,7 +150,7 @@ const out = process.argv[2];
 const src = require("./package.json");
 fs.writeFileSync(out, JSON.stringify({
   name: "archverse-overlay",
-  version: "0.1.36-r31-alpha.14",
+  version: "0.1.36-r31-alpha.15",
   description: "Community Linux port of SC Overlay",
   main: "electron/main.cjs",
   type: "module",
@@ -202,7 +204,7 @@ import sys
 
 installer = Path(sys.argv[1])
 text = installer.read_text()
-text = text.replace("0.1.33-r30.2-rapidocr-worker-isolation", "0.1.36-r31-alpha.14")
+text = text.replace("0.1.33-r30.2-rapidocr-worker-isolation", "0.1.36-r31-alpha.15")
 old_defaults = """data.holdToInteract = true;
 data.missionOcr = true;
 data.miningAssistant = true;"""
@@ -237,13 +239,13 @@ text = text.replace(
     "  F              = enter interaction while the pointer is over a widget\n"
     "  Shift+F6       = move/arrange all visible widgets",
 )
-text = text.replace("archverse-overlay-r30.2.log", "archverse-overlay-r31-alpha14.log")
-text = text.replace("r30.2", "r31 alpha 14")
+text = text.replace("archverse-overlay-r30.2.log", "archverse-overlay-r31-alpha15.log")
+text = text.replace("r30.2", "r31 alpha 15")
 installer.write_text(text)
 
 doctor = Path(sys.argv[2])
 doctor.write_text(doctor.read_text().replace(
-    "0.1.33-r30 diagnostics", "0.1.36-r31 alpha 14 diagnostics"))
+    "0.1.33-r30 diagnostics", "0.1.36-r31 alpha 15 diagnostics"))
 
 launcher = Path(sys.argv[3])
 launcher_text = launcher.read_text()
@@ -297,9 +299,9 @@ launcher.write_text(launcher_text)
 PY
 
 cat > "$OUT/README.md" <<'DOC'
-# ArchVerse Overlay 0.1.36-r31 alpha 14
+# ArchVerse Overlay 0.1.36-r31 alpha 15
 
-Arch/CachyOS resource-budget release with a repaired config path, bounded OCR, and the proven Alpha 12 interaction contract.
+Arch/CachyOS Scan Mode and Linux interaction repair on top of Alpha 14's resource budget.
 
 Input behavior:
 - Before first focus, the interaction pointer follows Star Citizen's nested Gamescope/XWayland cursor.
@@ -308,6 +310,7 @@ Input behavior:
 - After compositor motion is verified, that point remains authoritative while the mouse is idle.
 - After F is released, coordinate misses cannot revoke interaction ownership; Escape or an external click ends it.
 - Move the pointer over a classified overlay widget and press F once.
+- F is mandatory on Linux and cannot be disabled by migrated settings or the interaction controls.
 - Releasing F leaves that widget interactive, so Twitch Chat, Journal, Web Page forms, and other text inputs can be used normally.
 - The session remains interactive across coordinate misses until Escape is pressed or another window takes focus.
 - A dedicated focusless cursor surface is rendered above the Overlay Manager and native WebContentsViews.
@@ -324,7 +327,9 @@ Screen reader behavior:
 - Settings shows the current capture method, processing time, and skipped-stage count.
 - Settings and the OCR loop now read the same canonical config file; Alpha 13's legacy file is migrated and backed up once.
 - RapidOCR is limited to two ONNX threads; Tesseract and ImageMagick are limited to one thread each.
-- Mining Analysis and Signature OCR stay dormant until the Scan Mode angle gate succeeds.
+- A calibrated in-memory Prospector cone-control gate detects Scan Mode before a ping or target.
+- Scan Mode gating does not launch RapidOCR; Analysis and Signature OCR stay dormant outside it.
+- OCR diagnostics retain eight recent frame/result pairs, and app-owned logs include timestamps.
 - OpenGL is the Linux default; `SC_TRACKER_RENDER_MODE=software` remains the Safe Mode.
 
 This is an alpha. Keep the previous working archive available for rollback.
@@ -333,7 +338,7 @@ Install:
     ./install-cachyos.sh --clean-install
 
 Launch with logging:
-    sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha14.log
+    sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha15.log
 DOC
 
 cat > "$OUT/verify-alpha.sh" <<'SH'
@@ -347,6 +352,7 @@ for f in \
   app/electron/linux/star-citizen-session.cjs \
   app/electron/rapidocr-client.cjs \
   app/electron/rapidocr-worker.cjs \
+  app/electron/scan-mode-gate.cjs \
   app/server/sc-overlay-server.mjs \
   app/node_modules/uiohook-napi/package.json \
   app/node_modules/@gutenye/ocr-node/package.json \
@@ -386,7 +392,9 @@ grep -q 'completion-scheduled OCR loop armed' "$root/app/electron/capture.cjs"
 grep -q 'capture backend cached for this session' "$root/app/electron/capture.cjs"
 grep -q 'screenReaderProfile' "$root/app/server/sc-overlay-server.mjs"
 grep -q 'process.env.SC_TRACKER_CONFIG_DIR' "$root/app/server/sc-overlay-server.mjs"
-grep -q 'rapidocr-angle-gate' "$root/app/electron/capture.cjs"
+grep -q 'prospector-hud-color-gate' "$root/app/electron/capture.cjs"
+grep -q 'prospector-cone-control' "$root/app/electron/scan-mode-gate.cjs"
+grep -q 'fHoverEnabled = true' "$root/app/electron/main.cjs"
 grep -q 'intraOpNumThreads: OCR_THREADS' "$root/app/electron/rapidocr-worker.cjs"
 grep -q 'SC_TRACKER_OCR_THREADS:-2' "$root/bin/sc-blueprint-tracker"
 grep -q 'SC_TRACKER_RENDER_MODE:-opengl' "$root/bin/sc-blueprint-tracker"
@@ -399,21 +407,22 @@ grep -q 'directly (Wine detached from Gamescope ancestry)' "$root/app/electron/l
 bash -n "$root/install-cachyos.sh" "$root/bin/sc-blueprint-tracker" "$root/doctor.sh"
 node "$root/tests/r31-alpha13-efficiency.test.cjs" "$root"
 node "$root/tests/r31-alpha14-resource-budget.test.cjs" "$root"
+node "$root/tests/r31-alpha15-interaction-diagnostics.test.cjs" "$root"
 node "$root/tests/alpha14-config-e2e.cjs" "$root"
-echo 'r31 alpha 14 static and end-to-end verification passed.'
+echo 'r31 alpha 15 static and end-to-end verification passed.'
 SH
 
 chmod +x "$OUT"/*.sh "$OUT/bin/sc-blueprint-tracker"
 "$OUT/verify-alpha.sh"
 
-tar -czf "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.tar.gz" -C "$TMP_ROOT" "$(basename "$OUT")"
+tar -czf "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.15-arch.tar.gz" -C "$TMP_ROOT" "$(basename "$OUT")"
 (
   cd "$TMP_ROOT"
-  zip -qr "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.zip" "$(basename "$OUT")"
+  zip -qr "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.15-arch.zip" "$(basename "$OUT")"
 )
 (
   cd "$DIST"
-  sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.tar.gz ArchVerse-Overlay-0.1.36-r31-alpha.14-arch.zip > SHA256SUMS
+  sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.15-arch.tar.gz ArchVerse-Overlay-0.1.36-r31-alpha.15-arch.zip > SHA256SUMS
 )
 
-echo "Alpha 14 package created in $DIST"
+echo "Alpha 15 package created in $DIST"
