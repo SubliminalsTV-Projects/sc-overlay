@@ -1,0 +1,464 @@
+diff --git a/electron/capture.cjs b/electron/capture.cjs
+index 33f394a..02c447d 100644
+--- a/electron/capture.cjs
++++ b/electron/capture.cjs
+@@ -1059,6 +1059,9 @@ function startFabCapture({ port, configDir, onStatus }) {
+   let lastMiningFingerprint = "";
+   let lastSignatureFingerprint = "";
+   let lastScanModeFingerprint = "";
++  let lastScanModeDiagnosticFingerprint = "";
++  let lastScanModeDiagnosticAt = 0;
++  const SCAN_MODE_DEBUG_REFRESH_MS = 15000;
+   let lastCaptureDescription = "";
+   let noMiningReadCycles = 0;
+   const visualStages = new Map();
+@@ -1081,7 +1084,8 @@ function startFabCapture({ port, configDir, onStatus }) {
+   }
+
+
+-  function saveOcrDebug(shot, cap, genericRead, analysisRead, signatureRead, signatureOcr = null, scanModeRead = null) {
++  function saveOcrDebug(shot, cap, genericRead, analysisRead, signatureRead, signatureOcr = null,
++    scanModeRead = null, trigger = "periodic") {
+     try {
+       fs.mkdirSync(ocrDebugDir, { recursive: true });
+       fs.mkdirSync(ocrDebugRecentDir, { recursive: true });
+@@ -1092,6 +1096,38 @@ function startFabCapture({ port, configDir, onStatus }) {
+       // Slot names are reused forever: disk use is bounded to eight JPEG/JSON pairs.
+       const recentSlot = String(ocrDebugSequence++ % OCR_DEBUG_RECENT_LIMIT).padStart(2, "0");
+       fs.writeFileSync(path.join(ocrDebugRecentDir, `frame-${recentSlot}.jpg`), frameJpeg);
++      const matchFile = `match-${recentSlot}.jpg`;
++      const matchContextFile = `match-context-${recentSlot}.jpg`;
++      for (const name of [matchFile, matchContextFile]) {
++        try { fs.unlinkSync(path.join(ocrDebugRecentDir, name)); } catch {}
++      }
++      let matchCrops = null;
++      const match = scanModeRead?.roi;
++      if (scanModeRead?.referenceAngle && Number(scanModeRead?.templateScore) > 0
++        && [match?.x, match?.y, match?.w, match?.h].every(Number.isFinite)) {
++        const size = shot.getSize();
++        const box = {
++          x: Math.max(0, Math.min(size.width - 1, Math.floor(size.width * match.x))),
++          y: Math.max(0, Math.min(size.height - 1, Math.floor(size.height * match.y))),
++          width: Math.max(1, Math.round(size.width * match.w)),
++          height: Math.max(1, Math.round(size.height * match.h)),
++        };
++        box.width = Math.min(box.width, size.width - box.x);
++        box.height = Math.min(box.height, size.height - box.y);
++        const marginX = box.width * 2;
++        const marginY = box.height;
++        const context = {
++          x: Math.max(0, box.x - marginX),
++          y: Math.max(0, box.y - marginY),
++          width: Math.min(size.width, box.x + box.width + marginX) - Math.max(0, box.x - marginX),
++          height: Math.min(size.height, box.y + box.height + marginY) - Math.max(0, box.y - marginY),
++        };
++        const exactImage = shot.crop(box).resize({ width: 360, quality: "best" });
++        const contextImage = shot.crop(context).resize({ width: 720, quality: "best" });
++        fs.writeFileSync(path.join(ocrDebugRecentDir, matchFile), exactImage.toJPEG(90));
++        fs.writeFileSync(path.join(ocrDebugRecentDir, matchContextFile), contextImage.toJPEG(90));
++        matchCrops = { exact: matchFile, context: matchContextFile, box, context };
++      }
+       for (const [source, name] of [
+         [miningTemp.focusRaw, "latest-signature-focus-raw.png"],
+         [miningTemp.focus, "latest-signature-focus-gray.png"],
+@@ -1108,6 +1144,8 @@ function startFabCapture({ port, configDir, onStatus }) {
+       const debugRead = {
+         at: new Date().toISOString(),
+         recentSlot,
++        trigger,
++        matchCrops,
+         capture: {
+           method: cap.method,
+           width: cap.width,
+@@ -1141,6 +1179,7 @@ function startFabCapture({ port, configDir, onStatus }) {
+       const debugJson = JSON.stringify(debugRead, null, 2) + "\n";
+       fs.writeFileSync(path.join(ocrDebugDir, "latest-read.json"), debugJson);
+       fs.writeFileSync(path.join(ocrDebugRecentDir, `read-${recentSlot}.json`), debugJson);
++      console.log(`[screen-read] OCR diagnostic frame ${recentSlot} saved (${trigger})`);
+     } catch (error) {
+       console.warn("[screen-read] unable to write OCR diagnostics:", error?.message || error);
+     }
+@@ -1311,6 +1350,7 @@ function startFabCapture({ port, configDir, onStatus }) {
+       let signatureRead = { kind: "none" };
+       let signatureOcr = null;
+       let scanModeRead = { kind: "scan-mode", active: false, angle: null, confidence: 0 };
++      let scanModeDebugTrigger = null;
+       if (mining) {
+         const scanVisual = visualFingerprint(shot, cap.width, cap.height, SCAN_MODE_RADAR_SEARCH_ROI);
+         if (shouldRunVisualStage("scan-mode", scanVisual, { threshold: 0.035, maxAgeMs: 3000 })) {
+@@ -1324,13 +1364,40 @@ function startFabCapture({ port, configDir, onStatus }) {
+               signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+             });
+             await scanModeResp.json().catch(() => ({}));
+-            const scanFingerprint = `${scanModeRead.active ? 1 : 0}|${scanModeRead.confidence || 0}|${scanModeRead.referenceAngle || 0}`;
++            const match = scanModeRead.roi || {};
++            const matchKey = [match.x, match.y, match.w, match.h]
++              .map((value) => Number.isFinite(value) ? Number(value).toFixed(4) : "-").join(",");
++            const scanFingerprint = [
++              scanModeRead.active ? 1 : 0,
++              scanModeRead.confidence || 0,
++              scanModeRead.referenceAngle || 0,
++              scanModeRead.rejectionReason || "accepted",
++              matchKey,
++            ].join("|");
+             if (scanFingerprint !== lastScanModeFingerprint) {
+               lastScanModeFingerprint = scanFingerprint;
+               console.log(`[mining-scan-mode] ${scanModeRead.active ? "active (radar icon)" : "inactive"}` +
+                 ` confidence=${scanModeRead.confidence || 0}` +
+                 `${scanModeRead.method ? ` method=${scanModeRead.method}` : ""}` +
+-                `${scanModeRead.templateScore ? ` score=${scanModeRead.templateScore}` : ""}`);
++                `${scanModeRead.templateScore ? ` score=${scanModeRead.templateScore}` : ""}` +
++                `${scanModeRead.iconRecall ? ` icon=${scanModeRead.iconRecall}` : ""}` +
++                `${scanModeRead.labelRecall ? ` label=${scanModeRead.labelRecall}` : ""}` +
++                `${scanModeRead.haloDensity ? ` halo=${scanModeRead.haloDensity}` : ""}` +
++                `${scanModeRead.rejectionReason ? ` rejected=${scanModeRead.rejectionReason}` : ""}` +
++                `${matchKey !== "-,-,-,-" ? ` roi=${matchKey}` : ""}`);
++            }
++            const diagnosticFingerprint = [
++              scanModeRead.active ? 1 : 0,
++              scanModeRead.referenceAngle || 0,
++              scanModeRead.rejectionReason || "accepted",
++              matchKey,
++            ].join("|");
++            const diagnosticChanged = diagnosticFingerprint !== lastScanModeDiagnosticFingerprint;
++            const activeRefreshDue = scanModeRead.active
++              && Date.now() - lastScanModeDiagnosticAt >= SCAN_MODE_DEBUG_REFRESH_MS;
++            if (diagnosticChanged || activeRefreshDue) {
++              lastScanModeDiagnosticFingerprint = diagnosticFingerprint;
++              scanModeDebugTrigger = diagnosticChanged ? "scan-mode-match-change" : "scan-mode-active-refresh";
+             }
+           } catch (e) {
+             console.warn("[mining-scan-mode] detector failed:", e && e.message);
+@@ -1507,8 +1574,13 @@ function startFabCapture({ port, configDir, onStatus }) {
+       // Keep one bounded diagnostic set instead of encoding/writing a full frame on every cached
+       // recognition. Refresh on the first pass, a newly processed hit, or every thirtieth miss.
+       const miningStageRan = Number.isFinite(timings["mining-analysis"]) || Number.isFinite(timings["mining-signature"]);
+-      if (scanCycle === 1 || (miningKind !== "none" && miningStageRan) || noMiningReadCycles % 30 === 0) {
+-        saveOcrDebug(shot, cap, read, analysisRead, signatureRead, signatureOcr, scanModeRead);
++      const debugTrigger = scanModeDebugTrigger
++        || (scanCycle === 1 ? "first-cycle"
++          : ((miningKind !== "none" && miningStageRan) ? "mining-read"
++            : (noMiningReadCycles % 30 === 0 ? "periodic-miss" : null)));
++      if (debugTrigger) {
++        saveOcrDebug(shot, cap, read, analysisRead, signatureRead, signatureOcr, scanModeRead, debugTrigger);
++        if (scanModeDebugTrigger) lastScanModeDiagnosticAt = Date.now();
+       }
+       if (read.kind !== "fabricator") { lastUnresolved = ""; unresolvedTries = 0; lastHave = ""; lastRenderWait = ""; } // left the kiosk
+       if (read.kind === "fabricator" && read.item) {
+diff --git a/electron/scan-mode-gate.cjs b/electron/scan-mode-gate.cjs
+index 7d458fb..0067136 100644
+--- a/electron/scan-mode-gate.cjs
++++ b/electron/scan-mode-gate.cjs
+@@ -2,15 +2,18 @@
+
+ // Scan Mode is a ship-independent game state. Every ship renders the same radar-cone icon in the
+ // lower central HUD when the mode is open, although cockpit/FOV differences can move and scale it.
+-// Search a broad normalized field for that icon instead of sampling a ship-specific pixel
++// Search a broad normalized field for that control instead of sampling a ship-specific pixel
+ // crop. The six compact bit masks below were derived from the user-supplied 2/5/11/22/45/90-degree
+ // radar references. They contain no screenshots and are decoded once, entirely in memory.
+ const SCAN_MODE_RADAR_SEARCH_ROI = Object.freeze({
+   name: "radar-icon-search-field",
+-  x: 0.20,
+-  y: 0.46,
+-  w: 0.60,
+-  h: 0.32,
++  // The user marked the complete universal Scan HUD area in paired 6360x2560 on/off frames. Once
++  // converted to the 3840x2160 primary game frame, its union is x=.396-.666, y=.433-.665. Keep a
++  // normalized safety margin for FOV and HUD-scale differences without searching unrelated panels.
++  x: 0.37,
++  y: 0.41,
++  w: 0.32,
++  h: 0.30,
+ });
+
+ const RADAR_REFERENCE_BITS = Object.freeze([
+@@ -54,7 +57,24 @@ function resizeReference(source, width, height) {
+   }
+   const points = [];
+   for (let i = 0; i < mask.length; i += 1) if (mask[i]) points.push(i);
+-  return { reference: source.reference, width, height, points, onPixels: points.length };
++  // The universal control has two separated structures: the cone/icon above and its angle label
++  // below. Scoring them independently prevents a bright button edge or cockpit beam from passing
++  // merely because it overlaps many of the template's foreground pixels.
++  const iconCutoff = Math.floor(height * 0.70);
++  const labelCutoff = Math.floor(height * 0.76);
++  const iconPoints = points.filter((point) => Math.floor(point / width) < iconCutoff);
++  const labelPoints = points.filter((point) => Math.floor(point / width) >= labelCutoff);
++  return {
++    reference: source.reference,
++    width,
++    height,
++    points,
++    iconPoints,
++    labelPoints,
++    iconCutoff,
++    labelCutoff,
++    onPixels: points.length,
++  };
+ }
+
+ // Normalizing the capture to 960 pixels wide puts the icon at roughly 14-20 pixels high in the
+@@ -77,10 +97,10 @@ function detectScanModeRadarIcon(bitmap, width, height, roi = SCAN_MODE_RADAR_SE
+   width = Math.floor(Number(width));
+   height = Math.floor(Number(height));
+   if (!Buffer.isBuffer(bitmap) && !(bitmap instanceof Uint8Array)) {
+-    return { active: false, confidence: 0, method: "radar-icon-template-search", candidatesChecked: 0 };
++    return { active: false, confidence: 0, method: "radar-icon-structure-search", candidatesChecked: 0 };
+   }
+   if (width < 64 || height < 64 || bitmap.length < width * height * 4) {
+-    return { active: false, confidence: 0, method: "radar-icon-template-search", candidatesChecked: 0 };
++    return { active: false, confidence: 0, method: "radar-icon-structure-search", candidatesChecked: 0 };
+   }
+
+   const hud = new Uint8Array(width * height);
+@@ -106,45 +126,97 @@ function detectScanModeRadarIcon(bitmap, width, height, roi = SCAN_MODE_RADAR_SE
+   const top = Math.max(0, Math.round(height * roi.y));
+   const right = Math.min(width, Math.round(width * (roi.x + roi.w)));
+   const bottom = Math.min(height, Math.round(height * (roi.y + roi.h)));
+-  let best = null;
++  let bestRaw = null;
++  let bestValid = null;
+   let candidatesChecked = 0;
+
+   for (const template of scaledReferences) {
+     const maxX = right - template.width;
+     const maxY = bottom - template.height;
+-    for (let y = top; y <= maxY; y += 2) {
+-      for (let x = left; x <= maxX; x += 2) {
++    for (let y = top; y <= maxY; y += 1) {
++      for (let x = left; x <= maxX; x += 1) {
+         const livePixels = rectSum(x, y, template.width, template.height);
+         if (livePixels < template.onPixels * 0.35 || livePixels > template.onPixels * 1.8) continue;
+         candidatesChecked += 1;
+         let intersection = 0;
++        let iconIntersection = 0;
++        let labelIntersection = 0;
+         for (const point of template.points) {
+           const pointY = Math.floor(point / template.width);
+           const pointX = point - pointY * template.width;
+-          intersection += hud[(y + pointY) * width + x + pointX];
++          const matched = hud[(y + pointY) * width + x + pointX];
++          intersection += matched;
++          if (pointY < template.iconCutoff) iconIntersection += matched;
++          if (pointY >= template.labelCutoff) labelIntersection += matched;
+         }
+         const recall = intersection / template.onPixels;
+         const precision = intersection / livePixels;
+         const score = (2 * intersection) / (template.onPixels + livePixels);
+-        if (!best || score > best.score) {
+-          best = { template, x, y, score, recall, precision, livePixels };
+-        }
++        const iconRecall = iconIntersection / template.iconPoints.length;
++        const labelRecall = labelIntersection / template.labelPoints.length;
++
++        // A real radar control is isolated. Alpha 16's two confirmed false positives were parts of
++        // a larger yellow button and a hangar beam, so their foreground continued well beyond the
++        // candidate box. Measure a half-box halo with the integral image and reject that topology.
++        const marginX = Math.max(1, Math.round(template.width * 0.5));
++        const marginY = Math.max(1, Math.round(template.height * 0.5));
++        const outerX = Math.max(0, x - marginX);
++        const outerY = Math.max(0, y - marginY);
++        const outerRight = Math.min(width, x + template.width + marginX);
++        const outerBottom = Math.min(height, y + template.height + marginY);
++        const outerArea = (outerRight - outerX) * (outerBottom - outerY);
++        const haloArea = outerArea - template.width * template.height;
++        const haloPixels = rectSum(outerX, outerY, outerRight - outerX, outerBottom - outerY) - livePixels;
++        const haloDensity = haloArea ? haloPixels / haloArea : 1;
++
++        const candidate = {
++          template,
++          x,
++          y,
++          score,
++          recall,
++          precision,
++          iconRecall,
++          labelRecall,
++          haloDensity,
++        };
++        if (!bestRaw || score > bestRaw.score) bestRaw = candidate;
++        const structurallyValid = score >= 0.75
++          && precision >= 0.72
++          && recall >= 0.48
++          && iconRecall >= 0.60
++          && labelRecall >= 0.40
++          && haloDensity <= 0.055;
++        if (structurallyValid && (!bestValid || score > bestValid.score)) bestValid = candidate;
+       }
+     }
+   }
+
+-  const active = !!best && best.score >= 0.68 && best.precision >= 0.72 && best.recall >= 0.48;
++  // Prefer the best structurally valid radar control. If none exists, retain the best raw lookalike
++  // only for diagnostics so the next labeled frame explains exactly why it was rejected.
++  const active = !!bestValid;
++  const best = bestValid || bestRaw;
+   const confidence = active
+     ? Math.max(1, Math.min(100, Math.round((best.score - 0.55) / 0.25 * 100)))
+     : 0;
++  let rejectionReason = null;
++  if (!active && best) {
++    if (best.labelRecall < 0.40) rejectionReason = "missing-angle-label";
++    else if (best.haloDensity > 0.055) rejectionReason = "match-not-isolated";
++    else rejectionReason = "shape-threshold";
++  }
+   return {
+     active,
+     confidence,
+-    method: "radar-icon-template-search",
++    method: "radar-icon-structure-search",
+     referenceAngle: best?.template.reference || null,
+     templateScore: Number((best?.score || 0).toFixed(4)),
+     templatePrecision: Number((best?.precision || 0).toFixed(4)),
+     templateRecall: Number((best?.recall || 0).toFixed(4)),
++    iconRecall: Number((best?.iconRecall || 0).toFixed(4)),
++    labelRecall: Number((best?.labelRecall || 0).toFixed(4)),
++    haloDensity: Number((best?.haloDensity || 0).toFixed(4)),
++    rejectionReason,
+     candidatesChecked,
+     roi: best ? {
+       x: Number((best.x / width).toFixed(5)),
+diff --git a/overlay/changelog.json b/overlay/changelog.json
+index 35b6948..1d08cd3 100644
+--- a/overlay/changelog.json
++++ b/overlay/changelog.json
+@@ -1,4 +1,14 @@
+ {
++  "0.1.36-r31-alpha.17": {
++    "date": "2026-08-05T00:16:34Z",
++    "notes": [
++      "Scan Mode detection is recalibrated from paired 6360x2560 on/off screenshots whose universal Scan HUD area was explicitly outlined. The normalized field is resolution-independent and remains unrelated to ship type, Prospector HUD color, ping state, target text, or OCR.",
++      "Radar candidates must now contain both the upper cone/icon and its separated angle label, and must be isolated from surrounding bright structure. This rejects Alpha 16's confirmed changelog-button and hangar-beam false positives.",
++      "The detector searches every normalized pixel in the smaller calibrated field, so a valid icon cannot be skipped because it falls between the old two-pixel sample positions.",
++      "OCR diagnostics now save on Scan Mode match changes and periodic active refreshes. Each of the eight bounded slots includes the full frame, an enlarged exact match, an enlarged context crop, and structural scores/rejection reasons in JSON and the runtime log.",
++      "Alpha 16's physical click routing, single normal cursor, mandatory F interaction, OpenGL default, and bounded OCR resources are preserved."
++    ]
++  },
+   "0.1.36-r31-alpha.16": {
+     "date": "2026-08-04T03:50:48Z",
+     "notes": [
+diff --git a/test/r31-alpha15-interaction-diagnostics.test.cjs b/test/r31-alpha15-interaction-diagnostics.test.cjs
+index 6dc5fe4..e9715ad 100644
+--- a/test/r31-alpha15-interaction-diagnostics.test.cjs
++++ b/test/r31-alpha15-interaction-diagnostics.test.cjs
+@@ -42,7 +42,7 @@ assert.match(capture, /`read-\$\{recentSlot\}\.json`/);
+ // Scan Mode is now a ship-independent search for the shared radar icon. It does not depend on
+ // a Prospector crop, target/ping text, OCR, or temporary screenshot files.
+ assert.match(scanGate, /radar-icon-search-field/);
+-assert.match(scanGate, /radar-icon-template-search/);
++assert.match(scanGate, /radar-icon-(?:template|structure)-search/);
+ assert.match(capture, /SCAN_MODE_RADAR_SEARCH_ROI/);
+ assert.match(capture, /detectScanModeRadarIcon/);
+ assert.match(capture, /visualFingerprint\(shot, cap\.width, cap\.height, SCAN_MODE_RADAR_SEARCH_ROI\)/);
+diff --git a/test/r31-alpha16-radar-and-click-forwarding.test.cjs b/test/r31-alpha16-radar-and-click-forwarding.test.cjs
+index 657342a..c4ae694 100644
+--- a/test/r31-alpha16-radar-and-click-forwarding.test.cjs
++++ b/test/r31-alpha16-radar-and-click-forwarding.test.cjs
+@@ -39,7 +39,7 @@ assert.doesNotMatch(main, /INTERACTION_CURSOR_HTML|ensureInteractionCursorWindow
+ // Scan activation depends only on a shared radar-icon match in a broad normalized field.
+ assert.match(scanGate, /SCAN_MODE_RADAR_SEARCH_ROI/);
+ assert.match(scanGate, /RADAR_REFERENCE_BITS/);
+-assert.match(scanGate, /method: "radar-icon-template-search"/);
++assert.match(scanGate, /method: "radar-icon-(?:template|structure)-search"/);
+ assert.match(capture, /detectScanModeRadarIcon/);
+ assert.doesNotMatch(scanGate, /prospector/i);
+ assert.doesNotMatch(capture, /prospector-hud-color/i);
+diff --git a/test/r31-alpha17-scan-structure.test.cjs b/test/r31-alpha17-scan-structure.test.cjs
+new file mode 100644
+index 0000000..71a48f8
+--- /dev/null
++++ b/test/r31-alpha17-scan-structure.test.cjs
+@@ -0,0 +1,92 @@
++"use strict";
++
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const path = require("node:path");
++
++const root = process.argv[2] || path.resolve(__dirname, "..");
++const sourceLayout = fs.existsSync(path.join(root, "electron/scan-mode-gate.cjs"));
++const source = (file) => path.join(root, sourceLayout ? file : `app/${file}`);
++const scanGateSource = fs.readFileSync(source("electron/scan-mode-gate.cjs"), "utf8");
++const captureSource = fs.readFileSync(source("electron/capture.cjs"), "utf8");
++const { detectScanModeRadarIcon } = require(source("electron/scan-mode-gate.cjs"));
++
++// The search field comes from the user's paired 6360x2560 on/off frames and #ff0000 outlines,
++// converted to the 3840x2160 primary game frame with a normalized safety margin. It is a universal
++// Scan HUD field, not a ship, color, ping, target, or fixed-resolution dependency.
++assert.match(scanGateSource, /x: 0\.37/);
++assert.match(scanGateSource, /y: 0\.41/);
++assert.match(scanGateSource, /w: 0\.32/);
++assert.match(scanGateSource, /h: 0\.30/);
++assert.match(scanGateSource, /iconRecall/);
++assert.match(scanGateSource, /labelRecall/);
++assert.match(scanGateSource, /haloDensity/);
++assert.match(scanGateSource, /missing-angle-label/);
++assert.match(scanGateSource, /match-not-isolated/);
++assert.match(scanGateSource, /radar-icon-structure-search/);
++assert.doesNotMatch(scanGateSource, /prospector/i);
++
++// Diagnostics retain the exact match and its context, save on match changes/active refreshes, and
++// expose every structural score in the runtime log instead of only the ambiguous aggregate score.
++assert.match(captureSource, /match-context-\$\{recentSlot\}\.jpg/);
++assert.match(captureSource, /scan-mode-match-change/);
++assert.match(captureSource, /scan-mode-active-refresh/);
++assert.match(captureSource, /scanModeRead\.iconRecall/);
++assert.match(captureSource, /scanModeRead\.labelRecall/);
++assert.match(captureSource, /scanModeRead\.haloDensity/);
++assert.match(captureSource, /scanModeRead\.rejectionReason/);
++
++const WIDTH = 960;
++const HEIGHT = 540;
++const fixtures = [
++  {
++    name: "Alpha 16 changelog button false positive",
++    x: 480, y: 300, w: 80, h: 80, active: false,
++    bits: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMD/HwAAAAAAAADg/x8AAAAAAAAA4P8fAAAAAAAAAOD/HwAAAAAAAADg/x8AAAAAAAAA4P8fAAAAAAAAAMD/HwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
++  },
++  {
++    name: "Alpha 16 hangar beam false positive",
++    x: 480, y: 200, w: 80, h: 80, active: false,
++    bits: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAAAAAAAAACAH4ABAAAAAAAAwB+AAQAAAAAAAMgPwAMAAAAAAADMDwAAAAAAAAAAhAf8AwAAAAAAAKAH/P8AAAAAAAAgBAAAAAAAAACAIDQAAAAAAAAAACD8BwAAAAAAAAAQ/v8HAAAAAAAAAP7//wMAAAAAAAD+//8DAAAAAAAI/v//BwAAAADwDP7//38AAAAA+Az+//8/AAAAAPjA4f//HwAAAAD4gOP///8AAAAA+ADg//8fAAAAAPwD4P/zfwAAAAD8A+A/AAAAAAAA+AHgDwAAAAAAAPgBgAAAAAAAAAD4AgAAAAAAAAAAcAAAAAAAAAAAALAAAAAAAP4BAACAEAAAAAD8AAAAwDwAAACAGAAAAMD/8////wAAAADA+fv///8AAAAA8D34////AAAAAPA/+P//PwAAAADgAPj/AwAAAAAAAAAAAAAAAAAA/wcAAAAAAAAA/v8HAAAAAAAAAPz/AwAAAAAAAAAA+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
++  },
++  {
++    name: "outlined Scan Mode off",
++    x: 455, y: 210, w: 80, h: 80, active: false,
++    bits: "AAAAAAAAAAAAAAAAAAAwIAAAAAAAAAAAcDgAAAAAAAAAAPA4AAAAAAAAAADwPQAAAAAAAAAA8D8AAAAAAAAAAPA/AAAAAAAAAADwPwAAAAAAAAAA8D8AAAAAAAAAAPA/AAAAAAAAAADwPwAAAAAAAAAA8D8AAAAAAAAAAPA/AAAAAAAAAADgHwAAAAAAAAAAwA8AAAAAAAAAAIAHAAAAAAAAAACABwAAAAAAAAAAAAMAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAggAAAAAAAAAAAYMAAAAAAAAAAAODAAAAAAAAAAADg4AAAAAAAAAAB4PAAAAAAAAAAA+D4AAAAAAAAAAPg/AAAAAAAAAAD4PwAAAAAAAAAA+D8AAAAAAAAPAPg/AAAAAAAADwD4P8AAAAAAAAAA+D/AAAAAAAAAAPgfwAAAAAAAAAD4HwAAAAAAAAAA/B8AAAAAAAAAAPgPAAAAAAAAAAD4BwAAAAAAAAAA+AMAAAAAAAAAAPgDAAAAAAAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADBAAAAAAAAAAAAwYAAAAAAAAAAAcGAAAAAAAAAAAHBwAAAAAAAAAABwcAAAAAH4AAAAcHAAAAAACAAAAfB8AAAAAAgAAAPwfAAA/AAAAAAD8HwAAIAAAAAAA/B8AACAAAAAAAPwfAAAAAAAAAAD8HwAAAAAAAAAA/B8AAAAAAAAAAMAJAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAABAAIAAAAAAAAAAQACAAAAAAAAAAAAAAAAAAAA=",
++  },
++  {
++    name: "outlined Scan Mode on",
++    x: 415, y: 250, w: 80, h: 80, active: true,
++    bits: "AAAAwOMBAAAAAAAAAMDjAQAAAAAAAADg4wAAAAAAAAAA4MMAAAAAAAAAAMDDAQAAAAAAAADAgwAAAAAAAAAAAIMAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAYAAAAAAAAAAAAOAAAAAAAAAAAADgAAAA/AAAAAAA4AEAAAQAAAAAAOABAAAEAAAAAADgAQAAAAAAAAAA4AEAAAAAAAAAAOAhAAAAAAAAAABAYAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAABgAAAAAAAAAAAAAAAAAAAAAAAMAfAAAAAAAAAADAHwAAAAAAAAAA8H8AAAAAAAAAAOB/AAAAAAAAAADgPwAAAAAAAAAA4B8AAAAAAAAAIMAPAAAAAAAAACCADwAAAAAAAAAggAsAAAAAAAAAIAAHAAAAAAAAAOAAAAAAAAAAAADgAAAAAAAAAAAA4AAAAAAAAAAAAOAADwAAAAAAAADgAB8AAAAAAAAAAAAPAAAAAAAAAAAABQAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
++  },
++];
++
++function frameFromFixture(fixture) {
++  const frame = Buffer.alloc(WIDTH * HEIGHT * 4);
++  for (let pixel = 0; pixel < WIDTH * HEIGHT; pixel += 1) {
++    frame[pixel * 4] = 25;
++    frame[pixel * 4 + 1] = 35;
++    frame[pixel * 4 + 2] = 45;
++    frame[pixel * 4 + 3] = 255;
++  }
++  const packed = Buffer.from(fixture.bits, "base64");
++  for (let y = 0; y < fixture.h; y += 1) {
++    for (let x = 0; x < fixture.w; x += 1) {
++      const bit = y * fixture.w + x;
++      if (!((packed[bit >> 3] >> (bit & 7)) & 1)) continue;
++      const offset = ((fixture.y + y) * WIDTH + fixture.x + x) * 4;
++      frame[offset] = 20;
++      frame[offset + 1] = 210;
++      frame[offset + 2] = 240;
++    }
++  }
++  return frame;
++}
++
++for (const fixture of fixtures) {
++  const result = detectScanModeRadarIcon(frameFromFixture(fixture), WIDTH, HEIGHT);
++  assert.equal(result.active, fixture.active, `${fixture.name}: ${JSON.stringify(result)}`);
++  assert.equal(result.method, "radar-icon-structure-search");
++}
++
++console.log("r31 alpha 17 labeled Scan Mode structure regression test: passed");

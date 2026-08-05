@@ -4,12 +4,12 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-TMP_ROOT="${RUNNER_TEMP:-/tmp}/r31-alpha16-build"
+TMP_ROOT="${RUNNER_TEMP:-/tmp}/r31-alpha17-build"
 LINUX_DIR="$TMP_ROOT/linux"
 CORE_DIR="$TMP_ROOT/core"
 BASE_DIR="$TMP_ROOT/base"
 CONFLICT_DIR="$TMP_ROOT/conflicts"
-OUT="$TMP_ROOT/ArchVerse-Overlay-0.1.36-r31-alpha.16"
+OUT="$TMP_ROOT/ArchVerse-Overlay-0.1.36-r31-alpha.17"
 DIST="$ROOT/dist"
 BASE=5b70715f0958f01ab5d0b79124760c016c9410cd
 
@@ -33,14 +33,14 @@ def decode_parts(pattern: str, output: str) -> None:
     Path(output).write_bytes(decoded)
     print(f"Decoded {len(parts)} parts from {pattern}: {len(decoded)} bytes")
 
-decode_parts("linux-port/payload/part-*", "/tmp/r31-alpha16-linux.tar.gz")
-decode_parts("linux-port/core/part-*", "/tmp/r31-alpha16-core.tar.gz")
+decode_parts("linux-port/payload/part-*", "/tmp/r31-alpha17-linux.tar.gz")
+decode_parts("linux-port/core/part-*", "/tmp/r31-alpha17-core.tar.gz")
 PY
 
-gzip -t /tmp/r31-alpha16-linux.tar.gz
-gzip -t /tmp/r31-alpha16-core.tar.gz
-tar --no-same-owner -xzf /tmp/r31-alpha16-linux.tar.gz -C "$LINUX_DIR"
-tar --no-same-owner -xzf /tmp/r31-alpha16-core.tar.gz -C "$CORE_DIR"
+gzip -t /tmp/r31-alpha17-linux.tar.gz
+gzip -t /tmp/r31-alpha17-core.tar.gz
+tar --no-same-owner -xzf /tmp/r31-alpha17-linux.tar.gz -C "$LINUX_DIR"
+tar --no-same-owner -xzf /tmp/r31-alpha17-core.tar.gz -C "$CORE_DIR"
 test -s "$LINUX_DIR/electron/window-manager.cjs"
 test -s "$LINUX_DIR/electron/linux/star-citizen-session.cjs"
 test -s "$CORE_DIR/electron/main.cjs"
@@ -109,12 +109,17 @@ for patch in \
   git apply --recount "$patch"
 done
 
+# This generated patch has exact hunk counts and includes a new compact fixture file. Applying it
+# without --recount preserves Git's /dev/null new-file semantics.
+git apply --check linux-port/r31-alpha17-scan-structure.patch
+git apply linux-port/r31-alpha17-scan-structure.patch
+
 python3 - <<'PY'
 from pathlib import Path
 import json
 pkg = Path("package.json")
 data = json.loads(pkg.read_text())
-data["version"] = "0.1.36-r31-alpha.16"
+data["version"] = "0.1.36-r31-alpha.17"
 data["productName"] = "ArchVerse Overlay"
 pkg.write_text(json.dumps(data, indent=2) + "\n")
 PY
@@ -151,7 +156,7 @@ const out = process.argv[2];
 const src = require("./package.json");
 fs.writeFileSync(out, JSON.stringify({
   name: "archverse-overlay",
-  version: "0.1.36-r31-alpha.16",
+  version: "0.1.36-r31-alpha.17",
   description: "Community Linux port of SC Overlay",
   main: "electron/main.cjs",
   type: "module",
@@ -205,7 +210,7 @@ import sys
 
 installer = Path(sys.argv[1])
 text = installer.read_text()
-text = text.replace("0.1.33-r30.2-rapidocr-worker-isolation", "0.1.36-r31-alpha.16")
+text = text.replace("0.1.33-r30.2-rapidocr-worker-isolation", "0.1.36-r31-alpha.17")
 old_defaults = """data.holdToInteract = true;
 data.missionOcr = true;
 data.miningAssistant = true;"""
@@ -240,13 +245,13 @@ text = text.replace(
     "  F              = enter interaction while the pointer is over a widget\n"
     "  Shift+F6       = move/arrange all visible widgets",
 )
-text = text.replace("archverse-overlay-r30.2.log", "archverse-overlay-r31-alpha16.log")
-text = text.replace("r30.2", "r31 alpha 16")
+text = text.replace("archverse-overlay-r30.2.log", "archverse-overlay-r31-alpha17.log")
+text = text.replace("r30.2", "r31 alpha 17")
 installer.write_text(text)
 
 doctor = Path(sys.argv[2])
 doctor.write_text(doctor.read_text().replace(
-    "0.1.33-r30 diagnostics", "0.1.36-r31 alpha 16 diagnostics"))
+    "0.1.33-r30 diagnostics", "0.1.36-r31 alpha 17 diagnostics"))
 
 launcher = Path(sys.argv[3])
 launcher_text = launcher.read_text()
@@ -300,9 +305,9 @@ launcher.write_text(launcher_text)
 PY
 
 cat > "$OUT/README.md" <<'DOC'
-# ArchVerse Overlay 0.1.36-r31 alpha 16
+# ArchVerse Overlay 0.1.36-r31 alpha 17
 
-Arch/CachyOS Scan Mode and Linux interaction repair on top of Alpha 14's resource budget.
+Arch/CachyOS Scan Mode structure calibration on top of Alpha 16's interaction and resource fixes.
 
 Input behavior:
 - Before first focus, the interaction pointer follows Star Citizen's nested Gamescope/XWayland cursor.
@@ -330,10 +335,12 @@ Screen reader behavior:
 - Settings shows the current capture method, processing time, and skipped-stage count.
 - Settings and the OCR loop now read the same canonical config file; Alpha 13's legacy file is migrated and backed up once.
 - RapidOCR is limited to two ONNX threads; Tesseract and ImageMagick are limited to one thread each.
-- A position- and scale-tolerant in-memory search detects the shared radar-cone icon across ships.
-- Ship type, HUD color at one fixed coordinate, ping state, and target text are not Scan Mode inputs.
+- A position- and scale-tolerant in-memory search detects the shared radar control across ships.
+- The normalized search field comes from paired, explicitly outlined Scan Mode on/off desktop frames.
+- Candidates must contain the cone/icon and separated angle label and be isolated from surrounding bright structure.
+- Ship type, Prospector HUD color, ping state, target text, and OCR are not Scan Mode inputs.
 - Scan Mode gating does not launch RapidOCR; Analysis and Signature OCR stay dormant outside it.
-- OCR diagnostics retain eight recent frame/result pairs, and app-owned logs include timestamps.
+- OCR diagnostics retain eight recent full frames plus enlarged exact/context match crops and structural scores.
 - OpenGL is the Linux default; `SC_TRACKER_RENDER_MODE=software` remains the Safe Mode.
 
 This is an alpha. Keep the previous working archive available for rollback.
@@ -342,7 +349,7 @@ Install:
     ./install-cachyos.sh --clean-install
 
 Launch with logging:
-    sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha16.log
+    sc-blueprint-tracker 2>&1 | tee ~/archverse-overlay-r31-alpha17.log
 DOC
 
 cat > "$OUT/verify-alpha.sh" <<'SH'
@@ -401,7 +408,10 @@ grep -q 'completion-scheduled OCR loop armed' "$root/app/electron/capture.cjs"
 grep -q 'capture backend cached for this session' "$root/app/electron/capture.cjs"
 grep -q 'screenReaderProfile' "$root/app/server/sc-overlay-server.mjs"
 grep -q 'process.env.SC_TRACKER_CONFIG_DIR' "$root/app/server/sc-overlay-server.mjs"
-grep -q 'radar-icon-template-search' "$root/app/electron/scan-mode-gate.cjs"
+grep -q 'radar-icon-structure-search' "$root/app/electron/scan-mode-gate.cjs"
+grep -q 'missing-angle-label' "$root/app/electron/scan-mode-gate.cjs"
+grep -q 'match-not-isolated' "$root/app/electron/scan-mode-gate.cjs"
+grep -q 'match-context-${recentSlot}.jpg' "$root/app/electron/capture.cjs"
 grep -q 'SCAN_MODE_RADAR_SEARCH_ROI' "$root/app/electron/capture.cjs"
 grep -q 'RADAR_REFERENCE_BITS' "$root/app/electron/scan-mode-gate.cjs"
 ! grep -qi 'prospector' "$root/app/electron/scan-mode-gate.cjs"
@@ -421,21 +431,22 @@ node "$root/tests/r31-alpha13-efficiency.test.cjs" "$root"
 node "$root/tests/r31-alpha14-resource-budget.test.cjs" "$root"
 node "$root/tests/r31-alpha15-interaction-diagnostics.test.cjs" "$root"
 node "$root/tests/r31-alpha16-radar-and-click-forwarding.test.cjs" "$root"
+node "$root/tests/r31-alpha17-scan-structure.test.cjs" "$root"
 node "$root/tests/alpha14-config-e2e.cjs" "$root"
-echo 'r31 alpha 16 static and end-to-end verification passed.'
+echo 'r31 alpha 17 static and end-to-end verification passed.'
 SH
 
 chmod +x "$OUT"/*.sh "$OUT/bin/sc-blueprint-tracker"
 "$OUT/verify-alpha.sh"
 
-tar -czf "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.16-arch.tar.gz" -C "$TMP_ROOT" "$(basename "$OUT")"
+tar -czf "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" -C "$TMP_ROOT" "$(basename "$OUT")"
 (
   cd "$TMP_ROOT"
-  zip -qr "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.16-arch.zip" "$(basename "$OUT")"
+  zip -qr "$DIST/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.zip" "$(basename "$OUT")"
 )
 (
   cd "$DIST"
-  sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.16-arch.tar.gz ArchVerse-Overlay-0.1.36-r31-alpha.16-arch.zip > SHA256SUMS
+  sha256sum ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.zip > SHA256SUMS
 )
 
-echo "Alpha 16 package created in $DIST"
+echo "Alpha 17 package created in $DIST"
