@@ -99,6 +99,16 @@ check("16,000 and 18,000 are left as they are (Savrilium ×5 vs Bexalite ×5)",
 check("6,000 and 8,000 too (both debris, so it changes nothing anyway)",
   fix(6000) === null && fix(8000) === null);
 
+// ── the TWO-digit extension (Rytharr, 2026-08-07) ──────────────────────────────
+// A real read of 18,980 should have been 16,960 (Copper ×4) — two digits confused in the same
+// number. Neither single-digit swap alone resolves to anything legal (16,980 and 18,960 are both
+// nowhere near a real value), only flipping both at once does — this is exactly the case the
+// one-swap-only version couldn't reach.
+console.log("\nrepairing TWO confused 6/8 digits at once");
+check("18,980 -> 16,960 (Copper ×4)", fix(18980) === 16960, String(fix(18980)));
+check("a single swap of 18,980 alone resolves nothing (both are illegal)",
+  !legal(16980) && !legal(18960));
+
 // Exhaustive: every single-digit 6/8 misread of every legal value.
 const swap1 = (s: string) => {
   const out: string[] = [];

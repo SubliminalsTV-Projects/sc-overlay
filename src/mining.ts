@@ -108,35 +108,48 @@ export interface ScanOutcome {
  *  numbers that are consistently making it so that it reads the wrong number". */
 const CONFUSABLE_DIGITS: Record<string, string> = { "6": "8", "8": "6" };
 
-/** Fix a confused digit by CONSTRAINING the read to values the game can actually show.
+/** Fix confused digits by CONSTRAINING the read to values the game can actually show.
  *
  *  This is the answer to "can you train it better": the OCR can't be trained, but it doesn't need to
  *  be. A signature is one of only ~165 legal values spread over 2,000–25,800 — **0.69% of that
  *  range** — so a wrong digit almost always lands on a number that cannot exist, and usually exactly
- *  one legal value is a single 6/8 swap away. Measured over the real table: of the 81 misreads a
- *  single 6↔8 slip can produce, **75 have exactly one candidate** and are repaired here.
+ *  one legal value is one or two 6/8 swaps away.
  *
- *  Three rules keep it honest:
- *  - **One digit only.** Allowing two swaps repairs a handful more but starts inventing answers for
- *    reads that were wrong for some other reason.
+ *  🔴 ONE-DIGIT-ONLY WAS TOO NARROW (Rytharr, 2026-08-07): a real read of 18,980 should have been
+ *  16,960 (Copper ×4) — TWO digits confused in the same number, which the original one-swap-only
+ *  version couldn't reach and so left as "unknown" all night. Measured over the real table before
+ *  changing anything: allowing a SECOND simultaneous swap repairs 10 more real misreads (74 -> 84)
+ *  with **zero** new ambiguity — no case that single-swap could uniquely resolve becomes ambiguous
+ *  once pairs are tried too, because the same uniqueness rule below still applies across the whole
+ *  combined search, not just within one swap count.
+ *
+ *  What keeps it honest:
  *  - **A value that is already legal is never touched** — 6,800 (Lindinium ×2) is taken at face
  *    value, not "corrected" to 8,600 (Ice ×2). An exact match is evidence in its own right.
- *  - **Ambiguity is left alone, never guessed.** Only two pairs collide: 16,000 (Savrilium ×5) vs
- *    18,000 (Bexalite ×5), and 6,000 vs 8,000 — and the second is debris either way, so it changes
- *    nothing. Naming the wrong rock is worse than naming none.
+ *  - **Ambiguity is left alone, never guessed** — across EVERY single- and double-swap candidate
+ *    together, not just within one count. Only two pairs collide at one swap: 16,000 (Savrilium ×5)
+ *    vs 18,000 (Bexalite ×5), and 6,000 vs 8,000 (debris either way, so it changes nothing) — both
+ *    already caught by the "already legal" rule above, since 16,000/18,000/6,000/8,000 are all legal
+ *    values in their own right and never reach the swap search at all. Naming the wrong rock is
+ *    worse than naming none.
  *
  *  Returns the repaired value, or null if the read should stand as it is. */
 export function repairConfusableDigits(signature: number, isLegal: (n: number) => boolean): number | null {
   if (!Number.isInteger(signature) || signature < 0) return null;
   if (isLegal(signature)) return null;               // already a value the game can show — trust it
   const s = String(signature);
+  const confusable: number[] = [];
+  for (let i = 0; i < s.length; i++) if (CONFUSABLE_DIGITS[s[i]]) confusable.push(i);
   const found = new Set<number>();
-  for (let i = 0; i < s.length; i++) {
-    const alt = CONFUSABLE_DIGITS[s[i]];
-    if (!alt) continue;
-    const n = Number(s.slice(0, i) + alt + s.slice(i + 1));
+  const tryFlipping = (positions: number[]) => {
+    const chars = s.split("");
+    for (const i of positions) chars[i] = CONFUSABLE_DIGITS[s[i]];
+    const n = Number(chars.join(""));
     if (isLegal(n)) found.add(n);
-  }
+  };
+  for (const i of confusable) tryFlipping([i]);
+  for (let a = 0; a < confusable.length; a++)
+    for (let b = a + 1; b < confusable.length; b++) tryFlipping([confusable[a], confusable[b]]);
   return found.size === 1 ? [...found][0] : null;    // 0 = nothing plausible, 2+ = don't guess
 }
 
