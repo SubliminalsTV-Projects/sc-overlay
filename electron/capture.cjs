@@ -86,6 +86,24 @@ function rightPanelCrop(image, w, h) {
   return { img: image.crop({ x, y: 0, width: cw, height: ch }), w: cw, h: ch };
 }
 
+// The mining scan region, in pixels — deliberately duplicated from screen-read.ts's scanRegion()/
+// DEFAULT_SCAN_REGION rather than imported: that module is TypeScript run via tsx in the sidecar
+// process, and this file is plain CommonJS in the Electron main process with no build step wiring
+// them together. Keep in sync if the default band or the validation rule ever changes there.
+const DEFAULT_SCAN_REGION = { x: 0.5 - 0.17, y: 0.5 - 0.24, w: 0.34, h: 0.24 - 0.015 };
+function scanRegionPixels(saved, w, h) {
+  const f = saved
+    && Number.isFinite(saved.x) && Number.isFinite(saved.y)
+    && Number.isFinite(saved.w) && Number.isFinite(saved.h)
+    && saved.w > 0.02 && saved.h > 0.01
+    && saved.x >= 0 && saved.y >= 0 && saved.x + saved.w <= 1.001 && saved.y + saved.h <= 1.001
+    ? saved : DEFAULT_SCAN_REGION;
+  return {
+    x: Math.round(f.x * w), y: Math.round(f.y * h),
+    width: Math.round(f.w * w), height: Math.round(f.h * h),
+  };
+}
+
 // RapidOCR (PP-OCR) reader — main-process only, ESM loaded lazily (model loads once, ~2s). Returns
 // the same {text,x,y,w,h} line shape the sidecar classifier expects, from the PP-OCR {text,box}.
 let _rapid = null;
@@ -156,39 +174,50 @@ function hasRender(image) {
 // is the ONLY evidence it has, and a glyph that never confirms means no debris call-out ever.
 // That is the "2,000 and 6,000 are never called out" report, and it was never about those values.
 //
-// The invariant that survives a HUD recolour: THE PIN IS DRAWN IN THE SAME COLOUR AS THE NUMBER
-// BESIDE IT. Both are the same HUD layer. So the number's own pixels calibrate the match for that
-// frame, and the test becomes "is there ink beside the number that looks like the number's ink" —
-// true for a yellow HUD, a blue one, a white one, and any future one.
+// 🔴 THE "SAME COLOUR AS THE NUMBER" INVARIANT WAS ITSELF WRONG, not just mistuned (Rytharr,
+// 2026-08-07). A real capture showed the pin rendering GOLD (chroma ~0.42/0.38/0.20) beside a
+// WHITE number (chroma ~0.33/0.34/0.33) on the same frame — chromaDist between them was 0.297,
+// past the 0.22 threshold that assumed they'd match. That pin could never be found, at any
+// brightness, because the reference it was being compared against was never its own colour to
+// begin with. And the colour still can't be hardcoded — it demonstrably varies ship to ship.
+//
+// The invariant that actually holds: THE PIN IS THE ONLY COLOURFUL THING IN THIS BOX. Measured off
+// that same real capture — the translucent pill background and the (apparently always neutral)
+// number text both sit under 0.1 saturation; real pin ink measured 0.3–0.7 regardless of its hue.
+// So instead of matching a specific colour, ask whether a pixel is colourful AT ALL (its
+// saturation — how far its RGB sits from grey/white/black) rather than which colour it is. That
+// works for a yellow HUD, a blue one, a gold one, a white one, and any future one, without ever
+// needing to know in advance what "the pin's colour" is.
 const GLYPH = {
   /** Fraction of the search box that must be pin-coloured ink. The pin is ~15×22 in a ~34×29
    *  box (~33%), so this stays generous for a heavily blended one. */
   minFraction: 0.04,
-  /** How close a pixel's HUE must be to the number's ink, as a distance between brightness-
-   *  normalised RGB triplets (0 = identical hue, ~1.4 = opposite). Generous because the pin is
-   *  often semi-transparent over space, which desaturates it toward the background. */
-  maxHueDist: 0.22,
+  /** Saturation floor — (max−min)/max of a pixel's RGB — for it to count as pin ink rather than
+   *  the achromatic pill background or the (measured: near-white) number text. 0.18 sits with
+   *  clear margin above both real measured cases (white number ≈0.02–0.05, dark pill background
+   *  ≈0.05 once luminance noise at near-black is excluded by the floor below) and clear margin
+   *  below real pin ink (≈0.3+ even blended 50% into space or a lit rock). */
+  minSaturation: 0.18,
   /** A hit must also be BRIGHT — at least this fraction of the NUMBER's own ink luminance — so
-   *  the dark space showing through a translucent pin doesn't count as ink just for having the
-   *  right hue. Deliberately a fraction of the ink and NOT a step above the sampled background:
-   *  a tight OCR bbox can be almost pure ink, making background ~= ink, and a floor derived from
-   *  that gap then demands the pin be as bright as the number — which a translucent pin never is.
-   *  0.35 clears a pin blended 50% into space (measured ~52% of ink) with margin. */
+   *  near-black compression noise (which can read as spuriously "saturated" at tiny RGB values)
+   *  doesn't count just for having an unstable colour ratio. Deliberately a fraction of the ink and
+   *  NOT a step above the sampled background: a tight OCR bbox can be almost pure ink, making
+   *  background ~= ink, and a floor derived from that gap then demands the pin be as bright as the
+   *  number — which a translucent pin never is. 0.35 clears a pin blended 50% into space (measured
+   *  ~52% of ink) with margin. */
   minLumRatio: 0.35,
   /** Below this the text sample is too dim/flat to trust as a reference (the number itself was
    *  probably not in the box we were handed) — see the fallback in findScanGlyph. */
   minInkLum: 40,
 };
 
-/** Brightness-normalised RGB — strips intensity, keeps hue. A dim and a bright version of the
- *  same HUD colour normalise to the same triplet, which is the whole point: the pin is routinely
- *  dimmer than the number because space shows through it. */
-function chroma(r, g, b) {
-  const s = r + g + b;
-  return s > 0 ? [r / s, g / s, b / s] : [0, 0, 0];
-}
-function chromaDist(a, b) {
-  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * 1.732; // scaled so ~1 is "very different"
+/** How far a pixel sits from the grey/white/black axis — 0 for any shade of grey, up toward 1 for
+ *  a fully saturated colour. Colour-FAMILY agnostic on purpose: this asks "is it colourful" rather
+ *  than "which colour is it", which is what lets one threshold cover a gold pin, a cyan one, a red
+ *  one, whatever a given ship's HUD happens to use. */
+function saturation(r, g, b) {
+  const mx = Math.max(r, g, b);
+  return mx > 0 ? (mx - Math.min(r, g, b)) / mx : 0;
 }
 
 /** Sample a rect and derive its INK: the colour of the bright minority (glyph strokes) rather
@@ -218,7 +247,7 @@ function sampleInk(bmp, w, x0, y0, x1, y1) {
   }
   if (!n) return null;
   const mean = [Math.round(sr / n), Math.round(sg / n), Math.round(sb / n)];
-  return { mean, chroma: chroma(mean[0], mean[1], mean[2]), lum: cut, bg };
+  return { mean, lum: cut, bg };
 }
 
 /** Sample the box beside the signature number and decide whether the scan glyph is in it.
@@ -236,16 +265,17 @@ function findScanGlyph(image, rect, textRect) {
   if (total <= 0) return { seen: false, fraction: 0, total: 0, mean: null, ref: null, why: "empty search box" };
   const bmp = image.getBitmap(); // BGRA, 4 bytes/pixel
 
-  // The reference is the NUMBER's own ink — same HUD layer, therefore same colour, whatever ship
-  // the player is in. Without a usable text rect there is nothing to calibrate against and we say
-  // so rather than falling back to a guess: a wrong absolute colour is exactly the bug being fixed.
+  // The reference is the NUMBER's own ink luminance, purely as a BRIGHTNESS anchor — not its
+  // colour (see the note above on why that assumption was wrong). Without a usable text rect
+  // there is nothing to calibrate brightness against, so this refuses rather than guessing.
   const ink = textRect ? sampleInk(bmp, w, ...clamp(textRect)) : null;
   if (!ink || ink.lum < GLYPH.minInkLum) {
     return { seen: false, fraction: 0, total, mean: null, ref: null,
              why: ink ? `text ink too dim to calibrate (lum ${Math.round(ink.lum)})` : "no text rect to calibrate from" };
   }
-  // A hit must match the number's HUE and be bright relative to the number's own background —
-  // hue alone would accept the dark space seen through a translucent pin.
+  // A hit must be COLOURFUL (unlike the achromatic pill and the neutral number text) and bright
+  // relative to the number's own luminance — saturation alone would accept near-black compression
+  // noise, whose colour ratio is unstable at tiny RGB values.
   const lumFloor = ink.lum * GLYPH.minLumRatio;
   let hits = 0, sr = 0, sg = 0, sb = 0, hr = 0, hg = 0, hb = 0;
   for (let y = y0; y < y1; y++) {
@@ -254,7 +284,7 @@ function findScanGlyph(image, rect, textRect) {
       const b = bmp[i], g = bmp[i + 1], r = bmp[i + 2];
       sr += r; sg += g; sb += b;
       const lum = 0.114 * b + 0.587 * g + 0.299 * r;
-      if (lum >= lumFloor && chromaDist(chroma(r, g, b), ink.chroma) <= GLYPH.maxHueDist) {
+      if (lum >= lumFloor && saturation(r, g, b) >= GLYPH.minSaturation) {
         hits++; hr += r; hg += g; hb += b;
       }
     }
@@ -269,7 +299,7 @@ function findScanGlyph(image, rect, textRect) {
     // Logged so a HUD that still fails can be diagnosed from a user's sidecar.log without
     // guessing — this is what the old absolute thresholds could never tell us.
     ref: { mean: ink.mean, lum: Math.round(ink.lum), bg: Math.round(ink.bg), lumFloor: Math.round(lumFloor) },
-    why: `${hits}/${total} px matched the number's ink`,
+    why: `${hits}/${total} px were bright + saturated enough to count as pin ink`,
   };
 }
 
@@ -359,6 +389,7 @@ function startFabCapture({ port, configDir, onStatus }) {
   const shotsDir = path.join(configDir, "fab-shots"); // full uncropped frames (mineable)
   const tmpShot = path.join(os.tmpdir(), "sc-fab-shot.png");
   const tmpPanel = path.join(os.tmpdir(), "sc-fab-panel.png"); // upper-right crop fed to RapidOCR
+  const tmpMiningCrop = path.join(os.tmpdir(), "sc-mining-crop.png"); // scan-region crop fed to RapidOCR
   let busy = false;
   let busyAt = 0;             // when the current tick set busy (watchdog against a wedged loop)
   const TICK_WATCHDOG_MS = 15000; // if a tick has "held" busy this long, it hung — force re-arm
@@ -382,6 +413,10 @@ function startFabCapture({ port, configDir, onStatus }) {
   let fastUntil = 0;          // poll fast until this time (set while the scan HUD is on screen)
   let lastTickMs = 0;         // how long the last poll actually took — the fast rate tunes off it
   let rate = POLL_MS;         // the interval currently armed, so we only re-arm on a real change
+  let lastHeartbeatAt = 0;    // diagnostic liveness ping while an intermittent mining-loop hang
+  const HEARTBEAT_MS = 15000; // is still being tracked down — see the comment at the call site.
+  //                             Safe to remove once that's understood; harmless (one small POST
+  //                             every ~15s) to leave in until then.
   const uploaded = new Set(); // items pushed to the site this session
   const pendingUploads = new Map(); // item UUID -> display name|null: captured locally but NOT yet
   //                                   confirmed on the site; the drain loop retries until it lands
@@ -477,6 +512,20 @@ function startFabCapture({ port, configDir, onStatus }) {
     if (!/^StarCitizen$/i.test(fg.name)) { emitContext("idle"); return; } // only ever look at SC
     busy = true;
     busyAt = Date.now();
+    // A diagnostic liveness ping, for an intermittent mining-loop hang that isn't root-caused yet.
+    // sidecar.log carries no per-line timestamps otherwise, which made a real hang indistinguishable
+    // from "not at the scanner". Fire-and-forget so a slow/dead sidecar can never add latency to the
+    // real tick. If this stops appearing in sidecar.log, the tick loop itself is wedged (a
+    // `busy=true` never cleared, since this sits AFTER that point but before anything that could
+    // hang) — if it keeps appearing while mining reads still don't, the freeze is downstream instead.
+    if (mining && Date.now() - lastHeartbeatAt > HEARTBEAT_MS) {
+      lastHeartbeatAt = Date.now();
+      fetch(`http://localhost:${port}/api/heartbeat`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rate, lastTickMs, fastUntil: fastUntil - Date.now() }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      }).catch(() => {});
+    }
     try {
       const have = fab ? await ensureRemoteHave() : null; // dedup set only needed for capture
       const cap = await captureGame(fg.rect); // the monitor the GAME is on, not a blind sources[0]
@@ -510,6 +559,51 @@ function startFabCapture({ port, configDir, onStatus }) {
           const rr = await r2.json();
           if (rr.kind === "fabricator" && rr.item) { read = rr; renderSrc = panel.img; } // rr.crop is panel-relative
         } catch (e) { console.warn("[fab-capture] RapidOCR re-read failed, using Windows OCR:", e && e.message); }
+      }
+      // Pass 3 — same dual-engine idea, for the mining signature: once pass 1 says the scanner is
+      // up (its own HUD text, or a signature already parsed), re-read JUST the configured scan
+      // region with RapidOCR. Windows OCR mangles this number often enough that most scans never
+      // produced a candidate to classify at all (Rytharr, 2026-08-07) — the same class of problem
+      // Pass 2 already exists to solve for the kiosk. Cropped tight to the region rather than the
+      // whole frame, so it's cheap even at the fast poll rate while actively scanning.
+      if (mining && cfg.rapidOcr !== false && (read.scanHud || typeof read.signature === "number")) {
+        try {
+          const region = scanRegionPixels(cfg.scanRegion, cap.width, cap.height);
+          const crop = shot.crop(region);
+          // Magnify BEFORE OCR-ing, not for the player — this crop never touches the screen, it
+          // only feeds the OCR engine. The signature text is ~19px tall in the raw crop; both OCR
+          // engines are tuned on normal document-scale text and read small, thin HUD digits far
+          // less reliably than the same shapes several times larger (6-vs-8 confusion especially —
+          // the difference is a closed vs. open loop that gets much easier to resolve once it's not
+          // a handful of pixels). MINING_OCR_SCALE stays local to this crop; nothing else changes.
+          const MINING_OCR_SCALE = 4;
+          const big = crop.resize({
+            width: region.width * MINING_OCR_SCALE,
+            height: region.height * MINING_OCR_SCALE,
+            quality: "best",
+          });
+          fs.writeFileSync(tmpMiningCrop, big.toPNG());
+          const lines = (await ocrRapidLines(tmpMiningCrop)).map((l) => ({
+            text: l.text,
+            x: l.x / MINING_OCR_SCALE, y: l.y / MINING_OCR_SCALE,
+            w: l.w / MINING_OCR_SCALE, h: l.h / MINING_OCR_SCALE,
+          })); // back to the ORIGINAL crop's pixel space before anything downstream sees them
+          const r3 = await fetch(`http://localhost:${port}/api/screen-read`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lines, w: region.width, h: region.height, miningCrop: true }),
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
+          const rr3 = await r3.json();
+          // rr3's pin/text are CROP-relative (the sidecar has no idea where in the full frame this
+          // crop came from) — translate back to full-frame pixels before anything downstream uses
+          // them against `shot`, which is the uncropped bitmap.
+          if (rr3.kind === "mineable" && typeof rr3.signature === "number" && rr3.pin && rr3.text) {
+            const shift = (r) => ({ x: r.x + region.x, y: r.y + region.y, w: r.w, h: r.h });
+            read = { ...read, kind: "mineable", signature: rr3.signature, raw: rr3.raw,
+              pin: shift(rr3.pin), text: shift(rr3.text) };
+          }
+        } catch (e) { console.warn("[fab-capture] mining RapidOCR re-read failed, using Windows OCR:", e && e.message); }
       }
       // Cadence. Scanning ore is a live feedback loop: you shoot a rock and want to hear what it
       // is immediately, so while the scan HUD is on screen the loop runs at FAST_MS. Everything
@@ -560,7 +654,10 @@ function startFabCapture({ port, configDir, onStatus }) {
             body: JSON.stringify({
               signature: read.signature,
               confirmed: glyph.seen,
-              glyph: { fraction: glyph.fraction, total: glyph.total, mean: glyph.mean, hitMean: glyph.hitMean },
+              // `ref` (the number's own calibration ink/lum/floor) was computed by findScanGlyph but
+              // never forwarded — the sidecar's log line already knows how to print it, so a miss
+              // could never be told apart from "wrong hue" vs "not bright enough" without it.
+              glyph: { fraction: glyph.fraction, total: glyph.total, mean: glyph.mean, hitMean: glyph.hitMean, ref: glyph.ref },
               // For the "scan read area" outline: the text the OCR actually saw, and where/how big
               // it was. Sent as the raw frame rect plus the frame size, because only this process
               // knows the captured frame's dimensions — the sidecar turns it into fractions.

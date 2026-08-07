@@ -143,6 +143,21 @@ export function parseSignature(text: string): number | null {
   return null;
 }
 
+/** Pick the best signature-shaped candidate out of a set of lines already known to be "the
+ *  region" — either the scan-region-filtered subset of a full-frame read, or the entirety of a
+ *  tight crop taken OF that region (see the mining RapidOCR re-read in capture.cjs, which crops
+ *  to the configured scan region before OCR-ing it specifically because Windows OCR mangles this
+ *  small, translucent-backgrounded, stylized text — the same reason the fabricator kiosk gets a
+ *  RapidOCR second pass). Closest-to-centre wins, same as before this was extracted. */
+export function bestSignatureLine(lines: OcrLine[], centerX: number): { l: OcrLine; sig: number } | null {
+  const cands = lines
+    .map((l) => ({ l, sig: parseSignature(l.text) }))
+    .filter((c): c is { l: OcrLine; sig: number } => c.sig != null);
+  if (!cands.length) return null;
+  cands.sort((a, b) => Math.abs(a.l.x - centerX) - Math.abs(b.l.x - centerX));
+  return cands[0];
+}
+
 /** Parse an SC duration string ("41m 35s", "14h 53m", "1 h 5 m") to seconds, or null.
  *  Normalizes the digit/letter OCR slips FIRST — the hours digit right before "h" is
  *  routinely mangled into a look-alike letter (11h->"Ilh", 9h->"gh", 8h->"Bh"). Only h/m/s
@@ -677,14 +692,9 @@ export function classifyScreen(
     // the only way to cope with a HUD that doesn't sit where we assume — a different aspect
     // ratio, a UI scale, or the whole thing on a second monitor.
     const r = scanRegion(opts?.scanRegion, ocr.w, ocr.h);
-    const cx = r.x + r.w / 2;
-    const cands = lines
-      .filter((l) => l.y > r.y && l.y < r.y + r.h && l.x > r.x && l.x < r.x + r.w)
-      .map((l) => ({ l, sig: parseSignature(l.text) }))
-      .filter((c): c is { l: OcrLine; sig: number } => c.sig != null);
-    if (cands.length) {
-      cands.sort((a, b) => Math.abs(a.l.x - cx) - Math.abs(b.l.x - cx));
-      const best = cands[0];
+    const inBox = lines.filter((l) => l.y > r.y && l.y < r.y + r.h && l.x > r.x && l.x < r.x + r.w);
+    const best = bestSignatureLine(inBox, r.x + r.w / 2);
+    if (best) {
       return {
         kind: "mineable",
         signature: best.sig,

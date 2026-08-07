@@ -18,7 +18,7 @@ import { FabClaims } from "./fab-claim.js";
 import { SCENARIOS, replayLines, replayMissionId } from "./dev-replay.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
-import { loadCatalog, ocrImage, hasScanHud, classifyScreen, type CatalogEntry, type OcrResult, type ScanRegion } from "./screen-read.js";
+import { loadCatalog, ocrImage, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, type CatalogEntry, type OcrResult, type ScanRegion } from "./screen-read.js";
 import { maybeShareLog } from "./log-share.js";
 
 const overlayDir = assetDir(import.meta.url, "overlay");
@@ -1514,7 +1514,34 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // needs to know the player is scanning, so it can keep polling fast instead of idling.
     let scanHud = false;
     if (!screenCatalog) screenCatalog = loadCatalog(dataDir);
-    if (Array.isArray(body.lines)) {
+    if (body.miningCrop === true && Array.isArray(body.lines)) {
+      // RapidOCR re-read of a TIGHT CROP already limited to the configured mining scan region —
+      // every line here is already "in the box" by construction (that's what the crop IS), so this
+      // skips classifyScreen's scanRegion filtering, which is written for a full-frame read, and
+      // looks for the best signature-shaped candidate directly. Same reasoning as the fabricator's
+      // RapidOCR second pass: Windows OCR mangles this small, translucent-backgrounded, stylized
+      // text often enough that most scans never produced a candidate to classify at all.
+      const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
+      const best = bestSignatureLine(ocr.lines, ocr.w / 2);
+      // 🔑 glyphSearchBox MUST be computed in FULL-FRAME coordinates, not crop-relative ones.
+      // It clamps the pin's search box to stay inside "the frame" — but the crop is only ~150px
+      // wide while the pin sits ~20-40px further left than the number, so a crop-relative call
+      // clamped against the CROP's own edge instead of the screen's, silently shifting the search
+      // box right into territory that isn't where the pin actually is. Translate the candidate line
+      // to its true on-screen position first (capture.cjs sends the crop's offset + the real frame
+      // size alongside the lines) so the clamp — and everything downstream that samples `shot`,
+      // the UNCROPPED bitmap — uses the real screen bounds.
+      const offX = Number(body.offsetX) || 0, offY = Number(body.offsetY) || 0;
+      const frameW = Number(body.frameW) || ocr.w, frameH = Number(body.frameH) || ocr.h;
+      result = best
+        ? (() => {
+            const onScreen = { ...best.l, x: best.l.x + offX, y: best.l.y + offY };
+            return { kind: "mineable", signature: best.sig, raw: best.l.text.trim(),
+              pin: glyphSearchBox(onScreen, frameW, frameH),
+              text: { x: onScreen.x, y: onScreen.y, w: onScreen.w, h: onScreen.h } };
+          })()
+        : { kind: "none" };
+    } else if (Array.isArray(body.lines)) {
       // Pre-computed OCR from the main process (RapidOCR reads the fabricator name off a right-
       // panel crop). Classify directly — skip the WinRT OCR entirely for this call.
       const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
@@ -2186,6 +2213,19 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // Let the overlay WINDOW write a line into sidecar.log. It's a detached GUI process with no
   // console, so this is the only way anything it observes becomes readable — see the comment on
   // mrNote() in missions.html. Same dev+loopback gate as the replay below.
+  // Diagnostic liveness ping from the capture loop (electron/capture.cjs), throttled client-side to
+  // ~15s, for an intermittent mining-loop hang that isn't root-caused yet. sidecar.log carries no
+  // per-line timestamps otherwise, which made a real hang indistinguishable from "not at the
+  // scanner" — this settles that question directly from the log. Safe to remove once the hang is
+  // understood; harmless to leave in until then.
+  if (url === "/api/heartbeat" && req.method === "POST") {
+    const body = await readBody(req);
+    console.log(`[mining-heartbeat] ${new Date().toISOString()} rate=${body?.rate}ms lastTick=${body?.lastTickMs}ms fastFor=${body?.fastUntil}ms`);
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (url === "/api/dev/note" && req.method === "GET") {
     if (process.env.SC_DEV === "1" && fromThisMachine(req)) {
       console.log(`[overlay] ${new URL(req.url ?? "/", "http://localhost").searchParams.get("msg") ?? ""}`);
