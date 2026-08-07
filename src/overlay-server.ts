@@ -1686,8 +1686,20 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // Config write.
   if (url === "/api/config" && req.method === "POST") {
     const body = await readBody(req);
-    if (Array.isArray(body.urls)) config.urls = body.urls.filter((u: unknown) => typeof u === "string" && u);
-    if (typeof body.logPath === "string") config.logPath = body.logPath;
+    // Which concerns this particular save actually touched — every widget shares this one route
+    // (a font-scale tweak in the notepad posts here just like the settings page does), so the
+    // expensive work below (reindex, watcher restart, sync) must be scoped to what the request
+    // actually carried. Un-scoped, EVERY save — however small — re-ran a network fetch per loadout
+    // URL, tore down and rebuilt the log watcher, and re-pushed the whole collection to
+    // subliminal.gg, regardless of which field changed.
+    const touchedUrls = Array.isArray(body.urls);
+    const touchedLogPath = typeof body.logPath === "string";
+    const touchedSync = typeof body.syncEnabled === "boolean"
+      || (typeof body.syncToken === "string" && body.syncToken.trim().length > 0)
+      || body.clearToken === true;
+    const touchedShareLogs = typeof body.shareLogs === "boolean";
+    if (touchedUrls) config.urls = body.urls.filter((u: unknown) => typeof u === "string" && u);
+    if (touchedLogPath) config.logPath = body.logPath;
     if (typeof body.autoSwitch === "boolean") config.autoSwitch = body.autoSwitch;
     // Apply the checkbox first, then let a freshly-pasted token force sync ON — pasting a
     // token IS the intent to sync, so it can't be left silently disabled. The token is only
@@ -1811,14 +1823,19 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     broadcastMissions();
     // The Mining Assistant window shares the same appearance (theme + skew + scale).
     miningSend(miningAppearance());
-    await reindex();
-    startWatcher();
+    // Scoped to what actually changed (see touchedUrls etc. above) — a save that never touched
+    // these fields has no reason to refetch every loadout URL, tear down the log watcher mid-
+    // session, or push a sync/entitlement round-trip to subliminal.gg.
+    if (touchedUrls) await reindex();
+    if (touchedLogPath) startWatcher();
     // Re-arm sync with the new settings and reconcile the full collection.
-    if (sync.configure(config.syncToken, config.syncEnabled)) syncFull();
-    // A changed token → re-resolve subscriber entitlement now (don't wait for the 20-min tick).
-    void pollEntitlement();
+    if (touchedSync) {
+      if (sync.configure(config.syncToken, config.syncEnabled)) syncFull();
+      // A changed token → re-resolve subscriber entitlement now (don't wait for the 20-min tick).
+      void pollEntitlement();
+    }
     // If log-sharing was just turned on, upload the current session now.
-    void maybeShareLog(config, APP_VERSION, sharedLogStatePath);
+    if (touchedShareLogs) void maybeShareLog(config, APP_VERSION, sharedLogStatePath);
     // Push prefs (e.g. the time-format toggle) to any open overlay immediately.
     broadcastMissions();
     res.writeHead(200, { "Content-Type": "application/json" });
