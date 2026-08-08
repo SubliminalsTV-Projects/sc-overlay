@@ -1440,6 +1440,17 @@ export class MissionTracker extends EventEmitter {
     this.trackedMissionId = null;
     this.selectedMissionId = null;
     this.markerSinceJoin = false;
+    // 🔑 The mission RECORDS go too, not just the sequences that index them. Mission ids are
+    // per-connection instance GUIDs, so none of these survive a shard change — but leaving the
+    // map populated while clearing endedMissionIds below un-ends every mission the tracker has
+    // ever seen, and a stale record is not reachable through the seqs yet IS reachable through
+    // setScreenMission(), which scans the whole map. Sub, 2026-08-08: a "Deep space hit"
+    // completed at 22:00 came back hours and three session resets later, because OCR matched
+    // its leftover record on title and pushed it into acceptedSeq as a live mission.
+    this.missions.clear();
+    // Per-shard too, and the one pointer nothing else clears — it outranks trackedMissionId in
+    // effectiveMissionId(), so a stale value re-shows the previous shard's mission on spawn-in.
+    this.screenMissionId = null;
     this.endedMissionIds.clear();
     this.completedMissionIds.clear();
     if (this.completionTimer) clearTimeout(this.completionTimer);
@@ -1471,10 +1482,40 @@ export class MissionTracker extends EventEmitter {
     // resolve the OCR'd title straight from the dataset and re-register it. OCR reads the
     // CURRENT screen, so this can only ever surface a mission you're actually on now.
     if (!matched) {
+      // 🔑 Never RESURRECT a mission that already ended in this shard. The in-game title
+      // lingers on screen after a contract completes, so the next OCR read finds no active
+      // candidate and used to fall straight through to the synthetic registration below —
+      // re-registering the mission you just finished under a GUESSED contract key. That
+      // phantom then outranks the real one in effectiveMissionId() (screenMissionId beats
+      // trackedMissionId), can never be flagged completed or ended (completion events carry
+      // the runtime GUID, not this id), and shows the MERGED pool of every dataset variant
+      // sharing the title. Sub, 2026-08-07: "Kill the king" (really RegionC Derelict, one
+      // pool, 8/8 owned) came back as Rustville, 14/18, stuck on screen as incomplete.
+      // Matched one candidate at a time on purpose — matchScreenTitle is tie-safe and would
+      // return null if the same title ended TWICE, which is exactly when we most want to
+      // refuse. The genuine recovery case is untouched: Alt-F4 → relaunch runs through
+      // resetSession(), which clears endedMissionIds, so there is nothing here to match.
+      const endedSameTitle = [...this.missions].some(
+        ([id, info]) => info.title && this.endedMissionIds.has(id) && matchScreenTitle(title, [{ id, title: info.title }]),
+      );
+      if (endedSameTitle) return false;
       const res = this.resolveAcceptTitle(title);
       const key = res?.keys[0];
       if (key) {
-        const existing = [...this.missions].find(([id, info]) => info.contractKey === key && !this.endedMissionIds.has(id));
+        // 🔑 Match against EVERY key this title can resolve to, not just keys[0]. A `marker`
+        // event sets contractKey but NOT title, so a mission is title-less — and therefore
+        // invisible to the matcher above — until its accept line is parsed. Those two lines are
+        // ~6ms apart in the log but land in separate watcher reads often enough to matter, and
+        // an OCR poll in that gap used to mint a phantom beside the real, marker-identified
+        // mission. Comparing only keys[0] guaranteed a miss whenever the player was on any
+        // variant BUT the first: Sub, 2026-08-07, was on RegionC "Deep space hit" (8/8) and
+        // keys[0] is RegionA, so the panel showed the correct 8/8 and then flipped to a
+        // merged 14/18 the moment OCR ran. A marker's key is authoritative; a title guess is
+        // not, so an existing mission always wins over minting a new one.
+        const keys = new Set(res!.keys);
+        const live = [...this.missions].filter(([id, info]) => info.contractKey && keys.has(info.contractKey) && !this.endedMissionIds.has(id));
+        // Prefer a real log-registered mission over a synthetic one left by an earlier read.
+        const existing = live.find(([id]) => !id.startsWith("ocr:")) ?? live[0];
         if (existing) matched = existing[0];
         else {
           matched = "ocr:" + key;
