@@ -140,9 +140,7 @@
     3600,
     7200,
     10800,
-    14400,
-    18000,
-    21600
+    14400
    ]
   },
   {
@@ -1140,13 +1138,6 @@
     "count": 5
    }
   ],
-  "18000": [
-   {
-    "name": "Bexalite",
-    "rarity": "Rare",
-    "count": 5
-   }
-  ],
   "19020": [
    {
     "name": "Quantainium",
@@ -1316,13 +1307,6 @@
   "21510": [
    {
     "name": "Gold",
-    "rarity": "Rare",
-    "count": 6
-   }
-  ],
-  "21600": [
-   {
-    "name": "Bexalite",
     "rarity": "Rare",
     "count": 6
    }

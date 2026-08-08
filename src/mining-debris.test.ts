@@ -7,8 +7,13 @@
 //
 // 🔑 The asymmetry asserted throughout: a value that matches the rock table is honoured whatever
 // else is true of it. Weakening that would silently cost real ore call-outs, which is much worse
-// than a missed piece of debris. The two values where both readings are live (16,000 Savrilium ×5
-// and 18,000 Bexalite ×5) are the interesting cases and are checked against the real dataset.
+// than a missed piece of debris. 16,000 (Savrilium ×5, also 8 debris panels) is the one value where
+// both readings are live, and is checked against the real dataset.
+//
+// 🔴 Bexalite's ×5/×6 entries (18,000 / 21,600) were REMOVED from the table (Rytharr, 2026-08-08):
+// Bexalite's real max cluster is ×4 (14,400) — the table's higher tiers were generated as base×N
+// uniformly across every rock rather than verified per rock, and this one didn't hold. 18,000 used
+// to be the OTHER ore/debris collision (Bexalite ×5 vs 9 debris panels); it's now plain debris.
 import { readFileSync } from "node:fs";
 import { classifySignature, isDebrisValue, repairConfusableDigits } from "./mining.js";
 
@@ -55,14 +60,18 @@ check("19,200 (Savrilium ×6 / Aslarite ×5) is plain ore too",
   verdict(19200) === "ore", String(verdict(19200)));
 
 console.log("\nore AND debris — the values where both are possible");
-// These two are the whole reason the verdict exists rather than a boolean.
+// This is the whole reason the verdict exists rather than a boolean.
 const both = Object.keys(data.index).map(Number).filter((s) => isDebrisValue(s)).sort((a, b) => a - b);
-check("exactly two values in the table are also debris values",
-  both.length === 2 && both[0] === 16000 && both[1] === 18000, both.join(", "));
+check("exactly one value in the table is also a debris value",
+  both.length === 1 && both[0] === 16000, both.join(", "));
 check("16,000 is Savrilium ×5 OR debris", verdict(16000) === "ore-or-debris"
   && data.index["16000"][0].name === "Savrilium", String(verdict(16000)));
-check("18,000 is Bexalite ×5 OR debris", verdict(18000) === "ore-or-debris"
-  && data.index["18000"][0].name === "Bexalite", String(verdict(18000)));
+// 18,000 used to collide the same way as Bexalite ×5 — that tier doesn't really exist (Bexalite
+// tops out at ×4, 14,400; Rytharr, 2026-08-08), so it's plain debris now, not ambiguous.
+check("18,000 is plain debris now, not Bexalite (that tier doesn't exist)",
+  verdict(18000) === "debris" && !ore(18000), String(verdict(18000)));
+check("14,400 is Bexalite's real top tier (×4)",
+  verdict(14400) === "ore" && data.index["14400"][0].name === "Bexalite" && data.index["14400"][0].count === 4);
 
 console.log("\ndebris and unknown");
 check("a multiple of 2,000 with no rock is debris",
@@ -93,11 +102,11 @@ check("a read with no 6 or 8 is left alone", fix(3577) === null && fix(12345) ==
 check("out of range stays out of range", fix(88) === null && fix(68888) === null, String(fix(68888)));
 check("non-integers and negatives are refused", fix(NaN) === null && fix(3585.5) === null && fix(-3685) === null);
 
-// The two collisions. Neither may ever be auto-corrected; the second is debris either way.
-check("16,000 and 18,000 are left as they are (Savrilium ×5 vs Bexalite ×5)",
-  fix(16000) === null && fix(18000) === null);
-check("6,000 and 8,000 too (both debris, so it changes nothing anyway)",
-  fix(6000) === null && fix(8000) === null);
+// None of these may ever be auto-corrected: 16,000 is the real ore/debris collision (Savrilium
+// ×5), 18,000/6,000/8,000 are already legal as plain debris values. All four are "already legal"
+// by one reading or another, so the repair's early-return catches them before any swap is tried.
+check("16,000, 18,000, 6,000, and 8,000 are all left as they are",
+  fix(16000) === null && fix(18000) === null && fix(6000) === null && fix(8000) === null);
 
 // ── the TWO-digit extension (Rytharr, 2026-08-07) ──────────────────────────────
 // A real read of 18,980 should have been 16,960 (Copper ×4) — two digits confused in the same

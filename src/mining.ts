@@ -127,11 +127,12 @@ const CONFUSABLE_DIGITS: Record<string, string> = { "6": "8", "8": "6" };
  *  - **A value that is already legal is never touched** — 6,800 (Lindinium ×2) is taken at face
  *    value, not "corrected" to 8,600 (Ice ×2). An exact match is evidence in its own right.
  *  - **Ambiguity is left alone, never guessed** — across EVERY single- and double-swap candidate
- *    together, not just within one count. Only two pairs collide at one swap: 16,000 (Savrilium ×5)
- *    vs 18,000 (Bexalite ×5), and 6,000 vs 8,000 (debris either way, so it changes nothing) — both
- *    already caught by the "already legal" rule above, since 16,000/18,000/6,000/8,000 are all legal
- *    values in their own right and never reach the swap search at all. Naming the wrong rock is
- *    worse than naming none.
+ *    together, not just within one count. Only two pairs collide at one swap: 16,000 (Savrilium ×5,
+ *    also 8 debris panels) vs 18,000 (9 debris panels — NOT an ore tier; Bexalite's real max
+ *    cluster is ×4, 14,400, not ×5 — Rytharr, 2026-08-08), and 6,000 vs 8,000 (debris either way,
+ *    so it changes nothing) — all already caught by the "already legal" rule above, since
+ *    16,000/18,000/6,000/8,000 are all legal values in their own right (as ore or as debris) and
+ *    never reach the swap search at all. Naming the wrong rock is worse than naming none.
  *
  *  Returns the repaired value, or null if the read should stand as it is. */
 export function repairConfusableDigits(signature: number, isLegal: (n: number) => boolean): number | null {
