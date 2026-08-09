@@ -21,6 +21,13 @@ html=(work/'overlay/chat.html').read_text()
 pserver=(pkg/'server/server.mjs').read_text()
 phtml=(pkg/'server/overlay/chat.html').read_text()
 
+def guarded_segment(text: str, route: str, span: int = 900) -> bool:
+    i=text.find(route)
+    if i < 0:
+        return False
+    seg=text[i:i+span]
+    return 'fromThisMachine' in seg and '403' in seg
+
 checks = [
     ('client legacy location quarantine', 'LEGACY_UNATTESTED_CHAT_RE' in chat and 'if (!this.locationChannelsAllowed()) return;' in chat),
     ('client renderer restriction state', 'locationRestricted: !this.locationChannelsAllowed()' in chat),
@@ -31,7 +38,8 @@ checks = [
     ('site-mode rooms from trusted auth only', 'id.channels ?? []' in backend),
     ('admin token authorization', 'adminAuthorized(req)' in backend and 'CHAT_ADMIN_TOKEN' in backend),
     ('chat UI security notice', 'id="securityNote"' in html and 'locationRestricted' in html),
-    ('packaged sidecar loopback guards', 'Chat state is private to this machine.' in pserver and 'Chat state includes current shard/channel identifiers' in pserver),
+    ('packaged GET chat loopback guard', guarded_segment(pserver, '/api/chat') and 'Chat state is private to this machine.' in pserver),
+    ('packaged SSE chat loopback guard', guarded_segment(pserver, '/chat/events')),
     ('packaged sidecar location quarantine', 'chat.subliminal.gg' in pserver and 'locationRestricted' in pserver),
     ('packaged chat UI security notice', 'id="securityNote"' in phtml and 'locationRestricted' in phtml),
 ]
