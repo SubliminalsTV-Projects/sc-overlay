@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-export ARCHVERSE_REPO_ROOT="$ROOT"
 TMP="${RUNNER_TEMP:-/tmp}/alpha18-wrapper"
 mkdir -p "$TMP"
 cp "$ROOT/linux-port/build-r31-alpha18.sh" "$TMP/build.sh"
@@ -21,8 +20,6 @@ new='''else:\n    anchor2 = '  });\\n  // Clear any cached copy'\n    insert2 = 
 if old not in s: raise SystemExit('resolver fallback patch anchor missing')
 s=s.replace(old,new,1)
 
-# The upstream ready callback's close is swallowed by the last shared hunk when Alpha17's extra
-# will-quit cleanup is layered in. Emit the literal seam into the temporary resolver itself.
 needle='''    if (server) { server.kill(); server=null; }\n  });\n  app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });\n}\n'''
 replacement='''    if (server) { server.kill(); server=null; }\n  });\n  app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });\n  });\n}\n'''
 anchor='main.write_text(s)'
@@ -53,13 +50,24 @@ new=f'''if [[ -s "$CONFLICTS" ]]; then
   fi
 fi
 '''
-if old not in s:
-    raise SystemExit('conflict gate anchor not found')
+if old not in s: raise SystemExit('conflict gate anchor not found')
 s=s.replace(old,new,1)
 check='node --check electron/main.cjs'
 diag='''if ! node --check electron/main.cjs; then
-  echo "[alpha18] resolved main.cjs syntax context:" >&2
-  nl -ba electron/main.cjs | tail -n 120 >&2
+  echo "[alpha18] resolved main.cjs still has an EOF delimiter imbalance; probing suffixes" >&2
+  cp electron/main.cjs /tmp/a18-main-base.cjs
+  for spec in 'brace:}' 'paren:);' 'callback:});' 'bracket:];' 'brace2:}}' 'callback2:});});' 'callback_brace:});}' 'brace_callback:}});'; do
+    name="${spec%%:*}"; suffix="${spec#*:}"
+    cp /tmp/a18-main-base.cjs "/tmp/a18-$name.cjs"
+    printf '\n%s\n' "$suffix" >> "/tmp/a18-$name.cjs"
+    if node --check "/tmp/a18-$name.cjs" >/dev/null 2>&1; then
+      echo "[alpha18-delim] suffix $name ($suffix) makes syntax valid" >&2
+    else
+      msg=$(node --check "/tmp/a18-$name.cjs" 2>&1 | tail -n 4 | tr '\n' ' ')
+      echo "[alpha18-delim] $name => $msg" >&2
+    fi
+  done
+  nl -ba electron/main.cjs | tail -n 140 >&2
   exit 12
 fi'''
 if check not in s: raise SystemExit('main node-check anchor missing')
