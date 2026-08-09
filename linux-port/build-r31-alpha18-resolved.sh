@@ -54,9 +54,6 @@ if _dup_fg in s:
 else:
     raise SystemExit("capture: duplicate foreground seam missing")
 
-# The early lock check needs a Scan Mode bit before Alpha17's detailed mining block declares its
-# own `scanModeRead`. Give that preliminary bit a distinct name; once the detailed structural gate
-# runs, all downstream 0.1.41 mining work uses the authoritative `scanModeRead` state.
 _early = 'let scanModeRead = { active: false, confidence: 0, method: "not-armed" };'
 _late = 'let scanModeRead = { kind: "scan-mode", active: false, angle: null, confidence: 0 };'
 start = s.find(_early)
@@ -96,4 +93,23 @@ if old not in s: raise SystemExit('conflict gate anchor not found')
 s=s.replace(old,new,1)
 p.write_text(s)
 PY
+
+# Upstream's chat integration test launches chat-server/server.mjs directly. Its `ws` dependency
+# lives in chat-server/package-lock.json rather than the root install, so install that tiny nested
+# dependency set before the consolidated node:test sweep.
+python3 - "$TMP/build.sh" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text()
+old='''npm run typecheck
+node --import tsx --test src/*.test.ts
+npm run build:server'''
+new='''npm run typecheck
+NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$TMP_ROOT/npm-cache}" npm --prefix chat-server ci --ignore-scripts --no-audit --no-fund
+node --import tsx --test src/*.test.ts
+npm run build:server'''
+if old not in s: raise SystemExit('build: test block anchor missing')
+p.write_text(s.replace(old,new,1))
+PY
+
 exec bash "$TMP/build.sh" "$@"
