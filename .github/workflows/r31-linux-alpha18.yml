@@ -62,7 +62,7 @@ jobs:
           mkdir -p dist
           cp -a "$RUNNER_TEMP/dist/." dist/
           ls -lh dist
-          sha256sum -c dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
 
       - name: Preserve merge conflicts on the branch
         if: failure()
