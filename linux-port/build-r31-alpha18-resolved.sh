@@ -10,10 +10,14 @@ python3 - "$TMP/resolver.py" <<'PY'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text()
-old12='''    if n == 12:\n        return O + T'''
-new12='''    if n == 12:\n        return T'''
-if old12 not in s: raise SystemExit('resolver conflict12 patch anchor missing')
-s=s.replace(old12,new12,1)
+repls = {
+'''    if n == 12:\n        return O + T''': '''    if n == 12:\n        return T''',
+'''    if n == 17: return T + O''': '''    if n == 17: return T + "}\\n" + O''',
+'''    if n == 18: return O + T''': '''    if n == 18: return O + "}\\n" + T''',
+}
+for old,new in repls.items():
+    if old not in s: raise SystemExit(f'resolver seam patch anchor missing: {old!r}')
+    s=s.replace(old,new,1)
 
 old="else: raise SystemExit('main: overlay registration anchor missing')"
 new='''else:\n    anchor2 = '  });\\n  // Clear any cached copy'\n    insert2 = ''' + '"""' + '''  });\n  if (process.platform === \\"linux\\") {\n    overlayWindows.register(\\"Overlay Manager\\", overlay);\n    overlayWindows.pin(overlay);\n    browserController?.destroy();\n    browserController = new BrowserWidgetController({\n      WebContentsView, session, logger: console,\n      onInteractionClaim: (source) => claimFocusLatchedInteraction(`embedded-${source}`),\n      onNativeMouse: (source, mouse, b) => noteNativeMouseInput(`embedded-${source}`, mouse, b),\n      state: {\n        browserVisible, chatVisible: twitchChatVisible, url: browserRuntimeState.url, channel: browserRuntimeState.channel,\n        onState: (state) => {\n          browserRuntimeState = { ...browserRuntimeState, ...state }; browserVisible = !!state.browserVisible;\n          twitchChatVisible = !!state.chatVisible; writeBrowserState(state);\n          try { overlay?.webContents.send(\\"browser:state\\", state); } catch {}\n          pushWidgetStates();\n        },\n      },\n    });\n    browserController.attach(overlay);\n  }\n  // Clear any cached copy''' + '"""' + '''\n    if anchor2 in s: s=s.replace(anchor2, insert2, 1)\n    else: raise SystemExit('main: overlay registration anchor missing')'''
@@ -52,49 +56,6 @@ fi
 '''
 if old not in s: raise SystemExit('conflict gate anchor not found')
 s=s.replace(old,new,1)
-check='node --check electron/main.cjs'
-diag='''if ! node --check electron/main.cjs; then
-  echo "[alpha18] locating unmatched structural braces" >&2
-  python3 - electron/main.cjs <<'PYBRACE'
-from pathlib import Path
-import sys
-text=Path(sys.argv[1]).read_text()
-stack=[]; i=0; line=1; col=0; state='code'; quote=''; esc=False
-while i < len(text):
-    c=text[i]; n=text[i+1] if i+1 < len(text) else ''
-    if c=='\n': line+=1; col=0
-    else: col+=1
-    if state=='linecomment':
-        if c=='\n': state='code'
-        i+=1; continue
-    if state=='blockcomment':
-        if c=='*' and n=='/': state='code'; i+=2; col+=1; continue
-        i+=1; continue
-    if state in ('single','double','template'):
-        if esc: esc=False; i+=1; continue
-        if c=='\\\\': esc=True; i+=1; continue
-        end={'single':"'",'double':'"','template':'`'}[state]
-        if c==end: state='code'
-        i+=1; continue
-    if c=='/' and n=='/': state='linecomment'; i+=2; col+=1; continue
-    if c=='/' and n=='*': state='blockcomment'; i+=2; col+=1; continue
-    if c=="'": state='single'; i+=1; continue
-    if c=='"': state='double'; i+=1; continue
-    if c=='`': state='template'; i+=1; continue
-    if c=='{': stack.append((line,col))
-    elif c=='}':
-        if stack: stack.pop()
-        else: print(f'[alpha18-brace] extra close at {line}:{col}')
-    i+=1
-print(f'[alpha18-brace] unmatched opens={len(stack)}')
-for ln,cl in stack[-12:]:
-    src=text.splitlines()[ln-1].strip()
-    print(f'[alpha18-brace] open {ln}:{cl}: {src[:180]}')
-PYBRACE
-  exit 12
-fi'''
-if check not in s: raise SystemExit('main node-check anchor missing')
-s=s.replace(check,diag,1)
 p.write_text(s)
 PY
 exec bash "$TMP/build.sh" "$@"
