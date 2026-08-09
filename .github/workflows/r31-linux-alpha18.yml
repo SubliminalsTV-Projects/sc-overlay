@@ -51,7 +51,7 @@ jobs:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
-          bash linux-port/build-r31-alpha18-resolved.sh \
+          bash linux-port/build-r31-alpha18-audited.sh \
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
 
@@ -61,7 +61,7 @@ jobs:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
-          bash linux-port/alpha18-runtime-audit.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-audit.log"
+          bash linux-port/alpha18-runtime-audit-final.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-audit.log"
 
       - name: Stage Alpha 18 audit artifacts
         shell: bash
