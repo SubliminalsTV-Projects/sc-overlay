@@ -69,6 +69,12 @@ jobs:
           set -o pipefail
           python3 linux-port/alpha18-ipc-contract-audit.py 2>&1 | tee "$RUNNER_TEMP/alpha18-ipc-audit.log"
 
+      - name: Upstream 0.1.41 public-contract preservation audit
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 linux-port/alpha18-upstream-contract-audit.py 2>&1 | tee "$RUNNER_TEMP/alpha18-upstream-contract.log"
+
       - name: Renderer HTML and inline-script audit
         shell: bash
         run: |
@@ -120,6 +126,7 @@ jobs:
             ${{ runner.temp }}/alpha18-build.log
             ${{ runner.temp }}/alpha18-audit.log
             ${{ runner.temp }}/alpha18-ipc-audit.log
+            ${{ runner.temp }}/alpha18-upstream-contract.log
             ${{ runner.temp }}/alpha18-renderer-audit.log
             ${{ runner.temp }}/alpha18-startup-smoke.log
             ${{ runner.temp }}/alpha18-sidecar-smoke.log
@@ -144,6 +151,7 @@ jobs:
               "Build:$RUNNER_TEMP/alpha18-build.log:120" \
               "Deep audit:$RUNNER_TEMP/alpha18-audit.log:220" \
               "IPC audit:$RUNNER_TEMP/alpha18-ipc-audit.log:120" \
+              "Upstream contract:$RUNNER_TEMP/alpha18-upstream-contract.log:180" \
               "Renderer audit:$RUNNER_TEMP/alpha18-renderer-audit.log:160" \
               "Main startup smoke:$RUNNER_TEMP/alpha18-startup-smoke.log:180" \
               "Sidecar smoke:$RUNNER_TEMP/alpha18-sidecar-smoke.log:180" \
