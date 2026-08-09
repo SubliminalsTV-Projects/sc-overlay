@@ -63,6 +63,18 @@ jobs:
           set -o pipefail
           bash linux-port/alpha18-runtime-audit-final.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-audit.log"
 
+      - name: Preload to main IPC contract audit
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 linux-port/alpha18-ipc-contract-audit.py 2>&1 | tee "$RUNNER_TEMP/alpha18-ipc-audit.log"
+
+      - name: Packaged main-process startup smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-main-startup-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-startup-smoke.log"
+
       - name: Stage Alpha 18 audit artifacts
         shell: bash
         run: |
@@ -83,6 +95,8 @@ jobs:
             ${{ runner.temp }}/r31-alpha18-build/work/electron/preload.cjs
             ${{ runner.temp }}/alpha18-build.log
             ${{ runner.temp }}/alpha18-audit.log
+            ${{ runner.temp }}/alpha18-ipc-audit.log
+            ${{ runner.temp }}/alpha18-startup-smoke.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -98,20 +112,20 @@ jobs:
             echo "### Alpha 18 deep audit: ${BUILD_STATUS}"
             echo
             echo "Commit: \`${GITHUB_SHA}\` · Run: \`${GITHUB_RUN_ID}\`"
-            echo
-            echo '<details><summary>Build tail</summary>'
-            echo
-            echo '```text'
-            [[ -f "$RUNNER_TEMP/alpha18-build.log" ]] && tail -n 120 "$RUNNER_TEMP/alpha18-build.log" || true
-            echo '```'
-            echo '</details>'
-            echo
-            echo '<details><summary>Audit tail</summary>'
-            echo
-            echo '```text'
-            [[ -f "$RUNNER_TEMP/alpha18-audit.log" ]] && tail -n 220 "$RUNNER_TEMP/alpha18-audit.log" || echo 'Deep audit did not start.'
-            echo '```'
-            echo '</details>'
+            for pair in \
+              "Build:$RUNNER_TEMP/alpha18-build.log:120" \
+              "Deep audit:$RUNNER_TEMP/alpha18-audit.log:220" \
+              "IPC audit:$RUNNER_TEMP/alpha18-ipc-audit.log:120" \
+              "Startup smoke:$RUNNER_TEMP/alpha18-startup-smoke.log:160"; do
+              title="${pair%%:*}"; rest="${pair#*:}"; file="${rest%:*}"; lines="${rest##*:}"
+              echo
+              echo "<details><summary>${title}</summary>"
+              echo
+              echo '```text'
+              [[ -f "$file" ]] && tail -n "$lines" "$file" || echo "${title} did not start."
+              echo '```'
+              echo '</details>'
+            done
           } > "$RUNNER_TEMP/alpha18-pr-comment.md"
           gh pr comment 3 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/alpha18-pr-comment.md"
 
