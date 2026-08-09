@@ -51,7 +51,7 @@ jobs:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
-          bash linux-port/build-r31-alpha18-ci.sh \
+          bash linux-port/build-r31-alpha18-final-audit.sh \
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
 
@@ -93,7 +93,7 @@ jobs:
           set -o pipefail
           bash linux-port/alpha18-linux-contract-audit.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-linux-contract.log"
 
-      - name: Packaged canonical config and mandatory control E2E
+      - name: Packaged canonical config and Settings round-trip E2E
         shell: bash
         run: |
           set -o pipefail
