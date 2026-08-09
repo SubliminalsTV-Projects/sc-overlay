@@ -1,4 +1,4 @@
-name: Probe r31 Alpha 18 incremental merge
+name: Summarize r31 Alpha 18 conflicts
 
 on:
   push:
@@ -11,30 +11,26 @@ permissions:
   issues: write
 
 jobs:
-  probe:
+  summary:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Probe incremental rebase
+      - name: Summarize conflict signatures
         shell: bash
-        run: |
-          set -o pipefail
-          bash linux-port/probe-r31-alpha18-merge.sh 2>&1 | tee "$RUNNER_TEMP/probe.log"
-      - name: Report probe
-        if: always()
+        run: python3 linux-port/conflict-summary.py > "$RUNNER_TEMP/conflicts.txt"
+      - name: Report summary
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          STATUS: ${{ job.status }}
         run: |
           {
-            echo "### Alpha 18 incremental merge probe: ${STATUS}"
+            echo '### Alpha 18 conflict signatures'
             echo
             echo '```text'
-            tail -n 180 "$RUNNER_TEMP/probe.log" 2>/dev/null || true
+            cat "$RUNNER_TEMP/conflicts.txt"
             echo '```'
-          } > "$RUNNER_TEMP/probe-comment.md"
-          gh pr comment 3 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/probe-comment.md"
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment 3 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
