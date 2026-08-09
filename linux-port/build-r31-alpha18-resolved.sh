@@ -54,20 +54,43 @@ if old not in s: raise SystemExit('conflict gate anchor not found')
 s=s.replace(old,new,1)
 check='node --check electron/main.cjs'
 diag='''if ! node --check electron/main.cjs; then
-  echo "[alpha18] resolved main.cjs still has an EOF delimiter imbalance; probing suffixes" >&2
-  cp electron/main.cjs /tmp/a18-main-base.cjs
-  for spec in 'brace:}' 'paren:);' 'callback:});' 'bracket:];' 'brace2:}}' 'callback2:});});' 'callback_brace:});}' 'brace_callback:}});' 'callback3:});});});' 'brace3:}}}' 'paren_brace:);}' 'callback_brace2:});}}'; do
-    name="${spec%%:*}"; suffix="${spec#*:}"
-    cp /tmp/a18-main-base.cjs "/tmp/a18-$name.cjs"
-    printf '\n%s\n' "$suffix" >> "/tmp/a18-$name.cjs"
-    if out=$(node --check "/tmp/a18-$name.cjs" 2>&1); then
-      echo "[alpha18-delim] suffix $name ($suffix) makes syntax valid" >&2
-    else
-      msg=$(printf '%s\n' "$out" | tail -n 4 | tr '\n' ' ')
-      echo "[alpha18-delim] $name => $msg" >&2
-    fi
-  done
-  nl -ba electron/main.cjs | tail -n 80 >&2
+  echo "[alpha18] locating unmatched structural braces" >&2
+  python3 - electron/main.cjs <<'PYBRACE'
+from pathlib import Path
+import sys
+text=Path(sys.argv[1]).read_text()
+stack=[]; i=0; line=1; col=0; state='code'; quote=''; esc=False
+while i < len(text):
+    c=text[i]; n=text[i+1] if i+1 < len(text) else ''
+    if c=='\n': line+=1; col=0
+    else: col+=1
+    if state=='linecomment':
+        if c=='\n': state='code'
+        i+=1; continue
+    if state=='blockcomment':
+        if c=='*' and n=='/': state='code'; i+=2; col+=1; continue
+        i+=1; continue
+    if state in ('single','double','template'):
+        if esc: esc=False; i+=1; continue
+        if c=='\\\\': esc=True; i+=1; continue
+        end={'single':"'",'double':'"','template':'`'}[state]
+        if c==end: state='code'
+        i+=1; continue
+    if c=='/' and n=='/': state='linecomment'; i+=2; col+=1; continue
+    if c=='/' and n=='*': state='blockcomment'; i+=2; col+=1; continue
+    if c=="'": state='single'; i+=1; continue
+    if c=='"': state='double'; i+=1; continue
+    if c=='`': state='template'; i+=1; continue
+    if c=='{': stack.append((line,col))
+    elif c=='}':
+        if stack: stack.pop()
+        else: print(f'[alpha18-brace] extra close at {line}:{col}')
+    i+=1
+print(f'[alpha18-brace] unmatched opens={len(stack)}')
+for ln,cl in stack[-12:]:
+    src=text.splitlines()[ln-1].strip()
+    print(f'[alpha18-brace] open {ln}:{cl}: {src[:180]}')
+PYBRACE
   exit 12
 fi'''
 if check not in s: raise SystemExit('main node-check anchor missing')
