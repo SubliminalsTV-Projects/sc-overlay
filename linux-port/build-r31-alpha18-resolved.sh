@@ -20,6 +20,16 @@ old="else: raise SystemExit('main: overlay registration anchor missing')"
 new='''else:\n    anchor2 = '  });\\n  // Clear any cached copy'\n    insert2 = ''' + '"""' + '''  });\n  if (process.platform === \\"linux\\") {\n    overlayWindows.register(\\"Overlay Manager\\", overlay);\n    overlayWindows.pin(overlay);\n    browserController?.destroy();\n    browserController = new BrowserWidgetController({\n      WebContentsView, session, logger: console,\n      onInteractionClaim: (source) => claimFocusLatchedInteraction(`embedded-${source}`),\n      onNativeMouse: (source, mouse, b) => noteNativeMouseInput(`embedded-${source}`, mouse, b),\n      state: {\n        browserVisible, chatVisible: twitchChatVisible, url: browserRuntimeState.url, channel: browserRuntimeState.channel,\n        onState: (state) => {\n          browserRuntimeState = { ...browserRuntimeState, ...state }; browserVisible = !!state.browserVisible;\n          twitchChatVisible = !!state.chatVisible; writeBrowserState(state);\n          try { overlay?.webContents.send(\\"browser:state\\", state); } catch {}\n          pushWidgetStates();\n        },\n      },\n    });\n    browserController.attach(overlay);\n  }\n  // Clear any cached copy''' + '"""' + '''\n    if anchor2 in s: s=s.replace(anchor2, insert2, 1)\n    else: raise SystemExit('main: overlay registration anchor missing')'''
 if old not in s: raise SystemExit('resolver fallback patch anchor missing')
 s=s.replace(old,new,1)
+
+# The upstream ready callback's close is swallowed by the last shared hunk when Alpha17's extra
+# will-quit cleanup is layered in. Restore the exact structural seam: close .then(...), then close
+# the requestSingleInstanceLock() else block. This is semantic, not a blind trailing token append.
+needle='''    if (server) { server.kill(); server=null; }\n  });\n  app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });\n}\n'''
+replacement='''    if (server) { server.kill(); server=null; }\n  });\n  app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });\n  });\n}\n'''
+anchor='main.write_text(s)'
+patch='''if needle in s:\n    s = s.replace(needle, replacement, 1)\nelse:\n    raise SystemExit("main: app-ready close anchor missing")\nmain.write_text(s)'''
+if anchor not in s: raise SystemExit('resolver main-write anchor missing')
+s=s.replace(anchor, patch, 1)
 p.write_text(s)
 PY
 
@@ -50,22 +60,7 @@ s=s.replace(old,new,1)
 check='node --check electron/main.cjs'
 diag='''if ! node --check electron/main.cjs; then
   echo "[alpha18] resolved main.cjs syntax context:" >&2
-  nl -ba electron/main.cjs | sed -n '3150,3235p' >&2
-  if [[ -n "${ARCHVERSE_REPO_ROOT:-}" && -d "$ARCHVERSE_REPO_ROOT/.git" ]]; then
-    snapshot="${RUNNER_TEMP:-/tmp}/alpha18-resolved-main.cjs"
-    cp electron/main.cjs "$snapshot"
-    (
-      cd "$ARCHVERSE_REPO_ROOT"
-      git fetch origin integration/upstream-0.1.41-arch-r31-alpha18
-      git checkout -B alpha18-debug-save origin/integration/upstream-0.1.41-arch-r31-alpha18
-      cp "$snapshot" linux-port/debug-alpha18-resolved-main.cjs
-      git config user.name 'github-actions[bot]'
-      git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-      git add linux-port/debug-alpha18-resolved-main.cjs
-      git commit -m '[skip ci] debug: save resolved alpha18 main syntax snapshot' || true
-      git push origin HEAD:integration/upstream-0.1.41-arch-r31-alpha18
-    ) || true
-  fi
+  nl -ba electron/main.cjs | tail -n 120 >&2
   exit 12
 fi'''
 if check not in s: raise SystemExit('main node-check anchor missing')
