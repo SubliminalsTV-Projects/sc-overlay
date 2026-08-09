@@ -6,10 +6,6 @@ mkdir -p "$TMP"
 cp "$ROOT/linux-port/build-r31-alpha18.sh" "$TMP/build.sh"
 cp "$ROOT/linux-port/alpha18-resolve-conflicts.py" "$TMP/resolver.py"
 
-# Patch two exact three-way seams whose marker boundaries vary from the semantic units we want:
-# (1) use the upstream did-finish-load tail so the callback stays structurally intact; the resolver's
-#     post-pass then injects the Linux show/input-shape work at the stable pushWidgetStates anchor.
-# (2) accept either BrowserWindow constructor seam when registering the Linux window manager.
 python3 - "$TMP/resolver.py" <<'PY'
 from pathlib import Path
 import sys
@@ -54,6 +50,8 @@ check='node --check electron/main.cjs'
 diag='''if ! node --check electron/main.cjs; then
   echo "[alpha18] resolved main.cjs syntax context:" >&2
   nl -ba electron/main.cjs | sed -n '3150,3235p' >&2
+  # Make the existing failure-preservation step commit this fully-resolved file for inspection.
+  printf '\n<<<<<<< DEBUG_RESOLVED_ALPHA18\n' >> electron/main.cjs
   exit 12
 fi'''
 if check not in s: raise SystemExit('main node-check anchor missing')
