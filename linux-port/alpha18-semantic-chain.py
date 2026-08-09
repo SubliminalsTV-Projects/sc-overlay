@@ -9,3 +9,4 @@ root = Path(__file__).resolve().parent
 args = sys.argv[1:]
 subprocess.run([sys.executable, str(root / "alpha18-semantic-repair.py"), *args], check=True)
 subprocess.run([sys.executable, str(root / "alpha18-semantic-postrepair.py"), *args], check=True)
+subprocess.run([sys.executable, str(root / "alpha18-lexical-fixes.py"), *args], check=True)
