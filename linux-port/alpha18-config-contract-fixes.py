@@ -11,11 +11,23 @@ s = server.read_text()
 # The Alpha14 Linux patch introduced the field before upstream had it, but the old two-value type no
 # longer matches the Settings UI. The profile is descriptive state derived from the three reader
 # toggles, so keep the complete current vocabulary.
-s = s.replace(
-    'screenReaderProfile: "lightweight" | "full";',
-    'screenReaderProfile: "lightweight" | "balanced" | "mining" | "custom";',
-    1,
-)
+old_type = 'screenReaderProfile: "lightweight" | "full";'
+new_type = 'screenReaderProfile: "lightweight" | "balanced" | "mining" | "custom";'
+if old_type in s:
+    s = s.replace(old_type, new_type, 1)
+elif new_type not in s:
+    raise SystemExit("config contract: screenReaderProfile Config type missing")
+
+# Work only inside the /api/config POST handler. There are many saveConfig() calls in this server
+# (Twitch, setup, changelog, etc.); a global line-pair anchor is unnecessarily fragile and can
+# target the wrong concern after harmless upstream edits.
+route_start = '  if (url === "/api/config" && req.method === "POST") {'
+route_end = '\n  // Manual switch.'
+a = s.find(route_start)
+b = s.find(route_end, a + len(route_start)) if a >= 0 else -1
+if a < 0 or b < 0:
+    raise SystemExit("config contract: /api/config POST route boundaries missing")
+route = s[a:b]
 
 # Only F / hold mode / Shift+F6 are platform-owned. Forcing the OCR profile to lightweight on every
 # POST made the Mining and Balanced buttons save the correct reader booleans but report the wrong
@@ -31,41 +43,29 @@ repaired = '''    if (process.platform === "linux") {
       config.holdToInteract = true;
       config.moveHotkey = "Shift+F6";
     }'''
-if forced in s:
-    s = s.replace(forced, repaired, 1)
-elif repaired not in s:
-    raise SystemExit("config contract: Linux POST repair block missing")
+if forced in route:
+    route = route.replace(forced, repaired, 1)
+elif repaired not in route:
+    raise SystemExit("config contract: Linux POST repair block missing from config route")
 
-# Derive the profile from the persisted reader booleans using the same truth table as config.html.
-# This makes the disk state, API response and UI selection describe the same thing.
-save_anchor = '''    await saveConfig();
-    broadcastMissions();
-'''
+# Derive the profile from the actual persisted reader booleans immediately before this route's one
+# saveConfig(). This is the same truth table used by config.html.
 profile_block = '''    const screenReaderProfile: Config["screenReaderProfile"] =
       !config.missionOcr && !config.miningAssistant && !config.fabCapture ? "lightweight" :
       config.missionOcr && !config.miningAssistant && !config.fabCapture ? "balanced" :
       !config.missionOcr && config.miningAssistant && !config.fabCapture ? "mining" : "custom";
     config.screenReaderProfile = screenReaderProfile;
-    await saveConfig();
-    broadcastMissions();
 '''
-if save_anchor in s:
-    s = s.replace(save_anchor, profile_block, 1)
-elif 'const screenReaderProfile: Config["screenReaderProfile"]' not in s:
-    raise SystemExit("config contract: save/profile insertion anchor missing")
+if 'const screenReaderProfile: Config["screenReaderProfile"]' not in route:
+    save_token = '    await saveConfig();'
+    if route.count(save_token) != 1:
+        raise SystemExit(f"config contract: expected one saveConfig() in config route, found {route.count(save_token)}")
+    route = route.replace(save_token, profile_block + save_token, 1)
 
-# Our merged Settings page intentionally verifies that the requested screen-reader state actually
-# survived the round trip. Upstream 0.1.41 returns only {ok:true}; restore a compact applied-state
-# payload instead of weakening the UI verification.
-response_anchor = '''    broadcastMissions();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
-    return;
-  }
-  if (url === "/api/active" && req.method === "POST") {'''
-response = '''    broadcastMissions();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
+# The merged Settings page verifies the values that were actually applied. Upstream 0.1.41 returned
+# only {ok:true}, which makes a successful save look like a failure. Return a compact applied-state
+# snapshot from this route only.
+applied_response = '''    res.end(JSON.stringify({
       ok: true,
       screenReading: {
         fabCapture: config.fabCapture === true,
@@ -73,15 +73,14 @@ response = '''    broadcastMissions();
         miningAssistant: config.miningAssistant === true,
         profile: config.screenReaderProfile,
       },
-    }));
-    return;
-  }
-  if (url === "/api/active" && req.method === "POST") {'''
-if response_anchor in s:
-    s = s.replace(response_anchor, response, 1)
-elif 'profile: config.screenReaderProfile' not in s:
-    raise SystemExit("config contract: POST response anchor missing")
+    }));'''
+if 'screenReading:' not in route:
+    response_token = '    res.end(JSON.stringify({ ok: true }));'
+    if route.count(response_token) != 1:
+        raise SystemExit(f"config contract: expected one simple ok response in config route, found {route.count(response_token)}")
+    route = route.replace(response_token, applied_response, 1)
 
+s = s[:a] + route + s[b:]
 server.write_text(s)
 
 # Settings must present the same immutable Linux hotkeys that the shell/server enforce. Previously
@@ -122,7 +121,7 @@ save_hotkey_new = '''        body[which + "Hotkey"] = IS_LINUX_DESKTOP && which 
             : document.getElementById(HOTKEYS[which].input).value.trim();'''
 if save_hotkey_old in c:
     c = c.replace(save_hotkey_old, save_hotkey_new, 1)
-elif 'which === "move"' not in c:
+elif 'IS_LINUX_DESKTOP && which === "move"' not in c:
     raise SystemExit("config contract: hotkey save block missing")
 
 capture_anchor = '''  async function startCaptureHotkey(which) {
@@ -132,7 +131,6 @@ capture_repl = '''  async function startCaptureHotkey(which) {
 if capture_anchor in c:
     c = c.replace(capture_anchor, capture_repl, 1)
 elif 'which === "interact" || which === "move"' not in c:
-    # Upstream may place the guard a few lines into the function; handle the one-line form too.
     one = 'if (IS_LINUX_DESKTOP && which === "interact") return;'
     if one in c:
         c = c.replace(one, 'if (IS_LINUX_DESKTOP && (which === "interact" || which === "move")) return;', 1)
