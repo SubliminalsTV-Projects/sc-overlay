@@ -72,6 +72,20 @@ jobs:
           ls -lh dist
           (cd dist && sha256sum -c SHA256SUMS)
 
+      - name: Retain reconstructed runtime files on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha18-runtime-debug
+          path: |
+            ${{ runner.temp }}/r31-alpha18-build/work/electron/main.cjs
+            ${{ runner.temp }}/r31-alpha18-build/work/electron/capture.cjs
+            ${{ runner.temp }}/r31-alpha18-build/work/electron/preload.cjs
+            ${{ runner.temp }}/alpha18-build.log
+            ${{ runner.temp }}/alpha18-audit.log
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Report Alpha 18 audit to PR
         if: always()
         shell: bash
