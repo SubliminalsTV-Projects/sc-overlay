@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+export ARCHVERSE_REPO_ROOT="$ROOT"
 TMP="${RUNNER_TEMP:-/tmp}/alpha18-wrapper"
 mkdir -p "$TMP"
 cp "$ROOT/linux-port/build-r31-alpha18.sh" "$TMP/build.sh"
@@ -50,8 +51,21 @@ check='node --check electron/main.cjs'
 diag='''if ! node --check electron/main.cjs; then
   echo "[alpha18] resolved main.cjs syntax context:" >&2
   nl -ba electron/main.cjs | sed -n '3150,3235p' >&2
-  # Make the existing failure-preservation step commit this fully-resolved file for inspection.
-  printf '\n<<<<<<< DEBUG_RESOLVED_ALPHA18\n' >> electron/main.cjs
+  if [[ -n "${ARCHVERSE_REPO_ROOT:-}" && -d "$ARCHVERSE_REPO_ROOT/.git" ]]; then
+    snapshot="${RUNNER_TEMP:-/tmp}/alpha18-resolved-main.cjs"
+    cp electron/main.cjs "$snapshot"
+    (
+      cd "$ARCHVERSE_REPO_ROOT"
+      git fetch origin integration/upstream-0.1.41-arch-r31-alpha18
+      git checkout -B alpha18-debug-save origin/integration/upstream-0.1.41-arch-r31-alpha18
+      cp "$snapshot" linux-port/debug-alpha18-resolved-main.cjs
+      git config user.name 'github-actions[bot]'
+      git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      git add linux-port/debug-alpha18-resolved-main.cjs
+      git commit -m '[skip ci] debug: save resolved alpha18 main syntax snapshot' || true
+      git push origin HEAD:integration/upstream-0.1.41-arch-r31-alpha18
+    ) || true
+  fi
   exit 12
 fi'''
 if check not in s: raise SystemExit('main node-check anchor missing')
