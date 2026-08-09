@@ -124,18 +124,23 @@ if save_hotkey_old in c:
 elif 'IS_LINUX_DESKTOP && which === "move"' not in c:
     raise SystemExit("config contract: hotkey save block missing")
 
-capture_anchor = '''  async function startCaptureHotkey(which) {
-    if (IS_LINUX_DESKTOP && which === "interact") return;'''
-capture_repl = '''  async function startCaptureHotkey(which) {
-    if (IS_LINUX_DESKTOP && (which === "interact" || which === "move")) return;'''
-if capture_anchor in c:
-    c = c.replace(capture_anchor, capture_repl, 1)
-elif 'which === "interact" || which === "move"' not in c:
-    one = 'if (IS_LINUX_DESKTOP && which === "interact") return;'
-    if one in c:
-        c = c.replace(one, 'if (IS_LINUX_DESKTOP && (which === "interact" || which === "move")) return;', 1)
+# 0.1.41's current function has no pre-existing Linux guard; older Linux snapshots did. Insert the
+# immutable-key guard immediately after the function boundary rather than depending on either body
+# shape. This keeps all ordinary upstream hotkey capture behavior intact for every other action.
+guard = '    if (IS_LINUX_DESKTOP && (which === "interact" || which === "move")) return;'
+if guard not in c:
+    function_anchors = [
+        '  function startCaptureHotkey(which) {\n',
+        '  async function startCaptureHotkey(which) {\n',
+    ]
+    for function_anchor in function_anchors:
+        if function_anchor in c:
+            c = c.replace(function_anchor, function_anchor + guard + '\n', 1)
+            break
     else:
-        raise SystemExit("config contract: hotkey capture guard missing")
+        raise SystemExit("config contract: startCaptureHotkey function boundary missing")
+if c.count(guard) != 1:
+    raise SystemExit(f"config contract: expected one Linux hotkey capture guard, found {c.count(guard)}")
 
 config.write_text(c)
 print("[alpha18-config-contract] Settings/API/profile round-trip contract PASS")
