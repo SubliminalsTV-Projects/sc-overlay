@@ -69,11 +69,23 @@ jobs:
           set -o pipefail
           python3 linux-port/alpha18-ipc-contract-audit.py 2>&1 | tee "$RUNNER_TEMP/alpha18-ipc-audit.log"
 
+      - name: Renderer HTML and inline-script audit
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 linux-port/alpha18-renderer-audit.py 2>&1 | tee "$RUNNER_TEMP/alpha18-renderer-audit.log"
+
       - name: Packaged main-process startup smoke
         shell: bash
         run: |
           set -o pipefail
           bash linux-port/alpha18-main-startup-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-startup-smoke.log"
+
+      - name: Packaged sidecar startup and endpoint smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-sidecar-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-sidecar-smoke.log"
 
       - name: Stage Alpha 18 audit artifacts
         shell: bash
@@ -96,7 +108,9 @@ jobs:
             ${{ runner.temp }}/alpha18-build.log
             ${{ runner.temp }}/alpha18-audit.log
             ${{ runner.temp }}/alpha18-ipc-audit.log
+            ${{ runner.temp }}/alpha18-renderer-audit.log
             ${{ runner.temp }}/alpha18-startup-smoke.log
+            ${{ runner.temp }}/alpha18-sidecar-smoke.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -116,7 +130,9 @@ jobs:
               "Build:$RUNNER_TEMP/alpha18-build.log:120" \
               "Deep audit:$RUNNER_TEMP/alpha18-audit.log:220" \
               "IPC audit:$RUNNER_TEMP/alpha18-ipc-audit.log:120" \
-              "Startup smoke:$RUNNER_TEMP/alpha18-startup-smoke.log:160"; do
+              "Renderer audit:$RUNNER_TEMP/alpha18-renderer-audit.log:160" \
+              "Main startup smoke:$RUNNER_TEMP/alpha18-startup-smoke.log:180" \
+              "Sidecar smoke:$RUNNER_TEMP/alpha18-sidecar-smoke.log:180"; do
               title="${pair%%:*}"; rest="${pair#*:}"; file="${rest%:*}"; lines="${rest##*:}"
               echo
               echo "<details><summary>${title}</summary>"
