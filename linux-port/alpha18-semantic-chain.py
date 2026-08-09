@@ -12,3 +12,4 @@ subprocess.run([sys.executable, str(root / "alpha18-semantic-postrepair.py"), *a
 subprocess.run([sys.executable, str(root / "alpha18-lexical-fixes.py"), *args], check=True)
 subprocess.run([sys.executable, str(root / "alpha18-scan-diagnostics.py"), *args], check=True)
 subprocess.run([sys.executable, str(root / "alpha18-upstream-feature-fixes.py"), *args], check=True)
+subprocess.run([sys.executable, str(root / "alpha18-field-runtime-fixes.py"), *args], check=True)
