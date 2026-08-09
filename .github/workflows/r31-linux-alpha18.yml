@@ -180,8 +180,10 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Re-quarantined after the explicitly approved public Alpha 18 publication.
+  # Future commits may build and audit but cannot overwrite the release without a new approval.
   release-alpha18:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/integration/upstream-0.1.41-arch-r31-alpha18' }}
+    if: ${{ false }}
     needs: build-arch-alpha18
     runs-on: ubuntu-latest
     permissions:
