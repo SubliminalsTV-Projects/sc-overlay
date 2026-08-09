@@ -41,9 +41,33 @@ base=f'http://127.0.0.1:{port}'
 
 def request(path, body=None):
     data=None if body is None else json.dumps(body).encode()
-    req=urllib.request.Request(base+path, data=data, headers={'Content-Type':'application/json'} if data else {}, method='POST' if data else 'GET')
+    req=urllib.request.Request(
+        base+path,
+        data=data,
+        headers={'Content-Type':'application/json'} if data else {},
+        method='POST' if data else 'GET',
+    )
     with urllib.request.urlopen(req, timeout=2) as r:
         return json.loads(r.read())
+
+def assert_linux_controls(obj, where):
+    for key,want in [('interactHotkey','F'),('holdToInteract',True),('moveHotkey','Shift+F6')]:
+        if obj.get(key) != want:
+            raise SystemExit(f'[config-e2e] {where} {key}={obj.get(key)!r}, expected {want!r}')
+
+def assert_screen_reading(reply, *, fab, mission, mining, profile, where):
+    state=reply.get('screenReading')
+    if not isinstance(state, dict):
+        raise SystemExit(f'[config-e2e] {where} omitted screenReading applied-state: {reply!r}')
+    want={
+        'fabCapture': fab,
+        'missionOcr': mission,
+        'miningAssistant': mining,
+        'profile': profile,
+    }
+    for key,value in want.items():
+        if state.get(key) != value:
+            raise SystemExit(f'[config-e2e] {where} screenReading.{key}={state.get(key)!r}, expected {value!r}')
 
 last=None
 for _ in range(100):
@@ -68,33 +92,70 @@ if Path(diag.get('data',{}).get('userDir','')).resolve() != canonical:
     raise SystemExit(f'[config-e2e] wrong userDir: {diag.get("data",{}).get("userDir")}')
 
 cfg=request('/api/config')
-for key,want in [('interactHotkey','F'),('holdToInteract',True),('moveHotkey','Shift+F6')]:
-    if cfg.get(key) != want: raise SystemExit(f'[config-e2e] startup {key}={cfg.get(key)!r}, expected {want!r}')
+assert_linux_controls(cfg, 'startup')
 if cfg.get('legacySentinel') == 'wrong-path':
     raise SystemExit('[config-e2e] stale HOME config was adopted instead of canonical config')
 
-# Try to defeat the Linux contract through the public settings API. The sidecar must repair these
-# values before save, and packaged Linux must also accept the explicit bounded mining-debug opt-in.
-request('/api/config', {
+# Try to defeat the immutable Linux interaction controls while selecting the Mining reader profile.
+# The sidecar must repair F/hold/Shift+F6, derive profile="mining" from the actual reader booleans,
+# return the applied screen-reader state that config.html verifies, persist it, and allow the local
+# bounded mining-debug opt-in in a packaged Linux build.
+mining_reply=request('/api/config', {
     'interactHotkey':'Q',
     'holdToInteract':False,
     'moveHotkey':'Alt+M',
-    'screenReaderProfile':'anything-else',
+    'screenReaderProfile':'bogus-client-value',
+    'fabCapture':False,
+    'missionOcr':False,
+    'miningAssistant':True,
     'miningDebug':True,
 })
+assert_screen_reading(mining_reply, fab=False, mission=False, mining=True, profile='mining', where='mining POST')
 cfg=request('/api/config')
-for key,want in [('interactHotkey','F'),('holdToInteract',True),('moveHotkey','Shift+F6'),('screenReaderProfile','lightweight'),('miningDebug',True)]:
-    if cfg.get(key) != want: raise SystemExit(f'[config-e2e] repaired {key}={cfg.get(key)!r}, expected {want!r}')
+assert_linux_controls(cfg, 'mining GET')
+for key,want in [
+    ('fabCapture',False),('missionOcr',False),('miningAssistant',True),
+    ('screenReaderProfile','mining'),('miningDebug',True),
+]:
+    if cfg.get(key) != want:
+        raise SystemExit(f'[config-e2e] mining GET {key}={cfg.get(key)!r}, expected {want!r}')
 
-# Verify the persisted file, not only the HTTP response.
+# Exercise a second non-default profile so a future merge cannot merely hard-code "mining" or
+# "lightweight" and still pass. Balanced means mission OCR only.
+balanced_reply=request('/api/config', {
+    'interactHotkey':'Z',
+    'holdToInteract':False,
+    'moveHotkey':'Ctrl+M',
+    'fabCapture':False,
+    'missionOcr':True,
+    'miningAssistant':False,
+    'miningDebug':True,
+})
+assert_screen_reading(balanced_reply, fab=False, mission=True, mining=False, profile='balanced', where='balanced POST')
+cfg=request('/api/config')
+assert_linux_controls(cfg, 'balanced GET')
+for key,want in [
+    ('fabCapture',False),('missionOcr',True),('miningAssistant',False),
+    ('screenReaderProfile','balanced'),('miningDebug',True),
+]:
+    if cfg.get(key) != want:
+        raise SystemExit(f'[config-e2e] balanced GET {key}={cfg.get(key)!r}, expected {want!r}')
+
+# Verify the final applied state made it to the canonical disk file, not only the HTTP response.
 for _ in range(20):
     if expected.exists(): break
     time.sleep(.05)
 if not expected.exists(): raise SystemExit('[config-e2e] canonical config.json was not written')
 disk=json.loads(expected.read_text())
-for key,want in [('interactHotkey','F'),('holdToInteract',True),('moveHotkey','Shift+F6'),('screenReaderProfile','lightweight'),('miningDebug',True)]:
-    if disk.get(key) != want: raise SystemExit(f'[config-e2e] disk {key}={disk.get(key)!r}, expected {want!r}')
-print('[config-e2e] canonical path + mandatory Linux controls + miningDebug persistence PASS')
+assert_linux_controls(disk, 'disk')
+for key,want in [
+    ('fabCapture',False),('missionOcr',True),('miningAssistant',False),
+    ('screenReaderProfile','balanced'),('miningDebug',True),
+]:
+    if disk.get(key) != want:
+        raise SystemExit(f'[config-e2e] disk {key}={disk.get(key)!r}, expected {want!r}')
+
+print('[config-e2e] canonical path + immutable Linux controls + Settings applied-state/profile round trip PASS')
 PY
 
 kill -0 "$PID" 2>/dev/null || { echo '[config-e2e] server exited during config test' >&2; cat "$LOG" >&2; exit 113; }
