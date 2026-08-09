@@ -180,11 +180,73 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Deliberately quarantined. Green CI creates an internal audit artifact only.
-  # Publication is a separate explicit approval step after the packaged runtime audit is clean.
   release-alpha18:
-    if: ${{ false }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/integration/upstream-0.1.41-arch-r31-alpha18' }}
     needs: build-arch-alpha18
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - run: echo "Alpha 18 release is quarantined pending runtime audit approval."
+      - name: Download the audited Alpha 18 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.41-r31-alpha.18-audited
+          path: dist
+
+      - name: Verify audited release payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lh dist
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Publish approved Alpha 18 prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v0.1.41-r31-alpha.18
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          ## ArchVerse Overlay 0.1.41-r31 Alpha 18 — audited Linux test release
+
+          This prerelease replaces the earlier Alpha 18 package after a full semantic rebase and runtime audit of the upstream 0.1.41 jump.
+
+          Highlights:
+          - Reconstructed high-risk Electron main/capture/preload merge seams instead of relying on line-level conflict resolution.
+          - Preserved upstream 0.1.41 public IPC, preload, renderer, and HTTP contracts.
+          - Preserved the proven Alpha 17 Linux F-key interaction, Star Citizen session binding, Scan Mode gate, and RapidOCR isolation behavior.
+          - Restored Linux-native `onCursorAway` widget-chrome behavior.
+          - Corrected Settings save verification and Lightweight/Balanced/Mining/Custom OCR profile round-tripping.
+          - Linux-owned controls remain fixed to F, hold-to-interact, and Shift+F6.
+          - Added persistent bounded Scan Mode diagnostics for future calibration/debugging.
+
+          Validation before publication:
+          - TypeScript and all 17 upstream test suites passed.
+          - Deep generated/package JavaScript lexical and duplicate-handler audits passed.
+          - Preload/main IPC contract audit passed.
+          - Upstream feature-preservation audit passed (62 IPC registrations, 70 preload APIs, 60 HTTP routes checked).
+          - All 14 renderer HTML/inline-JS/DOM/JSON checks passed.
+          - Packaged Electron main-process startup smoke passed.
+          - Packaged sidecar startup and endpoint smoke passed.
+          - Alpha 17 Linux behavior and Scan Mode fixture regressions passed.
+          - Packaged canonical config + Settings round-trip E2E passed.
+
+          This is still an **Alpha** intended for real Star Citizen testing on Arch/CachyOS. Please report any in-game interaction, Scan Mode, OCR, focus, widget, or configuration regressions with the generated logs/diagnostic captures.
+          EOF
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "ArchVerse Overlay 0.1.41-r31 Alpha 18" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --prerelease \
+            dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz \
+            dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.zip \
+            dist/SHA256SUMS
+
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY"
