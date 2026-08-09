@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
+  issues: write
 
 concurrency:
   group: r31-alpha18-${{ github.event_name }}-${{ github.ref }}
@@ -48,9 +50,36 @@ jobs:
         env:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
-          set -euo pipefail
+          set -o pipefail
           bash linux-port/build-r31-alpha18.sh \
-            "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz"
+            "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
+            2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
+
+      - name: Report Alpha 18 validation to PR
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Alpha 18 CI: ${BUILD_STATUS}"
+            echo
+            echo "Commit: \`${GITHUB_SHA}\`"
+            echo
+            echo '<details><summary>Build tail</summary>'
+            echo
+            echo '```text'
+            if [[ -f "$RUNNER_TEMP/alpha18-build.log" ]]; then
+              tail -n 140 "$RUNNER_TEMP/alpha18-build.log"
+            else
+              echo 'Build did not reach the merge script.'
+            fi
+            echo '```'
+            echo '</details>'
+          } > "$RUNNER_TEMP/alpha18-pr-comment.md"
+          gh pr comment 3 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/alpha18-pr-comment.md"
 
       - uses: actions/upload-artifact@v4
         with:
