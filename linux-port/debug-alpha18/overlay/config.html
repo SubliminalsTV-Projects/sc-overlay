@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SC Overlay — Settings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<!-- Embedded on the canvas this page is a widget like any other, so it takes the shared widget
+     tokens + surface treatment. Harmless in the standalone window: nothing there uses .wpanel or
+     the widget token names, and the remap below is scoped to html.embedded. -->
+<link rel="stylesheet" href="/widget-theme.css" />
+<style>
+  /* Matches subliminal.gg — Material-3 dark surfaces, amber accent, Space Grotesk + Inter. */
+  :root {
+    --bg: #0d0e0f; --card: #1b1c1c; --card-high: #292a2a; --field: #171717;
+    --line: #262626; --line-strong: #404040; --line-soft: #524534;
+    --text: #e3e2e2; --muted: #d6c4ae; --outline: #9f8e7a;
+    --amber: #ffb231; --on-amber: #452b00; --amber-deep: #6d4700; --error: #ffb4ab;
+    --radius: .5rem; --radius-sm: .375rem;
+    --font-head: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  }
+  /* ── embedded on the canvas: wear the HUD ──────────────────────────────────────────────
+     🔑 Rather than restyle ~1,100 lines of rules, remap this page's OWN tokens onto the shared
+     widget tokens from widget-theme.css. Every existing rule keeps working and simply renders in
+     HUD colours — and since widget-theme.css retints those tokens per manufacturer skin, Settings
+     picks up all 16 skins for free with nothing further to write.
+     Scoped to html.embedded (specificity 0,1,1) so it beats the :root block above without
+     touching the standalone window, which must keep its amber subliminal.gg identity. */
+  html.embedded {
+    --bg: transparent;
+    --card: rgba(var(--accent-rgb), 0.06);
+    --card-high: rgba(var(--accent-rgb), 0.14);
+    --field: var(--track);
+    --line: var(--divider);
+    --line-strong: var(--border);
+    --line-soft: var(--divider);
+    --text: var(--cyan-text);
+    --muted: var(--cyan-dim);
+    --outline: var(--faint);
+    --amber: var(--cyan);            /* the page's accent becomes the skin's accent */
+    --on-amber: #06121a;             /* dark ink on an accent-filled button */
+    --amber-deep: #06121a;
+    --error: var(--red);
+    --font-head: var(--sans);
+    --font-body: var(--sans);
+  }
+  /* The widget owns the box: no page padding, no min-height, and the panel itself scrolls.
+     `.wrap` becomes the panel surface (the JS adds .wpanel to it for the shared scanlines /
+     Esperia mesh / Origin stitching that every other widget carries). */
+  html.embedded body { padding: 0; min-height: 0; background: transparent; height: 100%; overflow: hidden; }
+  html.embedded { height: 100%; }
+  html.embedded .wrap {
+    max-width: none; margin: 0; height: 100%; overflow-y: auto; padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: 10px;
+    /* 🔑 Two layers, not a hand-picked colour: the skin's translucent gradient sits ON TOP of
+       the skin's own near-opaque panel colour. The other widgets are glanceable readouts where
+       seeing the game through them is the point; Settings is dense body text and long labels,
+       and at the shared ~0.75 alpha it was hard to read against a bright planet. Layering keeps
+       it correct across all 16 manufacturer skins — no literal colour is written here, so
+       nothing has to be maintained per skin. */
+    background: linear-gradient(180deg, var(--panel-top), var(--panel-bot)), var(--panel-solid);
+  }
+  html.amd-lite.embedded .wrap { background: var(--panel-solid); }
+  /* The window's big hero header is dead weight in a widget — the widget's own bar names it. */
+  html.embedded .apphead { display: none; }
+  html.embedded .card { margin-top: 10px; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-body); background: var(--bg); color: var(--text); min-height: 100vh; padding: 40px 24px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  /* themed scrollbar — amber tint, matches the site */
+  * { scrollbar-width: thin; scrollbar-color: rgba(255,178,49,.25) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,178,49,.2); border-radius: 5px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,178,49,.45); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  .wrap { max-width: 680px; margin: 0 auto; }
+  .apphead { display: flex; align-items: center; gap: 15px; cursor: default; user-select: none; }
+  .beta-badge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 4px; vertical-align: 4px;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.12em; color: #1a1205; background: var(--amber); }
+  .app-logo { width: 54px; height: 54px; border-radius: 12px; flex: none; }
+  h1 { font-family: var(--font-head); font-size: 34px; font-weight: 700; color: #fff; letter-spacing: -.015em; line-height: 1.05; }
+  .app-sub { font-family: var(--font-body); font-size: 12px; letter-spacing: .14em; color: var(--muted); text-transform: uppercase; margin-top: 5px; font-weight: 600; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: .75rem; padding: 20px; margin-top: 16px; }
+  .label { font-family: var(--font-head); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 12px; }
+  input[type=text] { width: 100%; background: var(--field); border: 1px solid var(--line); color: var(--text); padding: 10px 12px; font-family: var(--font-body); font-size: 14px; border-radius: var(--radius-sm); transition: border-color .15s; }
+  input[type=text]::placeholder { color: var(--outline); }
+  input[type=text]:focus { outline: none; border-color: var(--amber); }
+  /* 🔑 Number inputs had NO rule at all — only [type=text] and [type=range] were ever styled — so
+     the pop-up durations rendered as raw platform controls: white field, system font, native
+     spinners, sitting in the middle of a dark panel (Sub, 2026-08-03).
+     `color-scheme: dark` is the part that matters and the part that is easy to miss: the up/down
+     spinner is drawn by the browser and cannot be recoloured with normal properties, so on a dark
+     field its arrows come out dark-on-dark and effectively invisible. That switch is what makes
+     the browser draw them light. The spinners are kept deliberately — nudging the number up and
+     down is how the control is used. */
+  input[type=number] { width: 78px; background: var(--field); border: 1px solid var(--line); color: var(--text);
+    padding: 10px 12px; font-family: var(--font-body); font-size: 14px; border-radius: var(--radius-sm);
+    transition: border-color .15s; color-scheme: dark; accent-color: var(--amber); }
+  input[type=number]:focus { outline: none; border-color: var(--amber); }
+  /* Canvas-calibration control groups: a row of nudge buttons plus its readout, sitting UNDER the
+     row's label rather than squeezed to the right of it — there are nine controls between the two
+     rows and they do not fit beside a label at any sensible window width. */
+  .calgrp { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .calgrp button { min-width: 34px; }
+  .calval { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+    min-width: 62px; text-align: center; }
+  input[readonly] { color: var(--muted); }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .row .ship { font-weight: 600; min-width: 150px; }
+  .row .ship.bad { color: var(--error); }
+  .row .u { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button { font-family: var(--font-body); font-weight: 600; cursor: pointer; border: 1px solid var(--line-strong); background: transparent; color: var(--text); padding: 8px 14px; font-size: 13px; border-radius: var(--radius-sm); transition: background .15s, border-color .15s; }
+  button:hover { background: var(--card-high); }
+  button.amber { border: none; background: var(--amber); color: var(--amber-deep); font-weight: 700; padding: 9px 18px; border-radius: var(--radius); }
+  button.amber:hover { filter: brightness(1.08); background: var(--amber); }
+  button.amber.ok, button.amber.ok:hover { background: #35c46a; color: #06210f; filter: none; } /* post-save confirmation */
+  button.danger { border-color: rgba(255,180,171,.3); color: var(--error); background: rgba(255,180,171,.06); padding: 6px 10px; }
+  button.danger:hover { background: rgba(255,180,171,.12); }
+  .active-tag { font-size: 10px; letter-spacing: .06em; color: var(--on-amber); background: var(--amber); padding: 2px 8px; border-radius: 999px; font-weight: 700; }
+  .add { display: flex; gap: 8px; margin-top: 6px; }
+  .opt { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 14px; color: var(--text); }
+  .opt input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--amber); }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
+  .hint code { font-family: ui-monospace, monospace; background: var(--field); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .saved { color: var(--amber); font-size: 13px; margin-left: 10px; opacity: 0; transition: opacity .2s; }
+  .saved.show { opacity: 1; }
+  .save-error { color:#ff7b7b; font-size:13px; margin-left:10px; display:none; }
+  .hkbtn { min-width: 170px; }
+  .hkbtn.capturing { border-color: var(--amber); color: var(--amber); background: rgba(255,178,49,.12); }
+  .ocr-profiles { display:flex; gap:8px; margin:10px 0 8px; }
+  .ocr-profiles button { flex:1; min-width:0; }
+  .ocr-profiles button.selected { border-color:var(--amber); color:var(--amber); background:rgba(255,178,49,.12); }
+  .ocr-live { margin-top:10px; padding:9px 11px; border:1px solid var(--line); border-radius:var(--radius-sm); background:rgba(0,0,0,.16); }
+  /* Themed dropdown (native <select> renders unstyled otherwise). */
+  select { -webkit-appearance: none; appearance: none; background: var(--field); border: 1px solid var(--line);
+    color: var(--text); padding: 9px 34px 9px 12px; font-family: var(--font-body); font-size: 14px;
+    border-radius: var(--radius-sm); cursor: pointer; transition: border-color .15s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5l4 4 4-4' fill='none' stroke='%23ffb231' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 11px center; }
+  select:focus { outline: none; border-color: var(--amber); }
+  select option { background: var(--card-high); color: var(--text); }
+  /* Themed range sliders (override the .opt input 18px box for these). */
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 5px; background: var(--line-strong);
+    border-radius: 999px; cursor: pointer; }
+  .opt input[type=range] { width: auto; height: 5px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--amber); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--amber); }
+  input[type=range]::-webkit-slider-thumb:hover { filter: brightness(1.1); }
+  .presets { display: flex; gap: 8px; margin-top: 8px; }
+  .presets button { flex: 1; padding: 7px 8px; font-size: 12.5px; }
+  /* Loadout-overlay settings (erkul URLs + ship auto-switch) are hidden for normal users —
+     they're Sub's stream-overlay feature. Revealed by the hidden unlock (title ×5). */
+  body:not(.show-loadout) .loadout-only { display: none; }
+  /* Support links (Sub Club / Patreon / Twitch) */
+  .support-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .support { display: flex; align-items: center; gap: 11px; padding: 11px 13px;
+    background: var(--field); border: 1px solid var(--line); border-left-width: 3px;
+    border-radius: var(--radius-sm); text-decoration: none; transition: background .15s, border-color .15s; }
+  .support:hover { background: var(--card-high); text-decoration: none; }
+  .support .support-ico { flex: none; width: 22px; display: grid; place-items: center; font-size: 18px; }
+  .support .support-ico svg { display: block; }
+  .support .support-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .support .support-txt b { color: var(--text); font-size: 13px; font-weight: 700; }
+  .support .support-txt small { color: var(--muted); font-size: 11.5px; }
+  .support .support-arrow { flex: none; color: var(--outline); font-size: 14px; }
+  .support:hover .support-arrow { color: var(--amber); }
+  /* Partner promos — compact cards, synced from subliminal.gg/api/partners. */
+  .partner-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .partner { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 11px 13px;
+    background: var(--field); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    text-decoration: none; transition: background .15s, border-color .15s; }
+  .partner:hover { background: var(--card-high); border-color: var(--amber); text-decoration: none; }
+  .partner .p-brand { font-weight: 700; color: var(--text); font-size: 13.5px; padding-right: 14px; }
+  .partner .p-logo { height: 30px; max-width: calc(100% - 14px); width: auto; object-fit: contain; align-self: flex-start; margin: 2px 0 5px; }
+  /* MonsterTech's thin mark + Tobii's compact wordmark read small at a shared height — bump them. */
+  .partner .p-logo[data-brand="MonsterTech"] { height: 46px; }
+  .partner .p-logo[data-brand="Tobii"] { height: 40px; }
+  .partner .p-deal { align-self: flex-start; font-size: 10px; font-weight: 700; color: var(--on-amber);
+    background: var(--amber); padding: 1px 7px; border-radius: 999px; }
+  .partner .p-code { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+  .partner .p-arrow { position: absolute; top: 9px; right: 11px; color: var(--outline); font-size: 13px; }
+  .partner:hover .p-arrow { color: var(--amber); }
+  /* ── Redesign: tiers, one-liner setting rows, info-icon tooltips ── */
+  .tier { margin-top: 30px; }
+  .tier-h { font-family: var(--font-head); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--amber); font-weight: 700; display: flex; align-items: baseline; gap: 10px; padding-bottom: 2px; border-bottom: 1px solid var(--line-soft); }
+  .tier-sub { font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); }
+  .cardhead { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .cardhead .label { margin-bottom: 0; flex: 1; }
+  .setrow { display: flex; align-items: flex-start; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .setrow:last-child { border-bottom: none; }
+  .setrow .opt { margin-top: 0; flex: 1; }
+  .info { position: relative; flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line-strong);
+    color: var(--muted); font-family: ui-serif, Georgia, "Times New Roman", serif; font-style: italic; font-size: 12px; font-weight: 700;
+    line-height: 16px; text-align: center; cursor: pointer; user-select: none; transition: color .15s, border-color .15s; }
+  .info:hover, .info:focus { color: var(--amber); border-color: var(--amber); outline: none; }
+  .info .tip { position: absolute; top: calc(100% + 8px); right: 0; width: 300px; max-width: 78vw; z-index: 50;
+    background: var(--card-high); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 11px 13px;
+    font-family: var(--font-body); font-style: normal; font-weight: 400; font-size: 12.5px; line-height: 1.55; color: var(--text);
+    text-align: left; white-space: normal; box-shadow: 0 12px 34px rgba(0,0,0,.55);
+    opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .15s; }
+  .info:hover .tip, .info:focus .tip, .info.pinned .tip { opacity: 1; visibility: visible; pointer-events: auto; }
+  .info .tip code { font-family: ui-monospace, monospace; background: var(--field); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+  /* compact hotkey rows */
+  .hkrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .hkrow:last-child { border-bottom: none; }
+  .hkrow .hklabel { flex: 1; font-size: 14px; color: var(--text); }
+  .hkrow .hkbtn { margin-left: auto; }
+  .hkrow .hint { flex-basis: 100%; width: 100%; margin-top: 0; }
+  .hkrow .hint:empty { display: none; }
+  /* Remove the hotkey entirely. Its own control, because there is no keypress that means "none" —
+     the capture flow can only ever ASSIGN one, so without this a hotkey could be changed forever
+     but never taken away. Hidden on a row that has no hotkey to remove. */
+  .hkrow .hkclear { flex: none; width: 26px; height: 26px; padding: 0; display: grid; place-items: center;
+    font-size: 12px; line-height: 1; color: var(--muted); cursor: pointer;
+    background: var(--field); border: 1px solid var(--line); border-radius: 6px; }
+  .hkrow .hkclear:hover { color: #ff8a8a; border-color: #7a3b3b; }
+  .hkrow .hkclear.hidden { visibility: hidden; }
+  /* A row with no hotkey set: the button still opens capture, it just doesn't pretend to be a key. */
+  .hkrow .hkbtn.unset { color: var(--muted); font-style: italic; }
+
+  /* Performance readout (Settings -> Performance & fixes -> Measure now). */
+  #perfOut { margin-top: 10px; }
+  .perfhead, .perfsub { font-weight: 700; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: #9a8c78; margin: 0 0 5px; }
+  .perfsub { margin-top: 14px; }
+  .perftbl { border-collapse: collapse; width: 100%; max-width: 520px; font-size: 13px; }
+  .perftbl td { padding: 5px 10px 5px 0; border-bottom: 1px solid rgba(255, 178, 49, 0.12); }
+  .perftbl tr.tot td { font-weight: 700; color: var(--text); }
+  .perftbl td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; width: 82px; }
+  .perftbl td.dim { color: #9a8c78; width: 58px; font-weight: 500; }
+  .perftbl td.barcell { width: 130px; }
+  .perftbl .barfill { height: 8px; border-radius: 4px; background: #ffb231; min-width: 2px; }
+  .perfnote { margin-top: 9px; font-size: 12px; line-height: 1.5; color: #9a8c78; max-width: 520px; }
+  /* The Performance & fixes card ran together as one wall of text — give each row a divider. */
+  .card .hkrow + .hkrow { border-top: 1px solid rgba(255, 178, 49, 0.12); padding-top: 12px; margin-top: 12px; }
+  .card .setrow + .setrow { border-top: 1px solid rgba(255, 178, 49, 0.10); padding-top: 10px; margin-top: 10px; }
+</style>
+<script>
+  // Auto-scale the whole settings UI to the display so 1080p AND 4K are readable out of the box.
+  // This page is fixed-px + Chromium-only, so a root `zoom` scales fonts AND layout uniformly with
+  // no px→rem refactor. `screen.height` is CSS px (already reduced by any OS scaling), so this one
+  // factor lands at a consistent PHYSICAL size across resolution × OS-scale combos — the key case
+  // being a 4K TV left at 100% OS scaling (→ 2×). Users can still Ctrl+= to zoom further on top.
+  // Runs pre-paint (in <head>) so there's no flash of tiny text.
+  (function () {
+    // 🔑 Embedded on the canvas the widget owns the box, and the canvas already applies its own
+    // per-widget text scaling — screen-scaling on top of that compounds into an unreadable size.
+    if (new URLSearchParams(location.search).has("embedded")) return;
+    function applyScale() {
+      var h = (window.screen && window.screen.height) || 1080;
+      document.documentElement.style.zoom = Math.max(1, Math.min(2.25, h / 1080));
+    }
+    applyScale();
+    window.addEventListener("resize", applyScale);
+  })();
+
+  // ── running as a canvas WIDGET instead of a window ──────────────────────────────────────
+  // Two host modes, one file (the same pattern the Journal and Mining Scanner use). In a window
+  // this page gets `window.overlayConfig` from config-preload.cjs; as an iframe on the canvas it
+  // gets no preload at all, so synthesize the identical API on top of the parent's __configHost.
+  // Doing it HERE — before any of the page's own script runs — is what lets all ~23 existing
+  // `window.overlayConfig.…` call sites work untouched instead of being rewritten to a bridge.
+  (function () {
+    if (!new URLSearchParams(location.search).has("embedded")) return;
+    document.documentElement.classList.add("embedded");
+    if (window.overlayConfig) return; // a real preload wins; never shadow it
+    var host = function () {
+      try { return (window.parent && window.parent.__configHost) || null; } catch (e) { return null; }
+    };
+    // Absent host → every call is a no-op resolving to null, exactly as the page already expects
+    // from an older shell (it guards each of these before use).
+    var call = function (name) {
+      return function () {
+        var h = host();
+        if (!h || typeof h[name] !== "function") return Promise.resolve(null);
+        try { return Promise.resolve(h[name].apply(h, arguments)); } catch (e) { return Promise.resolve(null); }
+      };
+    };
+    window.overlayConfig = {
+      pickPng: call("pickPng"), pickLog: call("pickLog"),
+      setOverlayHotkey: call("setOverlayHotkey"), setBindingHotkey: call("setBindingHotkey"),
+      setMiningHotkey: call("setMiningHotkey"), setWebViewHotkey: call("setWebViewHotkey"),
+      setInteractHotkey: call("setInteractHotkey"), setMoveHotkey: call("setMoveHotkey"),
+      setFabClaimHotkey: call("setFabClaimHotkey"),
+      setHoldMode: call("setHoldMode"), resetLayout: call("resetLayout"),
+      canvasCalibration: call("canvasCalibration"),
+      metrics: call("metrics"), openDataFolder: call("openDataFolder"),
+      isElevated: call("isElevated"), restartAsAdmin: call("restartAsAdmin"),
+      getOverlayEnabled: call("getOverlayEnabled"), setOverlayEnabled: call("setOverlayEnabled"),
+      onOverlayEnabledChanged: function (cb) { var h = host(); if (h && h.onOverlayEnabledChanged) h.onOverlayEnabledChanged(cb); },
+    };
+
+    // The standard embedded-widget handshake every other page does.
+    // 🔑 `ready()` is not optional: it is what makes the canvas apply this widget's saved frame,
+    // push its manufacturer theme onto this document (which the token remap above reads), apply
+    // the per-widget text scale and send the first visibility. Without it the widget renders
+    // unthemed at the wrong size and never learns it was shown.
+    document.addEventListener("DOMContentLoaded", function () {
+      var wrap = document.querySelector(".wrap");
+      if (wrap) wrap.classList.add("wpanel"); // shared scanlines / Esperia mesh / Origin stitching
+      try { host() && host().ready && host().ready(); } catch (e) { /* not embedded */ }
+    });
+    // Reveals this widget's header even though the cursor is over an IFRAME, so the canvas
+    // wrapper never sees it. Same one line every embedded page carries.
+    document.addEventListener("pointerdown", function () {
+      try { host() && host().summonCog && host().summonCog(); } catch (e) { /* not embedded */ }
+    });
+
+    // Typing over a focused game needs the shell's shared keyboard grab: the overlay takes focus
+    // and SUSPENDS the interact key, then calls back here once it's released so no stray
+    // character lands in the field. The registry names that callback __configFocus.
+    // 🔑 Text-entry fields ONLY. A checkbox or a button taking the grab would suspend the
+    // interact key for a click that never needed it, and the user would be left unable to
+    // interact with the overlay until something released it.
+    var TEXTY = /^(text|url|number|search|password|email)$/;
+    var isTexty = function (t) {
+      return !!t && (t.tagName === "TEXTAREA" || (t.tagName === "INPUT" && TEXTY.test(t.type || "text")));
+    };
+    var pendingFocus = null;
+    document.addEventListener("focusin", function (e) {
+      if (!isTexty(e.target)) return;
+      pendingFocus = e.target;
+      try { host() && host().editStart && host().editStart(); } catch (e2) { /* not embedded */ }
+    });
+    document.addEventListener("focusout", function (e) {
+      if (!isTexty(e.target)) return;
+      if (pendingFocus === e.target) pendingFocus = null;
+      try { host() && host().editEnd && host().editEnd(); } catch (e2) { /* not embedded */ }
+    });
+    window.__configFocus = function () {
+      try { if (pendingFocus) pendingFocus.focus(); } catch (e) { /* element went away */ }
+    };
+
+    // Hotkey capture needs the same grab, but a hotkey button is NOT a text field so the
+    // focusin path above deliberately ignores it. Expose the grab so the capture flow can take
+    // it explicitly, focusing the button itself — keydown is bound to `window`, so the event
+    // only reaches it if something inside THIS document holds focus.
+    // Absent (standalone window) the capture flow just skips this: that window already has real
+    // keyboard focus, which is why hotkey capture worked there without any of this.
+    window.__cfgGrab = {
+      start: function (el) {
+        pendingFocus = el || null;
+        try { host() && host().editStart && host().editStart(); } catch (e) { /* not embedded */ }
+      },
+      end: function () {
+        pendingFocus = null;
+        try { host() && host().editEnd && host().editEnd(); } catch (e) { /* not embedded */ }
+      },
+    };
+  })();
+</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="apphead" id="appTitle">
+    <img src="/tray-icon.png" alt="" class="app-logo" />
+    <div>
+      <h1>SC Overlay <span class="beta-badge">BETA</span></h1>
+      <div class="app-sub">Settings</div>
+    </div>
+  </div>
+
+<!-- ══════════ TIER 1 ══════════ -->
+  <div class="tier">
+    <div class="tier-h">Opt-in features <span class="tier-sub">all off until you turn them on</span></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Collection &amp; privacy</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="syncEnabled" /> Sync my collection to subliminal.gg</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Backs up your blueprint collection + tracked mission to your subliminal.gg account and lets you browse it on the web. Needs a token — get one at <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg/blueprints</a> → &ldquo;Connect the desktop tracker&rdquo; and paste it below.</span></span>
+    </div>
+    <input type="text" id="syncToken" placeholder="scbp_…  paste your token from subliminal.gg/blueprints" />
+    <div class="hint" id="syncStatus"></div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="shareLogs" /> Share anonymized logs to improve the tracker</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Sends your Star Citizen <code>Game.log</code> so mission and blueprint parsing can be fixed against real logs. Your handle, account ID, IP and session are stripped and chat is dropped before it leaves your PC. Needs a sync token.</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Screen reading (OCR)</div>
+    <div class="hint" style="margin-top:0">Reads selected HUD panels locally while Star Citizen is focused. More readers use more CPU.</div>
+    <div class="ocr-profiles" aria-label="Screen reading profile">
+      <button type="button" id="ocrProfileLightweight" onclick="applyScreenProfile('lightweight')">Lightweight</button>
+      <button type="button" id="ocrProfileBalanced" onclick="applyScreenProfile('balanced')">Balanced</button>
+      <button type="button" id="ocrProfileMining" onclick="applyScreenProfile('mining')">Mining</button>
+    </div>
+    <div class="hint" id="ocrProfileStatus">Lightweight — screen reading is off.</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="missionOcr" /> Detect the mission I'm tracking in-game</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Reads the tracked-mission panel so the overlay knows which mission you've actually selected — ground truth the game log can't give. No account needed.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="miningAssistant" /> Recognize mining scans and refinery panels</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Runs the specialized Mining readers only when enabled. Unchanged HUD regions are skipped and the expensive signature reader backs off when Scan Mode is not visible.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's catalog — only items we don't have yet. You're credited on the contributor leaderboard. Needs a sync token.</span></span>
+    </div>
+<<<<<<< ArchVerse Alpha17
+    <div class="hint ocr-live" id="ocrLiveStatus">Screen reader status: starting…</div>
+||||||| upstream 0.1.36
+=======
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="fabClaim" /> Offer to add blueprints the fabricator shows that I'm missing</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">The game only writes a blueprint to your log the moment you receive it, and those logs get deleted over time — so anything you earned before installing the app can never be detected. The Fabrication Kiosk only lists blueprints you own, so when it shows one we have no record of, you get 30 seconds to add it. You confirm each one, so check the name matches what's on your screen.</span></span>
+    </div>
+>>>>>>> upstream 0.1.41
+  </div>
+
+  <div class="card">
+    <div class="label">Widgets &amp; interaction</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="miningAutoShow" /> Pop the Mining Scanner open when I'm scanning or refining</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Shows the Mining Scanner on its own when the scanner or Refinement Center is detected. Only a signature matching a known ore counts — debris and stray numbers won't pop it open. If you close it, it stays away for a bit before it can pop again.</span></span>
+    </div>
+    <div class="setrow" id="holdToInteractRow">
+      <label class="opt"><input type="checkbox" id="holdToInteract" onchange="onHoldModeToggle()" /> Use the interaction key as the overlay entry gate</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip" id="holdToInteractTip">Hold the interaction key while moving into a widget. Once the widget becomes interactive, release the key and continue clicking, typing, or scrolling normally.</span></span>
+    </div>
+    <div class="setrow">
+      <div class="opt" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <span>Infographic Viewer</span>
+        <div class="add" style="margin-top:0">
+          <input type="text" id="bindingPng" placeholder="no PNG chosen — pick one to fill the Infographic Viewer" readonly />
+          <button onclick="chooseBinding()">Choose PNG…</button>
+          <button class="danger" onclick="clearBinding()" title="Remove">✕</button>
+        </div>
+      </div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Pick a PNG (transparency supported — e.g. a joystick binding chart) and it fills the Infographic Viewer, which you place and size like any other. Toggle it with the binding hotkey (set under Hotkeys) or from the tray.</span></span>
+    </div>
+  </div>
+
+  <!-- ══════════ TIER 2 ══════════ -->
+  <div class="tier">
+    <div class="tier-h">Setup &amp; defaults <span class="tier-sub">the essentials, sensible out of the box</span></div>
+  </div>
+
+  <div class="card">
+    <div class="cardhead">
+      <div class="label">Game log</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Pick the <code>game.log</code> FILE itself (not its folder) — e.g. …\StarCitizen\LIVE\game.log. <strong>Browse…</strong> to select it, or <strong>Detect</strong> to auto-find your install and channel (LIVE / PTU / …).</span></span>
+    </div>
+    <div class="add">
+      <input type="text" id="logPath" placeholder="…\StarCitizen\LIVE\game.log" />
+      <button onclick="chooseLog()">Browse…</button>
+      <button onclick="detectLog()">Detect</button>
+    </div>
+    <div id="logWarn" class="hint" style="display:none; color:#ffb4a8"></div>
+    <div id="detected" class="hint"></div>
+    <label class="opt loadout-only"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
+  </div>
+
+  <div class="card">
+    <div class="cardhead">
+      <div class="label">Appearance</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Restyle the overlay to a Star Citizen manufacturer. <strong>Mobiglas</strong> is the clean default; <strong>Drake</strong> is rugged burnt-orange; <strong>Anvil</strong> is military teal-green; <strong>Grey's</strong> is grungy CRT green; <strong>Auto</strong> matches the ship you're flying. Applies immediately. (Per-widget sizing: drag a widget's corner in arrange mode.)</span></span>
+    </div>
+    <label class="opt" style="margin-top:2px;">Theme
+      <select id="theme" onchange="onThemePicked()" style="margin-left:auto;">
+        <option value="mobiglas">Mobiglas (default)</option>
+        <option value="auto">Auto — match my ship</option>
+        <option value="aegis">Aegis Dynamics</option>
+        <option value="anvil">Anvil Aerospace</option>
+        <option value="argo">Argo Astronautics</option>
+        <option value="banu">Banu</option>
+        <option value="cnou">Consolidated Outland</option>
+        <option value="crusader">Crusader Industries</option>
+        <option value="drake">Drake Interplanetary</option>
+        <option value="esperia">Esperia</option>
+        <option value="gatac">Gatac</option>
+        <option value="greys">Grey's</option>
+        <option value="kruger">Kruger Intergalactic</option>
+        <option value="mirai">Mirai</option>
+        <option value="misc">MISC</option>
+        <option value="origin">Origin</option>
+        <option value="rsi">RSI</option>
+      </select>
+    </label>
+    <div id="themeLock" style="display:none; margin-top:8px; padding:9px 11px; border-radius:8px;
+         background:rgba(255,178,49,.09); border:1px solid rgba(255,178,49,.35); font-size:12.5px; line-height:1.45;">
+      <span style="opacity:.9"><strong>Auto</strong> (matches the ship you're flying) and <strong>Mobiglas</strong> are free. 🔒 <strong>Pinning</strong> one manufacturer regardless of ship is a subscriber perk — pick one to <strong>preview</strong> it, then it reverts. Subscribe any way below and it stays unlocked for as long as you're subscribed:</span>
+      <span style="display:flex; gap:16px; margin-top:7px; flex-wrap:wrap;">
+        <a href="https://www.twitch.tv/subs/subliminalstv" target="_blank" rel="noopener" style="color:#ffb231; font-weight:600; text-decoration:none;">Twitch →</a>
+        <a href="https://subliminal.gg/#subclub" target="_blank" rel="noopener" style="color:#ffb231; font-weight:600; text-decoration:none;">SubClub →</a>
+        <a href="https://subliminal.gg" target="_blank" rel="noopener" style="color:#ffb231; font-weight:600; text-decoration:none;">subliminal.gg →</a>
+      </span>
+    </div>
+    <label class="opt" style="margin-top:10px;"><input type="checkbox" id="revertThemeOnFoot" /> Switch back to Mobiglas when I leave my ship</label>
+    <div class="hint" style="margin-top:2px;">Applies to <strong>Auto</strong> theme and the stream ship-signal (<code>/api/ship</code>). Off = keep the last ship's manufacturer skin until you board another.</div>
+  </div>
+
+  
+
+  <div class="card">
+    <div class="cardhead">
+      <div class="label">Hotkeys</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Click a button then press your combo. Use Ctrl/Alt/Shift + a key, or a bare <code>F3</code> / <code>F13–F24</code> (those are free in Star Citizen; F4–F12 are taken). Applies immediately, no restart.</span></span>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Show / hide overlay</span>
+      <button type="button" id="overlayHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('overlay')">F3</button>
+      <button type="button" class="hkclear" id="overlayHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('overlay')">✕</button>
+      <input type="hidden" id="overlayHotkey" />
+      <div class="hint" id="overlayHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Web Page</span>
+      <button type="button" id="webViewHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('webView')">Ctrl + Shift + F3</button>
+      <button type="button" class="hkclear" id="webViewHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('webView')">✕</button>
+      <input type="hidden" id="webViewHotkey" />
+      <div class="hint" id="webViewHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Journal</span>
+      <button type="button" id="notepadHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('notepad')">Alt + F3</button>
+      <button type="button" class="hkclear" id="notepadHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('notepad')">✕</button>
+      <input type="hidden" id="notepadHotkey" />
+      <div class="hint" id="notepadHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Mining Scanner</span>
+      <button type="button" id="miningHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('mining')">Shift + F3</button>
+      <button type="button" class="hkclear" id="miningHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('mining')">✕</button>
+      <input type="hidden" id="miningHotkey" />
+      <div class="hint" id="miningHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Infographic Viewer</span>
+      <button type="button" id="bindingHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('binding')">Ctrl + F3</button>
+      <button type="button" class="hkclear" id="bindingHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('binding')">✕</button>
+      <input type="hidden" id="bindingHotkey" />
+      <div class="hint" id="bindingHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Hold-to-interact key</span>
+      <button type="button" id="interactHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('interact')">F</button>
+      <button type="button" class="hkclear" id="interactHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('interact')">✕</button>
+      <input type="hidden" id="interactHotkey" />
+      <div class="hint" id="interactHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Add missing blueprint</span>
+      <button type="button" id="fabClaimHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('fabClaim')">F4</button>
+      <button type="button" class="hkclear" id="fabClaimHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('fabClaim')">✕</button>
+      <input type="hidden" id="fabClaimHotkey" />
+      <div class="hint" id="fabClaimHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Move / arrange</span>
+      <button type="button" id="moveHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('move')">Ctrl + Alt + M</button>
+      <button type="button" class="hkclear" id="moveHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('move')">✕</button>
+      <input type="hidden" id="moveHotkey" />
+      <div class="hint" id="moveHotkeyHint"></div>
+    </div>
+    <!-- Moved here from "Performance & fixes": this whole block exists to explain why the hotkeys
+         above don't reach the game, so it belongs beside them rather than in a card nobody with
+         that problem would think to open. -->
+    <div class="setrow">
+      <span class="hklabel" style="flex:1; color:var(--muted); font-size:13px;">Hotkeys work on the desktop but not in-game?</span>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Do your hotkeys work on the desktop but not while Star Citizen is focused? The game runs as admin (anti-cheat), so another app's hotkeys only reach it while focused if that app is ALSO admin.</span></span>
+    </div>
+    <div class="hint" id="adminOk" style="display:none; color:#63d6a0">✓ Running as administrator — hotkeys work while the game is focused.</div>
+    <button type="button" id="adminBtn" class="amber" style="display:none" onclick="restartAsAdmin()">Restart as administrator</button>
+    <div class="hint" id="adminHint" style="display:none">Relaunches elevated (a Windows UAC prompt — click Yes). Only affects hotkeys while the game is focused. Tip: shortcut → Properties → Compatibility → Run as administrator to skip this each launch.</div>
+  </div>
+
+  <!-- "Performance & fixes" had grown into a drawer of seven unrelated things: the overlay master
+       switch, a performance meter, two GPU workarounds, an explanation of why hotkeys don't reach
+       the game, the canvas calibration and a layout reset. Split by the question the user is
+       actually asking, and the calibration gets its own heading with its controls UNDERNEATH
+       rather than crammed to the right of a label (Sub, 2026-08-03). The admin/hotkey block moved
+       into the Hotkeys card, where someone with that problem is already looking. -->
+
+  <!-- Canvas calibration. The same two controls arrange mode offers, mirrored here because this is
+       a normal OS window that the calibration cannot move: if the canvas is far enough out of place,
+       or scaled far enough down, the on-canvas copy can itself be off-screen. Hidden unless the
+       shell exposes the bridge (an older app, or a browser source). -->
+  <div class="card" id="canvasCalRow" style="display:none">
+    <div class="label">Canvas alignment &amp; scale</div>
+    <div class="hint" style="margin-top:0">
+      For monitors running at <strong>different Windows scaling levels</strong>. If the overlay lands
+      in the wrong place, or at the wrong size, adjust it here. Turn on arrange mode over the game —
+      the dashed outline shows where the overlay thinks your main monitor is — then size and move it
+      until that outline matches your real monitor edges. Leave it at 0, 0 &middot; 100% if it
+      already lines up.
+    </div>
+    <div class="setrow">
+      <span class="hklabel" style="flex:1">Position</span>
+      <div class="calgrp">
+        <button type="button" data-cal-nx="-10" title="Move left">←</button>
+        <button type="button" data-cal-nx="10" title="Move right">→</button>
+        <button type="button" data-cal-ny="-10" title="Move up">↑</button>
+        <button type="button" data-cal-ny="10" title="Move down">↓</button>
+        <span class="calval" id="canvasCalOff">0, 0</span>
+      </div>
+    </div>
+    <div class="setrow">
+      <span class="hklabel" style="flex:1">Size</span>
+      <div class="calgrp">
+        <button type="button" data-cal-nz="-5" title="Shrink">−</button>
+        <button type="button" data-cal-nz="5" title="Grow">+</button>
+        <span class="calval" id="canvasCalScale">100%</span>
+      </div>
+    </div>
+    <div class="setrow">
+      <button type="button" id="canvasCalReset" style="width:100%">Reset to 0, 0 &middot; 100%</button>
+    </div>
+    <div class="hint">Hold <strong>Shift</strong> for finer steps. Applies immediately.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Graphics &amp; performance</div>
+    <label class="opt" id="overlayShowRow" style="display:none"><input type="checkbox" id="overlayShow" /> Show the in-game overlay</label>
+    <div class="hint" id="overlayShowHint" style="display:none">Hides the on-screen overlay while mission tracking and sync keep running &mdash; handy if you just want it out of the way. <strong>If you are turning this off because the overlay is crashing your game, please report it</strong> &mdash; that is a bug worth fixing, not something to work around.</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="amdCompat" /> AMD compatibility mode</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">On an AMD GPU and the game crashes (Vulkan &ldquo;device lost&rdquo;) when the overlay is up? Turn this on — it forces the overlay off the GPU with a simpler no-blur panel. Requires restarting the app.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="hwAccel" /> Use GPU hardware acceleration</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Off by default — the overlay renders on the CPU, avoiding crashes some GPUs hit. Turn on only if you have GPU headroom and no crashes. Requires restarting the app.</span></span>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">What this is costing your PC</span>
+      <button type="button" id="perfBtn" class="hkbtn">Measure now</button>
+      <div class="hint">Widgets that pull live content (Twitch chat, a web page) cost far more than the text-only ones.</div>
+      <div id="perfOut"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Recover</div>
+    <div class="setrow">
+      <button type="button" class="danger" style="width:100%" onclick="onResetLayout()">Reset overlay layout (recover lost widgets)</button>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">If a widget ends up off-screen (e.g. dragged onto another monitor), this returns every widget to its default on-screen spot.</span></span>
+    </div>
+  </div>
+
+<div class="card">
+    <div class="label">Diagnostics</div>
+    <!-- Shortened: the old copy listed everything the report contains, which the report itself
+         then shows you the moment you press the button. What is worth saying up front is only
+         what you cannot see by looking — that it carries no secrets. -->
+    <div class="hint" style="margin-top:0">
+      Something not working? Copy a short health report and paste it into your bug report or
+      Discord. No passwords or tokens.
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Report</span>
+      <button type="button" id="diagBtn" class="hkbtn">Copy diagnostics</button>
+      <div class="hint" id="diagMsg"></div>
+    </div>
+    <pre id="diagOut" style="display:none; margin-top:10px; max-height:260px; overflow:auto;
+      white-space:pre-wrap; font-size:11px; line-height:1.5; background:rgba(0,0,0,0.28);
+      border:1px solid var(--line); border-radius:8px; padding:10px 12px; color:var(--muted)"></pre>
+  </div>
+  <!-- How long the two pop-up widgets stay up. Argante asked for this: a notifier that fades on
+       a fixed timer is either too quick to read or too slow to get out of the way, and which one
+       depends entirely on whether you're in a fight. Lives in Settings rather than each widget's
+       cog because SC Feed's cog is already the alert-sound panel, and a notifier you're trying to
+       slow down is by definition one that keeps vanishing before you can open its cog. -->
+  <div class="card">
+    <div class="label">Pop-up duration</div>
+    <div class="setrow">
+      <label class="opt" for="scFeedShowSeconds">SC Feed story</label>
+      <input type="number" id="scFeedShowSeconds" min="3" max="60" step="1" />
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Seconds an SC Feed story stays on screen before it fades. 3–60.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt" for="unlockAlertShowSeconds">Unlock Alert card</label>
+      <input type="number" id="unlockAlertShowSeconds" min="3" max="60" step="1" />
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Seconds a blueprint-unlock card stays on screen before it fades. 3–60.</span></span>
+    </div>
+    <div class="hint">Takes effect the next time each widget loads.</div>
+  </div>
+
+  <!-- ══════════ TIER 3 ══════════
+       "More" used to be a junk drawer: browser sources, promos, diagnostics and About all in one
+       heap. Diagnostics moved up to Performance & fixes where it belongs, promos got their own
+       tier so they read as promos rather than a setting, and this one now names what it holds.
+       "Your files" sits here rather than up in Setup because almost nobody opens it. -->
+  <div class="tier">
+    <div class="tier-h">Browser sources &amp; your files</div>
+  </div>
+<div class="card">
+    <div class="label">Browser sources &amp; extra monitors</div>
+    <div class="hint">Want a widget on a <strong>second monitor</strong>, or as an <strong>OBS browser source</strong>? Open one of these URLs in any browser window — it renders that widget on its own, live and transparent. This is the way to put a widget off your main screen; the in-game overlay itself stays on your primary display.</div>
+    <div id="srcRows"></div>
+    <div class="hint">In OBS: add a <strong>Browser</strong> source and paste the URL — the background is transparent, so it composites straight over your scene.</div>
+    <div class="hint" id="lanHint" style="display:none">📱 <strong>On a phone or another device</strong> on the same Wi-Fi, <code>localhost</code> won't work — swap in this PC's address instead: e.g. <code id="lanExample"></code><span class="lnk" id="lanCopy" style="margin-left:8px; cursor:pointer; text-decoration:underline dotted;">copy</span></div>
+  </div>
+<div class="card">
+    <div class="cardhead">
+      <div class="label">Your files</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Saved party splits live in your Windows app-data folder (the app can't write next to its own program files — Windows makes that read-only). Each save also writes <code>index.html</code>: double-click it and every split opens in your browser with a proper table.</span></span>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Saved party splits</span>
+      <button type="button" id="openPartyFolder" class="hkbtn">↗ Open folder</button>
+      <div class="hint">Holds a <code>.json</code>, a plain-text <code>.txt</code>, and an <code>index.html</code> you can open in any browser.</div>
+    </div>
+  </div>
+  <!-- ══════════ TIER 4 ══════════ -->
+  <div class="tier">
+    <div class="tier-h">Partners</div>
+  </div>
+  <div class="card" id="partnersCard" style="display:none">
+    <div class="label">Partner promos</div>
+    <div class="hint" style="margin-top:0; margin-bottom:12px">Deals from SubliminalsTV's partners — support development at no extra cost to you.</div>
+    <div class="partner-grid" id="partnerGrid"></div>
+  </div>
+
+<div class="card">
+    <div class="label">About</div>
+    <div class="hint" style="margin-top:0">
+      <strong>SC Overlay</strong> is a lightweight, transparent in-game HUD for Star Citizen. It reads your
+      <code>game.log</code> to show the blueprint reward pool for the mission you're tracking and checks off each
+      blueprint as you collect it — plus a <strong>Mining Scanner</strong> (signature scanner + refinery-job timers)
+      and <strong>manufacturer skins</strong> that automatically match the ship you're flying. Opt-in screen reading
+      (OCR) can detect your tracked mission in-game and help crowdsource item images for the catalog. Point it at your
+      <code>game.log</code> below to get started, and optionally connect your
+      <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg</a> account to sync your collection and
+      browse everything you've unlocked on the web.
+    </div>
+    <div class="hint" style="margin-top:16px; margin-bottom:8px">This tracker is free for everyone and supported by those who have the means. If it saves you time, helps your Star Citizen gameplay, here are the ways to back and keep development going:</div>
+    <div class="support-grid">
+      <a class="support" href="https://subliminal.gg/#subclub" target="_blank" rel="noopener" style="border-left-color:var(--amber)">
+        <span class="support-ico">👑</span>
+        <span class="support-txt"><b>Join SubClub</b><small>Membership perks and the most direct way to back the channel.</small></span>
+        <span class="support-arrow">↗</span>
+      </a>
+      <a class="support" href="https://www.twitch.tv/subs/subliminalstv" target="_blank" rel="noopener" style="border-left-color:#9146FF">
+        <span class="support-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="#9146FF" aria-hidden="true"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg></span>
+        <span class="support-txt"><b>Subscribe on Twitch</b><small>Subscribe or gift subs on the SubliminalsTV stream.</small></span>
+        <span class="support-arrow">↗</span>
+      </a>
+      <a class="support" href="https://www.patreon.com/c/SubliminalsTV" target="_blank" rel="noopener" style="border-left-color:#FF424D">
+        <span class="support-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="#FF424D" aria-hidden="true"><path d="M22.957 7.21c-.004-3.064-2.391-5.576-5.191-6.482-3.478-1.125-8.064-.962-11.384.604C2.357 3.231 1.093 7.391 1.046 11.54c-.039 3.411.302 12.396 5.369 12.46 3.765.047 4.326-4.804 6.068-7.141 1.24-1.662 2.836-2.132 4.801-2.618 3.376-.836 5.678-3.501 5.673-7.031Z"/></svg></span>
+        <span class="support-txt"><b>Become a Patron</b><small>Monthly support over on Patreon.</small></span>
+        <span class="support-arrow">↗</span>
+      </a>
+      <a class="support" href="https://subliminal.gg/projects" target="_blank" rel="noopener" style="border-left-color:#45D0E0">
+        <span class="support-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="#45D0E0" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg></span>
+        <span class="support-txt"><b>Check out other projects</b><small>More SubliminalsTV tools and Star Citizen apps.</small></span>
+        <span class="support-arrow">↗</span>
+      </a>
+    </div>
+    <div class="hint" style="text-align:center; margin-top:12px; opacity:0.75">Thank you — every bit helps. o7</div>
+  </div>
+  
+
+
+  <!-- Diagnostics. "It stopped working" is otherwise a guessing game across a dozen messages —
+       a dead sidecar, a moved game.log, an expired token and a read-only data folder all present
+       identically to the player. One button, one paste. Deliberately carries no secrets. -->
+  
+
+  
+
+  <div class="card loadout-only">
+    <div class="label">Erkul Loadout URLs</div>
+    <div id="list"></div>
+    <div class="add">
+      <input type="text" id="newUrl" placeholder="https://www.erkul.games/loadout/XXXXXXXX" />
+      <button onclick="addUrl()">Add</button>
+    </div>
+    <div class="hint">Paste an erkul share URL per ship. The overlay reads the ship from each build automatically — when that ship spawns in-game, it switches to it. Click a row to make it the active overlay now.</div>
+  </div>
+
+  <div style="margin-top:20px; display:flex; align-items:center;">
+    <button class="amber" id="saveBtn" onclick="save()">Save</button>
+    <span class="saved" id="saved">Saved ✓</span>
+    <span class="save-error" id="saveError"></span>
+  </div>
+
+  <div class="hint" style="margin-top:18px; opacity:0.7">
+    This app's source is public — view it on
+    <a href="https://github.com/SubliminalsTV-Projects/sc-overlay" target="_blank">GitHub</a>.
+  </div>
+  <!-- CIG Fan Kit compliance: the Made By The Community logo (unaltered, full opacity) + the
+       required trademark notice at ≥10pt, per the Star Citizen Fan Kit Guidelines. -->
+  <div style="display:flex; align-items:center; gap:14px; margin-top:22px; padding-top:16px; border-top:1px solid var(--outline);">
+    <img src="/made-by-community.png" alt="Made By The Community" style="width:56px; height:56px; flex:none;" />
+    <div style="font-size:10.5pt; line-height:1.45; color:var(--muted);">
+      This is an unofficial Star Citizen fan tool, not affiliated with Cloud Imperium.
+      <strong style="color:var(--text)">Star Citizen®, Roberts Space Industries® and Cloud Imperium® are registered trademarks of Cloud Imperium Rights LLC.</strong>
+    </div>
+  </div>
+</div>
+
+<script>
+  let cfg = { urls: [], activeUrl: null, logPath: "", autoSwitch: true, resolved: [] };
+  const IS_LINUX_DESKTOP = /Linux/i.test(navigator.userAgent || "");
+
+  // FREE: Mobiglas + Auto (match my ship). SUBSCRIBER: pinning a specific manufacturer regardless of ship.
+  const PREMIUM_THEMES = ["drake","anvil","greys","esperia","misc","banu","gatac","mirai","origin","aegis","crusader","rsi","kruger","argo"];
+  let themeEntitled = true, demoTimer = null;
+  function applyThemeLock(entitled) {
+    themeEntitled = entitled;
+    const sel = document.getElementById("theme");
+    for (const opt of sel.options) {
+      const locked = PREMIUM_THEMES.includes(opt.value) && !entitled;
+      opt.disabled = false; // selectable so non-subs can PREVIEW (trial) — the server reverts it
+      const base = opt.textContent.replace(/^🔒\s*/, "");
+      opt.textContent = (locked ? "🔒 " : "") + base;
+    }
+    document.getElementById("themeLock").style.display = entitled ? "none" : "block";
+  }
+  // When a non-subscriber previews a locked skin, the overlay trials it for ~20s then reverts to
+  // Mobiglas; mirror that here so the dropdown doesn't sit on a skin they didn't unlock.
+  function onThemePicked() {
+    save();
+    clearTimeout(demoTimer);
+    const sel = document.getElementById("theme");
+    if (!themeEntitled && PREMIUM_THEMES.includes(sel.value)) {
+      demoTimer = setTimeout(() => { sel.value = "mobiglas"; }, 21000);
+    }
+  }
+
+  async function loadCfg() {
+    cfg = await (await fetch("/api/config")).json();
+    // Browser-source URLs (for a second monitor / OBS) — built from wherever this config page is
+    // served, so the port is always right.
+    // Every widget that renders standalone gets a source. Only two were listed before, which
+    // meant the rest silently looked like they could not be used this way — they always could.
+    // 🔑 Web Page and Settings are deliberately absent: the Web Page widget's content is a native
+    // view owned by the app (a browser tab would just show its URL form), and Settings is a
+    // control panel, not something to composite into a scene.
+    var SOURCES = [
+      ["Mission & BP Tracker", "missions.html"],
+      ["Mining Scanner", "mining.html"],
+      ["Event Tracker", "battaglia.html"],
+      ["Infographic Viewer", "bindingwidget.html"],
+      ["Journal", "notepad.html"],
+      ["Loot Split", "party.html"],
+      ["SC Feed", "scfeed.html"],
+      ["Twitch Chat", "twitchchat.html"],
+      ["Unlock Alerts", "unlockalert.html"],
+    ];
+    var srcRows = document.getElementById("srcRows");
+    srcRows.innerHTML = SOURCES.map(function (w, i) {
+      var id = "src" + i;
+      return '<label class="opt"' + (i === 0 ? ' style="margin-top:6px;"' : "") + ">" + w[0] +
+        '<input type="text" id="' + id + '" readonly onclick="this.select()" value="' +
+        location.origin + "/" + w[1] + '" style="margin-left:auto; width:230px; font-family:monospace; font-size:12px;" />' +
+        '<button type="button" class="hkbtn" data-src="' + id + '">Copy</button>' +
+        "</label>";
+    }).join("");
+    // Delegated rather than an inline onclick per row: the ids are generated, and building a
+    // handler string around a generated id is how you end up with quoting bugs in markup.
+    srcRows.addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest("[data-src]") : null;
+      if (btn) copySrc(btn.getAttribute("data-src"), btn);
+    });
+    // Same widgets on a phone / second device: swap localhost for this PC's LAN address (the
+    // server reports it — a browser can't see it). Hidden if there's no LAN address to offer.
+    if (cfg.lanHost) {
+      const lanBase = "http://" + cfg.lanHost + ":" + (cfg.port || 8778);
+      document.getElementById("lanExample").textContent = lanBase + "/missions.html";
+      document.getElementById("lanCopy").dataset.url = lanBase + "/missions.html";
+      document.getElementById("lanHint").style.display = "";
+    } else {
+      document.getElementById("lanHint").style.display = "none";
+    }
+    document.getElementById("logPath").value = cfg.logPath || "";
+    checkLogPath();
+    document.getElementById("autoSwitch").checked = !!cfg.autoSwitch;
+    document.getElementById("hwAccel").checked = !!cfg.hwAccel;
+    document.getElementById("amdCompat").checked = !!cfg.amdCompat;
+    document.getElementById("bindingPng").value = cfg.bindingPng || "";
+    // `?? def`, NOT `|| def`: "" is a hotkey the user deliberately REMOVED and has to survive a
+    // reload; only a missing field means "never set" and takes the default.
+    for (const which of Object.keys(HOTKEYS)) {
+      const saved = cfg[which + "Hotkey"];
+      setHotkeyDisplay(which, typeof saved === "string" ? saved : HOTKEYS[which].def);
+    }
+    if (IS_LINUX_DESKTOP) {
+      setHotkeyDisplay("interact", "F");
+      document.getElementById("interactHotkeyBtn").disabled = true;
+      document.getElementById("interactHotkeyClear").style.display = "none";
+      document.getElementById("interactHotkeyHint").textContent =
+        "Linux keeps F as the permanent widget-entry key so the overlay cannot become unreachable.";
+    }
+    hotkeysLoaded = true;
+    const holdControl = document.getElementById("holdToInteract");
+    holdControl.checked = IS_LINUX_DESKTOP ? true : !!cfg.holdToInteract;
+    holdControl.disabled = IS_LINUX_DESKTOP;
+    if (IS_LINUX_DESKTOP) {
+      document.getElementById("holdToInteractTip").textContent =
+        "Linux always uses F as the safe widget-entry gate. Hold F while moving into a widget; after it becomes interactive, release F and keep clicking, typing, or scrolling normally.";
+    }
+    document.getElementById("revertThemeOnFoot").checked = !!cfg.revertThemeOnFoot;
+    document.body.classList.toggle("show-loadout", !!cfg.showLoadout);
+    document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
+    document.getElementById("fabCapture").checked = !!cfg.fabCapture;
+    document.getElementById("fabClaim").checked = !!cfg.fabClaim;
+    document.getElementById("missionOcr").checked = !!cfg.missionOcr;
+    document.getElementById("miningAssistant").checked = !!cfg.miningAssistant;
+    renderScreenProfile();
+    document.getElementById("miningAutoShow").checked = !!cfg.miningAutoShow;
+    document.getElementById("scFeedShowSeconds").value = String(cfg.scFeedShowSeconds ?? 12);
+    document.getElementById("unlockAlertShowSeconds").value = String(cfg.unlockAlertShowSeconds ?? 8);
+    document.getElementById("shareLogs").checked = !!cfg.shareLogs;
+    document.getElementById("theme").value = cfg.theme || "mobiglas";
+    // Manufacturer skins are a Twitch-sub perk. Entitlement comes from the server (cfg.premium,
+    // resolved from Twitch-sub status via subliminal.gg login); default unlocked until that
+    // pipeline lands. ?lockpreview forces the locked UI for testing.
+    applyThemeLock(cfg.premium !== false && !new URLSearchParams(location.search).has("lockpreview"));
+    // Put the saved key (truncated) right in the field so it's obvious one is connected.
+    // Focusing clears it for a clean paste; the "…" guard in save() stops it being re-submitted.
+    const tokenEl = document.getElementById("syncToken");
+    tokenEl.value = cfg.hasSyncToken ? cfg.syncTokenPreview : "";
+    document.getElementById("syncStatus").textContent = cfg.hasSyncToken ? "" : "No token yet — paste one to connect.";
+    renderList();
+    refreshAdmin();
+  }
+
+  // Elevation state: show "running as admin" or the opt-in "Restart as administrator" button.
+  async function refreshAdmin() {
+    if (!(window.overlayConfig && window.overlayConfig.isElevated)) return;
+    let el = false;
+    try { el = await window.overlayConfig.isElevated(); } catch { /* older shell */ }
+    document.getElementById("adminOk").style.display = el ? "" : "none";
+    document.getElementById("adminBtn").style.display = el ? "none" : "";
+    document.getElementById("adminHint").style.display = el ? "none" : "";
+  }
+  function restartAsAdmin() {
+    if (window.overlayConfig && window.overlayConfig.restartAsAdmin) window.overlayConfig.restartAsAdmin();
+  }
+
+  function renderList() {
+    const host = document.getElementById("list");
+    host.innerHTML = "";
+    if (!cfg.urls.length) { host.innerHTML = '<div class="hint">No loadouts yet — add one below.</div>'; return; }
+    cfg.urls.forEach((u, i) => {
+      const r = (cfg.resolved || []).find((x) => x.url === u) || { ship: "…", ok: true };
+      const isActive = u === cfg.activeUrl;
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML =
+        '<span class="ship' + (r.ok ? "" : " bad") + '">' + r.ship + "</span>" +
+        '<span class="u">' + u + "</span>" +
+        (isActive ? '<span class="active-tag">ACTIVE</span>' : '<button onclick="setActive(\'' + u + "')\">Set Active</button>") +
+        '<button class="danger" onclick="removeUrl(' + i + ')">✕</button>';
+      host.appendChild(row);
+    });
+  }
+
+  function addUrl() {
+    const el = document.getElementById("newUrl");
+    const v = el.value.trim();
+    if (!v) return;
+    if (!/loadout\/[A-Za-z0-9_-]+/.test(v)) {
+      alert("That's not a shareable build link. In erkul, click Share to save your build, then paste the /loadout/<id> URL it gives you.\n\nThe /live/calculator URL only exists in your browser and can't be loaded.");
+      return;
+    }
+    cfg.urls.push(v); el.value = ""; renderList(); save();
+  }
+  function removeUrl(i) { cfg.urls.splice(i, 1); renderList(); save(); }
+  async function setActive(url) {
+    const r = await (await fetch("/api/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })).json();
+    if (!r.ok) { alert("Couldn't load that build — make sure it's a saved erkul /loadout/ link, not the calculator."); return; }
+    cfg.activeUrl = url; renderList();
+  }
+
+
+  // Copy a browser-source URL to the clipboard, with brief button feedback.
+  function copySrc(id, btn) {
+    const v = document.getElementById(id).value;
+    const done = () => { const t = btn.textContent; btn.textContent = "Copied ✓"; setTimeout(() => { btn.textContent = t; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(done).catch(() => { document.getElementById(id).select(); document.execCommand("copy"); done(); });
+    else { document.getElementById(id).select(); document.execCommand("copy"); done(); }
+  }
+  // Copy the LAN browser-source URL (phone / second device).
+  document.getElementById("lanCopy")?.addEventListener("click", (e) => {
+    const url = e.target.dataset.url; if (!url) return;
+    const done = () => { const t = e.target.textContent; e.target.textContent = "copied ✓"; setTimeout(() => { e.target.textContent = t; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(done); else done();
+  });
+
+  // A number input can be emptied or spun to 0, and either would make a notifier vanish on
+  // arrival with no obvious way back. Clamped here AND server-side — the server has to hold the
+  // line for a hand-edited config.json, this one keeps the UI from ever showing a bad value.
+  function showSecs(id, fallback) {
+    const v = Math.round(Number(document.getElementById(id).value));
+    return Number.isFinite(v) && v > 0 ? Math.max(3, Math.min(60, v)) : fallback;
+  }
+
+  async function save() {
+    cfg.logPath = document.getElementById("logPath").value.trim();
+    cfg.autoSwitch = document.getElementById("autoSwitch").checked;
+    const body = {
+      urls: cfg.urls,
+      logPath: cfg.logPath,
+      autoSwitch: cfg.autoSwitch,
+      hwAccel: document.getElementById("hwAccel").checked,
+      amdCompat: document.getElementById("amdCompat").checked,
+      bindingPng: document.getElementById("bindingPng").value,
+      holdToInteract: IS_LINUX_DESKTOP ? true : document.getElementById("holdToInteract").checked,
+      revertThemeOnFoot: document.getElementById("revertThemeOnFoot").checked,
+      syncEnabled: document.getElementById("syncEnabled").checked,
+      fabCapture: document.getElementById("fabCapture").checked,
+      fabClaim: document.getElementById("fabClaim").checked,
+      missionOcr: document.getElementById("missionOcr").checked,
+      miningAssistant: document.getElementById("miningAssistant").checked,
+      screenReaderProfile: currentScreenProfile(),
+      miningAutoShow: document.getElementById("miningAutoShow").checked,
+      scFeedShowSeconds: showSecs("scFeedShowSeconds", 12),
+      unlockAlertShowSeconds: showSecs("unlockAlertShowSeconds", 8),
+      shareLogs: document.getElementById("shareLogs").checked,
+      theme: document.getElementById("theme").value,
+    };
+    // Hotkeys are sent ONLY once they've been read from the config — see hotkeysLoaded. Omitted
+    // fields are left untouched by the server, so an early Save can no longer wipe six hotkeys by
+    // submitting the empty inputs it happens to be looking at.
+    if (hotkeysLoaded) {
+      for (const which of Object.keys(HOTKEYS)) {
+        body[which + "Hotkey"] = IS_LINUX_DESKTOP && which === "interact"
+          ? "F"
+          : document.getElementById(HOTKEYS[which].input).value.trim();
+      }
+    }
+    const token = document.getElementById("syncToken").value.trim();
+    // The field may still show the truncated preview (contains "…"); only submit a real pasted token.
+    // Pasting a token IS the intent to sync, so turn sync on with it (no silent-off footgun).
+    if (token && !token.includes("…")) {
+      body.syncToken = token;
+      body.syncEnabled = true;
+      document.getElementById("syncEnabled").checked = true;
+    }
+    const errorEl = document.getElementById("saveError");
+    if (errorEl) { errorEl.style.display = "none"; errorEl.textContent = ""; }
+    let savedResponse;
+    try {
+      const response = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      savedResponse = await response.json();
+      const applied = savedResponse?.screenReading || {};
+      const verified = response.ok && savedResponse?.ok === true &&
+        applied.fabCapture === body.fabCapture &&
+        applied.missionOcr === body.missionOcr &&
+        applied.miningAssistant === body.miningAssistant &&
+        applied.profile === body.screenReaderProfile;
+      if (!verified) throw new Error(savedResponse?.detail || savedResponse?.error || "saved values did not verify");
+    } catch (error) {
+      const b = document.getElementById("saveBtn");
+      if (b) { b.textContent = "Save failed"; setTimeout(() => { b.textContent = "Save"; }, 2400); }
+      if (errorEl) {
+        errorEl.textContent = "Settings were not applied: " + (error?.message || error);
+        errorEl.style.display = "inline";
+      }
+      return;
+    }
+    document.getElementById("syncToken").value = "";
+    // Unmissable confirmation: flip the Save button to a green "Saved ✓" for ~1.6s (+ keep the toast).
+    const b = document.getElementById("saveBtn");
+    if (b) { b.textContent = "Saved ✓"; b.classList.add("ok"); setTimeout(() => { b.textContent = "Save"; b.classList.remove("ok"); }, 1600); }
+    const s = document.getElementById("saved"); s.classList.add("show"); setTimeout(() => s.classList.remove("show"), 1400);
+    await loadCfg();
+  }
+
+  function currentScreenProfile() {
+    const mission = document.getElementById("missionOcr").checked;
+    const mining = document.getElementById("miningAssistant").checked;
+    const fab = document.getElementById("fabCapture").checked;
+    if (!mission && !mining && !fab) return "lightweight";
+    if (mission && !mining && !fab) return "balanced";
+    if (!mission && mining && !fab) return "mining";
+    return "custom";
+  }
+  function renderScreenProfile() {
+    const profile = currentScreenProfile();
+    for (const name of ["Lightweight", "Balanced", "Mining"]) {
+      document.getElementById("ocrProfile" + name).classList.toggle("selected", profile === name.toLowerCase());
+    }
+    const descriptions = {
+      lightweight: "Lightweight — screen reading is off.",
+      balanced: "Balanced — mission recognition is enabled.",
+      mining: "Mining — scan and refinery recognition are enabled.",
+      custom: "Custom — selected readers run independently.",
+    };
+    document.getElementById("ocrProfileStatus").textContent = descriptions[profile];
+  }
+  async function applyScreenProfile(profile) {
+    document.getElementById("missionOcr").checked = profile === "balanced";
+    document.getElementById("miningAssistant").checked = profile === "mining";
+    document.getElementById("fabCapture").checked = false;
+    renderScreenProfile();
+    await save();
+  }
+
+  function renderOcrStatus(status) {
+    const el = document.getElementById("ocrLiveStatus");
+    if (!el || !status) return;
+    const names = {
+      off: "off", idle: "waiting", reading: "reading the screen", watching: "watching",
+      settling: "waiting for an item render", fabricator: "fabricator detected",
+      mission: "mission recognized", captured: "item captured", shared: "item shared",
+    };
+    const detail = [];
+    if (status.captureMethod) detail.push(status.captureMethod);
+    if (Number.isFinite(status.processingMs)) detail.push(status.processingMs + " ms");
+    if (status.skippedStages?.length) detail.push(status.skippedStages.length + " unchanged stage(s) skipped");
+    el.textContent = "Screen reader status: " + (names[status.state] || status.state || "unknown") +
+      (detail.length ? " — " + detail.join(" · ") : "");
+  }
+
+  async function detectLog() {
+    const d = document.getElementById("detected");
+    d.textContent = "Scanning for your Star Citizen install…";
+    let r;
+    try { r = await (await fetch("/api/detect-log")).json(); } catch { d.textContent = "Scan failed."; return; }
+    if (!r.candidates || !r.candidates.length) { d.textContent = "No install found — enter the path to game.log manually."; return; }
+    document.getElementById("logPath").value = r.recommended;
+    window.__detected = r.candidates;
+    d.innerHTML = "Found channels: " + r.candidates.map((c, i) =>
+      '<a href="#" onclick="pickLog(' + i + ');return false;">' + c.channel + (i === 0 ? " ✓" : "") + "</a>"
+    ).join(" &nbsp;·&nbsp; ");
+    save();
+  }
+  function pickLog(i) { document.getElementById("logPath").value = window.__detected[i].path; save(); }
+
+  async function chooseBinding() {
+    if (!window.overlayConfig) { alert("File picker unavailable — update the app."); return; }
+    const p = await window.overlayConfig.pickPng();
+    if (p) { document.getElementById("bindingPng").value = p; save(); }
+  }
+  function clearBinding() { document.getElementById("bindingPng").value = ""; save(); }
+
+  // Opt-in hold-to-interact: apply live via the shell, and persist via save().
+  function onHoldModeToggle() {
+    if (IS_LINUX_DESKTOP) return;
+    const on = document.getElementById("holdToInteract").checked;
+    if (window.overlayConfig && window.overlayConfig.setHoldMode) window.overlayConfig.setHoldMode(on);
+    save();
+  }
+  async function onResetLayout() {
+    if (window.overlayConfig && window.overlayConfig.resetLayout) await window.overlayConfig.resetLayout();
+  }
+
+  // ── canvas calibration (mixed-DPI) ───────────────────────────────────────
+  // The shell owns this, not the form: it re-fits the overlay window and persists through the
+  // sidecar, so it must NOT go through save() — that would round-trip a stale copy of the value.
+  // Mirrors arrange mode's control exactly; whichever surface you use, the other reads the same
+  // numbers back the next time it opens.
+  (function () {
+    const row = document.getElementById("canvasCalRow");
+    const api = () => (window.overlayConfig && window.overlayConfig.canvasCalibration) || null;
+    if (!row || !api()) return; // older shell / browser source → leave the row hidden
+    let cal = { x: 0, y: 0, scale: 1 };
+    const show = () => {
+      document.getElementById("canvasCalOff").textContent = cal.x + ", " + cal.y;
+      document.getElementById("canvasCalScale").textContent = Math.round(cal.scale * 100) + "%";
+    };
+    const push = async () => {
+      try { cal = (await api()(cal)) || cal; } catch { /* shell gone */ }
+      show();
+    };
+    (async () => {
+      let cur = null;
+      try { cur = await api()(); } catch { /* shell gone */ }
+      if (!cur) return; // no answer → this build can't calibrate; don't offer a control that lies
+      cal = cur; row.style.display = ""; show();
+    })();
+    row.addEventListener("click", (e) => {
+      const b = e.target instanceof Element ? e.target.closest("button") : null;
+      if (!b || !row.contains(b)) return;
+      if (b.id === "canvasCalReset") { cal = { x: 0, y: 0, scale: 1 }; void push(); return; }
+      const nz = Number(b.dataset.calNz || 0);
+      if (nz) {
+        const pct = Math.round(cal.scale * 100) + Math.sign(nz) * (e.shiftKey ? 1 : 5);
+        cal = { x: cal.x, y: cal.y, scale: Math.max(0.5, Math.min(3, pct / 100)) };
+        void push();
+        return;
+      }
+      const step = e.shiftKey ? 1 : 10;
+      const nx = Number(b.dataset.calNx || 0), ny = Number(b.dataset.calNy || 0);
+      if (!nx && !ny) return;
+      cal = { x: cal.x + Math.sign(nx) * step, y: cal.y + Math.sign(ny) * step, scale: cal.scale };
+      void push();
+    });
+  })();
+
+  // ── configurable hotkeys: click-to-capture, live-applied ─────────────────
+  // Two hotkeys share one capture flow: the overlay show/hide toggle and the
+  // binding-chart PNG toggle. Each names its input/button/hint els + live-apply fn.
+  const HOTKEYS = {
+    overlay: { input: "overlayHotkey", btn: "overlayHotkeyBtn", hint: "overlayHotkeyHint", def: "F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setOverlayHotkey && window.overlayConfig.setOverlayHotkey(a) },
+    binding: { input: "bindingHotkey", btn: "bindingHotkeyBtn", hint: "bindingHotkeyHint", def: "Ctrl+F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setBindingHotkey && window.overlayConfig.setBindingHotkey(a) },
+    mining: { input: "miningHotkey", btn: "miningHotkeyBtn", hint: "miningHotkeyHint", def: "Shift+F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setMiningHotkey && window.overlayConfig.setMiningHotkey(a) },
+    webView: { input: "webViewHotkey", btn: "webViewHotkeyBtn", hint: "webViewHotkeyHint", def: "Ctrl+Shift+F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setWebViewHotkey && window.overlayConfig.setWebViewHotkey(a) },
+    notepad: { input: "notepadHotkey", btn: "notepadHotkeyBtn", hint: "notepadHotkeyHint", def: "Alt+F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setNotepadHotkey && window.overlayConfig.setNotepadHotkey(a) },
+    interact: { input: "interactHotkey", btn: "interactHotkeyBtn", hint: "interactHotkeyHint", def: "F", bare: true,
+               apply: (a) => window.overlayConfig && window.overlayConfig.setInteractHotkey && window.overlayConfig.setInteractHotkey(a) },
+    move: { input: "moveHotkey", btn: "moveHotkeyBtn", hint: "moveHotkeyHint", def: "Ctrl+Alt+M",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setMoveHotkey && window.overlayConfig.setMoveHotkey(a) },
+    fabClaim: { input: "fabClaimHotkey", btn: "fabClaimHotkeyBtn", hint: "fabClaimHotkeyHint", def: "F4",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setFabClaimHotkey && window.overlayConfig.setFabClaimHotkey(a) },
+  };
+  let capturing = null; // which HOTKEYS key is mid-capture, or null
+  // 🔑 Have the hotkey fields been filled from the config yet? Save is clickable the moment the page
+  // renders, but loadCfg() is async — and now that "" is a REAL saved value meaning "removed", an
+  // early Save (or a Save after /api/config failed, which is not hypothetical in an app whose
+  // sidecar can crash) would persist six empty strings and silently delete every hotkey. Until this
+  // is true, save() omits the hotkey fields entirely, and the server leaves the stored ones alone.
+  let hotkeysLoaded = false;
+  function prettyHotkey(accel) {
+    return (accel || "").split("+").map(p => p === "Control" ? "Ctrl" : p === "Super" ? "Win" : p).join(" + ");
+  }
+  function setHotkeyDisplay(which, accel) {
+    const h = HOTKEYS[which];
+    document.getElementById(h.input).value = accel || "";
+    const btn = document.getElementById(h.btn);
+    btn.textContent = accel ? prettyHotkey(accel) : "None — click to set";
+    btn.classList.toggle("unset", !accel);
+    // Nothing to clear on a row that's already empty.
+    document.getElementById(h.input + "Clear")?.classList.toggle("hidden", !accel);
+  }
+  /** Remove a hotkey. "" is a real, saved value meaning "this action has no hotkey" — distinct from
+   *  the field being absent, which still means "never set, use the default". The shell treats an
+   *  empty accel as unregister, so applying it takes effect immediately. */
+  async function clearHotkey(which) {
+    const h = HOTKEYS[which];
+    if (capturing === which) { capturing = null; document.getElementById(h.btn).classList.remove("capturing"); }
+    setHotkeyDisplay(which, "");
+    if (h.apply) { try { await h.apply(""); } catch { /* shell gone; the saved value still sticks */ } }
+    let extra = "";
+    // 🔑 Don't let removing a key lock the user out of their own overlay. Hold-to-interact means
+    // widgets are ONLY clickable while that key is held, so clearing it with the mode on would
+    // leave nothing on screen clickable and no way in Settings to notice why. The mode exists
+    // because of the key, so it goes with it — and hover mode needs no key at all.
+    const hold = document.getElementById("holdToInteract");
+    if (which === "interact" && hold && hold.checked) {
+      hold.checked = false;
+      try { window.overlayConfig?.setHoldMode?.(false); } catch { /* saved below anyway */ }
+      extra = " Hold-to-interact was turned off too — without that key it would have left nothing on the overlay clickable.";
+    }
+    document.getElementById(h.hint).textContent =
+      "Removed — this action has no hotkey now. Click the button to set one." + extra;
+    save();
+  }
+  function startCaptureHotkey(which) {
+    capturing = which;
+    const btn = document.getElementById(HOTKEYS[which].btn);
+    btn.textContent = "Press keys…  (Esc cancels)";
+    btn.classList.add("capturing");
+    // Embedded on the canvas the overlay is click-through and the GAME holds the keyboard, so
+    // this window must take the shell's shared grab (which also suspends the interact key) or
+    // the keydown below never arrives. No-op in the standalone window, which already has focus.
+    window.__cfgGrab?.start(btn);
+  }
+  // KeyboardEvent.code → Electron accelerator key token (layout-independent for QWERTY).
+  function hkKeyName(code) {
+    let m;
+    if ((m = /^Key([A-Z])$/.exec(code))) return m[1];
+    if ((m = /^Digit([0-9])$/.exec(code))) return m[1];
+    if ((m = /^F([0-9]{1,2})$/.exec(code))) return (+m[1] >= 1 && +m[1] <= 24) ? code : null; // F1–F24 (Electron's max)
+    return ({ Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/", Backslash: "\\",
+      BracketLeft: "[", BracketRight: "]", Minus: "-", Equal: "=", Backquote: "`",
+      Space: "Space", Tab: "Tab", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right" })[code] || null;
+  }
+  window.addEventListener("keydown", async (e) => {
+    if (!capturing) return;
+    const which = capturing;
+    const h = HOTKEYS[which];
+    e.preventDefault(); e.stopPropagation();
+    const btn = document.getElementById(h.btn);
+    const hint = document.getElementById(h.hint);
+    if (e.key === "Escape") {
+      capturing = null; btn.classList.remove("capturing");
+      window.__cfgGrab?.end();
+      setHotkeyDisplay(which, document.getElementById(h.input).value);
+      return;
+    }
+    if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return; // wait for the non-modifier key
+    const mods = [];
+    if (e.ctrlKey) mods.push("Control");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+    if (e.metaKey) mods.push("Super");
+    const key = hkKeyName(e.code);
+    // F3 and F13–F24 are free in Star Citizen (F4–F12 are taken), so allow them bare —
+    // that's the whole point of a dedicated overlay key. Everything else needs a modifier.
+    const bareOk = h.bare || /^F(3|1[3-9]|2[0-4])$/.test(key || "");
+    capturing = null; btn.classList.remove("capturing");
+    // Release the grab on BOTH outcomes below (rejected key and accepted key) — a grab left
+    // held would keep the interact key suspended, i.e. the overlay stuck uninteractable.
+    window.__cfgGrab?.end();
+    if (!key || (!mods.length && !bareOk)) {
+      setHotkeyDisplay(which, document.getElementById(h.input).value);
+      hint.innerHTML = "⚠ Use at least one modifier (Ctrl / Alt / Shift) plus a key — or a bare F3 / F13–F24. Try again.";
+      return;
+    }
+    const accel = [...mods, key].join("+");
+    setHotkeyDisplay(which, accel);
+    let res = { ok: true };
+    if (h.apply) res = (await h.apply(accel)) || { ok: true };
+    if (res && res.ok === false) {
+      hint.innerHTML = "⚠ Couldn't register <b>" + prettyHotkey(accel) + "</b> — " +
+        (res.error === "in_use" ? "another app is already using it." : "invalid combo.") + " Pick another.";
+    } else {
+      hint.textContent = "Set to " + prettyHotkey(accel) + " — applied. Click the button to change it.";
+    }
+    save();
+  });
+
+  async function chooseLog() {
+    if (!window.overlayConfig || !window.overlayConfig.pickLog) { alert("File picker unavailable — update the app."); return; }
+    const p = await window.overlayConfig.pickLog(document.getElementById("logPath").value.trim());
+    if (p) { document.getElementById("logPath").value = p; checkLogPath(); save(); }
+  }
+  // Warn when the path looks like a folder (doesn't end in a .log file) — the common mistake.
+  function checkLogPath() {
+    const v = document.getElementById("logPath").value.trim();
+    const warn = document.getElementById("logWarn");
+    if (v && !/\.log$/i.test(v)) {
+      warn.textContent = "⚠ That looks like a folder, not a file. Select the game.log file itself.";
+      warn.style.display = "";
+    } else {
+      warn.style.display = "none";
+    }
+  }
+
+  // In-game overlay master switch — app-only (controlled live via the shell over IPC,
+  // separate from the server config + Save button). Hidden when opened in a plain browser.
+  function initOverlayToggle() {
+    const oc = window.overlayConfig;
+    if (!oc || !oc.getOverlayEnabled) return;
+    const row = document.getElementById("overlayShowRow");
+    const hint = document.getElementById("overlayShowHint");
+    const box = document.getElementById("overlayShow");
+    row.style.display = ""; hint.style.display = "";
+    oc.getOverlayEnabled().then((on) => { box.checked = on !== false; });
+    box.addEventListener("change", () => oc.setOverlayEnabled(box.checked));
+    oc.onOverlayEnabledChanged && oc.onOverlayEnabledChanged((on) => { box.checked = !!on; });
+  }
+
+  // Hidden unlock: tap the title 5× to reveal/hide the loadout-overlay settings.
+  // (They're Sub's erkul stream feature — off by default so normal users aren't confused.)
+  let titleTaps = 0, titleTapTimer = null;
+  document.getElementById("appTitle").addEventListener("click", async () => {
+    clearTimeout(titleTapTimer);
+    titleTapTimer = setTimeout(() => { titleTaps = 0; }, 1500);
+    if (++titleTaps < 5) return;
+    titleTaps = 0;
+    const next = !cfg.showLoadout;
+    await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ showLoadout: next }) });
+    await loadCfg();
+    const s = document.getElementById("saved");
+    s.textContent = next ? "Loadout settings shown" : "Loadout settings hidden";
+    s.classList.add("show"); setTimeout(() => { s.classList.remove("show"); s.textContent = "Saved ✓"; }, 1600);
+  });
+
+  document.getElementById("logPath").addEventListener("input", checkLogPath);
+  // ...and PERSIST it. `input` only validates as you type. Everything else on this page either
+  // auto-saves or is deliberately manual (the sync token), which left a typed-by-hand game.log
+  // path as the one setting you could lose by closing the panel — and it is the setting the app
+  // cannot work without. `change` fires on blur/Enter, so this saves a finished path, not every
+  // keystroke.
+  document.getElementById("logPath").addEventListener("change", save);
+  // Auto-save the plain checkboxes the instant they're toggled, so a change can never be lost by
+  // closing/scrolling away without clicking Save. (Theme, hotkeys, hold-to-interact and the file
+  // pickers already save on change; the sync token stays manual so a half-typed token isn't sent.)
+<<<<<<< ArchVerse Alpha17
+  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAssistant", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
+    .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", () => { renderScreenProfile(); save(); }); });
+||||||| upstream 0.1.36
+  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
+    .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
+=======
+  ["syncEnabled", "shareLogs", "fabCapture", "fabClaim", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
+    .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
+>>>>>>> upstream 0.1.41
+  // The sync field shows the truncated saved key; clear it on focus so a new token pastes
+  // cleanly, and restore the preview on blur if nothing was typed.
+  const syncTokenEl = document.getElementById("syncToken");
+  syncTokenEl.addEventListener("focus", () => { if (syncTokenEl.value === cfg.syncTokenPreview) syncTokenEl.value = ""; });
+  syncTokenEl.addEventListener("blur", () => { if (!syncTokenEl.value.trim() && cfg.hasSyncToken) syncTokenEl.value = cfg.syncTokenPreview; });
+  // The OCR toggles also live in the overlay cog; when this window regains focus, re-read them
+  // so a change made over there shows here too (only these checkboxes, never text being edited).
+  window.addEventListener("focus", async () => {
+    try {
+      const c = await (await fetch("/api/config")).json();
+      document.getElementById("missionOcr").checked = !!c.missionOcr;
+      document.getElementById("fabCapture").checked = !!c.fabCapture;
+<<<<<<< ArchVerse Alpha17
+      document.getElementById("miningAssistant").checked = !!c.miningAssistant;
+      renderScreenProfile();
+||||||| upstream 0.1.36
+=======
+      document.getElementById("fabClaim").checked = !!c.fabClaim;
+>>>>>>> upstream 0.1.41
+    } catch { /* ignore */ }
+  });
+  loadCfg();
+  if (window.overlayConfig?.ocrStatus) window.overlayConfig.ocrStatus().then(renderOcrStatus).catch(() => {});
+  window.overlayConfig?.onOcrStatus?.(renderOcrStatus);
+  initOverlayToggle();
+
+  // Partner promos — pulled live from subliminal.gg so they stay in sync with the site's
+  // partners page (single source of truth). Hidden if offline or none flagged for the app.
+  (async () => {
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    try {
+      const r = await fetch("https://subliminal.gg/api/partners");
+      if (!r.ok) return;
+      const { partners } = await r.json();
+      if (!partners || !partners.length) return;
+      // Brand logos hosted on subliminal.gg (/brands/*). Shown when mapped; brand text is the fallback.
+      const LOGOS = {
+        "Beam Eye Tracker": "https://subliminal.gg/brands/beam-eye-tracker-color.svg",
+        "GameGlass": "https://subliminal.gg/brands/gg-grayscale-on-black.svg",
+        "MonsterTech": "https://subliminal.gg/brands/monstertech-white.png",
+        "Pimax": "https://subliminal.gg/brands/pimax-white-color.svg",
+        "Tobii": "https://subliminal.gg/brands/tobii-white.png",
+      };
+      document.getElementById("partnerGrid").innerHTML = partners.map((p) =>
+        '<a class="partner" href="' + esc(p.url) + '" target="_blank" rel="noopener">' +
+          '<span class="p-arrow">↗</span>' +
+          (LOGOS[p.brand]
+            ? '<img class="p-logo" data-brand="' + esc(p.brand) + '" src="' + LOGOS[p.brand] + '" alt="' + esc(p.brand) + '" onerror="this.replaceWith(Object.assign(document.createElement(\'span\'),{className:\'p-brand\',textContent:this.alt}))" />'
+            : '<span class="p-brand">' + esc(p.brand) + "</span>") +
+          (p.discount ? '<span class="p-deal">' + esc(p.discount) + "</span>" : "") +
+          (p.code ? '<span class="p-code">code ' + esc(p.code) + "</span>" : "") +
+        "</a>"
+      ).join("");
+      document.getElementById("partnersCard").style.display = "";
+    } catch { /* offline — leave the card hidden */ }
+  })();
+
+  // Info-icon pin: click the (i) to keep its tooltip open; click elsewhere to close.
+  document.addEventListener("click",(e)=>{const info=e.target.closest(".info");document.querySelectorAll(".info.pinned").forEach(el=>{if(el!==info)el.classList.remove("pinned");});if(info){info.classList.toggle("pinned");e.stopPropagation();}});
+</script>
+<script>
+  // "Open folder" for the saved party splits (see the Your files card).
+  document.getElementById("openPartyFolder")?.addEventListener("click", () => {
+    window.overlayConfig?.openDataFolder?.("party-sessions");
+  });
+  // Performance readout. Every percentage is a share of the WHOLE SYSTEM (total installed RAM,
+  // all CPU cores) — not a share of our own usage, which would tell you nothing about impact.
+  const PROC_NAMES = {
+    Browser: "App core",
+    Tab: "Overlay + widgets",
+    GPU: "Graphics (GPU process)",
+    Utility: "Background helper",
+    Zygote: "Background helper",
+    Sandbox: "Background helper",
+  };
+  // ── Copy diagnostics ────────────────────────────────────────────────────────────────────
+  // Most of the report comes from the sidecar (it knows the log, the dataset, the token); a
+  // couple of things only the shell knows (are we elevated, what monitors are there), and the
+  // fact that the sidecar answered AT ALL is itself the first line of the report.
+  document.getElementById("diagBtn")?.addEventListener("click", async () => {
+    const msg = document.getElementById("diagMsg");
+    const out = document.getElementById("diagOut");
+    msg.textContent = "Collecting…";
+    const lines = [];
+    const add = (k, v) => lines.push(k.padEnd(18) + " " + v);
+    let d = null;
+    try {
+      const r = await fetch("/api/diagnostics", { cache: "no-store" });
+      d = await r.json();
+    } catch {
+      d = null;
+    }
+    add("Overlay service", d ? "answering on :" + d.app.sidecarPort : "NOT ANSWERING — the app cannot work without it");
+    if (d) {
+      add("App version", d.app.version + "  (up " + d.app.uptimeMinutes + " min)");
+      add("Game log", d.gameLog.path);
+      add("  found", d.gameLog.exists
+        ? "yes — " + d.gameLog.sizeMB + " MB, written " + d.gameLog.modifiedMinutesAgo + " min ago"
+        : "NO — nothing will be tracked until this points at a real game.log");
+      add("  watching", d.gameLog.watching);
+      add("Dataset", d.data.patch);
+      add("Data folder", d.data.userDir + (d.data.userDirWritable ? "" : "  NOT WRITABLE — nothing can save"));
+      add("Config file", d.data.configPath || "(not reported)");
+      add("Sync", d.sync.enabled ? "on, token " + d.sync.token : "off");
+      add("Screen reading", "profile=" + d.screenReading.profile + " fabricator=" + d.screenReading.fabCapture + " mission=" + d.screenReading.missionOcr +
+        " mining=" + d.screenReading.miningAssistant + " shareLogs=" + d.screenReading.shareLogs);
+      add("Display", "renderer=" + (d.display.rendererMode || "default") + " hwAccel=" + d.display.hwAccel + " amdCompat=" + d.display.amdCompat + " skin=" + d.display.theme);
+      add("Twitch", "channel=" + d.twitch.chatChannel + " signed in as " + d.twitch.signedInAs);
+    }
+    // Elevation matters because in-game hotkeys silently do nothing without it (UIPI over an
+    // elevated Star Citizen) — the single most common "hotkeys don't work" cause.
+    try { add("Running as admin", (await window.overlayConfig?.isElevated?.()) ? "yes" : "no — in-game hotkeys will not fire over an elevated Star Citizen"); }
+    catch { add("Running as admin", "unknown"); }
+    try {
+      const s = window.screen;
+      add("Primary display", s.width + "x" + s.height + " @ " + (window.devicePixelRatio || 1) + "x scaling");
+    } catch { /* not worth failing the report over */ }
+
+    const report = "SC Overlay diagnostics\n" + new Date().toISOString() + "\n\n" + lines.join("\n");
+    out.textContent = report;
+    out.style.display = "block";
+    try {
+      await navigator.clipboard.writeText(report);
+      msg.textContent = "Copied to your clipboard — paste it into your bug report.";
+    } catch {
+      msg.textContent = "Couldn't reach the clipboard — select the text below and copy it.";
+    }
+  });
+
+  document.getElementById("perfBtn")?.addEventListener("click", async () => {
+    const out = document.getElementById("perfOut");
+    out.textContent = "Measuring…";
+    const m = await window.overlayConfig?.metrics?.();
+    if (!m) { out.textContent = "Not available."; return; }
+    const merged = new Map();
+    for (const r of m.rows) {
+      const k = PROC_NAMES[r.type] || r.type;
+      const cur = merged.get(k) || { mb: 0, n: 0 };
+      cur.mb += r.mb; cur.n += 1;
+      merged.set(k, cur);
+    }
+    const rows = [...merged.entries()].sort((a, b) => b[1].mb - a[1].mb);
+    const sysPct = (mb) => m.systemMb ? (mb / m.systemMb) * 100 : 0;
+    const fmtMb = (mb) => mb >= 1024 ? (mb / 1024).toFixed(2) + " GB" : mb + " MB";
+    const fmtPct = (p) => (p < 0.1 ? "<0.1" : p.toFixed(1)) + "%";
+    out.innerHTML = "";
+
+    const head = document.createElement("div");
+    head.className = "perfhead";
+    head.textContent = "Total impact on your PC";
+    out.appendChild(head);
+
+    const tbl = document.createElement("table");
+    tbl.className = "perftbl";
+    const row = (label, value, pct, strong) => {
+      const tr = document.createElement("tr");
+      if (strong) tr.className = "tot";
+      const td = (t, cls) => { const c = document.createElement("td"); c.textContent = t; if (cls) c.className = cls; return c; };
+      tr.append(td(label), td(value, "num"), td(pct, "num dim"));
+      const bar = document.createElement("td");
+      bar.className = "barcell";
+      const fill = document.createElement("div");
+      fill.className = "barfill";
+      // Scale the bar so a genuinely small footprint still reads as a sliver, not an empty cell.
+      fill.style.width = Math.max(1, Math.min(100, parseFloat(pct) || 0)) + "%";
+      bar.appendChild(fill);
+      tr.appendChild(bar);
+      tbl.appendChild(tr);
+      return tr;
+    };
+    row("CPU (all " + m.cores + " cores)", m.cpuPct + "%", fmtPct(m.cpuPct), true);
+    row("Memory (of " + (m.systemMb / 1024).toFixed(0) + " GB installed)", fmtMb(m.totalMb), fmtPct(sysPct(m.totalMb)), true);
+    out.appendChild(tbl);
+
+    const sub = document.createElement("div");
+    sub.className = "perfsub";
+    sub.textContent = "Where that memory goes";
+    out.appendChild(sub);
+
+    const tbl2 = document.createElement("table");
+    tbl2.className = "perftbl";
+    for (const [name, v] of rows) {
+      const p = sysPct(v.mb);
+      const tr = document.createElement("tr");
+      const td = (t, cls) => { const c = document.createElement("td"); c.textContent = t; if (cls) c.className = cls; return c; };
+      tr.append(
+        td(name + (v.n > 1 ? " ×" + v.n : "")),
+        td(fmtMb(v.mb), "num"),
+        td(fmtPct(p), "num dim"),
+      );
+      const bar = document.createElement("td");
+      bar.className = "barcell";
+      const fill = document.createElement("div");
+      fill.className = "barfill";
+      fill.style.width = Math.max(1, Math.min(100, p)) + "%";
+      bar.appendChild(fill);
+      tr.appendChild(bar);
+      tbl2.appendChild(tr);
+    }
+    out.appendChild(tbl2);
+
+    const note = document.createElement("div");
+    note.className = "perfnote";
+    note.textContent = "Percentages are of your whole system. “Graphics” is the memory used by the "
+      + "graphics process — not how busy your GPU is.";
+    out.appendChild(note);
+  });
+</script>
+</body>
+</html>
