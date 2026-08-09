@@ -55,6 +55,15 @@ jobs:
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
 
+      - name: Stage Alpha 18 release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp -a "$RUNNER_TEMP/dist/." dist/
+          ls -lh dist
+          sha256sum -c dist/SHA256SUMS
+
       - name: Preserve merge conflicts on the branch
         if: failure()
         shell: bash
