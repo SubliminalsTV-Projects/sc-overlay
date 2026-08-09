@@ -1,4 +1,4 @@
-name: Build and release r31 Linux alpha 18
+name: Build and audit r31 Linux alpha 18
 
 on:
   push:
@@ -55,7 +55,15 @@ jobs:
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
 
-      - name: Stage Alpha 18 release artifacts
+      - name: Deep runtime/static merge audit
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-runtime-audit.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-audit.log"
+
+      - name: Stage Alpha 18 audit artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -64,32 +72,7 @@ jobs:
           ls -lh dist
           (cd dist && sha256sum -c SHA256SUMS)
 
-      - name: Preserve merge conflicts on the branch
-        if: failure()
-        shell: bash
-        run: |
-          set -euo pipefail
-          src="$RUNNER_TEMP/r31-alpha18-build/work"
-          [[ -d "$src" ]] || exit 0
-          rm -rf linux-port/debug-alpha18
-          mkdir -p linux-port/debug-alpha18/electron linux-port/debug-alpha18/overlay
-          for f in main.cjs capture.cjs preload.cjs config-preload.cjs mining-preload.cjs; do
-            [[ -f "$src/electron/$f" ]] && cp "$src/electron/$f" "linux-port/debug-alpha18/electron/$f"
-          done
-          for f in missions.html config.html mining.html; do
-            [[ -f "$src/overlay/$f" ]] && cp "$src/overlay/$f" "linux-port/debug-alpha18/overlay/$f"
-          done
-          if ! grep -R -q '^<<<<<<<' linux-port/debug-alpha18; then
-            rm -rf linux-port/debug-alpha18
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add linux-port/debug-alpha18
-          git commit -m '[skip ci] debug: capture alpha18 conflict snapshot'
-          git push origin HEAD:integration/upstream-0.1.41-arch-r31-alpha18
-
-      - name: Report Alpha 18 validation to PR
+      - name: Report Alpha 18 audit to PR
         if: always()
         shell: bash
         env:
@@ -98,17 +81,17 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "### Alpha 18 CI: ${BUILD_STATUS}"
+            echo "### Alpha 18 deep audit: ${BUILD_STATUS}"
             echo
             echo "Commit: \`${GITHUB_SHA}\` · Run: \`${GITHUB_RUN_ID}\`"
             echo
-            echo '<details><summary>Build tail</summary>'
+            echo '<details><summary>Audit tail</summary>'
             echo
             echo '```text'
-            if [[ -f "$RUNNER_TEMP/alpha18-build.log" ]]; then
-              tail -n 180 "$RUNNER_TEMP/alpha18-build.log"
+            if [[ -f "$RUNNER_TEMP/alpha18-audit.log" ]]; then
+              tail -n 220 "$RUNNER_TEMP/alpha18-audit.log"
             else
-              echo 'Build did not reach the merge script.'
+              echo 'Deep audit did not start.'
             fi
             echo '```'
             echo '</details>'
@@ -116,8 +99,9 @@ jobs:
           gh pr comment 3 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/alpha18-pr-comment.md"
 
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
-          name: ArchVerse-Overlay-0.1.41-r31-alpha.18-arch
+          name: ArchVerse-Overlay-0.1.41-r31-alpha.18-audited
           path: |
             dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz
             dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.zip
@@ -125,52 +109,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Deliberately quarantined. A green compile/test/audit run does NOT publish Alpha 18.
+  # Re-enable publication only after the packaged runtime has passed the deep audit and a
+  # deliberate release-approval commit is made.
   release-alpha18:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'integration/upstream-0.1.41-arch-r31-alpha18'
+    if: ${{ false }}
     needs: build-arch-alpha18
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: ArchVerse-Overlay-0.1.41-r31-alpha.18-arch
-          path: dist
-
-      - name: Publish Alpha 18 GitHub prerelease
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v0.1.41-r31-alpha.18
-          target_commitish: ${{ github.event.pull_request.head.sha }}
-          name: ArchVerse Overlay 0.1.41-r31 Alpha 18
-          prerelease: true
-          generate_release_notes: false
-          body: |
-            Alpha 18 rebases the tested ArchVerse r31 Alpha 17 Linux port onto SubliminalsTV SC Overlay 0.1.41.
-
-            Upstream included:
-            - Every developer change through upstream 0.1.41.
-            - The 0.1.40 mining scanner rebuild: much faster locked reads, RapidOCR-authoritative signatures, adaptive crops, rotating capture paths, colour-independent glyph detection, and improved ambiguous ore/debris call-outs.
-            - The new Global / Server / Shard social Chat widget with verified RSI identity gating.
-            - Current mission, reputation, Verify-from-logs, setup, settings, canvas, and widget fixes from 0.1.37-0.1.41.
-            - The 0.1.41 server.mjs sidecar design running under Electron's Node runtime, plus current data/package optimizations.
-            - The 0.1.41 tray-download crash fix and Unlock Alert claim-row fix.
-            - Alpha 18 Linux hotfix: restores the 0.1.41 sidecarLogStream helper and removes the stale Alpha 17 fs.closeSync(fd) merge remnant that could stop the sidecar during startup.
-
-            ArchVerse Linux behavior preserved:
-            - Alpha 17's mandatory F interaction route, one native cursor, physical pointer forwarding, and KDE/Gamescope focus handoff.
-            - Shift+F6 arrange mode and hard click-through over transparent canvas.
-            - Exact StarCitizen.exe session binding and Linux capture backends.
-            - Alpha 14's bounded OCR resources and OpenGL default with software Safe Mode fallback.
-            - Alpha 17's structural Scan Mode gate, false-positive regression fixtures, diagnostics, and the rule that Mining Analysis/signature OCR stays dormant outside Scan Mode.
-
-            Install:
-            1. Download the .tar.gz or .zip asset and extract it.
-            2. Run `./install-cachyos.sh --clean-install`.
-            3. Do not add `--reset-layout` if you want to preserve your existing widget positions.
-
-            Keep Alpha 17 available as the immediate rollback point while testing this prerelease.
-          files: |
-            dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz
-            dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.zip
-            dist/SHA256SUMS
+      - run: echo "Alpha 18 release is quarantined pending runtime audit approval."
