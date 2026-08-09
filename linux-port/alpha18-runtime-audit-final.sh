@@ -51,4 +51,5 @@ s=s.replace(needle, insert, 1)
 p.write_text(s)
 PY
 
-exec bash "$TMP/audit.sh" "$@"
+bash "$TMP/audit.sh" "$@"
+bash "$ROOT/linux-port/alpha18-chat-security-audit.sh"
