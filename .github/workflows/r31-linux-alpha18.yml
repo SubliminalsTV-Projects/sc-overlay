@@ -51,7 +51,7 @@ jobs:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
-          bash linux-port/build-r31-alpha18-resolved.sh \
+          bash linux-port/build-r31-alpha18-sidecar-hotfix.sh \
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
 
@@ -155,6 +155,7 @@ jobs:
             - Current mission, reputation, Verify-from-logs, setup, settings, canvas, and widget fixes from 0.1.37-0.1.41.
             - The 0.1.41 server.mjs sidecar design running under Electron's Node runtime, plus current data/package optimizations.
             - The 0.1.41 tray-download crash fix and Unlock Alert claim-row fix.
+            - Alpha 18 Linux hotfix: restores the 0.1.41 sidecarLogStream helper and removes the stale Alpha 17 fs.closeSync(fd) merge remnant that could stop the sidecar during startup.
 
             ArchVerse Linux behavior preserved:
             - Alpha 17's mandatory F interaction route, one native cursor, physical pointer forwarding, and KDE/Gamescope focus handoff.
