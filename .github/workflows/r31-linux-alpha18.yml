@@ -87,6 +87,18 @@ jobs:
           set -o pipefail
           bash linux-port/alpha18-main-startup-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-startup-smoke.log"
 
+      - name: Unpacked system-Electron Linux startup smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-unpacked-linux-startup-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-unpacked-startup.log"
+
+      - name: Transparent-canvas and startup-modal focus release smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-focus-release-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-focus-release.log"
+
       - name: Packaged sidecar startup and endpoint smoke
         shell: bash
         run: |
@@ -129,6 +141,8 @@ jobs:
             ${{ runner.temp }}/alpha18-upstream-contract.log
             ${{ runner.temp }}/alpha18-renderer-audit.log
             ${{ runner.temp }}/alpha18-startup-smoke.log
+            ${{ runner.temp }}/alpha18-unpacked-startup.log
+            ${{ runner.temp }}/alpha18-focus-release.log
             ${{ runner.temp }}/alpha18-sidecar-smoke.log
             ${{ runner.temp }}/alpha18-linux-contract.log
             ${{ runner.temp }}/alpha18-config-e2e.log
@@ -154,6 +168,8 @@ jobs:
               "Upstream contract:$RUNNER_TEMP/alpha18-upstream-contract.log:180" \
               "Renderer audit:$RUNNER_TEMP/alpha18-renderer-audit.log:160" \
               "Main startup smoke:$RUNNER_TEMP/alpha18-startup-smoke.log:180" \
+              "Unpacked Linux startup:$RUNNER_TEMP/alpha18-unpacked-startup.log:180" \
+              "Focus release:$RUNNER_TEMP/alpha18-focus-release.log:180" \
               "Sidecar smoke:$RUNNER_TEMP/alpha18-sidecar-smoke.log:180" \
               "Linux contract:$RUNNER_TEMP/alpha18-linux-contract.log:220" \
               "Config E2E:$RUNNER_TEMP/alpha18-config-e2e.log:180"; do
