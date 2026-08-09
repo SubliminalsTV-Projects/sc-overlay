@@ -1,0 +1,40 @@
+name: Probe r31 Alpha 18 incremental merge
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.41-arch-r31-alpha18
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Probe incremental rebase
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/probe-r31-alpha18-merge.sh 2>&1 | tee "$RUNNER_TEMP/probe.log"
+      - name: Report probe
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### Alpha 18 incremental merge probe: ${STATUS}"
+            echo
+            echo '```text'
+            tail -n 180 "$RUNNER_TEMP/probe.log" 2>/dev/null || true
+            echo '```'
+          } > "$RUNNER_TEMP/probe-comment.md"
+          gh pr comment 3 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/probe-comment.md"
