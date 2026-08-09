@@ -45,13 +45,13 @@ jobs:
             --dir "$RUNNER_TEMP/alpha17"
           sha256sum "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz"
 
-      - name: Rebase Alpha 17 onto upstream 0.1.41 and verify
+      - name: Semantically rebase Alpha 17 onto upstream 0.1.41 and verify
         shell: bash
         env:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
-          bash linux-port/build-r31-alpha18-sidecar-hotfix.sh \
+          bash linux-port/build-r31-alpha18-resolved.sh \
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
 
@@ -85,14 +85,17 @@ jobs:
             echo
             echo "Commit: \`${GITHUB_SHA}\` · Run: \`${GITHUB_RUN_ID}\`"
             echo
+            echo '<details><summary>Build tail</summary>'
+            echo
+            echo '```text'
+            [[ -f "$RUNNER_TEMP/alpha18-build.log" ]] && tail -n 120 "$RUNNER_TEMP/alpha18-build.log" || true
+            echo '```'
+            echo '</details>'
+            echo
             echo '<details><summary>Audit tail</summary>'
             echo
             echo '```text'
-            if [[ -f "$RUNNER_TEMP/alpha18-audit.log" ]]; then
-              tail -n 220 "$RUNNER_TEMP/alpha18-audit.log"
-            else
-              echo 'Deep audit did not start.'
-            fi
+            [[ -f "$RUNNER_TEMP/alpha18-audit.log" ]] && tail -n 220 "$RUNNER_TEMP/alpha18-audit.log" || echo 'Deep audit did not start.'
             echo '```'
             echo '</details>'
           } > "$RUNNER_TEMP/alpha18-pr-comment.md"
@@ -109,9 +112,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Deliberately quarantined. A green compile/test/audit run does NOT publish Alpha 18.
-  # Re-enable publication only after the packaged runtime has passed the deep audit and a
-  # deliberate release-approval commit is made.
+  # Deliberately quarantined. Green CI creates an internal audit artifact only.
+  # Publication is a separate explicit approval step after the packaged runtime audit is clean.
   release-alpha18:
     if: ${{ false }}
     needs: build-arch-alpha18
