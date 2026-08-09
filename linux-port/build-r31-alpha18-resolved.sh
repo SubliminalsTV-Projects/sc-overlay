@@ -24,8 +24,6 @@ new='''else:\n    anchor2 = '  });\\n  // Clear any cached copy'\n    insert2 = 
 if old not in s: raise SystemExit('resolver fallback patch anchor missing')
 s=s.replace(old,new,1)
 
-# Two partial three-way hunks ended one line before their function close. Close the functions at
-# the merge seam, not at EOF, so all later 0.1.41 handlers remain top-level.
 needle='''    if (server) { server.kill(); server=null; }\n  });\n  app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });\n}\n'''
 replacement='''    if (server) { server.kill(); server=null; }\n  });\n  app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });\n  });\n}\n'''
 anchor='main.write_text(s)'
@@ -33,9 +31,6 @@ patch=f'''_ready_needle = {needle!r}\n_ready_replacement = {replacement!r}\nif _
 if anchor not in s: raise SystemExit('resolver main-write anchor missing')
 s=s.replace(anchor, patch, 1)
 
-# Alpha17 already performs the active-Star-Citizen foreground/session gate immediately before the
-# upstream hunk. Taking 0.1.41 conflict 6 literally would declare `fg` a second time. Keep the
-# richer first gate and use its measured timing for 0.1.41's per-stage diagnostics.
 cap_anchor='cap.write_text(s)'
 cap_patch=r'''_dup_fg = ''' + repr('''    const tFg = Date.now();
     const fg = await foregroundWindow();
@@ -58,6 +53,18 @@ if _dup_fg in s:
     s = s.replace(_dup_fg, _fg_once, 1)
 else:
     raise SystemExit("capture: duplicate foreground seam missing")
+
+# The early lock check needs a Scan Mode bit before Alpha17's detailed mining block declares its
+# own `scanModeRead`. Give that preliminary bit a distinct name; once the detailed structural gate
+# runs, all downstream 0.1.41 mining work uses the authoritative `scanModeRead` state.
+_early = 'let scanModeRead = { active: false, confidence: 0, method: "not-armed" };'
+_late = 'let scanModeRead = { kind: "scan-mode", active: false, angle: null, confidence: 0 };'
+start = s.find(_early)
+end = s.find(_late, start + 1) if start >= 0 else -1
+if start < 0 or end < 0:
+    raise SystemExit("capture: scan-mode declaration seam missing")
+segment = s[start:end].replace('scanModeRead', 'archScanModeRead')
+s = s[:start] + segment + s[end:]
 cap.write_text(s)'''
 if cap_anchor not in s: raise SystemExit('resolver capture-write anchor missing')
 s=s.replace(cap_anchor, cap_patch, 1)
