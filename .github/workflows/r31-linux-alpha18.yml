@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
@@ -55,6 +55,31 @@ jobs:
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
 
+      - name: Preserve merge conflicts on the branch
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/r31-alpha18-build/work"
+          [[ -d "$src" ]] || exit 0
+          rm -rf linux-port/debug-alpha18
+          mkdir -p linux-port/debug-alpha18/electron linux-port/debug-alpha18/overlay
+          for f in main.cjs capture.cjs preload.cjs config-preload.cjs mining-preload.cjs; do
+            [[ -f "$src/electron/$f" ]] && cp "$src/electron/$f" "linux-port/debug-alpha18/electron/$f"
+          done
+          for f in missions.html config.html mining.html; do
+            [[ -f "$src/overlay/$f" ]] && cp "$src/overlay/$f" "linux-port/debug-alpha18/overlay/$f"
+          done
+          if ! grep -R -q '^<<<<<<<' linux-port/debug-alpha18; then
+            rm -rf linux-port/debug-alpha18
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add linux-port/debug-alpha18
+          git commit -m '[skip ci] debug: capture alpha18 conflict snapshot'
+          git push origin HEAD:integration/upstream-0.1.41-arch-r31-alpha18
+
       - name: Report Alpha 18 validation to PR
         if: always()
         shell: bash
@@ -66,7 +91,7 @@ jobs:
           {
             echo "### Alpha 18 CI: ${BUILD_STATUS}"
             echo
-            echo "Commit: \`${GITHUB_SHA}\`"
+            echo "Commit: \`${GITHUB_SHA}\` · Run: \`${GITHUB_RUN_ID}\`"
             echo
             echo '<details><summary>Build tail</summary>'
             echo
