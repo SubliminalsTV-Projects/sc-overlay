@@ -56,18 +56,18 @@ check='node --check electron/main.cjs'
 diag='''if ! node --check electron/main.cjs; then
   echo "[alpha18] resolved main.cjs still has an EOF delimiter imbalance; probing suffixes" >&2
   cp electron/main.cjs /tmp/a18-main-base.cjs
-  for spec in 'brace:}' 'paren:);' 'callback:});' 'bracket:];' 'brace2:}}' 'callback2:});});' 'callback_brace:});}' 'brace_callback:}});'; do
+  for spec in 'brace:}' 'paren:);' 'callback:});' 'bracket:];' 'brace2:}}' 'callback2:});});' 'callback_brace:});}' 'brace_callback:}});' 'callback3:});});});' 'brace3:}}}' 'paren_brace:);}' 'callback_brace2:});}}'; do
     name="${spec%%:*}"; suffix="${spec#*:}"
     cp /tmp/a18-main-base.cjs "/tmp/a18-$name.cjs"
     printf '\n%s\n' "$suffix" >> "/tmp/a18-$name.cjs"
-    if node --check "/tmp/a18-$name.cjs" >/dev/null 2>&1; then
+    if out=$(node --check "/tmp/a18-$name.cjs" 2>&1); then
       echo "[alpha18-delim] suffix $name ($suffix) makes syntax valid" >&2
     else
-      msg=$(node --check "/tmp/a18-$name.cjs" 2>&1 | tail -n 4 | tr '\n' ' ')
+      msg=$(printf '%s\n' "$out" | tail -n 4 | tr '\n' ' ')
       echo "[alpha18-delim] $name => $msg" >&2
     fi
   done
-  nl -ba electron/main.cjs | tail -n 140 >&2
+  nl -ba electron/main.cjs | tail -n 80 >&2
   exit 12
 fi'''
 if check not in s: raise SystemExit('main node-check anchor missing')
