@@ -49,6 +49,15 @@ fi
 '''
 if old not in s:
     raise SystemExit('conflict gate anchor not found')
-p.write_text(s.replace(old,new,1))
+s=s.replace(old,new,1)
+check='node --check electron/main.cjs'
+diag='''if ! node --check electron/main.cjs; then
+  echo "[alpha18] resolved main.cjs syntax context:" >&2
+  nl -ba electron/main.cjs | sed -n '3150,3235p' >&2
+  exit 12
+fi'''
+if check not in s: raise SystemExit('main node-check anchor missing')
+s=s.replace(check,diag,1)
+p.write_text(s)
 PY
 exec bash "$TMP/build.sh" "$@"
