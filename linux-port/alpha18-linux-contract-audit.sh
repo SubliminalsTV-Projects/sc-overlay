@@ -87,6 +87,7 @@ const cap=read("electron/capture.cjs","app/electron/capture.cjs");
 const client=read("electron/rapidocr-client.cjs","app/electron/rapidocr-client.cjs");
 const worker=read("electron/rapidocr-worker.cjs","app/electron/rapidocr-worker.cjs");
 const gate=read("electron/scan-mode-gate.cjs","app/electron/scan-mode-gate.cjs");
+const configPage=read("overlay/config.html","app/server/overlay/config.html");
 
 // Mandatory Linux interaction controls are platform-owned, not inherited from an upstream config.
 assert.match(main, /process\.platform === "linux" \? "Shift\+F6" : "Ctrl\+Alt\+M"/);
@@ -96,6 +97,16 @@ assert.match(main, /interaction gate \$\{registeredInteractKey\} registered befo
 assert.match(main, /LINUX_HARD_CLICK_THROUGH/);
 assert.match(main, /overlayWindows\.register\("Overlay Manager", overlay\)/);
 assert.match(main, /overlayWindows\.pin\(overlay\)/);
+
+// Settings must visibly present the same immutable Linux controls the shell and sidecar enforce.
+// It may not pretend Shift+F6 is editable and then silently repair a different value on save.
+assert.match(configPage, /setHotkeyDisplay\("interact", "F"\)/);
+assert.match(configPage, /document\.getElementById\("interactHotkeyBtn"\)\.disabled = true/);
+assert.match(configPage, /setHotkeyDisplay\("move", "Shift\+F6"\)/);
+assert.match(configPage, /document\.getElementById\("moveHotkeyBtn"\)\.disabled = true/);
+assert.match(configPage, /document\.getElementById\("moveHotkeyClear"\)\.style\.display = "none"/);
+assert.match(configPage, /which === "move"[\s\S]{0,120}"Shift\+F6"/);
+assert.match(configPage, /which === "interact" \|\| which === "move"/);
 
 // OCR isolation and resource budgets: no native RapidOCR model is loaded in Electron itself.
 assert.match(cap, /createRapidOcrClient/);
