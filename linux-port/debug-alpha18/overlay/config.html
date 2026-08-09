@@ -406,15 +406,11 @@
       <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's catalog — only items we don't have yet. You're credited on the contributor leaderboard. Needs a sync token.</span></span>
     </div>
-<<<<<<< ArchVerse Alpha17
     <div class="hint ocr-live" id="ocrLiveStatus">Screen reader status: starting…</div>
-||||||| upstream 0.1.36
-=======
     <div class="setrow">
       <label class="opt"><input type="checkbox" id="fabClaim" /> Offer to add blueprints the fabricator shows that I'm missing</label>
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">The game only writes a blueprint to your log the moment you receive it, and those logs get deleted over time — so anything you earned before installing the app can never be detected. The Fabrication Kiosk only lists blueprints you own, so when it shows one we have no record of, you get 30 seconds to add it. You confirm each one, so check the name matches what's on your screen.</span></span>
     </div>
->>>>>>> upstream 0.1.41
   </div>
 
   <div class="card">
@@ -1379,16 +1375,8 @@
   // Auto-save the plain checkboxes the instant they're toggled, so a change can never be lost by
   // closing/scrolling away without clicking Save. (Theme, hotkeys, hold-to-interact and the file
   // pickers already save on change; the sync token stays manual so a half-typed token isn't sent.)
-<<<<<<< ArchVerse Alpha17
-  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAssistant", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
+  ["syncEnabled", "shareLogs", "fabCapture", "fabClaim", "missionOcr", "miningAssistant", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
     .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", () => { renderScreenProfile(); save(); }); });
-||||||| upstream 0.1.36
-  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
-    .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
-=======
-  ["syncEnabled", "shareLogs", "fabCapture", "fabClaim", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
-    .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
->>>>>>> upstream 0.1.41
   // The sync field shows the truncated saved key; clear it on focus so a new token pastes
   // cleanly, and restore the preview on blur if nothing was typed.
   const syncTokenEl = document.getElementById("syncToken");
@@ -1401,13 +1389,9 @@
       const c = await (await fetch("/api/config")).json();
       document.getElementById("missionOcr").checked = !!c.missionOcr;
       document.getElementById("fabCapture").checked = !!c.fabCapture;
-<<<<<<< ArchVerse Alpha17
       document.getElementById("miningAssistant").checked = !!c.miningAssistant;
       renderScreenProfile();
-||||||| upstream 0.1.36
-=======
       document.getElementById("fabClaim").checked = !!c.fabClaim;
->>>>>>> upstream 0.1.41
     } catch { /* ignore */ }
   });
   loadCfg();

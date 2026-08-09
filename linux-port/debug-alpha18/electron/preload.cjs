@@ -26,19 +26,14 @@ contextBridge.exposeInMainWorld("overlayApi", {
   // Foreground tracking (Windows) and Linux native interaction events.
   wantForeground: (on) => ipcRenderer.invoke("app:want-foreground", !!on),
   onGameFocus: (cb) => ipcRenderer.on("overlay:game-focus", (_e, on) => cb(!!on)),
-<<<<<<< ArchVerse Alpha17
   onUnifiedInteraction: (cb) => ipcRenderer.on("overlay:unified-interaction", (_e, on) => cb(!!on)),
   onMiningOnlyInteraction: (cb) => ipcRenderer.on("overlay:mining-only-interaction", (_e, on) => cb(!!on)),
   onMiningMoveMode: (cb) => ipcRenderer.on("overlay:mining-move-mode", (_e, on) => cb(!!on)),  // The app version (authoritative), for the "what's new" card.
-||||||| upstream 0.1.36
-  // The app version (authoritative), for the "what's new" card.
-=======
   // The overlay window itself gaining/losing focus. Distinct from onGameFocus: that reports what
   // is in the FOREGROUND (used to fade the cog while you play), this reports that the user
   // deliberately switched TO the overlay via Alt-Tab or the taskbar.
   onWindowFocus: (cb) => ipcRenderer.on("overlay:window-focus", (_e, on) => cb(!!on)),
   // The app version (authoritative), for the "what's new" card.
->>>>>>> upstream 0.1.41
   getVersion: () => ipcRenderer.invoke("app:version"),
   // While a modal (what's-new card) is open, keep the HUD hover-interactive even when
   // "locked" — so the card is always closeable while the game runs.
@@ -100,10 +95,6 @@ contextBridge.exposeInMainWorld("overlayApi", {
   onPartyVisible: (cb) => ipcRenderer.on("overlay:party-visible", (_e, s) => cb(s)),
   setBattaglia: (on) => ipcRenderer.send("app:set-battaglia", !!on),
   onBattagliaVisible: (cb) => ipcRenderer.on("overlay:battaglia-visible", (_e, s) => cb(s)),
-<<<<<<< ArchVerse Alpha17
-||||||| upstream 0.1.36
-  // Reveal one of the app's own data folders in Explorer (allow-listed in main).
-=======
   // Social chat: shell-owned visibility; its send field reuses the keyboard-grab above.
   setChat: (on) => ipcRenderer.send("app:set-chat", !!on),
   onChatVisible: (cb) => ipcRenderer.on("overlay:chat-visible", (_e, s) => cb(s)),
@@ -111,12 +102,7 @@ contextBridge.exposeInMainWorld("overlayApi", {
   setConfig: (on) => ipcRenderer.send("app:set-config", !!on),
   onConfigVisible: (cb) => ipcRenderer.on("overlay:config-visible", (_e, s) => cb(s)),
   // Reveal one of the app's own data folders in Explorer (allow-listed in main).
->>>>>>> upstream 0.1.41
   openDataFolder: (which) => ipcRenderer.send("app:open-data-folder", String(which)),
-<<<<<<< ArchVerse Alpha17
-||||||| upstream 0.1.36
-  // Web Page widget + the Binding Chart WIDGET (the full-screen binding overlay is separate).
-=======
   // First-run setup: existing users with unfinished setup get one dismissible banner here
   // rather than the wizard taking over their screen. `openSetupWizard` is what its button calls.
   // The background service (sidecar) going down and coming back. It does ALL the work — the
@@ -127,23 +113,13 @@ contextBridge.exposeInMainWorld("overlayApi", {
   onSetupNudge: (cb) => ipcRenderer.on("overlay:setup-nudge", (_e, s) => cb(s)),
   openSetupWizard: () => ipcRenderer.send("setup:open-wizard"),
   // Web Page widget + the Binding Chart WIDGET (the full-screen binding overlay is separate).
->>>>>>> upstream 0.1.41
   setWebView: (on) => ipcRenderer.send("app:set-webview", !!on),
   onWebViewVisible: (cb) => ipcRenderer.on("overlay:webview-visible", (_e, s) => cb(s)),
   setBindingChart: (on) => ipcRenderer.send("app:set-bindingchart", !!on),
   onBindingChartVisible: (cb) => ipcRenderer.on("overlay:bindingchart-visible", (_e, s) => cb(s)),
-<<<<<<< ArchVerse Alpha17
-  onBindingChartReload: (cb) => ipcRenderer.on("overlay:bindingchart-reload", () => cb()),  widgetStates: () => ipcRenderer.invoke("app:widget-states"),
-||||||| upstream 0.1.36
   onBindingChartReload: (cb) => ipcRenderer.on("overlay:bindingchart-reload", () => cb()),
   widgetStates: () => ipcRenderer.invoke("app:widget-states"),
-=======
-  onBindingChartReload: (cb) => ipcRenderer.on("overlay:bindingchart-reload", () => cb()),
-  widgetStates: () => ipcRenderer.invoke("app:widget-states"),
-  // Nudge the whole canvas (physical px). Pass {x,y} to set, or nothing to read the current value.
-  // Canvas calibration for mixed-DPI desktops: { x, y, scale }. Pass nothing to just read it.
   canvasCalibration: (cal) => ipcRenderer.invoke("app:canvas-calibration", cal),
->>>>>>> upstream 0.1.41
   onWidgetStates: (cb) => ipcRenderer.on("overlay:widget-states", (_e, s) => cb(s)),
   arrange: (on) => ipcRenderer.send(on ? "overlay:begin-move" : "overlay:end-move"),
   // The embedded Mining widget's cog summons the shared Overlay Manager cog.

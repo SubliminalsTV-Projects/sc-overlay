@@ -168,30 +168,13 @@ const APP_VERSION = (() => {
   return app.getVersion();
 })();
 const PORT = 8778;
-<<<<<<< ArchVerse Alpha17
-
-// The Linux canvas geometry is owned by electron/window-manager.cjs. It discovers the
-// KDE monitor layout (KScreen first, then XRandR/Electron), creates one native Overlay
-// Manager window, and exposes one canvas-local coordinate system to every widget.
-
-// KDE Wayland + XWayland can leave a transparent full-screen Electron window in the
-// input path even when it looks transparent. Default Linux builds to a hard, whole-window
-// click-through mode. The tray/Control+Alt+L can temporarily unlock it for interaction.
+// Linux keeps the proven XWayland hard-click-through interaction contract.
 const LINUX_HARD_CLICK_THROUGH = process.platform === "linux" && process.env.SCBT_FORCE_CLICK_THROUGH !== "0";
 const INTERACTION_TIMEOUT_MS = 30000;
 const HUD_URL = `http://127.0.0.1:${PORT}/missions.html`;
 const CONFIG_URL = `http://127.0.0.1:${PORT}/config.html`;
-||||||| upstream 0.1.36
-const HUD_URL = `http://localhost:${PORT}/missions.html`;
-const CONFIG_URL = `http://localhost:${PORT}/config.html`;
-=======
-const HUD_URL = `http://localhost:${PORT}/missions.html`;
-const CONFIG_URL = `http://localhost:${PORT}/config.html`;
-const SETUP_URL = `http://localhost:${PORT}/setup.html`;
-// A fresh id per launch, injected into the sidecar we spawn. Anything answering on our port that
-// cannot echo it is not ours — see waitForServer.
+const SETUP_URL = `http://127.0.0.1:${PORT}/setup.html`;
 const INSTANCE_ID = require("node:crypto").randomUUID();
->>>>>>> upstream 0.1.41
 
 let server = null;
 let overlay = null;
@@ -216,7 +199,6 @@ let miningVisible = false;
 let twitchChatVisible = false;
 let scFeedVisible = false;
 let unlockAlertVisible = true;
-<<<<<<< ArchVerse Alpha17
 let partyVisible = false;
 let battagliaVisible = false;
 let webViewVisible = false;
@@ -266,23 +248,8 @@ const F_CLICK_NATIVE_GRACE_MS = 28;
 let miningAutoArm = false;
 let miningMoveMode = false;
 let miningOnlyInteraction = false;
-||||||| upstream 0.1.36
-let partyVisible = false; // is the in-canvas Party split widget currently shown
-let battagliaVisible = false; // is the in-canvas Battaglia grind tracker currently shown
-let webViewVisible = false; // is the in-canvas Web Page widget currently shown
-let bindingChartVisible = false; // is the in-canvas Binding Chart WIDGET shown (not the full-screen overlay)
-let miningArm = false;      // load the mining iframe hidden at startup (auto-show waiting to pop)
-=======
-let partyVisible = false; // is the in-canvas Party split widget currently shown
-let battagliaVisible = false; // is the in-canvas Battaglia grind tracker currently shown
-let chatVisible = false; // is the in-canvas social Chat widget shown (also gates the sidecar's chat socket)
-// Settings as a canvas WIDGET. Named ...Widget... throughout to keep it distinct from
-// `configWin`, the standalone settings WINDOW — both exist, same page, two host modes.
+let chatVisible = false;
 let configWidgetVisible = false;
-let webViewVisible = false; // is the in-canvas Web Page widget currently shown
-let bindingChartVisible = false; // is the in-canvas Binding Chart WIDGET shown (not the full-screen overlay)
-let miningArm = false;      // load the mining iframe hidden at startup (auto-show waiting to pop)
->>>>>>> upstream 0.1.41
 let miningAutoSuppress = 0; // auto-show is suppressed until this timestamp (set on a manual hide)
 let overlayEnabled = true; // master switch — false = HUD window destroyed, tracking still runs
 let manualCheck = false; // true while a tray-triggered update check is in flight (gates dialogs)
@@ -411,42 +378,6 @@ function resolveServerDir() {
   return candidates.find((dir) => fs.existsSync(path.join(dir, "sc-overlay-server.mjs"))) || null;
 }
 function startServer() {
-<<<<<<< ArchVerse Alpha17
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  if (process.platform === "win32" && app.isPackaged) {
-    const exe = path.join(process.resourcesPath, "server", "sc-overlay-server.exe");
-    const fd = fs.openSync(SIDECAR_LOG, sidecarLogOpened ? "a" : "w");
-    sidecarLogOpened = true;
-    server = spawn(exe, { cwd: path.dirname(exe), env: { ...process.env, APP_VERSION }, stdio: ["ignore", fd, fd], windowsHide: true });
-    fs.closeSync(fd);
-  } else if (process.platform === "linux") {
-    const serverDir = resolveServerDir();
-    if (!serverDir) { noteInSidecarLog(`sidecar files not found under ${ROOT}`); return false; }
-    const script = path.join(serverDir, "sc-overlay-server.mjs");
-    const fd = fs.openSync(SIDECAR_LOG, sidecarLogOpened ? "a" : "w");
-    sidecarLogOpened = true;
-    server = spawn(process.env.SC_TRACKER_NODE_BIN || "node", [script], {
-      cwd: serverDir,
-      env: { ...process.env, APP_VERSION, SC_TRACKER_CONFIG_DIR: CONFIG_DIR },
-      stdio: ["ignore", fd, fd],
-||||||| upstream 0.1.36
-  const out = sidecarLogStream();
-  const stdio = out === "ignore" ? "ignore" : ["ignore", out, out];
-  if (app.isPackaged) {
-    // Prod: the bun-compiled server binary shipped as an extraResource (no Node/tsx
-    // on the user's machine). cwd = its dir so assetDir finds overlay/ + data/.
-    const exe = path.join(process.resourcesPath, "server", "sc-overlay-server.exe");
-    // 🔑 `windowsHide` is NOT optional here. The bun-compiled sidecar is a CONSOLE-subsystem
-    // executable, and this app is a GUI process with no console of its own — so without
-    // CREATE_NO_WINDOW, Windows hands the child a brand new console, which appears as a terminal
-    // window sitting on the user's desktop for as long as the app runs (0.1.35 shipped exactly that;
-    // on a machine whose default terminal is Windows Terminal it opens as a WT window titled
-    // "…\sc-overlay-server.exe"). Every OTHER spawn in this codebase already sets it; this one was
-    // missed, and it only became visible when the sidecar stopped being spawned stdio:"ignore".
-    // Inject the authoritative app version — the bun sidecar can't read package.json.
-    server = spawn(exe, {
-      cwd: path.dirname(exe), env: { ...process.env, APP_VERSION }, stdio, windowsHide: true,
-=======
   const out = sidecarLogStream();
   const stdio = out === "ignore" ? "ignore" : ["ignore", out, out];
   if (app.isPackaged) {
@@ -464,29 +395,12 @@ function startServer() {
     // Inject the authoritative app version — the bundled sidecar can't read package.json.
     server = spawn(process.execPath, [serverJs], {
       cwd: path.dirname(serverJs),
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", APP_VERSION, SC_INSTANCE: INSTANCE_ID },
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", APP_VERSION, SC_INSTANCE: INSTANCE_ID, SC_TRACKER_CONFIG_DIR: CONFIG_DIR },
       stdio,
       windowsHide: true,
->>>>>>> upstream 0.1.41
     });
     fs.closeSync(fd);
   } else {
-<<<<<<< ArchVerse Alpha17
-    const fd = fs.openSync(SIDECAR_LOG, sidecarLogOpened ? "a" : "w");
-    sidecarLogOpened = true;
-    server = spawn("npx tsx src/overlay-server.ts", { cwd: ROOT, shell: true, env: { ...process.env, APP_VERSION }, stdio: ["ignore", fd, fd], windowsHide: true });
-    fs.closeSync(fd);
-||||||| upstream 0.1.36
-    // Dev: run the TS server via tsx. Same flag, same reason — `shell:true` means cmd.exe, which is
-    // a console app too.
-    server = spawn("npx tsx src/overlay-server.ts", {
-      cwd: ROOT,
-      shell: true,
-      env: { ...process.env, APP_VERSION },
-      stdio,
-      windowsHide: true,
-    });
-=======
     // Dev: run the TS server via tsx. Same flag, same reason — `shell:true` means cmd.exe, which is
     // a console app too.
     // SC_DEV unlocks the dev-replay endpoint (simulate finishing a mission without playing —
@@ -495,36 +409,14 @@ function startServer() {
     server = spawn("npx tsx src/overlay-server.ts", {
       cwd: ROOT,
       shell: true,
-      env: { ...process.env, APP_VERSION, SC_DEV: "1", SC_INSTANCE: INSTANCE_ID },
+      env: { ...process.env, APP_VERSION, SC_DEV: "1", SC_INSTANCE: INSTANCE_ID, SC_TRACKER_CONFIG_DIR: CONFIG_DIR },
       stdio,
       windowsHide: true,
     });
->>>>>>> upstream 0.1.41
   }
   server.on("error", (err) => { noteInSidecarLog(`server error: ${String(err)}`); server = null; });
   server.on("exit", (code, signal) => {
     if (app.isQuitting) return;
-<<<<<<< ArchVerse Alpha17
-    if (serverRestarts >= 5) { noteInSidecarLog(`server exited (${code}/${signal}); restart limit reached`); return; }
-    const wait = Math.min(30000, 1000 * 2 ** serverRestarts++);
-    noteInSidecarLog(`server exited (${code}/${signal}); restarting in ${wait}ms`);
-    serverRestartTimer = setTimeout(startServer, wait);  });
-  return true;
-||||||| upstream 0.1.36
-    // Everything the app can do depends on it, so bring it back rather than leaving a window
-    // that looks healthy and answers nothing.
-    if (serverRestarts >= 5) {
-      noteInSidecarLog(`server exited (code ${code}, signal ${signal}) — 5 crashes, not restarting again`);
-      console.error("[electron] server has crashed 5 times — not restarting it again");
-      return;
-    }
-    const wait = Math.min(30000, 1000 * 2 ** serverRestarts);
-    serverRestarts += 1;
-    noteInSidecarLog(`server exited (code ${code}, signal ${signal}) — restarting in ${wait}ms (attempt ${serverRestarts})`);
-    console.error(`[electron] server exited (code ${code}) — restarting in ${wait}ms, see ${SIDECAR_LOG}`);
-    serverRestartTimer = setTimeout(startServer, wait);
-  });
-=======
     // Everything the app can do depends on it, so bring it back rather than leaving a window
     // that looks healthy and answers nothing.
     if (serverRestarts >= 5) {
@@ -594,7 +486,6 @@ function reclaimStalePort() {
     req.on("error", done);           // nothing there — the normal case
     req.setTimeout(1500, () => { req.destroy(); done(); });
   });
->>>>>>> upstream 0.1.41
 }
 
 /** Wait for OUR sidecar — not merely for something to answer on the port.
@@ -616,15 +507,6 @@ function waitForServer(tries = 60) {
     };
     const ping = () => {
       http
-<<<<<<< ArchVerse Alpha17
-        .get(`http://127.0.0.1:${PORT}/api/missions`, (r) => {
-          r.resume();
-          resolve(true);
-||||||| upstream 0.1.36
-        .get(`http://localhost:${PORT}/api/missions`, (r) => {
-          r.resume();
-          resolve(true);
-=======
         .get(`http://localhost:${PORT}/api/instance`, (r) => {
           let body = "";
           r.on("data", (c) => { body += c; });
@@ -634,7 +516,6 @@ function waitForServer(tries = 60) {
             if (who && who.instance === INSTANCE_ID) return resolve(true); // ours
             retry(); // someone else's — keep waiting for ours rather than trusting theirs
           });
->>>>>>> upstream 0.1.41
         })
         .on("error", retry);
     };
@@ -642,39 +523,8 @@ function waitForServer(tries = 60) {
   });
 }
 
-<<<<<<< ArchVerse Alpha17
-function primaryBounds() { return overlayWindows.primaryBounds(); }
-function detectedVirtualDesktopBounds() {
-  const layout = overlayWindows.detect();
-  return { ...layout.desktop, source: layout.source };
-}
-function fullDisplayBounds() { return overlayWindows.canvasBounds(); }
-function centeredDefaultZone() { return overlayWindows.defaultZone(); }
-||||||| upstream 0.1.36
 function primaryBounds() {
-  const b = screen.getPrimaryDisplay().bounds;
-  return { x: b.x, y: b.y, width: b.width, height: b.height };
-}
-// The union of every display = the whole virtual desktop. Its origin can be NEGATIVE when a
-// monitor sits left/above the primary (e.g. x:-1080). The overlay canvas spans this so a widget
-// can be dragged across monitors; the page renders widgets at their PRIMARY-relative position +
-// the primary's offset within the canvas (overlay:canvas-info → px/py), so existing layouts stay
-// put on the primary and only a deliberate drag carries a widget onto another display.
-function virtualDesktopBounds() {
-  const all = screen.getAllDisplays();
-  const minX = Math.min(...all.map((d) => d.bounds.x));
-  const minY = Math.min(...all.map((d) => d.bounds.y));
-  const maxX = Math.max(...all.map((d) => d.bounds.x + d.bounds.width));
-  const maxY = Math.max(...all.map((d) => d.bounds.y + d.bounds.height));
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-}
-// The widget overlay spans the virtual desktop (multi-monitor). fullDisplayBounds() drives the
-// overlay window + overlay:canvas-info. (The binding-chart PNG stays PRIMARY-only — it's a
-// gameplay reference overlay, not a widget canvas — so it uses primaryBounds() directly.)
-function fullDisplayBounds() { return virtualDesktopBounds(); }
-// Re-fit every canvas window when the monitor layout changes (plugged/unplugged/rearranged).
-=======
-function primaryBounds() {
+  if (process.platform === "linux") return overlayWindows.primaryBounds();
   const b = screen.getPrimaryDisplay().bounds;
   return { x: b.x, y: b.y, width: b.width, height: b.height };
 }
@@ -719,6 +569,7 @@ function physicalDesktopBounds() {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 function virtualDesktopBounds() {
+  if (process.platform === "linux") return overlayWindows.canvasBounds();
   const phys = physicalDesktopBounds();
   // screenToDipRect is Windows-only; everywhere else (and on any build without it) the reported
   // bounds are already the one true coordinate system, so the old union is correct as written.
@@ -802,14 +653,19 @@ function clampCanvasScale(n) {
 // position are derived from overlay:canvas-info, which it fetches ONCE at load. Without this the
 // window resized and the canvas inside it stayed laid out for the old monitor arrangement — which
 // is what a Windows display-scaling change looks like from the user's side.
->>>>>>> upstream 0.1.41
+
+// Compatibility names used by the ArchVerse Linux interaction/window manager.
+function detectedVirtualDesktopBounds() {
+  if (process.platform === "linux") { const l = overlayWindows.detect(); return { ...l.desktop, source: l.source }; }
+  return { ...virtualDesktopBounds(), source: "electron" };
+}
+function centeredDefaultZone() {
+  if (process.platform === "linux") return overlayWindows.defaultZone();
+  const p = primaryBounds(); return { x: p.x, y: p.y, width: p.width, height: p.height };
+}
 function refitCanvasWindows() {
-<<<<<<< ArchVerse Alpha17
   overlayWindows.refitAll({ refresh: true });
   try { if (bindingWin && !bindingWin.isDestroyed()) bindingWin.setBounds(primaryBounds()); } catch {}
-||||||| upstream 0.1.36
-  try { if (overlay && !overlay.isDestroyed()) overlay.setBounds(fullDisplayBounds()); } catch { /* ignore */ }
-=======
   try {
     if (overlay && !overlay.isDestroyed()) {
       overlay.setBounds(fullDisplayBounds());
@@ -850,7 +706,6 @@ function reportGeometry() {
     };
     void postJson("/api/overlay-geometry", { shell });
   } catch { /* diagnostics must never be the thing that breaks a refit */ }
->>>>>>> upstream 0.1.41
 }
 
 // The overlay is now a FULL-SCREEN transparent canvas that hosts free-floating widgets
@@ -863,54 +718,6 @@ function reportGeometry() {
 function pinOverlayWindow(win) { overlayWindows.pin(win); }
 
 function createOverlay() {
-<<<<<<< ArchVerse Alpha17
-  overlayWindows.logLayout();
-  overlay = overlayWindows.createCanvasWindow("Overlay Manager", {
-    preload: path.join(__dirname, "preload.cjs"),
-    webPreferences: { autoplayPolicy: "no-user-gesture-required" },
-  });
-  browserController?.destroy();
-  browserController = new BrowserWidgetController({
-    WebContentsView,
-    session,
-    logger: console,
-    onInteractionClaim: (source) => claimFocusLatchedInteraction(`embedded-${source}`),
-    onNativeMouse: (source, mouse, bounds) => noteNativeMouseInput(`embedded-${source}`, mouse, bounds),
-    state: {
-      browserVisible,
-      chatVisible: twitchChatVisible,
-      url: browserRuntimeState.url,
-      channel: browserRuntimeState.channel,
-      onState: (state) => {
-        browserRuntimeState = { ...browserRuntimeState, ...state };
-        browserVisible = !!state.browserVisible;
-        twitchChatVisible = !!state.chatVisible;
-        writeBrowserState(state);
-        try { overlay?.webContents.send("browser:state", state); } catch {}
-        pushWidgetStates();
-      },
-    },
-  });
-  browserController.attach(overlay);
-  overlay.webContents.on("did-fail-load", (_event, code, description, url) => {
-    console.error(`[electron] overlay did-fail-load ${code} ${description}: ${url}`);
-||||||| upstream 0.1.36
-  const bounds = fullDisplayBounds(); // spans all monitors
-  overlay = new BrowserWindow({
-    x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    hasShadow: false,
-    fullscreenable: false,
-    focusable: true,
-    // autoplayPolicy: the embedded Mining Assistant iframe plays alert tones / HAL voice via
-    // Web Audio; allow it to sound without a prior user gesture (matches the old mining window).
-    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "preload.cjs"), autoplayPolicy: "no-user-gesture-required" },
-=======
   const bounds = fullDisplayBounds(); // spans all monitors
   overlayLoaded = false; // a fresh window has no listeners until its did-finish-load
   overlay = new BrowserWindow({
@@ -918,14 +725,19 @@ function createOverlay() {
     icon: appIconPath(),
     frame: false,
     transparent: true,
+    backgroundColor: "#00000000",
+    show: false,
     resizable: false,
     movable: false,
+    minimizable: false,
+    maximizable: false,
+    type: process.platform === "linux" ? "toolbar" : undefined,
     // 🔑 `false` ON PURPOSE, and it is the only reason the overlay appears in Alt-Tab: that flag
     // hides a window from the taskbar, and Windows builds the Alt-Tab list from the same place.
     // Being switchable is the point — the overlay is click-through and Star Citizen recentres the
     // mouse while it has focus, so "Alt-Tab to the overlay" is how you take focus off the game and
     // use the widgets normally. `focusable: true` below was always set; only this was blocking it.
-    skipTaskbar: false,
+    skipTaskbar: process.platform === "linux",
     alwaysOnTop: true,
     hasShadow: false,
     fullscreenable: false,
@@ -933,17 +745,29 @@ function createOverlay() {
     // autoplayPolicy: the embedded Mining Assistant iframe plays alert tones / HAL voice via
     // Web Audio; allow it to sound without a prior user gesture (matches the old mining window).
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, "preload.cjs"), autoplayPolicy: "no-user-gesture-required" },
->>>>>>> upstream 0.1.41
   });
+  if (process.platform === "linux") {
+    overlayWindows.register("Overlay Manager", overlay);
+    overlayWindows.pin(overlay);
+    browserController?.destroy();
+    browserController = new BrowserWidgetController({
+      WebContentsView, session, logger: console,
+      onInteractionClaim: (source) => claimFocusLatchedInteraction(`embedded-${source}`),
+      onNativeMouse: (source, mouse, b) => noteNativeMouseInput(`embedded-${source}`, mouse, b),
+      state: {
+        browserVisible, chatVisible: twitchChatVisible, url: browserRuntimeState.url, channel: browserRuntimeState.channel,
+        onState: (state) => {
+          browserRuntimeState = { ...browserRuntimeState, ...state }; browserVisible = !!state.browserVisible;
+          twitchChatVisible = !!state.chatVisible; writeBrowserState(state);
+          try { overlay?.webContents.send("browser:state", state); } catch {}
+          pushWidgetStates();
+        },
+      },
+    });
+    browserController.attach(overlay);
+  }
   // Clear any cached copy + cache-bust the URL so UI changes always show up.
   const hudUrl = `${HUD_URL}?v=${Date.now()}${AMD_COMPAT ? "&lite=1" : ""}`;
-<<<<<<< ArchVerse Alpha17
-  overlay.webContents.session.clearCache().finally(() => overlay?.loadURL(hudUrl));
-||||||| upstream 0.1.36
-  overlay.webContents.session.clearCache().finally(() => overlay.loadURL(hudUrl));
-  // Once the page is up, tell the renderer the mining widget's initial state: shown if the user
-  // left it open last session, else armed-hidden if auto-show is on (so it can self-pop).
-=======
   // 🔑 THE CANVAS MUST RETRY ITS OWN LOAD. This page is SERVED BY the sidecar, so any moment the
   // server isn't answering yet — a slow first start, a respawn, a machine under load — the load
   // fails and the window sits there transparent and EMPTY, forever. There is no error and nothing
@@ -980,32 +804,7 @@ function createOverlay() {
   overlay.webContents.session.clearCache().finally(loadHud);
   // Once the page is up, tell the renderer the mining widget's initial state: shown if the user
   // left it open last session, else armed-hidden if auto-show is on (so it can self-pop).
->>>>>>> upstream 0.1.41
   overlay.webContents.on("did-finish-load", () => {
-<<<<<<< ArchVerse Alpha17
-    try { overlay.setBounds(bounds); } catch {}
-    sendEmbeddedMiningVisible({ on: miningVisible, arm: miningAutoArm || miningArm, transient: false });
-    sendNotepadVisible({ on: notepadVisible });
-    sendTwitchChatVisible?.({ on: twitchChatVisible });
-    sendScFeedVisible?.({ on: scFeedVisible });
-    sendUnlockAlertVisible?.({ on: unlockAlertVisible });
-    sendPartyVisible?.({ on: partyVisible });
-    sendBattagliaVisible?.({ on: battagliaVisible });
-    sendWebViewVisible?.({ on: webViewVisible });
-    sendBindingChartVisible?.({ on: bindingChartVisible });
-    sendBrowserVisible();
-||||||| upstream 0.1.36
-    try { overlay.setBounds(bounds); } catch { /* re-assert the full span past any creation-time clamp */ }
-    sendMiningVisible(miningVisible ? { on: true } : { on: false, arm: miningArm });
-    sendNotepadVisible({ on: notepadVisible });
-    sendTwitchChatVisible({ on: twitchChatVisible });
-    sendScFeedVisible({ on: scFeedVisible });
-    sendUnlockAlertVisible({ on: unlockAlertVisible });
-    sendPartyVisible({ on: partyVisible });
-    sendBattagliaVisible({ on: battagliaVisible });
-    sendWebViewVisible({ on: webViewVisible });
-    sendBindingChartVisible({ on: bindingChartVisible });
-=======
     try { overlay.setBounds(bounds); } catch { /* re-assert the full span past any creation-time clamp */ }
     // 🔑 `initial: true` marks this as REPLAYING saved state, not the user turning something on.
     // The renderer treats "turn this widget on" as "bring its tab to the front of its group" —
@@ -1023,34 +822,20 @@ function createOverlay() {
     sendConfigWidgetVisible({ on: configWidgetVisible, initial: true });
     sendWebViewVisible({ on: webViewVisible, initial: true });
     sendBindingChartVisible({ on: bindingChartVisible, initial: true });
->>>>>>> upstream 0.1.41
+    sendBrowserVisible?.();
     pushWidgetStates();
-<<<<<<< ArchVerse Alpha17
-    overlayWindows.showCanvasWindow("Overlay Manager", overlay, { inactive: true });
-    reapplyOverlayInputShape();
-    // The renderer is intentionally never focused at startup, and Chromium may throttle its
-    // passive region timer. Explicitly ask for classified geometry after the widget states have
-    // been restored so held-F works before Settings has ever been opened.
-    for (const delay of [0, 100, 500, 1500]) {
-      setTimeout(() => { void requestOverlayRegionSnapshot(`did-finish-load+${delay}ms`); }, delay);
+    if (process.platform === "linux") {
+      overlayWindows.showCanvasWindow("Overlay Manager", overlay, { inactive: true });
+      reapplyOverlayInputShape();
+      for (const delay of [0, 100, 500, 1500]) setTimeout(() => { void requestOverlayRegionSnapshot(`did-finish-load+${delay}ms`); }, delay);
+      try { overlay.moveTop(); } catch {}
     }
-    try { overlay.moveTop(); } catch {}
-    if (interactiveTarget === "overlay") focusLinuxInteractiveWindow("overlay");
-  });  applyMouse();
-  overlay.webContents.on("before-input-event", (_event, input) => {
-    if (LINUX_HARD_CLICK_THROUGH && (interactiveTarget || overlayInteractionLatched) && input.type === "keyDown" && input.key === "Escape") {
-      lockAllOverlayWindowsFromEscape();
-    }
-||||||| upstream 0.1.36
-=======
     overlayLoaded = true;
     // Re-push, because a sidecar that died BEFORE this page existed would otherwise have shouted
     // into a window with no listener — and the banner would never appear at all.
     if (sidecarState.down) announceSidecar(sidecarState);
     flushSetupNudge();
->>>>>>> upstream 0.1.41
   });
-<<<<<<< ArchVerse Alpha17
   overlay.webContents.on("before-mouse-event", (_event, mouse) => {
     noteNativeMouseInput("overlay", mouse);
   });
@@ -1063,27 +848,14 @@ function createOverlay() {
     }
   });
   overlay.on("blur", handleOverlayFocusLost);
-||||||| upstream 0.1.36
-  applyMouse();
-  startMousePoll();
-=======
-  applyMouse();
-  startMousePoll();
-  // Focusing the overlay is now a deliberate act — it's in Alt-Tab, so switching to it means
-  // "I want to use the overlay". Tell the renderer, which keeps the settings cog up for as long
-  // as that lasts instead of fading it after 10s: having just switched to the thing, hunting for
-  // its controls is exactly the wrong experience.
-  const sendFocus = (on) => {
-    if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:window-focus", on);
-  };
-  overlay.on("focus", () => sendFocus(true));
-  overlay.on("blur", () => sendFocus(false));
->>>>>>> upstream 0.1.41
+
+  // Preserve upstream focus notification for the renderer while Linux keeps its richer handoff.
+  overlay.on("focus", () => { try { overlay?.webContents.send("overlay:window-focus", true); } catch {} });
+  overlay.on("blur", () => { try { overlay?.webContents.send("overlay:window-focus", false); } catch {} });
   overlay.on("closed", () => {
     browserController?.destroy();
     browserController = null;
     overlay = null;
-<<<<<<< ArchVerse Alpha17
     notepadEditing = false;
     notepadFocusPending = false;
     overlayInteractionLatched = false;
@@ -1092,10 +864,7 @@ function createOverlay() {
     fHoverHeld = false;
     modalOpen = false;
     releaseForwardedMouseButtons("overlay closed");
-||||||| upstream 0.1.36
-=======
     overlayLoaded = false;
->>>>>>> upstream 0.1.41
   });
 }
 
@@ -1135,7 +904,6 @@ async function resetWidgetLayout() {
   try { if (overlay && !overlay.isDestroyed()) overlay.webContents.reload(); } catch {}
 }
 
-<<<<<<< ArchVerse Alpha17
 function setWindowPassthrough(win, passthrough) {
   overlayWindows.setPassthrough(win, passthrough);
 }
@@ -1378,126 +1146,6 @@ function sampleFHoverHostHandoff({ warp = false, reason = "poll" } = {}) {
       ? `${Number(point.x)},${Number(point.y)}`
       : "unavailable";
     console.log(`[f-hover] host pointer handoff pending; requested ${anchor.x},${anchor.y}, host=${actual}, warp=${moved ? "accepted" : "failed"} (${reason})`);
-||||||| upstream 0.1.36
-function applyMouse() {
-  if (!overlay) return;
-  // The overlay is a full-screen canvas STACKED with the mining canvas, so it must stay
-  // click-through except where its own widget is — otherwise (as full-screen interactive) it
-  // would block the other window entirely. This is true even in arrange mode: interactivity
-  // stays hover-based so clicks route to whichever widget is under the cursor, regardless of
-  // which window is on top. Exceptions that force interactive: an active drag on THIS window
-  // (so a gesture can't drop), or an open modal (hub / what's-new — clickable even when locked).
-  // NOTE: no {forward:true} — on Windows that installs a system-wide low-level mouse hook per
-  // window, and three full-screen overlays' worth of hooks stutters the whole cursor once the
-  // app is elevated (UIPI stops masking them). `hovering` is driven by pollCursor() instead.
-  // Default: clickable whenever the cursor is over a widget. Opt-in "hold to interact" mode
-  // (holdMode) makes it passive UNLESS the interact key (default F) is held — so gameplay never
-  // accidentally clicks it. Either way, dragging/modal force it interactive.
-  // While editing a note, the notepad widget stays clickable without holding the interact key
-  // (so you can reach Done / the fields), but the rest of the canvas stays click-through so the
-  // game still gets clicks outside it — hence canHover, not a whole-window force.
-  // 🔑 modalOpen must NOT force the WHOLE canvas interactive. It used to, which meant leaving any
-  // widget's cog menu open made the entire screen swallow clicks — the game stopped responding
-  // until you closed the menu. An open menu is already reported as an interactive REGION (see the
-  // RSEL list in missions.html), so pollCursor's hit-test covers it; all `modalOpen` needs to do
-  // is bypass hold-to-interact, so a modal stays clickable without holding the interact key.
-  // Arrange mode is for MOVING and RESIZING widgets, so it must never require holding the
-  // interact key — you'd be holding a key with one hand to drag with the other. The hold only
-  // ever gates reaching INTO a widget's content (Sub, 2026-07-25).
-  // 🔑 Hold-to-interact only applies while the GAME is in front (Sub, 2026-07-25). The hold exists
-  // so gameplay can't accidentally click the HUD — on the desktop there's nothing to protect, and
-  // demanding it there meant pressing the interact key (default "F", a plain letter) over Discord
-  // or a browser, where it just typed an f into whatever had focus. We can't swallow the key: the
-  // hook is deliberately passive/non-consuming (EAC-safe), so the fix is to not need it. Falls
-  // back to the old always-hold behaviour until the foreground watcher has answered once, so a
-  // failed helper can't silently make the overlay click-grabby mid-game.
-  const holdActive = holdMode && (!foreground.ready() || foreground.gameInFront());
-  const canHover = holdActive ? (holdInteract || notepadEditing || modalOpen || moveMode) : true;
-  const interactive = dragging || (hovering && canHover);
-  overlay.setIgnoreMouseEvents(!interactive);
-}
-
-// ── Cursor-poll hover detection (replaces setIgnoreMouseEvents forward:true) ──────
-// Each page reports its interactive elements' client-rects (panel, summoned cog, open menus,
-// arrange banner). We poll the OS cursor and flip a window interactive only while the cursor is
-// actually over one of those rects — so the window is click-through everywhere else with NO
-// mouse hook and NO screen-wide event forwarding.
-let overlayRegions = []; // [{x,y,w,h}] in overlay-client coords (includes the mining widget)
-let mousePoll = null;
-function insideRegions(regions, win, pt) {
-  if (!regions.length || !win || win.isDestroyed()) return false;
-  const b = win.getBounds();
-  for (const r of regions) {
-    if (pt.x >= b.x + r.x && pt.x < b.x + r.x + r.w && pt.y >= b.y + r.y && pt.y < b.y + r.y + r.h) return true;
-=======
-function applyMouse() {
-  if (!overlay) return;
-  // The overlay is a full-screen canvas STACKED with the mining canvas, so it must stay
-  // click-through except where its own widget is — otherwise (as full-screen interactive) it
-  // would block the other window entirely. This is true even in arrange mode: interactivity
-  // stays hover-based so clicks route to whichever widget is under the cursor, regardless of
-  // which window is on top. Exceptions that force interactive: an active drag on THIS window
-  // (so a gesture can't drop), or an open modal (hub / what's-new — clickable even when locked).
-  // NOTE: no {forward:true} — on Windows that installs a system-wide low-level mouse hook per
-  // window, and three full-screen overlays' worth of hooks stutters the whole cursor once the
-  // app is elevated (UIPI stops masking them). `hovering` is driven by pollCursor() instead.
-  // Default: clickable whenever the cursor is over a widget. Opt-in "hold to interact" mode
-  // (holdMode) makes it passive UNLESS the interact key (default F) is held — so gameplay never
-  // accidentally clicks it. Either way, dragging/modal force it interactive.
-  // While editing a note, the notepad widget stays clickable without holding the interact key
-  // (so you can reach Done / the fields), but the rest of the canvas stays click-through so the
-  // game still gets clicks outside it — hence canHover, not a whole-window force.
-  // 🔑 modalOpen must NOT force the WHOLE canvas interactive. It used to, which meant leaving any
-  // widget's cog menu open made the entire screen swallow clicks — the game stopped responding
-  // until you closed the menu. An open menu is already reported as an interactive REGION (see the
-  // RSEL list in missions.html), so pollCursor's hit-test covers it; all `modalOpen` needs to do
-  // is bypass hold-to-interact, so a modal stays clickable without holding the interact key.
-  // Arrange mode is for MOVING and RESIZING widgets, so it must never require holding the
-  // interact key — you'd be holding a key with one hand to drag with the other. The hold only
-  // ever gates reaching INTO a widget's content (Sub, 2026-07-25).
-  // 🔑 Hold-to-interact only applies while the GAME is in front (Sub, 2026-07-25). The hold exists
-  // so gameplay can't accidentally click the HUD — on the desktop there's nothing to protect, and
-  // demanding it there meant pressing the interact key (default "F", a plain letter) over Discord
-  // or a browser, where it just typed an f into whatever had focus. We can't swallow the key: the
-  // hook is deliberately passive/non-consuming (EAC-safe), so the fix is to not need it. Falls
-  // back to the old always-hold behaviour until the foreground watcher has answered once, so a
-  // failed helper can't silently make the overlay click-grabby mid-game.
-  // 🔑 A FOCUSED overlay is interactive everywhere, and that is what makes the real mouse cursor
-  // visible over it. Cursor SHAPE belongs to the window under the pointer: while click-through,
-  // the pointer is really over Star Citizen's window, which sets no cursor — so it vanishes even
-  // though the overlay has focus. Taking the whole window interactive puts the pointer genuinely
-  // over ours, and Windows draws the normal arrow again. Safe because focusing the overlay is a
-  // deliberate act (Alt-Tab / taskbar): while it holds focus you are using the overlay, not
-  // playing, and Alt-Tabbing back hands clicks straight back to the game.
-  const holdActive = holdMode && (!foreground.ready() || foreground.gameInFront());
-  const canHover = holdActive ? (holdInteract || notepadEditing || modalOpen || moveMode) : true;
-  // 🔑 `overlayFocused` deliberately does NOT appear here, and must not be added back without
-  // solving the problem below. It was, briefly, to restore the real mouse cursor over the game
-  // (cursor SHAPE belongs to the window under the pointer, and while click-through that window is
-  // Star Citizen, which sets none). But this window spans the WHOLE VIRTUAL DESKTOP — that span is
-  // what lets a widget be dragged onto a second monitor — so "interactive while focused" means an
-  // interactive, always-on-top surface covering EVERY display. Two things followed, both reported:
-  // no click on any other monitor reached the app under it, and windows beneath appeared FROZEN
-  // (they were repainting fine; the stale composited overlay was what you could see).
-  // If the cursor is worth another attempt, it has to be scoped to where the game actually is —
-  // the game window's bounds, not the canvas — so every other display stays click-through.
-  const interactive = dragging || (hovering && canHover);
-  overlay.setIgnoreMouseEvents(!interactive);
-}
-
-// ── Cursor-poll hover detection (replaces setIgnoreMouseEvents forward:true) ──────
-// Each page reports its interactive elements' client-rects (panel, summoned cog, open menus,
-// arrange banner). We poll the OS cursor and flip a window interactive only while the cursor is
-// actually over one of those rects — so the window is click-through everywhere else with NO
-// mouse hook and NO screen-wide event forwarding.
-let overlayRegions = []; // [{x,y,w,h}] in overlay-client coords (includes the mining widget)
-let mousePoll = null;
-function insideRegions(regions, win, pt) {
-  if (!regions.length || !win || win.isDestroyed()) return false;
-  const b = win.getBounds();
-  for (const r of regions) {
-    if (pt.x >= b.x + r.x && pt.x < b.x + r.x + r.w && pt.y >= b.y + r.y && pt.y < b.y + r.y + r.h) return true;
->>>>>>> upstream 0.1.41
   }
   return false;
 }
@@ -1791,20 +1439,21 @@ function toggleBinding() { if (!bindingWin) createBinding(); if (bindingWin.isVi
 // Patch the sidecar config over HTTP (the config lives in the sidecar process).
 async function postJson(route, body) {
   try {
-<<<<<<< ArchVerse Alpha17
-    await fetch(`http://127.0.0.1:${PORT}/api/config`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
-||||||| upstream 0.1.36
-    await fetch(`http://localhost:${PORT}/api/config`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
-=======
     await fetch(`http://localhost:${PORT}${route}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
->>>>>>> upstream 0.1.41
     });
   } catch { /* sidecar not up yet — non-fatal */ }
 }
-<<<<<<< ArchVerse Alpha17
+async function postConfig(patch) { return postJson("/api/config", patch); }
+
+// ── Mining Assistant widget (in-canvas) ───────────────────────────────────────
+// The Mining Assistant is now an iframe widget INSIDE the overlay canvas (see missions.html +
+// mining.html?embedded=1), not its own window. The shell owns its VISIBILITY and drives it into
+// the overlay renderer; the renderer shows/hides the widget and owns its layout, drag, and
+// cursor hit-testing. setMiningVisible is the single mutator (keeps config + tray + hub in sync).
+function sendMiningVisible(state) {
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:mining-visible", state); }
+  catch { /* renderer gone */ }
 function miningIsVisible() { return miningVisible; }
 function sendNotepadVisible(state) {
   try { overlay?.webContents.send("overlay:notepad-visible", state); } catch {}
@@ -1820,43 +1469,13 @@ function sendBrowserVisible() {
   try { overlay?.webContents.send("browser:state", state); } catch {}
   browserController?.setBrowserVisible(browserVisible);
   browserController?.setChatVisible(twitchChatVisible);
-||||||| upstream 0.1.36
-
-// ── Mining Assistant widget (in-canvas) ───────────────────────────────────────
-// The Mining Assistant is now an iframe widget INSIDE the overlay canvas (see missions.html +
-// mining.html?embedded=1), not its own window. The shell owns its VISIBILITY and drives it into
-// the overlay renderer; the renderer shows/hides the widget and owns its layout, drag, and
-// cursor hit-testing. setMiningVisible is the single mutator (keeps config + tray + hub in sync).
-function sendMiningVisible(state) {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:mining-visible", state); }
-  catch { /* renderer gone */ }
-=======
-async function postConfig(patch) { return postJson("/api/config", patch); }
-
-// ── Mining Assistant widget (in-canvas) ───────────────────────────────────────
-// The Mining Assistant is now an iframe widget INSIDE the overlay canvas (see missions.html +
-// mining.html?embedded=1), not its own window. The shell owns its VISIBILITY and drives it into
-// the overlay renderer; the renderer shows/hides the widget and owns its layout, drag, and
-// cursor hit-testing. setMiningVisible is the single mutator (keeps config + tray + hub in sync).
-function sendMiningVisible(state) {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:mining-visible", state); }
-  catch { /* renderer gone */ }
->>>>>>> upstream 0.1.41
 }
-<<<<<<< ArchVerse Alpha17
 function widgetStatesSnapshot() {
   return { mining: miningVisible, notepad: notepadVisible, browser: browserVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, webView: webViewVisible, bindingChart: bindingChartVisible };
-||||||| upstream 0.1.36
-// Push widget on/off state to the in-overlay hub checkboxes (kept in sync with the tray).
-function pushWidgetStates() {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, webView: webViewVisible, bindingChart: bindingChartVisible }); }
-  catch { /* renderer gone */ }
-=======
 // Push widget on/off state to the in-overlay hub checkboxes (kept in sync with the tray).
 function pushWidgetStates() {
   try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }); }
   catch { /* renderer gone */ }
->>>>>>> upstream 0.1.41
 }
 function pushWidgetStates() {
   try { overlay?.webContents.send("overlay:widget-states", widgetStatesSnapshot()); } catch {}
@@ -1899,104 +1518,6 @@ function setTwitchChatVisible(on) {
   refreshTray();
 }
 function toggleTwitchChat() { setTwitchChatVisible(!twitchChatVisible); }
-<<<<<<< ArchVerse Alpha17
-// SC Feed news notifier.
-function sendScFeedVisible(state) { try { overlay?.webContents.send("overlay:scfeed-visible", state); } catch {} }
-function setScFeedVisible(on) { scFeedVisible=!!on; sendScFeedVisible({on:scFeedVisible}); postConfig({scFeedOpen:scFeedVisible}); pushWidgetStates(); refreshTray(); }
-function toggleScFeed(){ setScFeedVisible(!scFeedVisible); }
-function sendUnlockAlertVisible(state){ try { overlay?.webContents.send("overlay:unlockalert-visible", state); } catch {} }
-function setUnlockAlertVisible(on){ unlockAlertVisible=!!on; sendUnlockAlertVisible({on:unlockAlertVisible}); postConfig({unlockAlertOpen:unlockAlertVisible}); pushWidgetStates(); refreshTray(); }
-function toggleUnlockAlert(){ setUnlockAlertVisible(!unlockAlertVisible); }
-function sendPartyVisible(state){ try { overlay?.webContents.send("overlay:party-visible", state); } catch {} }
-function setPartyVisible(on){ partyVisible=!!on; sendPartyVisible({on:partyVisible}); postConfig({partyOpen:partyVisible}); pushWidgetStates(); refreshTray(); }
-function toggleParty(){ setPartyVisible(!partyVisible); }
-function sendBattagliaVisible(state){ try { overlay?.webContents.send("overlay:battaglia-visible", state); } catch {} }
-function setBattagliaVisible(on){ battagliaVisible=!!on; sendBattagliaVisible({on:battagliaVisible}); postConfig({battagliaOpen:battagliaVisible}); pushWidgetStates(); refreshTray(); }
-function toggleBattaglia(){ setBattagliaVisible(!battagliaVisible); }
-function sendWebViewVisible(state){ try { overlay?.webContents.send("overlay:webview-visible", state); } catch {} }
-function setWebViewVisible(on){ webViewVisible=!!on; sendWebViewVisible({on:webViewVisible}); postConfig({webViewOpen:webViewVisible}); pushWidgetStates(); refreshTray(); }
-function toggleWebView(){ setWebViewVisible(!webViewVisible); }
-function sendBindingChartVisible(state){ try { overlay?.webContents.send("overlay:bindingchart-visible", state); } catch {} }
-function setBindingChartVisible(on){ bindingChartVisible=!!on; if(bindingChartVisible){ try{overlay?.webContents.send("overlay:bindingchart-reload");}catch{} } sendBindingChartVisible({on:bindingChartVisible}); postConfig({bindingChartOpen:bindingChartVisible}); pushWidgetStates(); refreshTray(); }
-function toggleBindingChart(){ setBindingChartVisible(!bindingChartVisible); }
-
-function setMiningVisible(on, { persist = true, suppressAuto = false } = {}) {
-  miningVisible = !!on;
-  if (miningVisible && !overlayEnabled) setOverlayEnabled(true);
-  if (!miningVisible) {
-    miningMoveMode = false;
-    miningOnlyInteraction = false;
-    if (suppressAuto) miningAutoSuppress = Date.now() + 90000;
-    try { overlay?.webContents.send("overlay:mining-move-mode", false); } catch {}
-    try { overlay?.webContents.send("overlay:mining-only-interaction", false); } catch {}
-    if (interactiveTarget === "mining") setInteractiveTarget(null, "Mining hidden");  }
-  sendEmbeddedMiningVisible({ on: miningVisible, arm: miningAutoArm, transient: false });
-||||||| upstream 0.1.36
-// SC Feed news notifier — same shell-owned flag. "Visible" here means ARMED: the widget mounts
-// and polls, but only paints when there's a new story (then fades itself out again).
-function sendScFeedVisible(state) {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:scfeed-visible", state); }
-  catch { /* renderer gone */ }
-}
-function setScFeedVisible(on) {
-  scFeedVisible = !!on;
-  sendScFeedVisible({ on: scFeedVisible });
-  postConfig({ scFeedOpen: scFeedVisible }); // remember on/off for next launch
-  pushWidgetStates();
-  refreshTray();
-}
-function toggleScFeed() { setScFeedVisible(!scFeedVisible); }
-// Blueprint-unlock notifier — armed like SC Feed: mounted and listening, but it only paints
-// when a blueprint actually drops.
-function sendUnlockAlertVisible(state) {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:unlockalert-visible", state); }
-  catch { /* renderer gone */ }
-}
-function setUnlockAlertVisible(on) {
-  unlockAlertVisible = !!on;
-  sendUnlockAlertVisible({ on: unlockAlertVisible });
-  postConfig({ unlockAlertOpen: unlockAlertVisible });
-  pushWidgetStates();
-  refreshTray();
-}
-function toggleUnlockAlert() { setUnlockAlertVisible(!unlockAlertVisible); }
-// Party split widget — plain in-canvas iframe, same shell-owned visibility as the Notepad.
-function sendPartyVisible(state) {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:party-visible", state); }
-  catch { /* renderer gone */ }
-}
-function setPartyVisible(on) {
-  partyVisible = !!on;
-  sendPartyVisible({ on: partyVisible });
-  postConfig({ partyOpen: partyVisible }); // remember open/closed for next launch
-  pushWidgetStates();
-  refreshTray();
-}
-function toggleParty() { setPartyVisible(!partyVisible); }
-// Battaglia grind tracker - same shell-owned visibility as the widgets above. Retires when the
-// giver does (4.10): drop this block, its config flag, and overlay/battaglia.html.
-function sendBattagliaVisible(state) {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:battaglia-visible", state); }
-  catch { /* renderer gone */ }
-}
-function setBattagliaVisible(on) {
-  battagliaVisible = !!on;
-  sendBattagliaVisible({ on: battagliaVisible });
-  postConfig({ battagliaOpen: battagliaVisible }); // remember open/closed for next launch
-  pushWidgetStates();
-  refreshTray();
-}
-function toggleBattaglia() { setBattagliaVisible(!battagliaVisible); }
-// Web Page widget - any http(s) page the user pins to the canvas.
-function sendWebViewVisible(state) {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:webview-visible", state); }
-  catch { /* renderer gone */ }
-}
-function setWebViewVisible(on) {
-  webViewVisible = !!on;
-  sendWebViewVisible({ on: webViewVisible });
-  postConfig({ webViewOpen: webViewVisible });
-=======
 // SC Feed news notifier — same shell-owned flag. "Visible" here means ARMED: the widget mounts
 // and polls, but only paints when there's a new story (then fades itself out again).
 function sendScFeedVisible(state) {
@@ -2103,7 +1624,6 @@ function setWebViewVisible(on) {
   webViewVisible = !!on;
   sendWebViewVisible({ on: webViewVisible });
   postConfig({ webViewOpen: webViewVisible });
->>>>>>> upstream 0.1.41
   pushWidgetStates();
   if (persist) void postConfig({ miningOpen: miningVisible });
   refreshTray();
@@ -2159,11 +1679,6 @@ function registerWebViewHotkey(accel) {
   return r;
 }
 
-<<<<<<< ArchVerse Alpha17
-||||||| upstream 0.1.36
-// Live-rebindable hotkey for showing/hiding the Mining Assistant widget. Same shape as the
-// overlay/binding registrations so the config window can warn on an invalid / in-use combo.
-=======
 // Live-rebindable hotkey for the Journal widget. It was the one placeable widget with no way to
 // reach it without the tray or the hub — Argante asked for this, and a scratchpad you have to
 // alt-tab to open is a scratchpad you don't use mid-flight.
@@ -2179,7 +1694,6 @@ function registerNotepadHotkey(accel) {
 
 // Live-rebindable hotkey for showing/hiding the Mining Assistant widget. Same shape as the
 // overlay/binding registrations so the config window can warn on an invalid / in-use combo.
->>>>>>> upstream 0.1.41
 let miningAccel = null;
 function registerMiningHotkey(accel) {
   if (miningAccel) hotkeys.unregister(miningAccel);
@@ -2690,39 +2204,6 @@ function openConfigInBrowser() {
 }
 
 function openConfig() {
-<<<<<<< ArchVerse Alpha17
-  if (configWin && !configWin.isDestroyed()) {
-    configWin.show();
-    configWin.focus();
-    try { configWin.moveTop(); } catch {}
-    return;
-  }
-
-  // KWin can keep a full-screen transparent always-on-top overlay above a normal settings
-  // window even when both are Electron windows. Temporarily hide visible overlay canvases on
-  // Linux while settings are open, then restore them when settings closes.
-  const restore = {
-    overlay: process.platform === "linux" && !!(overlay && !overlay.isDestroyed() && overlay.isVisible()),
-    binding: process.platform === "linux" && !!(bindingWin && !bindingWin.isDestroyed() && bindingWin.isVisible()),
-  };
-  if (restore.overlay) {
-    browserController?.suspendHidden();
-    overlayWindows.suspendCanvasWindow("Overlay Manager", overlay);
-  }
-  if (restore.binding) bindingWin.hide();
-
-||||||| upstream 0.1.36
-  if (configWin) { configWin.show(); configWin.focus(); return; }
-  // Size the window to the display so it (and its auto-scaled content — config.html applies the
-  // same screen.height/1080 zoom) is readable on a 4K TV instead of a tiny 780px box. Clamp to the
-  // work area, and center on whichever display the cursor is on.
-  const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const scale = Math.max(1, Math.min(2.25, disp.size.height / 1080));
-  const width = Math.min(disp.workArea.width - 40, Math.round(780 * scale));
-  const height = Math.min(disp.workArea.height - 40, Math.round(860 * scale));
-  const x = Math.round(disp.workArea.x + (disp.workArea.width - width) / 2);
-  const y = Math.round(disp.workArea.y + (disp.workArea.height - height) / 2);
-=======
   if (configWin) { configWin.show(); configWin.focus(); return; }
   // Size the window to the display so it (and its auto-scaled content — config.html applies the
   // same screen.height/1080 zoom) is readable on a 4K TV instead of a tiny 780px box. Clamp to
@@ -2735,24 +2216,10 @@ function openConfig() {
   const height = Math.min(disp.workArea.height - 40, Math.round(860 * scale));
   const x = Math.round(disp.workArea.x + (disp.workArea.width - width) / 2);
   const y = Math.round(disp.workArea.y + (disp.workArea.height - height) / 2);
->>>>>>> upstream 0.1.41
   configWin = new BrowserWindow({
-<<<<<<< ArchVerse Alpha17
-    width: 780,
-    height: 820,
-    minWidth: 680,
-    minHeight: 620,
-    show: false,
-    center: true,
-    title: "SC Blueprint Tracker — Config",
-||||||| upstream 0.1.36
-    x, y, width, height,
-    title: "SC Overlay — Config",
-=======
     x, y, width, height,
     title: "SC Overlay — Config",
     icon: appIconPath(),
->>>>>>> upstream 0.1.41
     autoHideMenuBar: true,
     backgroundColor: "#171a1f",
     alwaysOnTop: process.platform !== "linux",
@@ -2927,35 +2394,11 @@ function restartAsAdmin() {
     // is handled by before-quit's server.kill.)
     const ps = [
       `Wait-Process -Id ${process.pid} -Timeout 10 -ErrorAction SilentlyContinue`,
-<<<<<<< ArchVerse Alpha17
-||||||| upstream 0.1.36
-      `W 'old instance gone (or 10s timeout); sweeping leftover sidecar'`,
-=======
       `W 'old instance gone (or 10s timeout); sweeping leftover sidecar'`,
       // The sidecar is our own exe running server.mjs as node (0.1.41+); match the command line,
       // never the bare name — every overlay window is also named 'SC Overlay'. The old bun-exe
       // name sweep stays one more release: an orphan from 0.1.40 can survive into this update.
->>>>>>> upstream 0.1.41
       `Get-Process -Name 'sc-overlay-server' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
-<<<<<<< ArchVerse Alpha17
-      `Start-Process -FilePath ${q(exe)}${argList} -WorkingDirectory ${q(wd)} -Verb RunAs`,
-    ].join("; ");
-    spawn("powershell", ["-NoProfile", "-Command", ps], { detached: true, stdio: "ignore", windowsHide: true }).unref();
-||||||| upstream 0.1.36
-      `try {`,
-      `  W 'requesting elevated relaunch (UAC): ${exe.replace(/'/g, "''")}'`,
-      `  Start-Process -FilePath ${q(exe)}${argList} -WorkingDirectory ${q(wd)} -Verb RunAs -ErrorAction Stop`,
-      `  W 'elevated relaunch accepted'`,
-      `} catch {`,
-      `  W ('ELEVATION FAILED: ' + $_.Exception.Message)`,
-      `}`,
-    ].join("\r\n");
-    const helperPath = path.join(app.getPath("temp"), "sc-overlay-elevate.ps1");
-    fs.writeFileSync(helperPath, helper, "utf8");
-    mlog(`spawning elevation helper (isPackaged=${app.isPackaged}, exe=${exe})`);
-    spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", helperPath],
-      { detached: true, stdio: "ignore", windowsHide: true }).unref();
-=======
       `Get-CimInstance Win32_Process -Filter "Name='SC Overlay.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*server.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
       `try {`,
       `  W 'requesting elevated relaunch (UAC): ${exe.replace(/'/g, "''")}'`,
@@ -2970,7 +2413,6 @@ function restartAsAdmin() {
     mlog(`spawning elevation helper (isPackaged=${app.isPackaged}, exe=${exe})`);
     spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", helperPath],
       { detached: true, stdio: "ignore", windowsHide: true }).unref();
->>>>>>> upstream 0.1.41
     app.isQuitting = true;
     setTimeout(() => app.quit(), 300); // begin our own shutdown; the helper waits for us to exit
   } catch (e) {
@@ -3045,28 +2487,8 @@ function setupUpdater() {
     if (!updateDownload) updateDownload = { version: "", percent: 0, bps: 0 };
     const pct = Math.floor(p.percent);
     updateDownload.bps = p.bytesPerSecond;
-<<<<<<< ArchVerse Alpha17
-    if (trayIsUsable()) tray.setToolTip(`SC Blueprint Tracker — downloading update ${pct}%`);
-    if (pct !== updateDownload.percent) {
-      updateDownload.percent = pct;
-      refreshTray();
-    }
-||||||| upstream 0.1.36
-    if (tray) tray.setToolTip(`SC Overlay — downloading update ${pct}%`);
-    if (pct !== updateDownload.percent) {
-      updateDownload.percent = pct;
-      refreshTray();
-    }
-=======
-    // ONLY the tooltip updates during a download. setContextMenu() here QUIT the app for
-    // anyone who opened the tray to watch progress: replacing the Menu object while its
-    // native popup is open tears it down and the process exits cleanly — no WER, no log
-    // (shipped 0.1.39–0.1.40; Sub diagnosed it). The menu itself still rebuilds on
-    // update-downloaded and on error, when no popup can be up. Never rebuild a tray
-    // context menu on a high-frequency event.
-    if (tray) tray.setToolTip(`SC Overlay — downloading update ${pct}%`);
-    updateDownload.percent = pct;
->>>>>>> upstream 0.1.41
+  if (trayIsUsable()) tray.setToolTip(`SC Overlay — downloading update ${pct}%`);
+  updateDownload.percent = pct;
   });
   autoUpdater.on("update-not-available", () => {
     if (!manualCheck) return;
@@ -3162,18 +2584,10 @@ function refreshTray() {
       { type: "separator" },
       { label: "Tools", enabled: false },      { label: "Refresh missions (re-read log)", click: refreshMissions },
       { label: "Verify from logs", click: verifyFromLogs },
-<<<<<<< ArchVerse Alpha17
-      { label: "Open config…", click: openConfig },
-      ...(process.platform === "linux" ? [{ label: "Open config in browser…", click: openConfigInBrowser }] : []),
-      ...(process.platform === "win32" && cachedElevated === false
-||||||| upstream 0.1.36
-      { label: "Settings…", click: openConfig },
-      ...(cachedElevated === false
-=======
       { label: "Settings…", click: openSettingsSurface },
       { label: "Run setup again…", click: openSetup },
-      ...(cachedElevated === false
->>>>>>> upstream 0.1.41
+      ...(process.platform === "linux" ? [{ label: "Open config in browser…", click: openConfigInBrowser }] : []),
+      ...(process.platform === "win32" && cachedElevated === false
         ? [{ label: "Restart as administrator (for in-game hotkeys)", click: restartAsAdmin }]
         : []),
       { type: "separator" },
@@ -3198,46 +2612,20 @@ function refreshTray() {
   );
 }
 
-<<<<<<< ArchVerse Alpha17
-function createTray() {
-  // The asar only packs electron/**, so overlay/ isn't inside it — in the packaged
-  // app the icon ships with the sidecar under resources/server/overlay/. Resolve
-  // there when packaged, else from the repo (dev). (Was ROOT/overlay → blank tray.)
+function appIconPath() {
   const iconCandidates = [
     path.join(ROOT, "server", "overlay", "tray-icon.png"),
     path.join(process.resourcesPath, "server", "overlay", "tray-icon.png"),
     path.join(process.resourcesPath, "app", "server", "overlay", "tray-icon.png"),
+    path.join(ROOT, "overlay", "tray-icon.png"),
     path.join(ROOT, "build", "icon.png"),
   ];
-  const iconPath = iconCandidates.find((candidate) => fs.existsSync(candidate)) || "";
-  const icon = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
-||||||| upstream 0.1.36
-function createTray() {
-  // The asar only packs electron/**, so overlay/ isn't inside it — in the packaged
-  // app the icon ships with the sidecar under resources/server/overlay/. Resolve
-  // there when packaged, else from the repo (dev). (Was ROOT/overlay → blank tray.)
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, "server", "overlay", "tray-icon.png")
-    : path.join(ROOT, "overlay", "tray-icon.png");
-  const icon = nativeImage.createFromPath(iconPath);
-=======
-/** The app icon, for the tray AND every window.
- *  🔑 The asar only packs electron/**, so overlay/ isn't inside it — in the packaged app the
- *  icon ships with the sidecar under resources/server/overlay/. Resolve there when packaged,
- *  else from the repo (dev). (Resolving from ROOT/overlay when packaged → blank tray.)
- *  `build/icon.png` is NOT usable here: it is only an electron-builder input and never ships.
- *  A window with no `icon:` falls back to the EXECUTABLE's icon, which in dev is electron.exe —
- *  which is why the Electron logo showed up on the settings window, the wizard, and (now that
- *  the overlay is Alt-Tabbable) the overlay's own taskbar entry. */
-function appIconPath() {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, "server", "overlay", "tray-icon.png")
-    : path.join(ROOT, "overlay", "tray-icon.png");
+  return iconCandidates.find((candidate) => fs.existsSync(candidate)) || "";
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(appIconPath());
->>>>>>> upstream 0.1.41
+  const iconPath = appIconPath();
+  const icon = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
   tray = new Tray(icon);
   tray.setToolTip("SC Overlay");
   tray.on("click", toggleShow);
@@ -3256,68 +2644,6 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
-<<<<<<< ArchVerse Alpha17
-    if (process.platform === "win32") {
-      foreground.onChange(() => {
-        applyMouse();
-        try { overlay?.webContents.send("overlay:game-focus", foreground.gameInFront()); } catch {}
-      });
-    }
-    const serverStarted = startServer();
-    const up = serverStarted ? await waitForServer() : false;
-    if (!up) {
-      console.error("[electron] server did not come up on :" + PORT);
-      dialog.showErrorBox("SC Overlay server failed", `The local server could not start. See ${SIDECAR_LOG}`);
-      createTray();
-      return;
-    }    overlayEnabled = readOverlayEnabled();
-    const savedBrowser = readBrowserState();
-    browserVisible = savedBrowser.browserVisible;
-    twitchChatVisible = savedBrowser.chatVisible;
-    browserRuntimeState = { ...browserRuntimeState, url: savedBrowser.url, channel: savedBrowser.channel };
-
-    // Attach the held interaction key before creating the always-on-top Overlay Manager. This
-    // ensures the low-level hook is already listening while Star Citizen still owns focus on the
-    // very first launch; held-F is ready before the overlay window is created.
-    let registeredInteractKey = "F";
-    try {
-      const c = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "config.json"), "utf8"));
-      if (process.platform !== "linux" && c.interactHotkey) registeredInteractKey = c.interactHotkey;
-      // Linux always uses F as the safe, focus-independent widget-entry gate. A migrated
-      // holdToInteract=false value must never disable the only normal interaction path.
-      if (process.platform === "linux") fHoverEnabled = true;
-    } catch { /* defaults */ }
-    const earlyInteractResult = registerInteractHotkey(registeredInteractKey);
-    if (earlyInteractResult.ok) console.log(`[hotkeys] interaction gate ${registeredInteractKey} registered before overlay creation`);
-    else console.error(`[hotkeys] interaction gate ${registeredInteractKey} unavailable: ${earlyInteractResult.error || "unknown"}`);
-
-    if (LINUX_HARD_CLICK_THROUGH) {
-      console.log("[electron] Linux hard click-through mode active; one native canvas hosts Blueprint, Mining, and Notepad");
-    }
-    if (overlayEnabled && !overlay) createOverlay();
-||||||| upstream 0.1.36
-    // One helper answers "who's in front" for both the OCR gate and hold-to-interact — and only
-    // runs while one of them actually wants it (see foreground.want). Alt-tabbing in or out of the
-    // game changes whether the hold is required, so re-evaluate on every change rather than
-    // waiting for something else to notice.
-    foreground.onChange(() => {
-      applyMouse();
-      // The canvas needs the same answer for its own reason: a summoned cog / open hub should
-      // time itself out once you're back in the GAME, since that's when it's forgotten about.
-      // Pushed rather than polled — the page can't see the desktop, and this fires only on an
-      // actual change of foreground window.
-      try {
-        if (overlay && !overlay.isDestroyed()) {
-          overlay.webContents.send("overlay:game-focus", foreground.gameInFront());
-        }
-      } catch { /* window gone */ }
-    });
-    startServer();
-    const up = await waitForServer();
-    if (!up) console.error("[electron] server did not come up on :" + PORT);
-    overlayEnabled = readOverlayEnabled();
-    if (overlayEnabled) createOverlay();
-=======
     // One helper answers "who's in front" for both the OCR gate and hold-to-interact — and only
     // runs while one of them actually wants it (see foreground.want). Alt-tabbing in or out of the
     // game changes whether the hold is required, so re-evaluate on every change rather than
@@ -3350,23 +2676,26 @@ if (!app.requestSingleInstanceLock()) {
         "happening, Settings → Copy diagnostics says why, and the detail is in:\n" + SIDECAR_LOG);
     }
     overlayEnabled = readOverlayEnabled();
+    const savedBrowser = readBrowserState();
+    browserVisible = savedBrowser.browserVisible; twitchChatVisible = savedBrowser.chatVisible;
+    browserRuntimeState = { ...browserRuntimeState, url: savedBrowser.url, channel: savedBrowser.channel };
+    let registeredInteractKey = "F";
+    try {
+      const c = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "config.json"), "utf8"));
+      if (process.platform !== "linux" && c.interactHotkey) registeredInteractKey = c.interactHotkey;
+      if (process.platform === "linux") fHoverEnabled = true;
+    } catch {}
+    const earlyInteractResult = registerInteractHotkey(registeredInteractKey);
+    if (earlyInteractResult?.ok) console.log(`[hotkeys] interaction gate ${registeredInteractKey} registered before overlay creation`);
     if (overlayEnabled) createOverlay();
     reportGeometry(); // baseline for diagnostics, before any monitor change moves things around
->>>>>>> upstream 0.1.41
     createTray();
     overlayWindows.installDisplayHooks();
     setupUpdater();
-<<<<<<< ArchVerse Alpha17
     hotkeys.register("Control+Alt+L", toggleLock); // legacy Blueprint lock/unlock
 
     // Linux uses Shift+F6 for the shared arrange workflow. F remains the normal widget-entry gate.
 
-||||||| upstream 0.1.36
-    // Keep the canvas windows covering the whole virtual desktop when monitors change.
-    screen.on("display-added", refitCanvasWindows);
-    screen.on("display-removed", refitCanvasWindows);
-    screen.on("display-metrics-changed", refitCanvasWindows);
-=======
     // First run → wizard; existing user with unfinished setup → one dismissible banner. Runs
     // after createOverlay() because the banner is sent to the canvas, and only when the server
     // actually answered — the wizard reads every step's state from it.
@@ -3375,24 +2704,15 @@ if (!app.requestSingleInstanceLock()) {
     screen.on("display-added", refitCanvasWindows);
     screen.on("display-removed", refitCanvasWindows);
     screen.on("display-metrics-changed", refitCanvasWindows);
->>>>>>> upstream 0.1.41
     // Configurable global hotkeys (live-rebindable from the config window), read from the
     // persisted config: overlay show/hide (default F3) + binding-chart PNG (default Alt+F3).
     let overlayKey = "F3";
     let bindKey = "Ctrl+F3";
     let miningKey = "Shift+F3";
-<<<<<<< ArchVerse Alpha17
-    let interactKey = registeredInteractKey;
-    let moveKey = "Shift+F6";
-||||||| upstream 0.1.36
-    let interactKey = "F";
-    let moveKey = "Ctrl+Alt+M";
-=======
     let notepadKey = "Alt+F3";
-    let interactKey = "F";
-    let moveKey = "Ctrl+Alt+M";
+    let interactKey = typeof registeredInteractKey === "string" ? registeredInteractKey : "F";
+    let moveKey = process.platform === "linux" ? "Shift+F6" : "Ctrl+Alt+M";
     let fabClaimKey = "F4";
->>>>>>> upstream 0.1.41
     try {
       const p = path.join(CONFIG_DIR, "config.json");
       const c = JSON.parse(fs.readFileSync(p, "utf8"));
@@ -3405,46 +2725,24 @@ if (!app.requestSingleInstanceLock()) {
       }
       if (Number.isFinite(c.canvasScale)) canvasScale = clampCanvasScale(c.canvasScale);
       if (typeof c.miningHotkey === "string") miningKey = c.miningHotkey;
-<<<<<<< ArchVerse Alpha17
       if (process.platform !== "linux" && typeof c.interactHotkey === "string") interactKey = c.interactHotkey;
       if (process.platform !== "linux" && typeof c.moveHotkey === "string") moveKey = c.moveHotkey;
-      if (process.platform === "linux") fHoverEnabled = true;
-      else holdMode = c.holdToInteract === true;    } catch { /* defaults */ }
-||||||| upstream 0.1.36
-      if (typeof c.interactHotkey === "string") interactKey = c.interactHotkey;
-      if (typeof c.moveHotkey === "string") moveKey = c.moveHotkey;
-      if (c.holdToInteract === true) holdMode = true; // opt-in: require holding the interact key
-    } catch { /* defaults */ }
-    foreground.want("hold", holdMode); // only track the foreground app if something asks
-=======
-      if (typeof c.interactHotkey === "string") interactKey = c.interactHotkey;
-      if (typeof c.moveHotkey === "string") moveKey = c.moveHotkey;
       if (typeof c.fabClaimHotkey === "string") fabClaimKey = c.fabClaimHotkey;
-      if (c.holdToInteract === true) holdMode = true; // opt-in: require holding the interact key
+      if (process.platform === "linux") { fHoverEnabled = true; holdMode = true; interactKey = "F"; moveKey = "Shift+F6"; }
+      else holdMode = c.holdToInteract === true;
     } catch { /* defaults */ }
-    foreground.want("hold", holdMode); // only track the foreground app if something asks
->>>>>>> upstream 0.1.41
+    if (process.platform === "win32") foreground.want("hold", holdMode);
     registerOverlayHotkey(overlayKey);
     registerBindingHotkey(bindKey);
     registerMiningHotkey(miningKey);
-<<<<<<< ArchVerse Alpha17
+    registerNotepadHotkey(notepadKey);
     if (interactKey !== registeredInteractKey) {
       registerInteractHotkey(interactKey);
       registeredInteractKey = interactKey;
     }
-||||||| upstream 0.1.36
-    registerInteractHotkey(interactKey);
-=======
-    registerNotepadHotkey(notepadKey);
-    registerInteractHotkey(interactKey);
->>>>>>> upstream 0.1.41
     registerMoveHotkey(moveKey);
-<<<<<<< ArchVerse Alpha17
-    if (process.platform === "linux") void postConfig({ moveHotkey: "Shift+F6" });
-||||||| upstream 0.1.36
-=======
     registerFabClaimHotkey(fabClaimKey);
->>>>>>> upstream 0.1.41
+    if (process.platform === "linux") void postConfig({ interactHotkey: "F", holdToInteract: true, moveHotkey: "Shift+F6" });
     // Learn our elevation state (async) so the tray can offer "Restart as administrator" when
     // we're NOT elevated — the state hotkeys-over-a-focused-game depend on.
     checkElevated().then(() => refreshTray());
@@ -3484,27 +2782,13 @@ if (!app.requestSingleInstanceLock()) {
     // Opt-in fabricator / mission / mining screen-capture loop. No-op until enabled.
     startFabCapture({
       port: PORT,
-<<<<<<< ArchVerse Alpha17
       configDir: CONFIG_DIR,
+      devTools: !app.isPackaged,
       onStatus: (s) => {
         latestOcrStatus = { ...s, at: Number(s?.at) || Date.now() };
-        try { overlay?.webContents.send("overlay:ocr", latestOcrStatus); } catch { /* window gone */ }
-        try { configWin?.webContents.send("ocr:status", latestOcrStatus); } catch { /* window gone */ }
+        try { overlay?.webContents.send("overlay:ocr", latestOcrStatus); } catch {}
+        try { configWin?.webContents.send("ocr:status", latestOcrStatus); } catch {}
       },
-||||||| upstream 0.1.36
-      configDir: path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker"),
-      onStatus: (s) => { try { overlay?.webContents.send("overlay:ocr", s); } catch { /* window gone */ } },
-=======
-      configDir: path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker"),
-      // 🔑 Passed in, never read from config alone. `miningDebug` writes SCREENSHOTS OF THE USER'S
-      // DESKTOP to disk, and this app's whole position on screen reading is that it does not happen
-      // unless you ask for it. A config flag would ship that capability to everyone — off by
-      // default and with no UI, but present, and a stale `true` left in a config.json would arm it
-      // on a packaged build. Same gate as the dev-replay endpoint: non-packaged only, decided here
-      // where `app.isPackaged` is authoritative, so a release physically cannot turn it on.
-      devTools: !app.isPackaged,
-      onStatus: (s) => { try { overlay?.webContents.send("overlay:ocr", s); } catch { /* window gone */ } },
->>>>>>> upstream 0.1.41
     });
   });
 
@@ -3597,40 +2881,14 @@ if (!app.requestSingleInstanceLock()) {
     registerBindingHotkey(typeof accel === "string" ? accel : ""));
   ipcMain.handle("set-webview-hotkey", (_e, accel) =>
     registerWebViewHotkey(typeof accel === "string" ? accel : ""));
-<<<<<<< ArchVerse Alpha17
   ipcMain.handle("set-mining-hotkey", (_e, accel) =>
     registerMiningHotkey(typeof accel === "string" ? accel : ""));
-||||||| upstream 0.1.36
-=======
   ipcMain.handle("set-notepad-hotkey", (_e, accel) =>
     registerNotepadHotkey(typeof accel === "string" ? accel : ""));
->>>>>>> upstream 0.1.41
   ipcMain.handle("set-interact-hotkey", (_e, accel) =>
     registerInteractHotkey(process.platform === "linux" ? "F" : (typeof accel === "string" ? accel : "")));
   ipcMain.handle("set-move-hotkey", (_e, accel) =>
     registerMoveHotkey(typeof accel === "string" ? accel : ""));
-<<<<<<< ArchVerse Alpha17
-  ipcMain.handle("app:set-hold-mode", (_e, on) => {
-    if (process.platform === "linux") {
-      // The Windows setting remains configurable, but Linux hard click-through requires one
-      // guaranteed way back into every widget. Ignore stale or live attempts to turn F off.
-      fHoverEnabled = true;
-      applyMouse();
-      return true;
-    }
-    holdMode = !!on;
-    if (!holdMode) holdInteract = false;
-    applyMouse();
-    return holdMode;
-||||||| upstream 0.1.36
-  ipcMain.handle("overlay:reset-layout", () => { resetWidgetLayout(); return true; });
-  // Primary display's offset + size within the full-desktop canvas, so the page can default a
-  // new/reset widget onto the PRIMARY monitor (not a corner of a left/top secondary display).
-  ipcMain.handle("overlay:canvas-info", () => {
-    const v = fullDisplayBounds();
-    const p = screen.getPrimaryDisplay().bounds;
-    return { px: p.x - v.x, py: p.y - v.y, pw: p.width, ph: p.height, vw: v.width, vh: v.height };
-=======
   ipcMain.handle("set-fabclaim-hotkey", (_e, accel) =>
     registerFabClaimHotkey(typeof accel === "string" ? accel : ""));
   ipcMain.handle("overlay:reset-layout", () => { resetWidgetLayout(); return true; });
@@ -3658,14 +2916,24 @@ if (!app.requestSingleInstanceLock()) {
       vw: w.width / z, vh: w.height / z,
       scale: z,
     };
->>>>>>> upstream 0.1.41
+  ipcMain.handle("app:set-hold-mode", (_e, on) => {
+    if (process.platform === "linux") {
+      // The Windows setting remains configurable, but Linux hard click-through requires one
+      // guaranteed way back into every widget. Ignore stale or live attempts to turn F off.
+      fHoverEnabled = true;
+      applyMouse();
+      return true;
+    }
+    holdMode = !!on;
+    if (!holdMode) holdInteract = false;
+    applyMouse();
+    return holdMode;
   });
   ipcMain.handle("app:want-foreground", (_e, on) => {
     if (process.platform !== "win32") return null;
     foreground.want("cog", !!on);
     return foreground.ready() ? foreground.gameInFront() : null;
   });
-<<<<<<< ArchVerse Alpha17
   ipcMain.on("overlay:hover", (_e, on) => { hovering = !!on; applyMouse(); });
   // The page reports the visible widget rectangles. During held-F gate/latch interaction these
   // rectangles become the native Linux window shape: widget clicks reach Electron while empty
@@ -3715,38 +2983,6 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("browser:set-chat-visible", (_e, on) => setTwitchChatVisible(!!on));
   ipcMain.handle("browser:state", () => browserController?.state() || {
     browserVisible, chatVisible: twitchChatVisible, ...browserRuntimeState,
-||||||| upstream 0.1.36
-
-  // Legacy hover signal — hover is now driven by pollCursor() hit-testing the reported regions,
-  // so this is a no-op (kept so the preload bridge / page calls don't error).
-  ipcMain.on("overlay:hover", () => {});
-  // The page reports its interactive elements' client-rects; pollCursor() hit-tests the cursor
-  // against them to decide when this window is interactive (no mouse hook, no forwarding).
-  ipcMain.on("overlay:regions", (_e, rects) => { overlayRegions = Array.isArray(rects) ? rects : []; });
-  // A HUD modal (what's-new card / hub) opened/closed → keep it clickable even under lock.
-  ipcMain.on("overlay:modal", (_e, on) => {
-    modalOpen = !!on;
-    // A modal (what's-new card, the hub) renders in the canvas and would be painted UNDER a
-    // native view, so the view stands down while one is up.
-    maskWebView(modalOpen);
-    applyMouse();
-=======
-
-  // Legacy hover signal — hover is now driven by pollCursor() hit-testing the reported regions,
-  // so this is a no-op (kept so the preload bridge / page calls don't error).
-  ipcMain.on("overlay:hover", () => {});
-  // The page reports its interactive elements' client-rects; pollCursor() hit-tests the cursor
-  // against them to decide when this window is interactive (no mouse hook, no forwarding).
-  ipcMain.on("overlay:regions", (_e, rects) => { overlayRegions = Array.isArray(rects) ? rects : []; });
-  // A HUD modal (what's-new card / hub) opened/closed → keep it clickable even under lock.
-  ipcMain.on("overlay:modal", (_e, on) => {
-    modalOpen = !!on;
-    // A modal (what's-new card, the hub) renders in the canvas and would be painted UNDER a
-    // native view, so the view stands down while one is up.
-    maskModal = modalOpen;
-    recomputeWebViewMask();
-    applyMouse();
->>>>>>> upstream 0.1.41
   });
   ipcMain.on("overlay:notepad-editing", (_e, on) => {
     notepadEditing = !!on;
@@ -3764,7 +3000,8 @@ if (!app.requestSingleInstanceLock()) {
   // A HUD modal (what's-new card / hub) opened/closed → keep it clickable even under lock.
   ipcMain.on("overlay:modal", (_e, on) => {
     modalOpen = !!on;
-    maskWebView(modalOpen);
+    maskModal = modalOpen;
+    recomputeWebViewMask();
     applyMouse();
     reapplyOverlayInputShape();
     // Startup patch notes are a blocking agreement/acknowledgement surface. Make the native
@@ -3792,57 +3029,12 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("overlay:open-url", (_e, url) => {
     if (typeof url === "string" && /^https:\/\//i.test(url)) shell.openExternal(url);
   });
-<<<<<<< ArchVerse Alpha17
-  ipcMain.on("overlay:begin-move", () => { maskWebView(true); setMoveMode(true); });
-  ipcMain.on("overlay:end-move", () => { maskWebView(false); setMoveMode(false); });
-  ipcMain.on("webview:bounds", (_e, r) => { if (!r || typeof r.x !== "number") return; webViewBounds={x:Math.round(r.x),y:Math.round(r.y),width:Math.max(0,Math.round(r.width)),height:Math.max(0,Math.round(r.height))}; applyWebViewBounds(); });
-  ipcMain.on("webview:show", (_e,on)=>{webViewWanted=!!on;if(webViewWanted)ensureWebView();applyWebViewBounds();});
-  ipcMain.on("webview:load", (_e,url)=>{if(typeof url!=="string"||!/^https?:\/\//i.test(url))return;ensureWebView();webView?.webContents.loadURL(url).catch(()=>{});});
-  ipcMain.on("webview:reload",()=>{try{webView?.webContents.reload();}catch{}});
-  ipcMain.on("webview:back",()=>{try{if(webView?.webContents.navigationHistory.canGoBack())webView.webContents.navigationHistory.goBack();}catch{}});
-  ipcMain.on("webview:close",()=>{webViewWanted=false;destroyWebView();});  // Per-widget layout (canvas model): the page fetches saved widget layouts on load and
-||||||| upstream 0.1.36
   // Any widget's grab handle (or the global cog's Arrange button) enters GLOBAL arrange —
   // all visible widgets become movable; either "Done" exits for all.
   // Arrange draws drag banners and handles OVER the widgets; a native view would sit on top of
   // all of it, so it steps aside for the duration.
-  ipcMain.on("overlay:begin-move", () => { maskWebView(true); setArrangeAll(true); });
-  ipcMain.on("overlay:end-move", () => { maskWebView(false); setArrangeAll(false); });
-
-  // ── the Web Page widget's view ──────────────────────────────────────────────
-  // The renderer owns the widget's chrome and geometry and leaves a hole; these carry the hole's
-  // rect, what to load in it, and whether it should be painted at all.
-  ipcMain.on("webview:bounds", (_e, r) => {
-    if (!r || typeof r.x !== "number") return;
-    // Round: fractional bounds make a native view blurry against the game.
-    webViewBounds = { x: Math.round(r.x), y: Math.round(r.y), width: Math.max(0, Math.round(r.width)), height: Math.max(0, Math.round(r.height)) };
-    applyWebViewBounds();
-  });
-  ipcMain.on("webview:show", (_e, on) => {
-    webViewWanted = !!on;
-    if (webViewWanted) ensureWebView();
-    applyWebViewBounds();
-  });
-  ipcMain.on("webview:load", (_e, url) => {
-    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return;
-    ensureWebView();
-    webView?.webContents.loadURL(url).catch((e) => {
-      try { overlay?.webContents.send("webview:state", { url, failed: String(e).split("\n")[0] }); } catch { /* gone */ }
-    });
-  });
-  ipcMain.on("webview:reload", () => { try { webView?.webContents.reload(); } catch { /* none yet */ } });
-  ipcMain.on("webview:back", () => {
-    try { if (webView?.webContents.navigationHistory.canGoBack()) webView.webContents.navigationHistory.goBack(); } catch { /* none yet */ }
-  });
-  ipcMain.on("webview:close", () => { webViewWanted = false; destroyWebView(); });
-  // Per-widget layout (canvas model): the page fetches saved widget layouts on load and
-=======
-  // Any widget's grab handle (or the global cog's Arrange button) enters GLOBAL arrange —
-  // all visible widgets become movable; either "Done" exits for all.
-  // Arrange draws drag banners and handles OVER the widgets; a native view would sit on top of
-  // all of it, so it steps aside for the duration.
-  ipcMain.on("overlay:begin-move", () => { maskArrange = true; recomputeWebViewMask(); setArrangeAll(true); });
-  ipcMain.on("overlay:end-move", () => { maskArrange = false; recomputeWebViewMask(); setArrangeAll(false); });
+  ipcMain.on("overlay:begin-move", () => { maskArrange = true; recomputeWebViewMask(); setArrangeAll(true); setMoveMode(true); reapplyOverlayInputShape(); });
+  ipcMain.on("overlay:end-move", () => { maskArrange = false; recomputeWebViewMask(); setArrangeAll(false); setMoveMode(false); reapplyOverlayInputShape(); });
   // Canvas chrome that has to be readable is open over the view (a widget's settings popover, the
   // cog hub). The renderer is the only thing that knows this — main cannot see the DOM.
   ipcMain.on("overlay:mask-view", (_e, on) => { maskChrome = !!on; recomputeWebViewMask(); });
@@ -3874,7 +3066,6 @@ if (!app.requestSingleInstanceLock()) {
   });
   ipcMain.on("webview:close", () => { webViewWanted = false; destroyWebView(); });
   // Per-widget layout (canvas model): the page fetches saved widget layouts on load and
->>>>>>> upstream 0.1.41
   // saves them back as the user drags/resizes. Scale is now a property of each widget inside
   // the full-screen canvas, not a resize of the overlay window (which is fixed full-screen).
   ipcMain.handle("overlay:get-widgets", () => readWidgets());
@@ -3883,20 +3074,6 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.handle("overlay:canvas-info", () => overlayWindows.canvasInfo());
 
   // ── global widget on/off (from the in-overlay hub) ──────────────────────────
-<<<<<<< ArchVerse Alpha17
-  ipcMain.handle("app:widget-states", () => widgetStatesSnapshot());  ipcMain.on("app:set-mining", (_e, on) => {
-    if (on) miningAutoSuppress = 0;
-    setMiningVisible(!!on, { suppressAuto: !on });
-||||||| upstream 0.1.36
-  // Only the Mining Assistant is a hub toggle — the Blueprint widget hides in-page and the
-  // Binding chart is hotkey-only (never kept on). Both widgets now live in the one overlay
-  // renderer, so mining is a shell-owned visibility flag (setMiningVisible) rather than a window.
-  // (sendMiningVisible / pushWidgetStates / setMiningVisible are defined at module scope above.)
-  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, webView: webViewVisible, bindingChart: bindingChartVisible }));
-  ipcMain.on("app:set-mining", (_e, on) => {
-    if (on) { miningAutoSuppress = 0; setMiningVisible(true); }
-    else setMiningVisible(false, { manual: true });
-=======
   // Only the Mining Assistant is a hub toggle — the Blueprint widget hides in-page and the
   // Binding chart is hotkey-only (never kept on). Both widgets now live in the one overlay
   // renderer, so mining is a shell-owned visibility flag (setMiningVisible) rather than a window.
@@ -3917,90 +3094,12 @@ if (!app.requestSingleInstanceLock()) {
     return { x: canvasOffset.x, y: canvasOffset.y, scale: canvasScale };
   });
   ipcMain.handle("app:widget-states", () => ({ mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }));
+  ipcMain.handle("app:widget-states", () => widgetStatesSnapshot());
   ipcMain.on("app:set-mining", (_e, on) => {
     if (on) { miningAutoSuppress = 0; setMiningVisible(true); }
     else setMiningVisible(false, { manual: true });
->>>>>>> upstream 0.1.41
   });
   ipcMain.on("app:set-notepad", (_e, on) => setNotepadVisible(!!on));
-<<<<<<< ArchVerse Alpha17
-  ipcMain.on("app:set-twitchchat", (_e,on)=>setTwitchChatVisible(!!on));
-  ipcMain.on("app:set-twitch-chat", (_e,on)=>setTwitchChatVisible(!!on));
-  ipcMain.on("app:set-browser", (_e,on)=>setBrowserVisible(!!on));
-  ipcMain.on("app:set-scfeed", (_e,on)=>setScFeedVisible(!!on));
-  ipcMain.on("app:set-unlockalert", (_e,on)=>setUnlockAlertVisible(!!on));
-  ipcMain.on("app:set-party", (_e,on)=>setPartyVisible(!!on));
-  ipcMain.on("app:set-battaglia", (_e,on)=>setBattagliaVisible(!!on));
-  ipcMain.on("app:set-webview", (_e,on)=>setWebViewVisible(!!on));
-  ipcMain.on("app:set-bindingchart", (_e,on)=>setBindingChartVisible(!!on));
-  ipcMain.handle("scfeed:pick-tone", async()=>{const r=await dialog.showOpenDialog(overlay??undefined,{title:"Choose an SC Feed alert WAV",filters:[{name:"WAV audio",extensions:["wav"]}],properties:["openFile"]});if(r.canceled||!r.filePaths.length)return false;await postConfig({scFeedTone:r.filePaths[0]});return true;});
-  ipcMain.handle("scfeed:clear-tone", async()=>{await postConfig({scFeedTone:""});return true;});
-  ipcMain.handle("app:metrics",()=>{const os=require("node:os");let cpu=0,mem=0;const rows=[];for(const m of app.getAppMetrics()){const mb=Math.round((m.memory?.workingSetSize??0)/1024);const pc=m.cpu?.percentCPUUsage??0;cpu+=pc;mem+=mb;rows.push({type:m.type,mb,pc});}return{totalMb:mem,cpuPct:Math.round((cpu/os.cpus().length)*10)/10,cores:os.cpus().length,systemMb:Math.round(os.totalmem()/1048576),rows};});
-  ipcMain.on("app:open-data-folder",(_e,which)=>{const dirs={"party-sessions":"party-sessions","fab-captures":"fab-captures"};const sub=dirs[String(which)];if(!sub)return;const dir=path.join(CONFIG_DIR,sub);try{fs.mkdirSync(dir,{recursive:true});}catch{}shell.openPath(dir);});
-  ipcMain.on("mining:hover",()=>{});
-  ipcMain.on("mining:modal",(_e,on)=>{modalOpen=!!on;applyMouse();});
-  ipcMain.on("mining:drag-lock",(_e,on)=>{dragging=!!on;applyMouse();});
-  ipcMain.on("mining:summon-cog",()=>{try{overlay?.webContents.send("overlay:summon-cog");}catch{}});
-  ipcMain.on("mining:begin-move",()=>setMiningMoveMode(true));
-  ipcMain.on("mining:end-move",()=>setMiningMoveMode(false));
-||||||| upstream 0.1.36
-  ipcMain.on("app:set-twitchchat", (_e, on) => setTwitchChatVisible(!!on));
-  ipcMain.on("app:set-scfeed", (_e, on) => setScFeedVisible(!!on));
-  ipcMain.on("app:set-unlockalert", (_e, on) => setUnlockAlertVisible(!!on));
-  ipcMain.on("app:set-party", (_e, on) => setPartyVisible(!!on));
-  ipcMain.on("app:set-battaglia", (_e, on) => setBattagliaVisible(!!on));
-  // SC Feed alert tone picker, mirroring mining:pick-tone (renderers can't open OS dialogs).
-  ipcMain.handle("scfeed:pick-tone", async () => {
-    const r = await dialog.showOpenDialog(overlay ?? undefined, {
-      title: "Choose an SC Feed alert WAV",
-      filters: [{ name: "WAV audio", extensions: ["wav"] }],
-      properties: ["openFile"],
-    });
-    if (r.canceled || !r.filePaths.length) return false;
-    await postConfig({ scFeedTone: r.filePaths[0] });
-    return true;
-  });
-  ipcMain.handle("scfeed:clear-tone", async () => { await postConfig({ scFeedTone: "" }); return true; });
-  ipcMain.on("app:set-webview", (_e, on) => setWebViewVisible(!!on));
-  ipcMain.on("app:set-bindingchart", (_e, on) => setBindingChartVisible(!!on));
-  // Reveal one of our own data folders in Explorer (the Party widget's saved splits). Restricted
-  // to a known allow-list of subfolders so a renderer can never ask the shell to open a path.
-  // Performance readout: Electron's own per-process CPU + memory, so "how much is this costing
-  // my PC" is answerable in the app instead of via Task Manager guesswork.
-  ipcMain.handle("app:metrics", () => {
-    const os = require("node:os");
-    let cpu = 0, mem = 0;
-    const rows = [];
-    for (const m of app.getAppMetrics()) {
-      const mb = Math.round((m.memory?.workingSetSize ?? 0) / 1024);
-      // Electron reports CPU as a share of ONE core.
-      const pc = m.cpu?.percentCPUUsage ?? 0;
-      cpu += pc; mem += mb;
-      rows.push({ type: m.type, mb, pc });
-    }
-    rows.sort((a, b) => b.mb - a.mb);
-    const cores = os.cpus().length;
-    return {
-      totalMb: mem,
-      // Share of the WHOLE cpu, which is what a player cares about.
-      cpuPct: Math.round((cpu / cores) * 10) / 10,
-      cores,
-      // Total installed RAM, so every memory figure can be expressed as a share of the SYSTEM
-      // rather than a share of our own usage (which says nothing about impact).
-      systemMb: Math.round(os.totalmem() / 1048576),
-      rows,
-    };
-  });
-  ipcMain.on("app:open-data-folder", (_e, which) => {
-    const dirs = { "party-sessions": "party-sessions", "fab-captures": "fab-captures" };
-    const sub = dirs[String(which)];
-    if (!sub) return;
-    const dir = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", sub);
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* best-effort */ }
-    shell.openPath(dir);
-  });
-
-=======
   ipcMain.on("app:set-twitchchat", (_e, on) => setTwitchChatVisible(!!on));
   ipcMain.on("app:set-scfeed", (_e, on) => setScFeedVisible(!!on));
   ipcMain.on("app:set-unlockalert", (_e, on) => setUnlockAlertVisible(!!on));
@@ -4059,7 +3158,25 @@ if (!app.requestSingleInstanceLock()) {
     shell.openPath(dir);
   });
 
->>>>>>> upstream 0.1.41
+  ipcMain.on("app:set-twitchchat", (_e,on)=>setTwitchChatVisible(!!on));
+  ipcMain.on("app:set-twitch-chat", (_e,on)=>setTwitchChatVisible(!!on));
+  ipcMain.on("app:set-browser", (_e,on)=>setBrowserVisible(!!on));
+  ipcMain.on("app:set-scfeed", (_e,on)=>setScFeedVisible(!!on));
+  ipcMain.on("app:set-unlockalert", (_e,on)=>setUnlockAlertVisible(!!on));
+  ipcMain.on("app:set-party", (_e,on)=>setPartyVisible(!!on));
+  ipcMain.on("app:set-battaglia", (_e,on)=>setBattagliaVisible(!!on));
+  ipcMain.on("app:set-webview", (_e,on)=>setWebViewVisible(!!on));
+  ipcMain.on("app:set-bindingchart", (_e,on)=>setBindingChartVisible(!!on));
+  ipcMain.handle("scfeed:pick-tone", async()=>{const r=await dialog.showOpenDialog(overlay??undefined,{title:"Choose an SC Feed alert WAV",filters:[{name:"WAV audio",extensions:["wav"]}],properties:["openFile"]});if(r.canceled||!r.filePaths.length)return false;await postConfig({scFeedTone:r.filePaths[0]});return true;});
+  ipcMain.handle("scfeed:clear-tone", async()=>{await postConfig({scFeedTone:""});return true;});
+  ipcMain.handle("app:metrics",()=>{const os=require("node:os");let cpu=0,mem=0;const rows=[];for(const m of app.getAppMetrics()){const mb=Math.round((m.memory?.workingSetSize??0)/1024);const pc=m.cpu?.percentCPUUsage??0;cpu+=pc;mem+=mb;rows.push({type:m.type,mb,pc});}return{totalMb:mem,cpuPct:Math.round((cpu/os.cpus().length)*10)/10,cores:os.cpus().length,systemMb:Math.round(os.totalmem()/1048576),rows};});
+  ipcMain.on("app:open-data-folder",(_e,which)=>{const dirs={"party-sessions":"party-sessions","fab-captures":"fab-captures"};const sub=dirs[String(which)];if(!sub)return;const dir=path.join(CONFIG_DIR,sub);try{fs.mkdirSync(dir,{recursive:true});}catch{}shell.openPath(dir);});
+  ipcMain.on("mining:hover",()=>{});
+  ipcMain.on("mining:modal",(_e,on)=>{modalOpen=!!on;applyMouse();});
+  ipcMain.on("mining:drag-lock",(_e,on)=>{dragging=!!on;applyMouse();});
+  ipcMain.on("mining:summon-cog",()=>{try{overlay?.webContents.send("overlay:summon-cog");}catch{}});
+  ipcMain.on("mining:begin-move",()=>setMiningMoveMode(true));
+  ipcMain.on("mining:end-move",()=>setMiningMoveMode(false));
   // Tray app — keep running when the overlay window is closed.
   app.on("window-all-closed", (e) => {
     e.preventDefault?.();
@@ -4079,3 +3196,5 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });
 }
+
+<<<<<<< DEBUG_RESOLVED_ALPHA18

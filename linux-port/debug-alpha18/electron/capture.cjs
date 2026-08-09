@@ -379,6 +379,20 @@ async function captureGame(winRect) {
   throw new Error(errors.join("; ") || "no screen-capture backend succeeded");
 }
 
+
+let _lastArchVerseScanMode = null;
+function archVerseScanMode(image, width, height) {
+  const normalizedWidth = 960;
+  const normalizedHeight = Math.max(240, Math.round(normalizedWidth * height / width));
+  const normalized = image.resize({ width: normalizedWidth, height: normalizedHeight, quality: "good" });
+  const r = detectScanModeRadarIcon(normalized.toBitmap(), normalizedWidth, normalizedHeight);
+  if (_lastArchVerseScanMode !== r.active) {
+    _lastArchVerseScanMode = r.active;
+    console.log(`[mining-scan-mode] ${r.active ? "active (radar icon)" : "inactive"} confidence=${r.confidence || 0} method=${r.method || "structure"} score=${r.templateScore || 0}${r.rejectionReason ? ` rejected=${r.rejectionReason}` : ""}`);
+  }
+  return r;
+}
+
 // The kiosk's item render + name + category all live in the upper-right of the screen. Cropping to
 // it before RapidOCR both (a) stops PP-OCR fusing the left material panel into the name and (b)
 // speeds the read up. Fractions are of the captured GAME display (the fabricator is a fullscreen UI).
@@ -388,58 +402,6 @@ function rightPanelCrop(image, w, h) {
   return { img: image.crop({ x, y: 0, width: cw, height: ch }), w: cw, h: ch };
 }
 
-<<<<<<< ArchVerse Alpha17
-// Dedicated Mining RESULTS-panel OCR. The completed rock analysis is a small HUD block to the
-// right of the reticle, so full-screen OCR is both slower and much noisier (chat, MFDs, missions).
-// Coordinates are normalized against the captured GAME display and therefore scale from the
-// 2048x1152 calibration sample to 3840x2160 and other 16:9 resolutions.
-const MINING_ROIS = Object.freeze({
-  panel:       { x: 0.625, y: 0.390, w: 0.170, h: 0.275, scale: 3.2 },
-  composition: { x: 0.640, y: 0.530, w: 0.150, h: 0.105, scale: 4.0 },
-  stats:       { x: 0.688, y: 0.455, w: 0.070, h: 0.075, scale: 6.0 },
-});
-// A ping/scan signature is much smaller than the completed RESULTS panel. Full-screen Tesseract
-// routinely misses it, so r29 uses two overlapping play-field crops, RapidOCR candidates, and a high-contrast numeric
-// pass over the focused crop. The threshold pass is important because the gray signature badge can
-// disappear into the asteroid field during sparse-text segmentation even while the digits remain
-// plainly visible to a person.
-const MINING_SIGNATURE_ROIS = Object.freeze({
-  focus: { x: 0.285, y: 0.235, w: 0.430, h: 0.390, scale: 3.8 },
-  wide:  { x: 0.175, y: 0.245, w: 0.650, h: 0.440, scale: 2.6 },
-});
-
-function normalizedCrop(image, width, height, roi) {
-  const x = Math.max(0, Math.min(width - 1, Math.round(width * roi.x)));
-  const y = Math.max(0, Math.min(height - 1, Math.round(height * roi.y)));
-  const w = Math.max(8, Math.min(width - x, Math.round(width * roi.w)));
-  const h = Math.max(8, Math.min(height - y, Math.round(height * roi.h)));
-  const cropped = image.crop({ x, y, width: w, height: h });
-  const targetWidth = Math.min(1600, Math.max(w, Math.round(w * (roi.scale || 3))));
-  return { img: cropped.resize({ width: targetWidth, quality: "best" }), x, y, w, h };
-}
-
-// A tiny, quantized luminance map is enough to tell whether a HUD region materially changed.
-// It stays inside Electron/nativeImage (no PNG encode, ImageMagick, Tesseract, or child process).
-function visualFingerprint(image, width, height, roi) {
-  const x = Math.max(0, Math.min(width - 1, Math.round(width * roi.x)));
-  const y = Math.max(0, Math.min(height - 1, Math.round(height * roi.y)));
-  const w = Math.max(8, Math.min(width - x, Math.round(width * roi.w)));
-  const h = Math.max(8, Math.min(height - y, Math.round(height * roi.h)));
-  const bitmap = image.crop({ x, y, width: w, height: h })
-    .resize({ width: 48, height: 27, quality: "fast" }).toBitmap();
-  const out = new Uint8Array(Math.floor(bitmap.length / 4));
-  for (let src = 0, dst = 0; src + 3 < bitmap.length; src += 4, dst += 1) {
-    out[dst] = Math.round((bitmap[src] + bitmap[src + 1] + bitmap[src + 2]) / (3 * 16));
-  }
-  return out;
-||||||| upstream 0.1.36
-// RapidOCR (PP-OCR) reader — main-process only, ESM loaded lazily (model loads once, ~2s). Returns
-// the same {text,x,y,w,h} line shape the sidecar classifier expects, from the PP-OCR {text,box}.
-let _rapid = null;
-function getRapid() {
-  if (!_rapid) _rapid = import("@gutenye/ocr-node").then((m) => m.default.create());
-  return _rapid;
-=======
 // The mining scan region, in pixels — deliberately duplicated from screen-read.ts's scanRegion()/
 // DEFAULT_SCAN_REGION rather than imported: that module is TypeScript run via tsx in the sidecar
 // process, and this file is plain CommonJS in the Electron main process with no build step wiring
@@ -480,227 +442,7 @@ let _rapid = null;
 function getRapid() {
   if (!_rapid) _rapid = import("@gutenye/ocr-node").then((m) => m.default.create());
   return _rapid;
->>>>>>> upstream 0.1.41
 }
-<<<<<<< ArchVerse Alpha17
-
-function fingerprintDistance(a, b) {
-  if (!a || !b || a.length !== b.length || !a.length) return Infinity;
-  let total = 0;
-  for (let i = 0; i < a.length; i += 1) total += Math.abs(a[i] - b[i]);
-  // Fingerprint values are 4-bit luminance buckets. Normalize the mean delta to 0..1 so stage
-  // thresholds are resolution-independent percentages rather than magic bucket counts.
-  return total / (a.length * 15);
-}
-
-function ocrTesseractText(imgPath, { psm = 6, whitelist = "" } = {}) {
-  return new Promise((resolve, reject) => {
-    const args = [path.resolve(imgPath), "stdout", "-l", "eng", "--psm", String(psm),
-      "-c", "preserve_interword_spaces=1"];
-    if (whitelist) args.push("-c", `tessedit_char_whitelist=${whitelist}`);
-    execFile("tesseract", args, { env: OCR_NATIVE_ENV, maxBuffer: 8 * 1024 * 1024, timeout: 8000 }, (err, stdout) => {
-      if (err) return reject(new Error(`Mining Tesseract PSM ${psm} failed: ${err.message || err}`));
-      resolve(String(stdout || "").trim());
-    });
-  });
-}
-
-async function preprocessHudImage(inputPath, outputPath) {
-  try {
-    await runFile("magick", [
-      inputPath,
-      "-colorspace", "Gray",
-      "-auto-level",
-      "-contrast-stretch", "1%x1%",
-      "-sharpen", "0x1",
-      "-strip",
-      outputPath,
-    ], { timeout: 10_000 });
-    return outputPath;
-  } catch {
-    // ImageMagick is installed by the r29 installer, but retaining the unprocessed crop keeps the
-    // reader functional if a user intentionally skips that dependency.
-    return inputPath;
-  }
-}
-
-async function preprocessSignatureThreshold(inputPath, outputPath) {
-  try {
-    // 70% was selected from the real 15,600 Torite diagnostic frame. It preserves the thin white
-    // digits while suppressing most rocks, HUD lines, and the blue-space background. Keep this as a
-    // separate pass rather than replacing grayscale: each catches signatures the other can miss.
-    await runFile("magick", [
-      inputPath,
-      "-colorspace", "Gray",
-      "-auto-level",
-      "-threshold", "70%",
-      "-strip",
-      outputPath,
-    ], { timeout: 10_000 });
-    return outputPath;
-  } catch {
-    return null;
-  }
-}
-
-async function readMiningScanMode(image, width, height) {
-  // Normalize once, then look only for the shared radar icon. Ship type, a fixed cockpit crop,
-  // target text, ping results, and OCR are deliberately absent from this decision path.
-  const normalizedWidth = 960;
-  const normalizedHeight = Math.max(240, Math.round(normalizedWidth * height / width));
-  const normalized = image.resize({ width: normalizedWidth, height: normalizedHeight, quality: "good" });
-  const result = detectScanModeRadarIcon(normalized.toBitmap(), normalizedWidth, normalizedHeight);
-  return {
-    kind: "scan-mode",
-    active: result.active,
-    angle: null,
-    confidence: result.confidence,
-    method: result.method,
-    roi: result.roi,
-    roiName: result.roiName,
-    referenceAngle: result.referenceAngle,
-    templateScore: result.templateScore,
-    templatePrecision: result.templatePrecision,
-    templateRecall: result.templateRecall,
-    candidatesChecked: result.candidatesChecked,
-    searchHintCount: 0,
-  };
-}
-
-// Tesseract can skip a tiny scanner badge when it sees the entire asteroid field as one page. r29
-// first joins neighboring white digit strokes, asks ImageMagick for connected-component boxes, and
-// OCRs each plausible short text row in isolation. This turns the supplied 15,600 badge from an
-// empty full-crop result into a compact local read (typically 15,600, 15600, or 15400).
-function parseSignatureComponentBoxes(verbose, imageWidth, imageHeight) {
-  const boxes = [];
-  for (const line of String(verbose || "").split(/\r?\n/)) {
-    if (!/gray\(255\)|srgb\(255,255,255\)/i.test(line)) continue;
-    const match = line.match(/^\s*\d+:\s+(\d+)x(\d+)\+(-?\d+)\+(-?\d+)\s+/);
-    if (!match) continue;
-    const w = Number(match[1]), h = Number(match[2]), x = Number(match[3]), y = Number(match[4]);
-    if (![w, h, x, y].every(Number.isFinite)) continue;
-    if (w < 45 || w > 190 || h < 14 || h > 62) continue;
-    const aspect = w / Math.max(1, h);
-    if (aspect < 1.35 || aspect > 10) continue;
-    if (x < 0 || y < 0 || x + w > imageWidth || y + h > imageHeight) continue;
-    // Prefer the central play field but keep off-centre markers too. Sorting only limits worst-case
-    // OCR cost; it is not used as a recognition score by the server.
-    const cx = x + w / 2, cy = y + h / 2;
-    const centerDistance = Math.hypot(cx / imageWidth - 0.5, cy / imageHeight - 0.42);
-    boxes.push({ x, y, w, h, centerDistance });
-  }
-  boxes.sort((a, b) => a.centerDistance - b.centerDistance || b.w - a.w);
-  // A latest-frame state machine does not benefit from OCRing eighteen candidates from a frame
-  // that is already several seconds old. Keep only the four best-centered rows.
-  return boxes.slice(0, 4);
-}
-
-async function localizedSignatureReads(thresholdPath, imageWidth, imageHeight) {
-  let result;
-  try {
-    result = await runFile("magick", [
-      thresholdPath,
-      "-morphology", "Close", "Rectangle:9x1",
-      "-define", "connected-components:verbose=true",
-      "-connected-components", "8",
-      "null:",
-    ], { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 });
-  } catch {
-    return [];
-  }
-  const boxes = parseSignatureComponentBoxes(`${result.stdout || ""}\n${result.stderr || ""}`, imageWidth, imageHeight);
-  const lines = [];
-  for (let i = 0; i < boxes.length; i++) {
-    const box = boxes[i];
-    const pad = 8;
-    const x = Math.max(0, box.x - pad), y = Math.max(0, box.y - pad);
-    const right = Math.min(imageWidth, box.x + box.w + pad);
-    const bottom = Math.min(imageHeight, box.y + box.h + pad);
-    const w = right - x, h = bottom - y;
-    const candidatePath = path.join(os.tmpdir(), `sc-mining-signature-component-${process.pid}-${i}.png`);
-    try {
-      await runFile("magick", [
-        thresholdPath,
-        "-crop", `${w}x${h}+${x}+${y}`,
-        "+repage",
-        "-resize", "600%",
-        "-morphology", "Close", "Rectangle:1x1",
-        "-strip",
-        candidatePath,
-      ], { timeout: 8_000 });
-      const primary = await ocrTesseractLines(candidatePath, { psm: 7, whitelist: "0123456789,." }).catch(() => []);
-      const lineSets = [primary];
-      if (!primary.length) {
-        lineSets.push(await ocrTesseractLines(candidatePath, { psm: 11, whitelist: "0123456789,." }).catch(() => []));
-      }
-      const seen = new Set();
-      for (const row of lineSets.flat()) {
-        const text = String(row?.text || "").trim();
-        if (!text || seen.has(text)) continue;
-        seen.add(text);
-        lines.push({ text, x, y, w, h, confidence: Number(row?.confidence) || 0 });
-      }
-    } finally {
-      try { fs.unlinkSync(candidatePath); } catch {}
-    }
-  }
-  return lines;
-}
-
-async function readMiningAnalysis(image, width, height, tempPaths) {
-  const panel = normalizedCrop(image, width, height, MINING_ROIS.panel);
-  const composition = normalizedCrop(image, width, height, MINING_ROIS.composition);
-  const stats = normalizedCrop(image, width, height, MINING_ROIS.stats);
-  fs.writeFileSync(tempPaths.panelRaw, panel.img.toPNG());
-  fs.writeFileSync(tempPaths.compositionRaw, composition.img.toPNG());
-  fs.writeFileSync(tempPaths.statsRaw, stats.img.toPNG());
-  // Preserve grayscale copies for diagnostics, but keep the production RESULTS-panel OCR on the
-  // original HUD colors. The supplied Lindinium calibration frame showed that grayscale can erase
-  // thin orange/white characters where the bright rock sits behind the text. Signature OCR remains
-  // grayscale because those marker digits are isolated against the play field.
-  await Promise.all([
-    preprocessHudImage(tempPaths.panelRaw, tempPaths.panel),
-    preprocessHudImage(tempPaths.compositionRaw, tempPaths.composition),
-    preprocessHudImage(tempPaths.statsRaw, tempPaths.stats),
-  ]);
-  // RapidOCR is the primary reader. Alpha 13 always launched both engines over every panel,
-  // multiplying CPU use even when RapidOCR had already produced a confident read.
-  const [panelRapid, compositionRapid] = await Promise.all([
-    ocrRapidLinesOptional(tempPaths.panelRaw),
-    ocrRapidLinesOptional(tempPaths.compositionRaw),
-  ]);
-  const rapidPanelText = panelRapid.map((row) => row.text).filter(Boolean).join("\n");
-  const rapidCompositionText = compositionRapid.map((row) => row.text).filter(Boolean).join("\n");
-  const fallbackTasks = [
-    ocrTesseractText(tempPaths.statsRaw, { psm: 6, whitelist: "0123456789OQDILSZB|!,.%SCU" }),
-  ];
-  if (!rapidPanelText) fallbackTasks.push(ocrTesseractText(tempPaths.panelRaw, { psm: 6 }));
-  if (!rapidPanelText) fallbackTasks.push(ocrTesseractText(tempPaths.panelRaw, { psm: 11 }));
-  if (!rapidCompositionText) fallbackTasks.push(ocrTesseractText(tempPaths.compositionRaw, { psm: 6 }));
-  const fallback = await Promise.all(fallbackTasks);
-  const statsText = fallback.shift() || "";
-  const panelTextTess = rapidPanelText ? "" : (fallback.shift() || "");
-  const sparseText = rapidPanelText ? "" : (fallback.shift() || "");
-  const compositionTextTess = rapidCompositionText ? "" : (fallback.shift() || "");
-  const panelText = [rapidPanelText, panelTextTess].filter(Boolean).join("\n");
-  const compositionText = [rapidCompositionText, compositionTextTess].filter(Boolean).join("\n");
-  return { panelText, sparseText, compositionText, statsText, roi: { panel, composition, stats }, ocrEngine: rapidPanelText ? "rapidocr+tesseract" : "tesseract" };
-}
-
-async function readMiningSignatures(image, width, height, tempPaths) {
-  const reads = [];
-  const plausibleNumeric = (lines) => (lines || []).some((row) => {
-    const digits = String(row?.text || "").replace(/\D/g, "");
-    return digits.length >= 4 && digits.length <= 9;
-||||||| upstream 0.1.36
-async function ocrRapidLines(imgPath) {
-  const ocr = await getRapid();
-  const res = await ocr.detect(imgPath);
-  return (res || []).map((r) => {
-    const xs = r.box.map((pt) => pt[0]), ys = r.box.map((pt) => pt[1]);
-    const x = Math.min(...xs), y = Math.min(...ys);
-    return { text: String(r.text || ""), x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
-=======
 // ── Mining diagnostic frames (opt-in, config.miningDebug) ────────────────────────────────────
 // Writes the magnified bitmap the OCR actually receives, plus the raw crop, into the per-user dir
 // so the sidecar can serve them over HTTP. Deliberately NOT next to the binary (Program Files is
@@ -727,7 +469,6 @@ async function ocrRapidLines(imgPath) {
     const xs = r.box.map((pt) => pt[0]), ys = r.box.map((pt) => pt[1]);
     const x = Math.min(...xs), y = Math.min(...ys);
     return { text: String(r.text || ""), x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
->>>>>>> upstream 0.1.41
   });
   let signatureCandidateSeen = false;
   for (const [name, roi] of Object.entries(MINING_SIGNATURE_ROIS)) {
@@ -1233,30 +974,7 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
   const tmpShots = Array.from({ length: 6 }, (_, i) => path.join(os.tmpdir(), `sc-fab-shot-${i}.png`));
   let tmpShotIdx = 0;
   const tmpPanel = path.join(os.tmpdir(), "sc-fab-panel.png"); // upper-right crop fed to RapidOCR
-<<<<<<< ArchVerse Alpha17
-  const miningTemp = {
-    panelRaw: path.join(os.tmpdir(), "sc-mining-results-panel-raw.png"),
-    panel: path.join(os.tmpdir(), "sc-mining-results-panel-gray.png"),
-    compositionRaw: path.join(os.tmpdir(), "sc-mining-results-composition-raw.png"),
-    composition: path.join(os.tmpdir(), "sc-mining-results-composition-gray.png"),
-    statsRaw: path.join(os.tmpdir(), "sc-mining-results-stats-raw.png"),
-    stats: path.join(os.tmpdir(), "sc-mining-results-stats-gray.png"),
-    focusRaw: path.join(os.tmpdir(), "sc-mining-signature-focus-raw.png"),
-    focus: path.join(os.tmpdir(), "sc-mining-signature-focus-gray.png"),
-    focusThreshold: path.join(os.tmpdir(), "sc-mining-signature-focus-threshold.png"),
-    scanModeRaw: path.join(os.tmpdir(), "sc-mining-scan-mode-raw.png"),
-    scanModeMask: path.join(os.tmpdir(), "sc-mining-scan-mode-mask.png"),
-    wideRaw: path.join(os.tmpdir(), "sc-mining-signature-wide-raw.png"),
-    wide: path.join(os.tmpdir(), "sc-mining-signature-wide-gray.png"),
-  };
-  const ocrDebugDir = path.join(configDir, "ocr-debug");
-  const ocrDebugRecentDir = path.join(ocrDebugDir, "recent");
-  const OCR_DEBUG_RECENT_LIMIT = 8;
-  let ocrDebugSequence = 0;
-||||||| upstream 0.1.36
-=======
   const tmpMiningCrop = path.join(os.tmpdir(), "sc-mining-crop.png"); // scan-region crop fed to RapidOCR
->>>>>>> upstream 0.1.41
   let busy = false;
   let busyAt = 0;             // when the current tick set busy (watchdog against a wedged loop)
   const TICK_WATCHDOG_MS = 15000; // log a slow tick, but never overlap native OCR work
@@ -1287,11 +1005,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
   let pendingAt = 0;          // when we FIRST saw it — the settle is a duration, not a poll count
   let fastUntil = 0;          // poll fast until this time (set while the scan HUD is on screen)
   let lastTickMs = 0;         // how long the last poll actually took — the fast rate tunes off it
-<<<<<<< ArchVerse Alpha17
-  let rate = POLL_MS;         // completion-to-next-cycle delay; native OCR can never overlap itself
-||||||| upstream 0.1.36
-  let rate = POLL_MS;         // the interval currently armed, so we only re-arm on a real change
-=======
   let rate = POLL_MS;         // the interval currently armed, so we only re-arm on a real change
   // Where the signature was last actually found, in FULL-FRAME pixels. The configured scan region
   // is a coarse "look roughly here" band — Sub's is 1170x324, of which the number occupies about
@@ -1308,7 +1021,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
   const HEARTBEAT_MS = 15000; // is still being tracked down — see the comment at the call site.
   //                             Safe to remove once that's understood; harmless (one small POST
   //                             every ~15s) to leave in until then.
->>>>>>> upstream 0.1.41
   const uploaded = new Set(); // items pushed to the site this session
   const pendingUploads = new Map(); // item UUID -> display name|null: captured locally but NOT yet
   //                                   confirmed on the site; the drain loop retries until it lands
@@ -1498,30 +1210,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
     const claim = cfg.fabClaim === true;
     // The Mining Assistant (refinery timers + signature scanner) also reads the screen;
     // refinery/mineable reads are routed to its tracker server-side in /api/screen-read.
-<<<<<<< ArchVerse Alpha17
-    const mining = cfg.miningAssistant === true;
-    const features = { fabricator: fab, mission: miss, mining };
-    if (!fab && !miss && !mining) { emitContext("off", { features, reason: "all-readers-disabled" }); return; }
-    if (Date.now() < nextCaptureAttemptAt) {
-      emitContext("idle", { features, reason: "capture-backoff", retryAt: nextCaptureAttemptAt });
-      return;
-    }
-    // Never start a second capture/OCR cycle while the first still owns native image objects.
-    // The old watchdog cleared `busy` after 15 seconds, leaving the first async tick alive and
-    // allowing overlapping RapidOCR/sharp/libvips work. That can abort the whole Electron process.
-    // A slow tick is now reported and skipped; its own finally block is the only place that unlocks.
-||||||| upstream 0.1.36
-    const mining = cfg.miningAssistant === true;
-    // The foreground watcher is only worth running while something here is armed — with all three
-    // opt-ins off this loop does nothing but re-read a config file every 3s, and shouldn't be
-    // keeping a helper process alive to do it.
-    fgWatch.want("ocr", fab || miss || mining);
-    if (!fab && !miss && !mining) { emitContext("off"); return; }
-    // Watchdog: a single hung await (e.g. a fetch to the sidecar while it's restarting during an
-    // auto-update) must never latch the loop forever. If a prior tick has held `busy` well past
-    // any real tick, treat it as wedged and re-arm — otherwise the overlay freezes on its last
-    // message ("Reading the fabricator…") until the app restarts.
-=======
     // 🔑 The opt-in alone is NOT enough — the widget also has to be able to use the answer.
     // This used to read the screen whenever `miningAssistant` was ticked, so a closed scanner
     // kept OCRing every tick forever, which is work nobody asked for and nobody could see.
@@ -1539,7 +1227,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
     // auto-update) must never latch the loop forever. If a prior tick has held `busy` well past
     // any real tick, treat it as wedged and re-arm — otherwise the overlay freezes on its last
     // message ("Reading the fabricator…") until the app restarts.
->>>>>>> upstream 0.1.41
     if (busy) {
       const elapsed = Date.now() - busyAt;
       if (elapsed >= TICK_WATCHDOG_MS && Date.now() - lastSlowTickLogAt >= TICK_WATCHDOG_MS) {
@@ -1568,21 +1255,11 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
       console.log(`[screen-read] active via ${fg.gate || "foreground-window"}` + sessionLabel +
         `; mining=${mining ? "on" : "off"}, mission=${miss ? "on" : "off"}, fabricator=${fab ? "on" : "off"}`);
     }
-<<<<<<< ArchVerse Alpha17
-||||||| upstream 0.1.36
-    const fg = await foregroundWindow();
-    if (!/^StarCitizen$/i.test(fg.name)) { emitContext("idle"); return; } // only ever look at SC
-=======
     const tFg = Date.now();
     const fg = await foregroundWindow();
     if (!/^StarCitizen$/i.test(fg.name)) { emitContext("idle"); return; } // only ever look at SC
->>>>>>> upstream 0.1.41
     busy = true;
     busyAt = Date.now();
-<<<<<<< ArchVerse Alpha17
-    emitEvent({ state: "reading", features, cycle: scanCycle + 1, gate: fg.gate || "foreground-window", session: boundSession });
-||||||| upstream 0.1.36
-=======
     // Per-stage timings for THIS tick. The loop self-tunes off the tick's total cost
     // (floor = lastTickMs * 1.5), so when a tick is slow the "fast" rate stops being fast — which
     // means knowing WHICH stage is expensive decides whether that is fixable. Filled in as the
@@ -1602,78 +1279,19 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       }).catch(() => {});
     }
->>>>>>> upstream 0.1.41
     try {
-<<<<<<< ArchVerse Alpha17
-      const have = fab ? await timeStage("remote-have", () => ensureRemoteHave()) : null; // dedup only needed for capture
-      const cap = await timeStage("capture", () => captureGame(fg.rect)); // the monitor the GAME is on
-||||||| upstream 0.1.36
-      const have = fab ? await ensureRemoteHave() : null; // dedup set only needed for capture
-      const cap = await captureGame(fg.rect); // the monitor the GAME is on, not a blind sources[0]
-=======
       const have = fab ? await ensureRemoteHave() : null; // dedup set only needed for capture
       const t0 = Date.now();
       const cap = await captureGame(fg.rect); // the monitor the GAME is on, not a blind sources[0]
->>>>>>> upstream 0.1.41
       const shot = cap && cap.image;
       if (!shot) return;
-<<<<<<< ArchVerse Alpha17
-      const captureDescription = `${cap.method || "unknown"}:${cap.width}x${cap.height}:${cap.sourceName || ""}:${cap.sourceId || ""}`;
-      if (captureDescription !== lastCaptureDescription) {
-        lastCaptureDescription = captureDescription;
-        console.log(`[screen-read] capture source ${cap.method || "unknown"} ${cap.width}x${cap.height}` +
-          `${cap.sourceName ? ` (${cap.sourceName})` : ""}` +
-          `${cap.sourceId ? ` display_id=${cap.sourceId}` : ""}`);
-        if (cap.sourceInventory && /fallback/.test(cap.method || "")) {
-          console.log(`[screen-read] Electron screen inventory: ${cap.sourceInventory}`);
-        }
-      }
-      // The generic full-frame OCR is needed only for mission/fabricator features. Alpha 12 ran it
-      // during Mining-only sessions too, then followed it with every specialized Mining pass.
-      let read = { kind: "none" };
-      let renderSrc = shot;
-      const genericFingerprint = (fab || miss)
-        ? visualFingerprint(shot, cap.width, cap.height, { x: 0.50, y: 0.0, w: 0.50, h: 1.0 })
-        : null;
-      const runGeneric = genericFingerprint && shouldRunVisualStage("generic", genericFingerprint, {
-        threshold: 0.07,
-        maxAgeMs: cfg.screenReaderProfile === "lightweight" ? 12_000 : 6000,
-      });
-      if (runGeneric) {
-        read = await timeStage("generic-ocr", async () => {
-          fs.writeFileSync(tmpShot, shot.toPNG());
-          const resp = await fetch(`http://127.0.0.1:${port}/api/screen-read`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path: tmpShot }),
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-          });
-          return resp.json();
-        });
-        cachedGenericRead = read;
-        cachedGenericUsesPanel = false;
-      } else if (genericFingerprint) {
-        read = cachedGenericRead;
-        skippedStages.push("generic-unchanged");
-      } else {
-        skippedStages.push("generic-disabled");
-      }
-      if (cachedGenericUsesPanel && read.kind === "fabricator") {
-        renderSrc = rightPanelCrop(shot, cap.width, cap.height).img;
-      }
-||||||| upstream 0.1.36
-      fs.writeFileSync(tmpShot, shot.toPNG());
-      // Pass 1 — Windows OCR on the full game frame: the cheap "where am I" glance. It detects the
-      // kiosk and serves the mission / mining reads (which work fine on it today).
-      const resp = await fetch(`http://localhost:${port}/api/screen-read`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: tmpShot }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-      let read = await resp.json();
-      let renderSrc = shot; // where the item render is cropped FROM (full frame, or the panel below)
-=======
+      let scanModeRead = { active: false, confidence: 0, method: "not-armed" };
+      if (mining && process.platform === "linux") {
+        try { scanModeRead = archVerseScanMode(shot, cap.width, cap.height); }
+        catch (e) { console.warn("[mining-scan-mode] detector failed:", e && e.message); }
+      } else if (mining) { scanModeRead = { active: true, confidence: 100, method: "upstream" }; }
+      if (!scanModeRead.active) { sigBox = null; sigBoxAt = 0; }
+      stage.scanMode = scanModeRead.active;
       stage.capture = Date.now() - t0;
       stage.frame = `${cap.width}x${cap.height}`;
       // 🔑 SKIP THE WHOLE-FRAME PASS WHILE ACTIVELY SCANNING. Measured 2026-08-08: encoding the
@@ -1684,7 +1302,7 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
       // skipped rather than removed, and only while a live signature lock says we are at a rock —
       // you cannot be at a kiosk and scanning an asteroid at the same time. The lock expires, so
       // a tick that finds nothing pays the full glance again and everything re-detects normally.
-      const locked = mining && sigBox && Date.now() - sigBoxAt < SIG_LOCK_MS;
+      const locked = mining && scanModeRead.active && sigBox && Date.now() - sigBoxAt < SIG_LOCK_MS;
       let read = { kind: "none" };
       if (!locked) {
         // 🔑 Its OWN try. The two passes must not share fate: a throw here used to abort the whole
@@ -1717,7 +1335,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
         stage.skippedFullFrame = true;
       }
       let renderSrc = shot; // where the item render is cropped FROM (full frame, or the panel below)
->>>>>>> upstream 0.1.41
       // Pass 2 — dual-engine: once pass 1 says we're at a kiosk, re-read the item NAME with RapidOCR
       // on the upper-right crop. It's far better at the stylized name tokens Windows OCR mangles
       // ("MH1"->"MI-II", "Tier"->"Tie@"). Only runs in a kiosk (rare), so no cost during play.
@@ -1899,7 +1516,7 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
       // skipped while locked and that fails outright ~42% of the time otherwise. Gating the ONLY
       // trustworthy mining reader behind the least trustworthy one is backwards: RapidOCR got every
       // signature right in a measured session while Windows OCR got none. If mining is armed, look.
-      if (mining && cfg.rapidOcr !== false) {
+      if (mining && scanModeRead.active && cfg.rapidOcr !== false) {
         try {
           const full = scanRegionPixels(cfg.scanRegion, cap.width, cap.height);
           // Narrow to where the number actually was, when we know. Clamped inside `full`, so this
@@ -1977,11 +1594,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
       // else — and the fabricator ABOVE ALL — stays at the slow rate, because rushing a kiosk
       // risks grabbing a render mid-fade. A kiosk frame cancels fast mode outright.
       if (read.kind === "fabricator") fastUntil = 0;
-<<<<<<< ArchVerse Alpha17
-      else if (mining && (read.scanHud || scanModeRead.active)) fastUntil = Date.now() + FAST_WINDOW_MS;
-||||||| upstream 0.1.36
-      else if (mining && read.scanHud) fastUntil = Date.now() + FAST_WINDOW_MS;
-=======
       // 🔑 A PARSED SIGNATURE IS THE PROOF, not the HUD's wording. Fast mode used to arm only on
       // read.scanHud — an OCR text match for "scanning / ready to scan / strong / moderate /
       // weak". That is the mining scanner's vocabulary, and the line it comes from is USER
@@ -1995,8 +1607,7 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
       // the player is scanning, whatever the HUD says or doesn't. scanHud is KEPT as an
       // additional trigger because it fires on "ready to scan", i.e. slightly BEFORE the first
       // number exists — useful when it happens to be there, never required.
-      else if (mining && (read.scanHud || typeof read.signature === "number")) fastUntil = Date.now() + FAST_WINDOW_MS;
->>>>>>> upstream 0.1.41
+      else if (mining && scanModeRead.active && (read.scanHud || typeof read.signature === "number")) fastUntil = Date.now() + FAST_WINDOW_MS;
       // Self-tuning, because this runs over a RUNNING GAME and a fixed rate is a guess about
       // someone else's PC. A tick costs a screen grab plus an OCR (~230ms on Sub's machine with
       // the warm worker, but a slower box could be several times that). Never let the loop occupy
@@ -2212,24 +1823,12 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
         } catch { /* best effort */ }
       }
     } catch (e) {
-<<<<<<< ArchVerse Alpha17
-      const message = captureErrorMessage(e);
-      nextCaptureAttemptAt = Date.now() + 60_000;
-      if (message !== lastCaptureError) {
-        console.error(`[fab-capture] screen read failed: ${message}; retry paused for 60 seconds`);
-        lastCaptureError = message;
-      }
-      emitEvent({ state: "capture-error", message, features, cycle: scanCycle, retryAt: nextCaptureAttemptAt });
-||||||| upstream 0.1.36
-      console.error("[fab-capture] tick error:", e && e.message);
-=======
       console.error("[fab-capture] tick error:", e && e.message);
       // 🔑 Carried on the tick record, not just console.error'd. This process is a detached GUI
       // child with no stdout, so a throw here is INVISIBLE — which is exactly how half of a
       // measured run came back with only the `capture` stage filled in and no explanation
       // (Sub, 2026-08-08). A stage that stops recording is a symptom; the message is the cause.
       stage.error = String((e && e.message) || e).slice(0, 300);
->>>>>>> upstream 0.1.41
     } finally {
       lastTickMs = Date.now() - busyAt;
       // Buffered, not posted per tick — a round-trip inside the very loop being measured would
