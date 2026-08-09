@@ -22,12 +22,11 @@ if old not in s: raise SystemExit('resolver fallback patch anchor missing')
 s=s.replace(old,new,1)
 
 # The upstream ready callback's close is swallowed by the last shared hunk when Alpha17's extra
-# will-quit cleanup is layered in. Restore the exact structural seam: close .then(...), then close
-# the requestSingleInstanceLock() else block. This is semantic, not a blind trailing token append.
+# will-quit cleanup is layered in. Emit the literal seam into the temporary resolver itself.
 needle='''    if (server) { server.kill(); server=null; }\n  });\n  app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });\n}\n'''
 replacement='''    if (server) { server.kill(); server=null; }\n  });\n  app.on("will-quit", () => { if (trayIsUsable()) tray.destroy(); tray=null;  });\n  });\n}\n'''
 anchor='main.write_text(s)'
-patch='''if needle in s:\n    s = s.replace(needle, replacement, 1)\nelse:\n    raise SystemExit("main: app-ready close anchor missing")\nmain.write_text(s)'''
+patch=f'''_ready_needle = {needle!r}\n_ready_replacement = {replacement!r}\nif _ready_needle in s:\n    s = s.replace(_ready_needle, _ready_replacement, 1)\nelse:\n    raise SystemExit("main: app-ready close anchor missing")\nmain.write_text(s)'''
 if anchor not in s: raise SystemExit('resolver main-write anchor missing')
 s=s.replace(anchor, patch, 1)
 p.write_text(s)
