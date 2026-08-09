@@ -71,13 +71,26 @@ All Linux processes use one physical config root:
 The Electron shell sets it and the sidecar consumes it. A stale HOME/APPDATA-style legacy config may
 not silently override it.
 
-The public config API must repair these values before persisting on Linux even if a caller attempts
-to change them:
+The public config API must repair these platform-owned values before persisting on Linux even if a
+caller attempts to change them:
 
 - `interactHotkey = "F"`
 - `holdToInteract = true`
 - `moveHotkey = "Shift+F6"`
-- `screenReaderProfile = "lightweight"`
+
+The screen-reader profile is **not** a locked Linux platform setting. A fresh Linux config may begin
+at `lightweight`, but the user must be able to select Balanced, Mining, or another valid reader
+combination. `screenReaderProfile` is descriptive state derived from the actual reader toggles and
+must remain coherent with them:
+
+- `lightweight`: Fabricator off, Mission OCR off, Mining Assistant off
+- `balanced`: Fabricator off, Mission OCR on, Mining Assistant off
+- `mining`: Fabricator off, Mission OCR off, Mining Assistant on
+- `custom`: every other combination
+
+The Settings page and `/api/config` must use the same truth table. The POST response must report the
+**applied** screen-reader state (`fabCapture`, `missionOcr`, `miningAssistant`, and derived profile)
+so Settings can verify the save rather than reporting a false failure after a successful write.
 
 ## 5. Release quarantine
 
@@ -156,8 +169,12 @@ Launch the actual packaged sidecar with an isolated canonical config directory a
 - verify diagnostics report the canonical config path;
 - verify a conflicting legacy HOME config is not adopted;
 - attempt to overwrite F/hold/Shift+F6 through `/api/config`;
-- verify the API response is repaired;
-- verify the saved `config.json` is repaired;
+- verify the API response and saved `config.json` repair those platform controls;
+- exercise at least two non-default reader states (for example Mining and Balanced);
+- verify `/api/config` returns the applied `screenReading` state that Settings verifies;
+- verify the derived profile matches the actual reader booleans in the POST response, subsequent
+  GET response, and persisted `config.json`;
+- verify packaged Linux can explicitly opt into bounded Mining diagnostics;
 - verify the sidecar remains alive.
 
 ## 7. Upgrade cadence
