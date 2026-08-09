@@ -51,7 +51,7 @@ jobs:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
-          bash linux-port/build-r31-alpha18.sh \
+          bash linux-port/build-r31-alpha18-resolved.sh \
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
 
@@ -97,7 +97,7 @@ jobs:
             echo
             echo '```text'
             if [[ -f "$RUNNER_TEMP/alpha18-build.log" ]]; then
-              tail -n 140 "$RUNNER_TEMP/alpha18-build.log"
+              tail -n 180 "$RUNNER_TEMP/alpha18-build.log"
             else
               echo 'Build did not reach the merge script.'
             fi
