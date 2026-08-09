@@ -21,19 +21,11 @@ if not tar_path.exists():
 
 IPC_RE = re.compile(r'ipcMain\.(handle|on|once)\(\s*["\']([^"\']+)["\']')
 PRELOAD_API_RE = re.compile(r'(?m)^\s{2}([A-Za-z_$][\w$]*):\s*')
-ROUTE_RE = re.compile(
-    r'url\s*(?:===|\.startsWith\()\s*["\']([^"\']+)["\']\)?'
-    r'(?:(?:(?!\n\s*if\s*\().){0,180}?req\.method\s*===\s*["\']([A-Z]+)["\'])?',
-    re.S,
-)
 
-# A few IPC channels are intentionally Windows-only or replaced by Linux-native interaction
-# ownership. Keep this allowlist explicit and tiny; any new omission must be reviewed and added with
-# a reason rather than silently passing.
-IPC_ALLOW_MISSING: set[tuple[str, str]] = {
-    # Currently none: Linux should still expose every upstream renderer/main public channel even if
-    # the implementation behind it differs.
-}
+# A few IPC channels may eventually be intentionally Windows-only or replaced by Linux-native
+# interaction ownership. Keep this allowlist explicit and tiny; any new omission must be reviewed
+# and added with a reason rather than silently passing.
+IPC_ALLOW_MISSING: set[tuple[str, str]] = set()
 
 
 def ipc_contract(main: str) -> set[tuple[str, str]]:
@@ -75,6 +67,7 @@ def audit(candidate_root: Path, label: str):
     # exists. Route preservation is therefore source-audited in the work tree; package endpoint
     # execution is independently covered by the actual sidecar smoke test.
     missing_routes: list[tuple[str, str | None]] = []
+    upstream_routes: set[tuple[str, str | None]] = set()
     if (candidate_root / "src/overlay-server.ts").exists():
         upstream_routes = routes((up / "src/overlay-server.ts").read_text(errors="replace"))
         candidate_routes = routes((candidate_root / "src/overlay-server.ts").read_text(errors="replace"))
@@ -92,10 +85,10 @@ def audit(candidate_root: Path, label: str):
         for e in errors:
             print(e, file=sys.stderr)
         raise SystemExit(120)
+    route_text = f", HTTP routes={len(upstream_routes)}" if upstream_routes else ""
     print(
         f"[upstream-contract] {label} PASS: "
-        f"upstream IPC={len(upstream_ipc)}, preload API={len(up_pre)}"
-        + (f", HTTP routes={len(routes((up / 'src/overlay-server.ts').read_text(errors='replace')))}" if missing_routes == [] and (candidate_root / 'src/overlay-server.ts').exists() else "")
+        f"upstream IPC={len(upstream_ipc)}, preload API={len(up_pre)}{route_text}"
     )
 
 
