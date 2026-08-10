@@ -11,20 +11,29 @@ root = Path(__file__).resolve().parent
 args = sys.argv[1:]
 src = (root / "alpha18-semantic-repair.py").read_text()
 
-# Alpha18's merge sometimes swallowed the close of overlay:canvas-info. Upstream 0.1.42 changed
-# the neighbouring main-process block and its three-way result can already contain a valid close.
-# Repair the known-bad form, but otherwise verify structure instead of requiring one exact seam.
+# Alpha18's merge sometimes swallowed only the close of overlay:canvas-info. In 0.1.42 the
+# neighbouring main-process block changed enough that the diff3 intermediate can splice pieces from
+# both versions into the handler. Do not try to brace-repair that hybrid. Replace the entire handler
+# (and its explanatory comments up to app:set-hold-mode) with upstream 0.1.42's coherent block.
+# Linux geometry still flows underneath through the ArchVerse virtual-desktop/window-manager
+# functions reconstructed elsewhere in main.cjs.
 old = '''if canvas_close_bad not in s:
     raise SystemExit("main: canvas-info close seam missing")
 s = s.replace(canvas_close_bad, canvas_close_good, 1)
 '''
-new = '''if canvas_close_bad in s:
-    s = s.replace(canvas_close_bad, canvas_close_good, 1)
-else:
-    ci = s.find('ipcMain.handle("overlay:canvas-info"')
-    hm = s.find('ipcMain.handle("app:set-hold-mode"', ci + 1) if ci >= 0 else -1
-    if ci < 0 or hm < 0 or '});' not in s[ci:hm]:
-        raise SystemExit("main: canvas-info handler is not structurally closed before app:set-hold-mode")
+new = '''up_canvas = extract_between(
+    up_main,
+    '  ipcMain.handle("overlay:canvas-info"',
+    '  ipcMain.handle("app:set-hold-mode"',
+    label="upstream canvas-info block",
+)
+s = replace_between(
+    s,
+    '  ipcMain.handle("overlay:canvas-info"',
+    '  ipcMain.handle("app:set-hold-mode"',
+    up_canvas,
+    label="merged canvas-info block",
+)
 '''
 if old not in src:
     raise SystemExit("alpha19 semantic adapter: Alpha18 canvas seam block changed")
