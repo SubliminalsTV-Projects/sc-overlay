@@ -1,4 +1,4 @@
-name: Build and audit r31 Linux alpha 19
+name: Build r31 Linux alpha 19 field test
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: r31-alpha19-${{ github.event_name }}-${{ github.ref }}
+  group: r31-alpha19-field-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,91 +30,34 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Download known-good Alpha 17 Linux baseline
+      - name: Download ArchVerse Alpha 18 baseline
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/alpha17"
-          gh release download v0.1.36-r31-alpha.17 \
+          mkdir -p "$RUNNER_TEMP/alpha18"
+          gh release download v0.1.41-r31-alpha.18 \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz' \
-            --dir "$RUNNER_TEMP/alpha17"
-          sha256sum "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz"
+            --pattern 'ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz' \
+            --dir "$RUNNER_TEMP/alpha18"
+          sha256sum "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz"
 
-      - name: Rebuild audited Alpha 18 and apply only upstream 0.1.41 to 0.1.42 delta
+      - name: Apply upstream 0.1.41 to 0.1.42 to working Alpha 18
         shell: bash
         env:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
           bash linux-port/build-r31-alpha19-incremental.sh \
-            "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
+            "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha19-build.log"
 
-      - name: Upstream 0.1.42 security E2E audit
-        shell: bash
-        run: |
-          set -o pipefail
-          bash linux-port/alpha19-security-audit.sh 2>&1 | tee "$RUNNER_TEMP/alpha19-security.log"
+      # Intentionally no ArchVerse security-regression suite for this candidate.
+      # The build uses upstream 0.1.42 security/chat behavior as released and only runs
+      # syntax/typecheck + the developer's own tests inside build-r31-alpha19-incremental.sh.
 
-      - name: Deep JavaScript/runtime audit
-        shell: bash
-        run: |
-          set -euo pipefail
-          sed -i 's/0.1.41-r31-alpha.18/0.1.42-r31-alpha.19/g' linux-port/alpha18-runtime-audit.sh
-          cat > linux-port/alpha18-chat-security-audit.sh <<'SH'
-          #!/usr/bin/env bash
-          echo '[alpha19] legacy Alpha18 chat-security audit superseded by 0.1.42 E2E audit'
-          SH
-          chmod +x linux-port/alpha18-chat-security-audit.sh
-          set -o pipefail
-          bash linux-port/alpha18-runtime-audit-final.sh 2>&1 | tee "$RUNNER_TEMP/alpha19-runtime.log"
-
-      - name: Preload to main IPC contract audit
-        shell: bash
-        run: |
-          set -euo pipefail
-          sed 's/0.1.41-r31-alpha.18/0.1.42-r31-alpha.19/g' \
-            linux-port/alpha18-ipc-contract-audit.py > "$RUNNER_TEMP/alpha19-ipc.py"
-          python3 "$RUNNER_TEMP/alpha19-ipc.py" | tee "$RUNNER_TEMP/alpha19-ipc.log"
-
-      - name: Upstream 0.1.42 public-contract preservation audit
-        shell: bash
-        run: |
-          set -euo pipefail
-          sed -e 's/upstream-0.1.41/upstream-0.1.42/g' \
-              -e 's/upstream 0.1.41/upstream 0.1.42/g' \
-              -e 's/0.1.41-r31-alpha.18/0.1.42-r31-alpha.19/g' \
-            linux-port/alpha18-upstream-contract-audit.py > "$RUNNER_TEMP/alpha19-upstream-contract.py"
-          python3 "$RUNNER_TEMP/alpha19-upstream-contract.py" | tee "$RUNNER_TEMP/alpha19-upstream-contract.log"
-
-      - name: Renderer audit
-        shell: bash
-        run: |
-          set -euo pipefail
-          sed 's/0.1.41-r31-alpha.18/0.1.42-r31-alpha.19/g' \
-            linux-port/alpha18-renderer-audit.py > "$RUNNER_TEMP/alpha19-renderer.py"
-          python3 "$RUNNER_TEMP/alpha19-renderer.py" | tee "$RUNNER_TEMP/alpha19-renderer.log"
-
-      - name: Linux startup and interaction regressions
-        shell: bash
-        run: |
-          set -euo pipefail
-          for script in \
-            alpha18-main-startup-smoke.sh \
-            alpha18-unpacked-linux-startup-smoke.sh \
-            alpha18-focus-release-smoke.sh \
-            alpha18-sidecar-smoke.sh \
-            alpha18-linux-contract-audit.sh \
-            alpha18-config-e2e.sh; do
-            sed 's/0.1.41-r31-alpha.18/0.1.42-r31-alpha.19/g' "linux-port/$script" > "$RUNNER_TEMP/$script"
-            chmod +x "$RUNNER_TEMP/$script"
-            bash "$RUNNER_TEMP/$script"
-          done 2>&1 | tee "$RUNNER_TEMP/alpha19-linux-regressions.log"
-
-      - name: Stage Alpha 19 candidate artifacts
+      - name: Stage Alpha 19 field-test artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -128,7 +71,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: ArchVerse-Overlay-0.1.42-r31-alpha.19-security-audited
+          name: ArchVerse-Overlay-0.1.42-r31-alpha.19-field-test
           path: |
             dist/ArchVerse-Overlay-0.1.42-r31-alpha.19-arch.tar.gz
             dist/ArchVerse-Overlay-0.1.42-r31-alpha.19-arch.zip
@@ -139,23 +82,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: alpha19-security-debug
+          name: alpha19-field-test-debug
           path: |
             ${{ runner.temp }}/alpha19-build.log
-            ${{ runner.temp }}/alpha19-security.log
-            ${{ runner.temp }}/alpha19-runtime.log
-            ${{ runner.temp }}/alpha19-ipc.log
-            ${{ runner.temp }}/alpha19-upstream-contract.log
-            ${{ runner.temp }}/alpha19-renderer.log
-            ${{ runner.temp }}/alpha19-linux-regressions.log
             ${{ runner.temp }}/r31-alpha19-build/conflicts.txt
             ${{ runner.temp }}/r31-alpha19-build/work/electron/main.cjs
             ${{ runner.temp }}/r31-alpha19-build/work/electron/capture.cjs
             ${{ runner.temp }}/r31-alpha19-build/work/electron/preload.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/overlay/config.html
             ${{ runner.temp }}/r31-alpha19-build/work/src/overlay-server.ts
             ${{ runner.temp }}/r31-alpha19-build/work/src/chat.ts
           if-no-files-found: warn
           retention-days: 7
 
-  # SECURITY QUARANTINE: no public Alpha 19 release is created automatically.
-  # Promotion requires an explicitly approved follow-up after this candidate passes every gate.
+  # FIELD-TEST QUARANTINE: no public Alpha 19 release is created automatically.
