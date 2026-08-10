@@ -1,0 +1,150 @@
+name: Build and release r31 Linux alpha 20
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.42-arch-r31-alpha20-resource-scanner
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r31-alpha20-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arch-alpha20:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Download ArchVerse Alpha 18 baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/alpha18"
+          gh release download v0.1.41-r31-alpha.18 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz' \
+            --dir "$RUNNER_TEMP/alpha18"
+          sha256sum "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz"
+
+      - name: Build and verify Alpha 20
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: |
+          set -euo pipefail
+          bash linux-port/build-r31-alpha20-incremental.sh \
+            "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz" \
+            2>&1 | tee "$RUNNER_TEMP/alpha20-build.log"
+
+      - name: Stage Alpha 20 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp -a "$RUNNER_TEMP/dist-alpha20/." dist/
+          test -s dist/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz
+          test -s dist/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.zip
+          (cd dist && sha256sum -c SHA256SUMS)
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: ArchVerse-Overlay-0.1.42-r31-alpha.20-arch
+          path: |
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: alpha20-resource-scanner-debug
+          path: |
+            ${{ runner.temp }}/alpha20-build.log
+            ${{ runner.temp }}/r31-alpha19-build/conflicts.txt
+            ${{ runner.temp }}/r31-alpha19-build/work/electron/main.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/electron/capture.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/overlay/mining.html
+            ${{ runner.temp }}/r31-alpha19-build/work/overlay/missions.html
+            ${{ runner.temp }}/r31-alpha19-build/work/src/overlay-server.ts
+          if-no-files-found: warn
+          retention-days: 7
+
+  release-alpha20:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/integration/upstream-0.1.42-arch-r31-alpha20-resource-scanner'
+    needs: build-arch-alpha20
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.42-r31-alpha.20-arch
+          path: dist
+
+      - name: Publish Alpha 20 GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.42-r31-alpha.20
+          target_commitish: ${{ github.sha }}
+          name: ArchVerse Overlay 0.1.42 r31 Alpha 20 — Resource Scanner
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            Alpha 20 is the Resource Scanner field-test build. It keeps the Alpha 19 Linux runtime and adds broader resource classification plus independent per-widget readability controls.
+
+            Resource Scanner:
+            - The user-facing Mining Scanner is renamed Resource Scanner while internal mining keys/routes remain unchanged so saved hotkeys and layout continue to work.
+            - Known ship-minable signatures still resolve to their mineral and cluster match.
+            - RS 3,000 is shown as the hand-mineable gemstone class without guessing the individual gem from RS alone.
+            - RS 2,000 is treated as a shared resource contact because harvestables and salvage can overlap there.
+            - Other whole 2,000 multiples are shown only as Salvage Candidate — Unconfirmed.
+            - The overlay no longer announces Debris from signature alone. "Salvageable debris" is reserved for an explicit positive salvage confirmation.
+
+            Widget readability:
+            - Every canvas widget gets a Text brightness slider from 25% to 200%.
+            - Every canvas widget gets a Window transparency slider from 0% to 100%.
+            - Background transparency is independent of text brightness, so the glass can be nearly invisible while text stays readable.
+            - Settings persist per widget.
+
+            Preserved from Alpha 19:
+            - First-attempt held-F widget interaction; no arrange-mode unlock is required before interacting.
+            - Transparent-canvas focus release, Shift+F6 arrange mode, Gamescope/KDE handling and exact Star Citizen session binding.
+            - Linux capture, isolated RapidOCR, structural Scan Mode gating and upstream 0.1.42 security/routing behavior.
+
+            Install:
+            1. Download the .tar.gz or .zip asset and extract it.
+            2. Run `./install-cachyos.sh --clean-install`.
+            3. Do not add `--reset-layout` if you want to preserve your existing widget positions.
+
+            Suggested Alpha 20 tests:
+            - Open each widget cog and verify Text brightness and Window transparency move independently and persist after restart.
+            - Set a window near 80–100% transparency while leaving text brightness around 100–150% and confirm readability over Star Citizen.
+            - Verify Resource Scanner still identifies your known mineral targets and only shows unconfirmed salvage candidates for signature-only 2,000 multiples.
+            - Confirm F interaction still works on the first attempt without pressing Shift+F6 first.
+
+            Keep Alpha 19 available as the immediate rollback point while testing this prerelease.
+          files: |
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.zip
+            dist/SHA256SUMS
