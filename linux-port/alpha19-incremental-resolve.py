@@ -36,37 +36,26 @@ def split_conflicts(text: str):
 
 
 def resolve_main(ours: str, base: str, theirs: str, idx: int) -> str:
-    # 1) Alpha 18 owns the Linux interaction state; 0.1.42 adds opacity state beside it.
     if "let fHoverHeld = false;" in ours and "let unfocusedOpacity = 1;" in theirs:
         merged = ours
         anchor = "let chatVisible = false;\n"
-        addition = (
-            "let unfocusedOpacity = 1;\n"
-            "let opacityOverride = false;\n"
-        )
+        addition = "let unfocusedOpacity = 1;\nlet opacityOverride = false;\n"
         if anchor not in merged:
             raise SystemExit("main conflict 1 anchor missing")
         if "let unfocusedOpacity = 1;" not in merged:
             merged = merged.replace(anchor, anchor + addition, 1)
         return merged
 
-    # 2) Keep the proven Linux focus-latch/blur behavior and add upstream's opacity refresh.
     if "before-mouse-event" in ours and "applyOverlayOpacity" in theirs:
-        merged = ours
-        merged += (
+        return ours + (
             "  overlay.on(\"focus\", applyOverlayOpacity);\n"
             "  overlay.on(\"blur\", applyOverlayOpacity);\n"
             "  applyOverlayOpacity();\n"
         )
-        return merged
 
-    # 3) Upstream pollCursor cannot replace the Gamescope/XWayland F-hover state machine.
-    # The 0.1.42 opacity implementation is renderer-driven and its poll-time refresh is not
-    # required for the Linux classifier, so retain the Alpha 18 block intact.
     if "function updateFHoverHitFromRegions()" in ours and "function pollCursor()" in theirs:
         return ours
 
-    # 4) Keep Linux-owned F/hold/Shift+F6 while accepting 0.1.42 opacity settings/hotkey.
     if "moveKey = \"Shift+F6\"" in ours and "unfocusedOpacity" in theirs:
         return (
             "      if (Number.isFinite(c.unfocusedOpacity)) setUnfocusedOpacity(c.unfocusedOpacity);\n"
@@ -79,17 +68,14 @@ def resolve_main(ours: str, base: str, theirs: str, idx: int) -> str:
 
 
 def resolve_config(ours: str, base: str, theirs: str, idx: int) -> str:
-    # ArchVerse's Linux-safe controls and screen-reader profile UI are intentional. 0.1.42 adds
-    # the new unfocused-opacity slider in the same loadCfg region. Preserve both behaviors.
+    # Exact overlap: 0.1.42 inserts the new opacity slider immediately before the hold-to-interact
+    # control, while ArchVerse replaces that hold control with the Linux-locked F interaction UI.
+    # Keep both: upstream slider first, then the proven Linux hold-control block.
     if "holdToInteract" in ours and "setOpacitySlider" in theirs:
-        merged = ours
-        if "setOpacitySlider" not in merged:
-            anchor = "    hotkeysLoaded = true;\n"
-            line = "    setOpacitySlider(Number.isFinite(cfg.unfocusedOpacity) ? Math.round(cfg.unfocusedOpacity * 100) : 100);\n"
-            if anchor not in merged:
-                raise SystemExit("config opacity insertion anchor missing")
-            merged = merged.replace(anchor, anchor + line, 1)
-        return merged
+        return (
+            "    setOpacitySlider(Number.isFinite(cfg.unfocusedOpacity) ? Math.round(cfg.unfocusedOpacity * 100) : 100);\n"
+            + ours
+        )
     raise SystemExit(f"unexpected config.html conflict #{idx}")
 
 
