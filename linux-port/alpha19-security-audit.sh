@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="${RUNNER_TEMP:-/tmp}"
-WORK="$TMP/r31-alpha18-build/work"
+WORK="$TMP/r31-alpha19-build/work"
 PKG="$(find "$TMP" -type d -path '*/ArchVerse-Overlay-0.1.42-r31-alpha.19/app' -print | head -n1 || true)"
 
 [[ -d "$WORK" ]] || { echo '[alpha19-security] missing reconstructed work tree' >&2; exit 2; }
