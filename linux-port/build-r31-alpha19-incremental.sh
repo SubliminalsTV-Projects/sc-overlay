@@ -116,7 +116,9 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Reapply only Linux platform contracts. 0.1.42 security/chat remains developer-authored.
 # ---------------------------------------------------------------------------
-python3 "$ROOT/linux-port/alpha18-config-contract-fixes.py" "$WORK"
+# Alpha 19 field testing established that the only sidecar compatibility change needed here is
+# honoring Electron's SC_TRACKER_CONFIG_DIR. Keep upstream 0.1.42 routing/security untouched.
+python3 "$ROOT/linux-port/alpha19-linux-sidecar-compat.py" "$WORK"
 
 # Version/identity. Do not rewrite upstream's dependency graph.
 python3 - "$WORK/package.json" <<'PY'
