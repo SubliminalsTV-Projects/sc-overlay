@@ -19,7 +19,7 @@ concurrency:
 jobs:
   build-arch-alpha19:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,13 +43,13 @@ jobs:
             --dir "$RUNNER_TEMP/alpha17"
           sha256sum "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz"
 
-      - name: Semantically rebase ArchVerse onto upstream 0.1.42
+      - name: Rebuild audited Alpha 18 and apply only upstream 0.1.41 to 0.1.42 delta
         shell: bash
         env:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
-          bash linux-port/build-r31-alpha19-final-audit.sh \
+          bash linux-port/build-r31-alpha19-incremental.sh \
             "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha19-build.log"
 
@@ -148,11 +148,12 @@ jobs:
             ${{ runner.temp }}/alpha19-upstream-contract.log
             ${{ runner.temp }}/alpha19-renderer.log
             ${{ runner.temp }}/alpha19-linux-regressions.log
-            ${{ runner.temp }}/r31-alpha18-build/work/electron/main.cjs
-            ${{ runner.temp }}/r31-alpha18-build/work/electron/capture.cjs
-            ${{ runner.temp }}/r31-alpha18-build/work/electron/preload.cjs
-            ${{ runner.temp }}/r31-alpha18-build/work/src/overlay-server.ts
-            ${{ runner.temp }}/r31-alpha18-build/work/src/chat.ts
+            ${{ runner.temp }}/r31-alpha19-build/conflicts.txt
+            ${{ runner.temp }}/r31-alpha19-build/work/electron/main.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/electron/capture.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/electron/preload.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/src/overlay-server.ts
+            ${{ runner.temp }}/r31-alpha19-build/work/src/chat.ts
           if-no-files-found: warn
           retention-days: 7
 
