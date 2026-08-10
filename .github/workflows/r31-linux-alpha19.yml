@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - integration/upstream-0.1.42-arch-r31-alpha19
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: r31-alpha19-${{ github.ref }}
+  group: r31-alpha19-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -60,9 +63,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Reuse the mature Alpha18 deep audit against the Alpha19 package. The old bespoke
-          # pre-0.1.42 Chat audit is intentionally disabled because 0.1.42 is now authoritative
-          # and alpha19-security-audit.sh replaces it with actual HTTP E2E checks.
           sed -i 's/0.1.41-r31-alpha.18/0.1.42-r31-alpha.19/g' linux-port/alpha18-runtime-audit.sh
           cat > linux-port/alpha18-chat-security-audit.sh <<'SH'
           #!/usr/bin/env bash
