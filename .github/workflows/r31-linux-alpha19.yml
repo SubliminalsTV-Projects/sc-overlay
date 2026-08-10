@@ -49,6 +49,11 @@ jobs:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -o pipefail
+          # This field-test intentionally keeps the developer's 0.1.42 config/server model as-is.
+          # The older Alpha18 source-level config-contract repair expected fields that upstream
+          # 0.1.42 no longer defines; Linux F/Shift+F6 behavior is already preserved in main.cjs
+          # and the merged Settings renderer.
+          sed -i '/alpha18-config-contract-fixes.py/d' linux-port/build-r31-alpha19-incremental.sh
           bash linux-port/build-r31-alpha19-incremental.sh \
             "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz" \
             2>&1 | tee "$RUNNER_TEMP/alpha19-build.log"
