@@ -11,29 +11,36 @@ root = Path(__file__).resolve().parent
 args = sys.argv[1:]
 src = (root / "alpha18-semantic-repair.py").read_text()
 
-# Alpha18's merge sometimes swallowed only the close of overlay:canvas-info. In 0.1.42 the
-# neighbouring main-process block changed enough that the diff3 intermediate can splice pieces from
-# both versions into the handler. Do not try to brace-repair that hybrid. Replace the entire handler
-# (and its explanatory comments up to app:set-hold-mode) with upstream 0.1.42's coherent block.
-# Linux geometry still flows underneath through the ArchVerse virtual-desktop/window-manager
-# functions reconstructed elsewhere in main.cjs.
+# Alpha18's merge sometimes damaged only overlay:canvas-info. Upstream 0.1.42 changed this IPC
+# neighbourhood enough that diff3 can now lose the adjacent hold/foreground handlers too. Treat the
+# whole cluster as one semantic unit: upstream owns its IPC/API shape; ArchVerse's Linux focus/input
+# implementation is layered underneath by the later post-repair/runtime stages.
 old = '''if canvas_close_bad not in s:
     raise SystemExit("main: canvas-info close seam missing")
 s = s.replace(canvas_close_bad, canvas_close_good, 1)
 '''
-new = '''up_canvas = extract_between(
-    up_main,
-    '  ipcMain.handle("overlay:canvas-info"',
-    '  ipcMain.handle("app:set-hold-mode"',
-    label="upstream canvas-info block",
-)
-s = replace_between(
-    s,
-    '  ipcMain.handle("overlay:canvas-info"',
-    '  ipcMain.handle("app:set-hold-mode"',
-    up_canvas,
-    label="merged canvas-info block",
-)
+new = '''cluster_start = '  ipcMain.handle("overlay:canvas-info"'
+mi = s.find(cluster_start)
+ui = up_main.find(cluster_start)
+if mi < 0 or ui < 0:
+    raise SystemExit("main: canvas interaction IPC cluster start missing")
+end_anchors = [
+    '  ipcMain.on("overlay:hover"',
+    '  ipcMain.on("overlay:regions"',
+    '  ipcMain.on("overlay:modal"',
+]
+chosen = None
+mj = uj = -1
+for anchor in end_anchors:
+    a = s.find(anchor, mi + len(cluster_start))
+    b = up_main.find(anchor, ui + len(cluster_start))
+    if a >= 0 and b >= 0:
+        chosen, mj, uj = anchor, a, b
+        break
+if chosen is None:
+    raise SystemExit("main: no stable end anchor after canvas interaction IPC cluster")
+up_cluster = up_main[ui:uj]
+s = s[:mi] + up_cluster + s[mj:]
 '''
 if old not in src:
     raise SystemExit("alpha19 semantic adapter: Alpha18 canvas seam block changed")
