@@ -11,6 +11,7 @@
 import { execSync } from "node:child_process";
 import { cpSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { basename } from "node:path";
+import { applyArchVerseOverlayPatches } from "./archverse-overlay-patches.mjs";
 
 const out = "build/server";
 rmSync(out, { recursive: true, force: true });
@@ -39,5 +40,9 @@ for (const dir of ["overlay", "data"]) {
   });
   console.log(`copied ${dir}/ -> ${out}/${dir}/`);
 }
+
+// Apply Linux-fork UX as a thin build layer instead of permanently forking the
+// giant upstream HTML files. This keeps future upstream merges dramatically cleaner.
+applyArchVerseOverlayPatches(out);
 
 console.log("server bundle ->", out);
