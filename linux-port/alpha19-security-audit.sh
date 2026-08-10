@@ -8,6 +8,11 @@ PKG="$(find "$TMP" -type d -path '*/ArchVerse-Overlay-0.1.42-r31-alpha.19/app' -
 [[ -d "$WORK" ]] || { echo '[alpha19-security] missing reconstructed work tree' >&2; exit 2; }
 [[ -n "$PKG" && -d "$PKG" ]] || { echo '[alpha19-security] missing packaged Alpha 19 app' >&2; exit 2; }
 
+# The mature regression harnesses intentionally keep their Alpha18 temp-root name. Point that name
+# at this candidate's tree instead of editing years-worth of path assumptions in every proven test.
+rm -rf "$TMP/r31-alpha18-build"
+ln -s "$TMP/r31-alpha19-build" "$TMP/r31-alpha18-build"
+
 python3 - "$WORK" "$PKG" <<'PY'
 from pathlib import Path
 import sys
