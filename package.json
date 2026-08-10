@@ -22,7 +22,8 @@
     "dist": "npm run build:server && electron-builder",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test:glyph": "tsx tools/glyph-geom-test.ts && electron tools/glyph-test.cjs"
+    "test:glyph": "tsx tools/glyph-geom-test.ts && electron tools/glyph-test.cjs",
+    "test:archverse": "node tools/archverse-alpha20-smoke-test.mjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
