@@ -1,0 +1,86 @@
+name: Build r31 Linux alpha 21 log-fix field test
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.42-arch-r31-alpha21-log-fixes
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r31-alpha21-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arch-alpha21:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Download ArchVerse Alpha 18 baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/alpha18"
+          gh release download v0.1.41-r31-alpha.18 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz' \
+            --dir "$RUNNER_TEMP/alpha18"
+          sha256sum "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz"
+
+      - name: Build and verify Alpha 21
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: |
+          set -euo pipefail
+          bash linux-port/build-r31-alpha21-incremental.sh \
+            "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz" \
+            2>&1 | tee "$RUNNER_TEMP/alpha21-build.log"
+
+      - name: Stage Alpha 21 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp -a "$RUNNER_TEMP/dist-alpha21/." dist/
+          test -s dist/ArchVerse-Overlay-0.1.42-r31-alpha.21-arch.tar.gz
+          test -s dist/ArchVerse-Overlay-0.1.42-r31-alpha.21-arch.zip
+          (cd dist && sha256sum -c SHA256SUMS)
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: ArchVerse-Overlay-0.1.42-r31-alpha.21-arch
+          path: |
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.21-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.21-arch.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: alpha21-log-fix-debug
+          path: |
+            ${{ runner.temp }}/alpha21-build.log
+            ${{ runner.temp }}/r31-alpha21-build/ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/capture.cjs
+          if-no-files-found: warn
+          retention-days: 7
