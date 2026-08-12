@@ -9,9 +9,6 @@
   /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
     const t = q.get("theme"); if (t) r.setAttribute("data-theme", t); }</script>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* Star Citizen news toast, fed by sc-feed.subliminal.gg's OmniFeed (proxied + flattened by the
@@ -111,7 +108,9 @@
 
   const SITE = "https://sc-feed.subliminal.gg";
   const POLL_MS = 90_000;   // the sidecar caches upstream for 60s, so this is cheap
-  const SHOW_MS = 12_000;   // how long a story stays on screen before fading itself out
+  // How long a story stays up before fading. User-settable (Settings -> Notifications); the
+  // server clamps 3-60s so a hand-edited config can't make it vanish instantly or never leave.
+  let SHOW_MS = 12_000;
   const SEEN_KEY = "scfeed.seen";  // ids already surfaced, so a reload doesn't re-pop them
   const MAX_SEEN = 400;
 
@@ -130,6 +129,8 @@
       cfg.sound = c.scFeedSound !== false;
       cfg.linkTarget = c.scFeedLinkTarget === "source" ? "source" : "site";
       if (typeof c.scFeedVolume === "number" && isFinite(c.scFeedVolume)) cfg.volume = Math.max(0, Math.min(1, c.scFeedVolume));
+      if (typeof c.scFeedShowSeconds === "number" && isFinite(c.scFeedShowSeconds))
+        SHOW_MS = Math.max(3, Math.min(60, c.scFeedShowSeconds)) * 1000;
     } catch { /* defaults */ }
     $("aVoice").checked = cfg.voice;
     $("aSound").checked = cfg.sound;
@@ -248,9 +249,18 @@
     return Math.round(s / 86400) + "d ago";
   }
 
-  // `silent` = a baseline/preview card (launch placeholder, arrange preview). It renders but
-  // never plays a sound or speaks - only genuinely new headlines alert.
-  function show(item, silent) {
+  // Two INDEPENDENT properties of a card, and conflating them is what made the launch
+  // placeholder sit on screen forever:
+  //   silent - renders without sound or speech. Only genuinely new headlines alert.
+  //   sticky - does not auto-hide. ONLY the arrange preview wants this, because you are
+  //            positioning the widget and it has to stay put while you drag it.
+  // The launch baseline is silent but NOT sticky: it is proof of life, so it behaves like any
+  // other card and leaves after SHOW_MS. While a card is up the widget is `.live`, which makes
+  // it pointer-events:auto and puts it in the shell's interactive-region list - so one that
+  // never hides spends the whole session able to swallow a click meant for the game.
+  function show(item, opts) {
+    const silent = !!(opts && opts.silent);
+    const sticky = !!(opts && opts.sticky);
     current = item;
     $("src").textContent = item.source || "SC Feed";
     $("when").textContent = timeAgo(item.at);
@@ -265,7 +275,7 @@
     // a click meant for the game.
     try { host()?.active?.(true); } catch { /* not embedded */ }
     clearTimeout(hideTimer);
-    if (!silent) hideTimer = setTimeout(next, SHOW_MS); // a placeholder stays until real news arrives
+    if (!sticky) hideTimer = setTimeout(next, SHOW_MS);
   }
   function hide() {
     clearTimeout(hideTimer);
@@ -304,7 +314,9 @@
       // tells the user where on screen the widget lives without hunting for arrange mode.
       primed = true;
       const latest = fresh[fresh.length - 1];
-      if (latest && !current) show(latest, true); // silent: nothing here is actually new
+      // Silent because nothing here is actually new — but NOT sticky: it shows where the widget
+      // lives, then gets out of the way like every other card.
+      if (latest && !current) show(latest, { silent: true });
       return;
     }
     if (!fresh.length) return;
@@ -317,8 +329,10 @@
   window.__scFeedPreview = (on) => {
     if (on) {
       if (current) return;
-      show({ source: "SC Feed", tag: "Preview", title: "New news will appear here when it comes through.", at: new Date().toISOString(), url: SITE }, true);
-      clearTimeout(hideTimer); // hold it up for as long as arrange mode lasts
+      // sticky: it must hold for as long as arrange mode lasts, or you'd be positioning a
+      // widget that vanishes mid-drag. This is the ONLY card that wants that.
+      show({ source: "SC Feed", tag: "Preview", title: "New news will appear here when it comes through.", at: new Date().toISOString(), url: SITE },
+           { silent: true, sticky: true });
     } else if (!queue.length) hide();
   };
 

@@ -1,0 +1,122 @@
+# SC Overlay chat — BAN list. A match here refuses the message and bans the sender.
+#
+# 🔴 SUB'S POLICY, 2026-08-11, verbatim: "I'm worried about racial slurs, hate speech, that type
+# of stuff. As far as the auto mod banning someone. Otherwise, I really don't care if an adult
+# uses profanity amongst other adults. I don't need to ban for that."
+#
+# So this file is SLURS AND HATE SPEECH ONLY. Ordinary profanity lives in wordlist-censor.txt
+# and is asterisked in place; nobody is banned for it. A term in neither file never fires at all.
+#
+# HOW TO EDIT: one term per line, `#` comments a line out. Matching is case-insensitive and on
+# WORD BOUNDARIES (see automod.mjs), never substrings — "spic" cannot fire on "spice", "coon"
+# cannot fire on "raccoon", "retard" cannot fire on "retardant". A term with spaces matches
+# across any run of whitespace.
+#
+# 🔴 A BAN HERE HITS A REAL, NAMED PERSON. Chat is RSI-verified, which is what makes a ban stick
+# and is also what makes a false one expensive. Everything below is either an unambiguous slur or
+# an unambiguous hate slogan; the judgement calls are commented out at the bottom with the reason,
+# so a decision to enable one is a decision someone made rather than a line nobody noticed.
+#
+# Sources: the slur subset of LDNOOBW's published English list, plus well-known slurs it omits.
+
+# ── racial and ethnic ──────────────────────────────────────────────────────
+beaner
+beaners
+ching chong
+chink
+chinks
+coon
+coons
+curry muncher
+dago
+darkie
+darky
+gook
+gooks
+groid
+heeb
+honkey
+honky
+jigaboo
+jiggaboo
+jiggerboo
+jungle bunny
+kaffir
+kike
+kikes
+nig nog
+nigga
+niggas
+nigger
+niggers
+paki
+pakis
+pickaninny
+pikey
+porch monkey
+raghead
+sand nigger
+slant eye
+slanteye
+spearchucker
+spic
+spics
+tar baby
+towelhead
+wetback
+wetbacks
+wop
+zipperhead
+
+# ── homophobic and transphobic ─────────────────────────────────────────────
+bulldyke
+carpet muncher
+carpetmuncher
+dyke
+dykes
+fag
+fags
+faggot
+faggots
+fudge packer
+fudgepacker
+pole smoker
+shemale
+trannie
+tranny
+troon
+
+# ── ableist ────────────────────────────────────────────────────────────────
+mong
+retard
+retarded
+retards
+spastic
+
+# ── hate ideology ──────────────────────────────────────────────────────────
+gas the jews
+heil hitler
+neo nazi
+neonazi
+sieg heil
+white power
+white pride
+
+# ── predatory ──────────────────────────────────────────────────────────────
+# Not "hate speech" strictly, but the same zero-tolerance case and the same non-negotiable ban.
+jail bait
+jailbait
+nambla
+pedobear
+pthc
+
+# ── JUDGEMENT CALLS — deliberately OFF. Enable one only on purpose. ────────
+# poof      — a real slur, but also plain English in a gaming chat ("and then poof, it was gone").
+# negro     — a slur in English and an ordinary word in Spanish, including in place names.
+# swastika  — naming the symbol is not the same as endorsing it; it comes up in history talk.
+# pedophile — a word people legitimately use to describe someone, including in a report.
+# paedophile
+# lolita    — also a novel and a fashion subculture.
+# shota
+# rape      — moved to the censor list. Crude gaming idiom ("we got raped") is not hate speech,
+#             and banning a real named person for it is not what Sub asked for.

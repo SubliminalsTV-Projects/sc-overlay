@@ -1,20 +1,28 @@
 import { createServer, type ServerResponse } from "node:http";
 import { networkInterfaces } from "node:os";
 import { writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
-import { extname, join, dirname } from "node:path";
+import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync, rmSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
+import { extname, join, dirname, basename, resolve, sep } from "node:path";
 
-import { resolveLoadout, type Build } from "./erkul.js";
 import { LogWatcher } from "./watcher.js";
 import { parseLine } from "./parser.js";
 import { parseMissionEvent } from "./missions-parser.js";
+import { PlaceWatcher, debrisStepWording, type Place } from "./location.js";
 import { PartyTracker, ownHandleFromLog } from "./party.js";
 import { MissionTracker } from "./missions.js";
+import { collectLogPaths } from "./log-paths.js";
 import { MiningTracker } from "./mining.js";
+import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
+import { MissionFeedbackStore } from "./mission-feedback.js";
+import { FabClaims } from "./fab-claim.js";
+import { SCENARIOS, replayLines, replayMissionId } from "./dev-replay.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
-import { loadCatalog, ocrImage, hasScanHud, classifyScreen, type CatalogEntry, type OcrResult, type ScanRegion } from "./screen-read.js";
+import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
+import { parseContractList } from "./contract-list.js";
+import { ContractMatcher } from "./contract-match.js";
+import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
 import { maybeShareLog } from "./log-share.js";
 
 const overlayDir = assetDir(import.meta.url, "overlay");
@@ -35,12 +43,30 @@ if (!APP_VERSION) {
 // Periodically share the current session's scrubbed log (dedup by content hash). The
 // last tick before the app closes captures the fullest session; opt-in + no-op when off.
 const LOG_SHARE_INTERVAL_MS = 20 * 60 * 1000;
-setInterval(() => void maybeShareLog(config, APP_VERSION), LOG_SHARE_INTERVAL_MS);
+setInterval(() => void maybeShareLog(config, APP_VERSION, sharedLogStatePath), LOG_SHARE_INTERVAL_MS);
 
 // "What's new" per version (overlay/changelog.json), cached after first read. Each entry is
 // { date, notes } (date = UTC release time); a bare string[] is accepted for backward-compat.
-type ChangelogEntry = string[] | { date?: string | null; notes: string[] };
-const clNotes = (e: ChangelogEntry | undefined): string[] => (Array.isArray(e) ? e : e?.notes ?? []);
+//
+// A NOTE is { kind, label, text }: `label` is the short scannable title, `text` the description,
+// and `kind` (new | improved | fixed) drives the card's grouping. A PLAIN STRING is a legacy note
+// — 0.1.33 and older were written before labels existed — and normalizes to text with no label and
+// no kind, which the card renders as a flat ungrouped list exactly as it always did. Normalising
+// HERE rather than in the card means one shape reaches every consumer, and an unknown kind from a
+// hand-edited file degrades to ungrouped instead of inventing a section.
+type ChangelogNote = string | { kind?: string | null; label?: string | null; text: string };
+type ChangelogEntry = ChangelogNote[] | { date?: string | null; notes: ChangelogNote[] };
+type NormalisedNote = { kind: string | null; label: string | null; text: string };
+const CL_KINDS = new Set(["new", "improved", "fixed"]);
+const clNote = (n: ChangelogNote): NormalisedNote | null => {
+  if (typeof n === "string") return n.trim() ? { kind: null, label: null, text: n } : null;
+  if (!n || typeof n.text !== "string" || !n.text.trim()) return null;
+  const kind = typeof n.kind === "string" && CL_KINDS.has(n.kind) ? n.kind : null;
+  const label = typeof n.label === "string" && n.label.trim() ? n.label.trim() : null;
+  return { kind, label, text: n.text };
+};
+const clNotes = (e: ChangelogEntry | undefined): NormalisedNote[] =>
+  (Array.isArray(e) ? e : e?.notes ?? []).map(clNote).filter((n): n is NormalisedNote => n !== null);
 const clDate = (e: ChangelogEntry | undefined): string | null => (Array.isArray(e) ? null : e?.date ?? null);
 let changelogCache: Record<string, ChangelogEntry> | null = null;
 function loadChangelog(): Record<string, ChangelogEntry> {
@@ -67,12 +93,13 @@ const seedConfigPath = join(overlayDir, "config.json");
 // Writable copy of the datasets: bundled pools are seeded in, and any pools the
 // tracker fetches for a not-yet-bundled patch cache here (Program Files is read-only).
 const dataDir = join(userDir, "data");
+// Which rotated sessions (logbackups/) have already been shared. Remembered by FILENAME, and
+// permanently — a backup is immutable, so "sent", "wrong patch" and "no mission signal" are all
+// final answers. Without this every app launch would re-offer the whole folder.
+const sharedLogStatePath = join(userDir, "shared-logs.json");
 
 interface Config {
-  urls: string[];
-  activeUrl: string | null;
   logPath: string;
-  autoSwitch: boolean;
   /** subliminal.gg device token (minted on /blueprints) for collection sync. */
   syncToken: string;
   /** Whether to push collected blueprints + tracked mission to subliminal.gg. */
@@ -84,13 +111,45 @@ interface Config {
    *  game.log can't give — it sees every accepted mission equally). Independent of fabCapture;
    *  either one arms the capture loop. Read by electron/capture.cjs each poll. */
   missionOcr: boolean;
+  /** Opt-in: when the fabricator shows a blueprint the tracker has no record of, offer to
+   *  tick it. Recovers ownership the log can never report (receipts predating the install,
+   *  or rotated-away logbackups) using the one screen that only lists what you own.
+   *  Independent of fabCapture — this needs no upload and no sync token. */
+  fabClaim: boolean;
   /** Mining Assistant: arms the capture loop to read the Refinement Center (job timers)
    *  and the mining scanner signature. Opt-in; read by electron/capture.cjs each poll. */
   miningAssistant: boolean;
+  /** DEV BUILDS ONLY — writes the bitmaps the mining OCR is handed to <userDir>/debug-frames,
+   *  served at GET /api/mining/debug-frame. Those bitmaps are screenshots of the user's desktop,
+   *  and this app's position on screen reading is that it never happens unless you ask for it — so
+   *  this is gated on SC_DEV here AND on app.isPackaged in main.cjs, rather than trusted to a
+   *  config flag a release could ship or a stale config.json could arm. Off by default either way. */
+  miningDebug: boolean;
   /** Where the signature number is hunted, as fractions of the frame. Null = the default band.
    *  Set by dragging the "scan read area" box (Mining Scanner cog) — the only way to cope with a
    *  HUD that doesn't sit where we assume. */
   scanRegion: ScanRegion | null;
+  /** OPT-IN, OFF BY DEFAULT, and 🔑 DELIBERATELY NOT PERSISTED — it is reset to false on
+   *  every launch. Sub's call (2026-08-11): "I want it to be more like they can
+   *  temporarily turn this thing on."
+   *
+   *  That is the right shape for this specifically. Every other opt-in here (fabCapture,
+   *  missionOcr, miningAssistant) is a standing preference you tick once, and those read
+   *  the screen for YOUR benefit, live. This one reads the screen to gather data for a
+   *  shared dataset, which is a different bargain — nobody should discover months later
+   *  that a box they ticked once has been quietly screen-reading ever since. You turn it
+   *  on for a sweep and it is off again next launch.
+   *
+   *  ⚠️ It stays in the config OBJECT (rather than a bare module variable) so every
+   *  existing reader — capture.cjs polls the config each tick — keeps working unchanged;
+   *  it is simply stripped on save. The QUEUE is persisted separately, so ending a session
+   *  never loses gathered observations. */
+  payoutScan: boolean;
+  /** Where the offers PANEL sits, as fractions of the frame. Null = not calibrated, and
+   *  the scan will not run without it: the parser needs the panel to tell the title column
+   *  from the amount column, and guessing produced garbage (the bottom nav pushed the
+   *  column boundary past the amounts and every row read as priceless). */
+  contractRegion: ScanRegion | null;
   /** Auto-show the Mining Assistant window when the scanner/refinery screen is detected. */
   miningAutoShow: boolean;
   /** Remembers whether the Mining Assistant window was left open, so it's restored on launch. */
@@ -166,8 +225,30 @@ interface Config {
   overlayHotkey: string;
   /** Global hotkey that shows/hides the Mining Assistant window (Electron accelerator
    *  syntax). Read by main.cjs at startup. */
+  /** Manual nudge for the overlay canvas, in PHYSICAL pixels, applied to the window's position.
+   *  Mixed-DPI desktops (a 225% 4K primary beside 100% 1080p monitors) leave the canvas offset
+   *  from the real monitors. Rather than guess the DPI maths, the user drags it into place like a
+   *  console game's safe-area screen.
+   *  🔑 Defaults to 0,0, so a correct setup is bit-for-bit unaffected. */
+  canvasOffsetX: number;
+  canvasOffsetY: number;
+  /** The other half of that calibration: a uniform scale for the canvas coordinate space. Changing
+   *  the PRIMARY monitor's Windows scaling leaves the canvas both mis-placed AND mis-sized (Sub,
+   *  2026-08-03), and an offset can only fix the placement. Applied as CSS `zoom` on the canvas
+   *  document, so the dotted primary outline, every widget's position and every widget's contents
+   *  scale as one — the user grows it until the outline sits on their real monitor edges.
+   *  🔑 Defaults to 1. */
+  canvasScale: number;
+  /** Seconds an SC Feed story stays on screen before fading (Argante's ask). Clamped 3–60:
+   *  under 3 nothing is readable, and a notifier that never leaves is a panel, not a pop-up. */
+  scFeedShowSeconds: number;
+  /** Seconds an Unlock Alert card stays up. Same clamp, same reasoning. */
+  unlockAlertShowSeconds: number;
   miningHotkey: string;
   webViewHotkey: string;
+  /** Global hotkey that shows/hides the Journal widget (Electron accelerator syntax).
+   *  Read by electron/main.cjs at startup. */
+  notepadHotkey: string;
   /** Hold-to-interact hotkey (Electron accelerator, default "F"): when hold-to-interact mode is
    *  on, the overlay is passive (click-through) unless this key is HELD. */
   interactHotkey: string;
@@ -176,6 +257,18 @@ interface Config {
   holdToInteract: boolean;
   /** Global hotkey that toggles arrange/move mode (Electron accelerator syntax). */
   moveHotkey: string;
+  /** How opaque the overlay is while you are NOT focused on it — i.e. while you are playing.
+   *  1 = off (the default, so nobody's overlay changes appearance on update); clamped 0.2–1 in
+   *  the UI, the server AND the shell, because an overlay faded to nothing is one you can't
+   *  find to turn back up. Read by electron/main.cjs, which applies it as WINDOW opacity. */
+  unfocusedOpacity: number;
+  /** Global hotkey that forces full opacity regardless of focus (and back). Lets you read the
+   *  overlay mid-fight without alt-tabbing to it. Empty = no hotkey. */
+  opacityHotkey: string;
+  /** Hotkey that CONFIRMS a fabricator claim prompt. A hotkey rather than only a click
+   *  because the overlay is click-through over the game — confirming with the mouse means
+   *  entering hold-to-interact mid-kiosk, which is exactly when you can least afford it. */
+  fabClaimHotkey: string;
   /** Recent-activity timestamps: relative ("2h ago") when true, absolute date+clock
    *  when false. Read by the overlay via the mission view's `prefs`. */
   timeRelative: boolean;
@@ -186,10 +279,6 @@ interface Config {
   /** App version whose "what's new" card the user has dismissed. The card shows once per
    *  new version (when this !== the running version) and this is set on dismiss. */
   seenChangelog: string;
-  /** Reveal the loadout-overlay settings (Erkul URLs + ship auto-switch) in config.html.
-   *  Off by default — those are Sub's erkul stream-overlay feature, meaningless to normal
-   *  blueprint-tracker users. Unlocked by a hidden gesture (click the Settings title 5×). */
-  showLoadout: boolean;
   /** Overlay HUD declutter toggle (set from the overlay's settings cog): hide the
    *  fabricator category filter bar. Sent to the overlay via the mission view prefs.
    *  (Odds mode + Verify now live inside the cog itself, so the footer has no buttons.) */
@@ -210,19 +299,60 @@ interface Config {
    *  instead of keeping the ship's manufacturer skin. Affects theme="auto" AND the /api/ship
    *  signal. Default false = stay on the last ship's manufacturer until you board another. */
   revertThemeOnFoot: boolean;
+  /** Remembers whether the Chat widget was left open — and is also the CONNECTION gate:
+   *  chat holds no socket unless the widget is open (Sub's lightweight rule). */
+  chatOpen: boolean;
+  /** WebSocket URL of the chat server (chat-server/server.mjs protocol). Defaults to the
+   *  subliminal.gg deployment; point it at ws://127.0.0.1:8788/ws for local dev. */
+  chatServerUrl: string;
+  /** Dev-mode chat identity for the A/B. Production identity comes from the sync token —
+   *  the site resolves it to the RSI-VERIFIED handle, and unverified accounts get no chat
+   *  (Sub's rule: chat identities must be bannable). */
+  chatHandle: string;
+  /** Custom chat rooms the user has joined, by DISPLAY NAME. Rejoined on every connect, so a
+   *  restart lands you back in the same channels. The client owns this list; the sidecar only
+   *  persists what it reports. */
+  chatChannels: string[];
+  /** Share what you're doing (the contract you're running, or that you're scanning rocks) with
+   *  the people in your chat channels.
+   *  🔴 OFF by default, and it stays that way for the same reason publishing your shard on a
+   *  party listing is opt-in per listing: nothing may leak from merely having the widget open.
+   *  This is the one thing an external chat can show that the game's own social panel cannot —
+   *  it comes off game.log — which is exactly why it has to be asked for rather than assumed. */
+  chatShareActivity: boolean;
+  /** Be invisible in the channels that identify WHERE you are — your server (region) and Nearby
+   *  (DGS). Global, your org and custom rooms are unaffected: this hides a location, not a
+   *  person.
+   *  🔑 Enforced by not SENDING the location at all (see ChatClient.setHideLocation), so the
+   *  shard never reaches a machine the player does not own. A server-side "hide me" flag would
+   *  still have published it and merely declined to show it. */
+  chatHideLocation: boolean;
+  /** First-run setup wizard: every step is resolved (done or explicitly skipped). Set when the
+   *  wizard is finished; the wizard never auto-opens again once true. */
+  setupDone: boolean;
+  /** The wizard's "review your settings" step. Nothing else in the app can observe that a user
+   *  looked at Settings, so this is the only record — it is set when they come back from it. */
+  setupSettingsReviewed: boolean;
+  /** The wizard's optional "share your profile" step, which happens entirely on the website.
+   *  The app can't detect an RSI handle verification, so this records that the user resolved it. */
+  setupShareResolved: boolean;
+  /** Existing users don't get the wizard thrown at them on update — they get one dismissible
+   *  banner. Set when they dismiss it or open the wizard from it, so it never returns. */
+  setupNudgeDismissed: boolean;
 }
 
 const DEFAULTS: Config = {
-  urls: ["https://www.erkul.games/loadout/Zjbboonv"],
-  activeUrl: "https://www.erkul.games/loadout/Zjbboonv",
   logPath: "C:\\Program Files\\Roberts Space Industries\\StarCitizen\\GAME\\game.log",
-  autoSwitch: true,
   syncToken: "",
   syncEnabled: false,
   fabCapture: false,
   missionOcr: false,
+  fabClaim: false,
   miningAssistant: false,
+  miningDebug: false,
   scanRegion: null,
+  payoutScan: false,
+  contractRegion: null,
   miningAutoShow: false,
   miningOpen: false,
   notepadOpen: false,
@@ -254,40 +384,94 @@ const DEFAULTS: Config = {
   bindingPng: "",
   bindingHotkey: "Ctrl+F3",
   overlayHotkey: "F3",
+  canvasOffsetX: 0,
+  canvasOffsetY: 0,
+  canvasScale: 1,
+  scFeedShowSeconds: 12,
+  unlockAlertShowSeconds: 8,
   miningHotkey: "Shift+F3",
   webViewHotkey: "Ctrl+Shift+F3",
+  notepadHotkey: "Alt+F3",
   interactHotkey: "F",
   holdToInteract: false,
   moveHotkey: "Ctrl+Alt+M",
+  fabClaimHotkey: "F4",
+  unfocusedOpacity: 1,
+  opacityHotkey: "",
   timeRelative: true,
   shareLogs: false,
   seenChangelog: "",
-  showLoadout: false,
   hideCatbar: false,
   theme: "mobiglas",
   overlayTwist: 0, // flat by default; the user can dial in a skew angle in the hub
   overlayScale: 100,
   revertThemeOnFoot: false,
+  chatOpen: false,
+  // Production chat (Coolify VPS, CHAT_AUTH=site — identities come from the sync token's
+  // verified RSI handle). Local dev server: ws://127.0.0.1:8788/ws + a chatHandle.
+  chatServerUrl: "wss://chat.subliminal.gg/ws",
+  chatHandle: "",
+  chatChannels: [],
+  chatShareActivity: false,
+  chatHideLocation: false,
+  setupDone: false,
+  setupSettingsReviewed: false,
+  setupShareResolved: false,
+  setupNudgeDismissed: false,
 };
+
+// Set when the config on disk was left ARMED (a crash, or a build from before the forced-off
+// rule). Read once at startup to rewrite the file immediately — see the note in loadConfig.
+let payoutScanWasArmedOnDisk = false;
 
 function loadConfig(): Config {
   // Prefer the user's saved config; fall back to the bundled default on first run.
+  //
+  // 🔑 `payoutScan` is forced OFF here regardless of what any file says. This is the ONLY thing
+  // keeping the scan session temporary, and it is enough: whatever the file claims, the running
+  // app starts disarmed and the file is rewritten to agree (see the startup save below).
+  //
+  // 🔴 DO NOT go back to stripping it on SAVE. That looked stronger and silently broke the
+  // scanner for a whole release: `electron/capture.cjs` learns the mode by READING config.json
+  // off disk every tick (`readConfig`), so a field that is never written is a field it can never
+  // see — `payout` was permanently false, the contract-region crop at capture.cjs:713 never ran,
+  // and the dashboard sat on "no board on screen" forever while every server-side surface
+  // correctly reported the mode as ON. Nothing failed loudly; `c8c2aca` introduced it as a
+  // tightening and no board was swept afterwards to notice. Forcing it off on LOAD gives the
+  // same guarantee — the mode cannot survive a launch — without lying to the process that has
+  // to act on it.
   for (const p of [configPath, seedConfigPath]) {
     try {
-      if (existsSync(p)) return { ...DEFAULTS, ...JSON.parse(readFileSync(p, "utf8")) };
+      if (existsSync(p)) {
+        const raw = JSON.parse(readFileSync(p, "utf8"));
+        if (raw && raw.payoutScan === true) payoutScanWasArmedOnDisk = true;
+        return { ...DEFAULTS, ...raw, payoutScan: false };
+      }
     } catch {
       /* corrupt — try the next source */
     }
   }
   return { ...DEFAULTS };
 }
+// 🔑 Whether this is a genuinely FIRST run, decided BEFORE anything can write a config —
+// the setup wizard takes over the screen, so it must never fire at someone who has been
+// using the app for months. An ABSENT `setupDone` cannot serve here: every existing user's
+// config predates the field and would read as fresh.
+//
+// Judged on the USER's config alone. `seedConfigPath` (overlay/config.json) is deliberately
+// excluded: it is a bundled DEFAULT, not evidence that this user has configured anything, and
+// it never ships (tools/build-server.mjs filters it out) so packaged behaviour is unchanged
+// either way. Including it meant the wizard could never fire on a machine that happened to have
+// a dev seed lying around — which is every developer's, and which made `npm run dev:fresh`
+// (the only way to walk first-run setup once you have already done it) silently useless.
+const freshInstall = !existsSync(configPath);
 let config: Config = loadConfig();
 
 /** Scan common Star Citizen install locations for per-channel game.log files, newest
  *  first. SC installs as <root>\StarCitizen\<CHANNEL>\game.log (LIVE, PTU, EPTU,
  *  TECH-PREVIEW, HOTFIX, GAME, …). The channel whose log was written most recently is
  *  the one the player actually plays, so that's the recommended pick. */
-function detectGameLogs(): { path: string; channel: string; mtimeMs: number }[] {
+function detectGameLogs(): { path: string; channel: string; mtimeMs: number; live: boolean }[] {
   const bases: string[] = [];
   for (const d of ["C", "D", "E", "F", "G", "H"])
     for (const sub of [
@@ -301,7 +485,7 @@ function detectGameLogs(): { path: string; channel: string; mtimeMs: number }[] 
   // Also scan the parent of the currently-configured path (its siblings = channels).
   try { bases.push(dirname(dirname(config.logPath))); } catch { /* ignore */ }
 
-  const found: { path: string; channel: string; mtimeMs: number }[] = [];
+  const found: { path: string; channel: string; mtimeMs: number; live: boolean }[] = [];
   const seen = new Set<string>();
   for (const base of bases) {
     let channels: string[];
@@ -312,23 +496,131 @@ function detectGameLogs(): { path: string; channel: string; mtimeMs: number }[] 
       if (seen.has(key)) continue;
       try {
         const st = statSync(p);
-        if (st.isFile()) { found.push({ path: p, channel: ch, mtimeMs: st.mtimeMs }); seen.add(key); }
+        if (st.isFile()) { found.push({ path: p, channel: ch, mtimeMs: st.mtimeMs, live: isLiveLog(p) }); seen.add(key); }
       } catch { /* no game.log in this channel */ }
     }
   }
-  return found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  // 🔑 A LIVE log beats a newer one. Picking purely by mtime pointed the app at PTU for
+  // anyone who had dabbled there most recently — and since only live progress counts, that
+  // meant tracking nothing real while their actual history sat in a sibling folder.
+  // Judged by the log's own `--envtag`, never the folder name: names are user-renamable
+  // (and on some installs the channels are junctions to one folder), the header is not.
+  // Name is the LAST tie-break and nothing more. It matters only when several candidates are
+  // equally live and equally recent — which happens when the channel folders are junctions to
+  // one install (Sub's setup: six paths, one inode, identical mtimes). Without it the winner
+  // is directory order, so a live player can be told they're on "EPTU". It can never override
+  // the env tag or recency, so a renamed folder still can't misrepresent a log.
+  const nameRank = (ch: string) => {
+    const c = ch.toUpperCase();
+    return c === "LIVE" ? 0 : c === "GAME" ? 1 : 2;
+  };
+  return found.sort((a, b) => {
+    if (a.live !== b.live) return a.live ? -1 : 1;
+    if (a.mtimeMs !== b.mtimeMs) return b.mtimeMs - a.mtimeMs;
+    return nameRank(a.channel) - nameRank(b.channel);
+  });
+}
+
+/** Is this game.log a LIVE (PUB) session? Reads only the header, where the tag lives —
+ *  these files reach tens of MB and detection runs at startup.
+ *  Unknown reads as LIVE: a log too short to carry a header yet must not be ranked below
+ *  a real test-server log. Mirrors the same tolerance as the tracker's own env gate. */
+function isLiveLog(p: string): boolean {
+  try {
+    const fd = openSync(p, "r");
+    try {
+      const buf = Buffer.alloc(4096);
+      const n = readSync(fd, buf, 0, buf.length, 0);
+      const m = /--envtag=.?([A-Za-z0-9_]+)|Environment:\s*([A-Za-z0-9_]+)/.exec(buf.toString("utf8", 0, n));
+      const tag = (m?.[1] || m?.[2] || "").toUpperCase();
+      return !tag || tag === "PUB";
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return true; // unreadable → don't demote it on a guess
+  }
+}
+
+/** Is the sync token actually good? A non-empty string proves nothing — it can be revoked or
+ *  typed wrong — so this asks the site. Used by both `/api/diagnostics` and `/api/setup`; one
+ *  copy, because two would drift on exactly the detail that matters (401 = the token is bad and
+ *  the user must act, anything else = the network is down and they must not).
+ *
+ *  🔑 Memoised for 5s. The setup wizard POLLS this while its connect step is open, waiting for a
+ *  freshly-pasted token to go green; without the memo that step would hit subliminal.gg on every
+ *  tick. The window is deliberately short — a user who pastes a token expects it to verify now,
+ *  not in a minute. */
+type TokenVerdict = "none" | "ok" | "rejected" | "unreachable";
+let tokenMemo: { at: number; forToken: string; verdict: TokenVerdict } | null = null;
+async function verifySyncToken(): Promise<TokenVerdict> {
+  if (!config.syncToken) return "none";
+  // Keyed on the token itself, so pasting a NEW one is never answered from the old one's memo.
+  if (tokenMemo && tokenMemo.forToken === config.syncToken && Date.now() - tokenMemo.at < 5000)
+    return tokenMemo.verdict;
+  let verdict: TokenVerdict;
+  try {
+    // 🔑 MUST be an endpoint that actually authenticates. This asked `/api/sc/fab-needed`, which
+    // answers 200 to anyone — no bearer at all included — so every token verified as good. The
+    // setup wizard's connect step is built on this, and it was telling users with a mistyped
+    // token "Connected — your collection will sync". `/api/sc/entitlement` is read-only and 401s
+    // without a valid bearer, so it can actually tell them apart.
+    const r = await fetch("https://subliminal.gg/api/sc/entitlement", {
+      headers: { Authorization: `Bearer ${config.syncToken}` },
+      signal: AbortSignal.timeout(6000),
+    });
+    // 401 is the ONLY "your token is bad". A definite non-401 answer means the server recognised
+    // the caller — including 403, which is a VALID token that simply isn't entitled to something
+    // (skins are subscriber-gated). Reading 403 as rejected would tell a perfectly connected
+    // non-subscriber their token was refused.
+    verdict = r.status === 401 ? "rejected" : r.status < 500 ? "ok" : "unreachable";
+  } catch { verdict = "unreachable"; }
+  tokenMemo = { at: Date.now(), forToken: config.syncToken, verdict };
+  return verdict;
 }
 
 // Save to the writable user dir; a write failure must never crash the server
 // (an EPERM writing under Program Files is exactly what took it down before).
+//
+// 🔑 A failure here is INVISIBLE in the worst possible way: every endpoint still answers
+// {ok:true} because it only reports that the in-memory config was updated, so the app behaves
+// perfectly until it restarts and every setting the user changed is gone. Worse, the one place
+// this was reported — console.error — goes nowhere whenever the sidecar's stdio isn't being
+// captured, which is exactly when you most need it. So the last failure is REMEMBERED and
+// surfaced by /api/diagnostics, and a save that succeeds clears it.
+let lastSaveError: { at: string; error: string } | null = null;
+let lastSaveOk: string | null = null;
+// Live overlay geometry, merged from the shell (`shell` key) and the canvas page (`canvas` key).
+// See the /api/overlay-geometry routes; in memory only, because it describes a window that exists
+// right now and a stale copy would be worse than none.
+let overlayGeometry: Record<string, unknown> | null = null;
 const saveConfig = async (): Promise<void> => {
   try {
     mkdirSync(userDir, { recursive: true });
+    // 🔑 `payoutScan` IS written, deliberately — see the long note in loadConfig(). It is the
+    // only way `electron/capture.cjs` can learn the mode (it re-reads this file every tick), and
+    // stripping it here is what silently disabled the whole scanner in `c8c2aca`. The mode stays
+    // temporary because loadConfig() forces it off on every launch and rewrites the file, which
+    // is a guarantee about what RUNS rather than about what is on disk.
     await writeFile(configPath, JSON.stringify(config, null, 2));
+    lastSaveOk = new Date().toISOString();
+    lastSaveError = null;
   } catch (e) {
+    lastSaveError = { at: new Date().toISOString(), error: String(e) };
     console.error("[config] save failed:", String(e));
   }
 };
+
+// 🔑 A config left ARMED — the app was killed mid-sweep, or it predates the forced-off rule — is
+// rewritten disarmed RIGHT NOW, not whenever the next save happens to occur. loadConfig() already
+// guarantees the running app starts disarmed, but `electron/capture.cjs` reads the FILE, so until
+// this lands the file is what would arm it. The shell only spawns that loop after waitForServer(),
+// so this write is ahead of its first tick. Conditional purely to avoid rewriting a file on every
+// launch for the 99% of launches that were left off.
+if (payoutScanWasArmedOnDisk) {
+  console.log("[payout] config was left armed — disarming on disk");
+  void saveConfig();
+}
 
 // ── Notepad (local-only scratch notes) ───────────────────────────────────────
 // A flat list of notes stored beside config.json in the per-user dir (NEVER next to
@@ -390,63 +682,50 @@ function seedDataDir(): void {
 }
 seedDataDir();
 
-// ── Loadout cache + ship index ──────────────────────────────────────────────
-const TTL = 60_000;
-const cache = new Map<string, { build: Build; at: number }>();
-async function getBuild(url: string): Promise<Build> {
-  const c = cache.get(url);
-  if (c && Date.now() - c.at < TTL) return c.build;
-  const build = await resolveLoadout(url);
-  cache.set(url, { build, at: Date.now() });
-  return build;
-}
-
-// ship localName (lowercase) -> erkul url, so a [VEHICLE SPAWN] can pick a build
-const shipIndex = new Map<string, string>();
-async function reindex(): Promise<void> {
-  shipIndex.clear();
-  for (const u of config.urls) {
-    try {
-      const b = await getBuild(u);
-      if (b.ship.localName) shipIndex.set(b.ship.localName.toLowerCase(), u);
-    } catch (e) {
-      console.error("[reindex] failed for", u, String(e));
-    }
-  }
-}
-
-// ── SSE broadcast of the active build ───────────────────────────────────────
-const clients = new Set<ServerResponse>();
-let activeBuild: Build | null = null;
-
-function broadcast(): void {
-  const data = `data: ${JSON.stringify(activeBuild)}\n\n`;
-  for (const res of clients) res.write(data);
-}
-
-async function setActive(url: string, reason: string): Promise<boolean> {
-  // Resolve FIRST — only commit if it actually loaded, so a bad/unresolvable
-  // URL never replaces a good active build with a silent stale fallback.
-  try {
-    const build = await getBuild(url);
-    activeBuild = build;
-    config.activeUrl = url;
-    void saveConfig();
-    console.log(`[active] ${build.ship.name} — ${reason}`);
-    broadcast();
-    return true;
-  } catch (e) {
-    console.error(`[active] could not resolve ${url}: ${String(e)}`);
-    return false;
-  }
-}
-
 // ── Mission / blueprint tracker ─────────────────────────────────────────────
 // remoteBaseUrl: pull a patch's pool data from subliminal.gg if it isn't bundled
 // (offline-first — always falls back to the shipped data/ files).
 const tracker = new MissionTracker({ dataDir, remoteBaseUrl: "https://subliminal.gg/sc" });
 // Name->UUID catalog for the screen-read OCR endpoint; loaded lazily on first use.
 let screenCatalog: CatalogEntry[] | null = null;
+
+/** Rolling diagnostic buffer of what the mining scanner SAW, served at GET /api/mining/recent.
+ *  In memory only and capped — a debug aid, never a record. It exists because the detailed
+ *  `[mining]` log line is only written once a signature has parsed, so the interesting case —
+ *  a frame where nothing parsed — left no trace at all. */
+interface MiningReadNote {
+  at: number;
+  /** Which OCR pass produced this: the full-frame Windows OCR, pre-computed lines, or the
+   *  magnified RapidOCR crop. Tells a Windows-OCR miss apart from a RapidOCR one. */
+  pass: string;
+  kind: string;
+  signature: number | null;
+  scanHud: boolean;
+  sawText: string;
+}
+const MINING_READ_RING = 60;
+const recentMiningReads: MiningReadNote[] = [];
+let lastHeartbeat: { at: number; rate: number | null; lastTickMs: number | null; fastForMs: number | null } | null = null;
+/** Per-stage tick timings from the capture loop (see the heartbeat handler). */
+const TICK_RING = 80;
+const recentTicks: Record<string, unknown>[] = [];
+
+function noteMiningRead(n: Omit<MiningReadNote, "at">): void {
+  recentMiningReads.push({ at: Date.now(), ...n });
+  if (recentMiningReads.length > MINING_READ_RING) recentMiningReads.shift();
+}
+
+/** A short sample of the text the OCR returned, for telling "saw nothing" apart from "saw the
+ *  number and mangled it". Bounded in both directions — line count and total length. */
+function readTextSample(body: Record<string, unknown>): string {
+  const lines = body.lines;
+  if (!Array.isArray(lines)) return "";
+  return lines
+    .map((l: unknown) => (l && typeof l === "object" ? String((l as { text?: unknown }).text ?? "") : ""))
+    .filter(Boolean)
+    .join(" | ")
+    .slice(0, 400);
+}
 const missionClients = new Set<ServerResponse>();
 // ── Overlay theme (manufacturer) ─────────────────────────────────────────────
 // The ship manufacturer we last detected in the log (for theme: "auto"). Drake and Anvil have
@@ -559,10 +838,77 @@ function shipInfo() {
 // The overlay view plus user prefs the overlay needs (kept out of the tracker, which
 // doesn't know about config). Sent on every mission broadcast so a config change (e.g.
 // the time-format toggle) reaches the overlay live via broadcastMissions().
+/** Fabricator claim prompts — offer to tick a blueprint the kiosk is showing that we have
+ *  no record of. Session-scoped on purpose: the two-prompts-per-item budget resets when the
+ *  app restarts, which is the point (a prompt missed today is worth re-offering tomorrow). */
+const fabClaims = new FabClaims();
+
+// ── What everyone else found out about this contract ────────────────────────────────────────
+// Two things subliminal.gg now knows that the shipped dataset cannot: what the contract actually
+// PAID (the game calculates most payouts at accept time — the number exists nowhere in the game
+// files, which is what the board scanner exists to collect), and what players said about it
+// afterwards (difficulty, whether they soloed it, what the fighting was like).
+//
+// 🔑 Fetched HERE, not in the widget. Both read endpoints answer without CORS headers, so a page
+// on localhost cannot read them — and the sidecar already talks to the site.
+// 🔑 Unauthenticated, deliberately: neither GET wants a token, so these numbers appear for
+// everyone rather than only for people who have connected an account.
+// ⚠️ It is an outbound request naming the contract you are running. No token, no identity, and
+// only when a mission is actually tracked — but it IS a request that did not happen before. Gate
+// it on `config.syncEnabled` if that ever needs to be tighter.
+type CommunityPayout = { samples: number; contributors: number; min: number; max: number; median: number; currency: string; singleContributor: boolean };
+type CommunityFacts = { samples: number; combatTop: string | null; difficulty: number | null; difficultyAnswers: number; soloRate: number | null; soloAnswers: number; ships: { ship: string; count: number }[] };
+type Community = { payout: CommunityPayout | null; facts: CommunityFacts | null };
+const communityCache = new Map<string, { at: number; data: Community | null }>();
+const COMMUNITY_TTL_MS = 10 * 60_000;
+let communityInFlight = "";
+
+function communityFor(key: string | null): Community | null {
+  if (!key) return null;
+  const hit = communityCache.get(key);
+  // Serve a stale entry while the refresh runs. Blinking the numbers away and back is worse
+  // than showing ten-minute-old medians for a second.
+  if (!hit || Date.now() - hit.at >= COMMUNITY_TTL_MS) void fetchCommunity(key);
+  return hit ? hit.data : null;
+}
+
+async function fetchCommunity(key: string): Promise<void> {
+  if (communityInFlight === key) return;
+  communityInFlight = key;
+  const base = (process.env.SC_SYNC_BASE || "https://subliminal.gg").replace(/\/+$/, "");
+  const q = `?keys=${encodeURIComponent(key)}`;
+  try {
+    const grab = async (path: string, field: string) => {
+      const res = await fetch(`${base}/api/sc/${path}${q}`);
+      if (!res.ok) return null;
+      const body = await res.json() as Record<string, Record<string, unknown>>;
+      return (body?.[field]?.[key] ?? null) as never;
+    };
+    const [payout, facts] = await Promise.all([
+      grab("mission-payout", "payouts"),
+      grab("mission-feedback", "missions"),
+    ]);
+    communityCache.set(key, { at: Date.now(), data: { payout, facts } });
+    broadcastMissions();
+  } catch {
+    // Offline, or the site is down. Cache the miss so a dead network cannot turn into a request
+    // per SSE tick — it simply retries after the TTL.
+    communityCache.set(key, { at: Date.now(), data: null });
+  } finally {
+    communityInFlight = "";
+  }
+}
+
 function missionsPayload(): string {
+  const v = tracker.view();
   return JSON.stringify({
-    ...tracker.view(),
+    ...v,
+    community: communityFor(v.contractKey),
     appVersion: APP_VERSION,
+    // The live claim prompt (or null). Rides the missions SSE because that is what the
+    // Unlock Alerts widget already listens to — no new channel, and it self-clears when
+    // the 30s window lapses because `current()` expires it on read.
+    fabClaim: fabClaims.current(Date.now()),
     live: twitchLive,
     ship: shipInfo(), // flown-ship manufacturer/theme/accent — push-live for external overlays
     prefs: {
@@ -570,11 +916,26 @@ function missionsPayload(): string {
       hideCatbar: config.hideCatbar,
       missionOcr: config.missionOcr,
       fabCapture: config.fabCapture,
+      fabClaim: config.fabClaim,
+      fabClaimKey: config.fabClaimHotkey,   // shown in the prompt ("or press F4")
       theme: effectiveTheme(),
       overlayTwist: config.overlayTwist,
       overlayScale: config.overlayScale,
+      // 🔑 The SHELL owns window opacity but only read this at startup, so saving it did
+      // nothing until the next launch (Sub, 2026-08-09: "I set it to 20, clicked into the
+      // game, nothing happens"). Riding it on the prefs broadcast means EVERY surface that
+      // can change it — settings window, embedded settings widget, a hand-edited config —
+      // reaches the shell through one path that already fires on every config save.
+      unfocusedOpacity: config.unfocusedOpacity,
       premium: entitled(),   // subscriber: skins unlocked + logos/flair shown
       demo: !!demoTheme,     // a trial preview is live → overlay shows the trial watermark
+      // The contract-board scan session. Rides prefs so the CANVAS can put its dashboard on
+      // screen the moment the mode is armed from anywhere — the settings window, the panel's
+      // own Stop button, or a restart forcing it off. It is the only signal the panel obeys,
+      // which is what keeps "panel up" and "screen-reading armed" from ever disagreeing.
+      // 🔑 Read from `config` and never persisted (saveConfig strips it), so a broadcast on
+      // launch always carries `false` — the mode cannot come back without someone arming it.
+      payoutScan: config.payoutScan,
     },
   });
 }
@@ -600,7 +961,254 @@ const economy = new MiningEconomyStore(dataDir);
 const party = new PartyTracker(join(userDir, "party.json"), join(userDir, "party-sessions"));
 
 const mining = new MiningTracker({ dataDir, stateDir: userDir });
+
+// Crowdsourced mission facts (what you actually do in it, difficulty, soloable) collected by
+// the completion report. Local-only for now — this file IS the upload queue for when the
+// subliminal.gg endpoint lands.
+
+// ── Contract-board payout scanner ──────────────────────────────────────────
+// OFF unless switched on (POST /api/payout-scan). While on, every full-frame OCR the
+// capture loop already takes is ALSO parsed as a Contract Manager board — no second
+// screenshot, no second OCR, no extra polling. That matters: the loop is the app's
+// hottest path and a parallel capture would double its cost for a feature most players
+// will never turn on.
+let payoutScanner: PayoutScanner | null = null;
+let lastPanelLines: string[] = [];
+let lastFrame = "";
+let payoutMatcher: ContractMatcher | null = null;
+let payoutMatcherFor = "";
+
+/** Built lazily and rebuilt when the patch changes — the matcher is an index over the
+ *  whole dataset and there is no point paying for it until someone scans. */
+function ensurePayoutScanner(): PayoutScanner | null {
+  const patch = tracker.view().patch ?? "";
+  if (payoutScanner && payoutMatcherFor === patch) return payoutScanner;
+  const candidates = tracker.matchCandidates();
+  if (!candidates.length) return null;
+  payoutMatcher = new ContractMatcher(candidates);
+  payoutMatcherFor = patch;
+  payoutScanner = new PayoutScanner(payoutMatcher, patch, join(userDir, "payout-queue.json"));
+  console.log(`[payout] matcher built for ${patch || "(unknown patch)"} over ${candidates.length} contracts`);
+  return payoutScanner;
+}
+
+/** The star system the player is in, when the log has said recently. Used only to break a
+ *  tie between same-titled variants; a wrong guess here would silently mis-file a price,
+ *  so an unknown place yields null and the row stays ambiguous. */
+/** Last star system seen this session. 🔑 Deliberately NOT expired, unlike PlaceWatcher's
+ *  own reading. The terrain report only fires about every ten minutes, so `current()`
+ *  spends most of its time stale-and-therefore-unknown — which for the WIDGET is right
+ *  (it must not claim you are somewhere you left) but for this is self-defeating: with no
+ *  system, every same-titled Mercenary variant stays ambiguous and the scan records
+ *  nothing. A SYSTEM is not a place: you cannot leave one without a long quantum trip, so
+ *  the last one seen is overwhelmingly still true. Cleared on a session change, which is
+ *  the only moment it can silently stop being true. */
+let lastSystem: string | null = null;
+
+/** The category and giver names the dataset actually holds — what turns the board parse
+ *  from geometry-guessing into vocabulary matching. Cached: it is the same two lists every
+ *  tick, and rebuilding them from 4,075 contracts per capture would be pure waste. */
+let vocabCache: { patch: string; v: { categories: string[]; givers: string[] } } | null = null;
+function payoutVocab(): { categories: string[]; givers: string[] } {
+  const patch = tracker.view().patch ?? "";
+  if (vocabCache && vocabCache.patch === patch) return vocabCache.v;
+  const cands = tracker.matchCandidates();
+  const v = {
+    categories: [...new Set(cands.map((c) => c.missionType).filter(Boolean))],
+    givers: [...new Set(cands.map((c) => c.giver).filter(Boolean))],
+  };
+  vocabCache = { patch, v };
+  return v;
+}
+
+function currentSystem(): string | null {
+  // `place` is declared further down; this only runs at request time, well after init.
+  const p = place.current();
+  if (p.kind === "planet" && p.body) {
+    // Body codes are "<system><number><letter>" — "stanton2a" -> "stanton".
+    const sys = String(p.body).replace(/[0-9].*$/, "").trim();
+    if (sys.length >= 3) lastSystem = sys;
+  }
+  return lastSystem;
+}
+
+async function flushPayouts(): Promise<void> {
+  const sc = payoutScanner;
+  if (!sc || !sc.pending()) return;
+  if (!config.syncEnabled || !config.syncToken) return;
+  const base = (process.env.SC_SYNC_BASE || "https://subliminal.gg").replace(/\/+$/, "");
+  await sc.flush(async (batch: PayoutObservation[]) => {
+    const res = await fetch(`${base}/api/sc/mission-payout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.syncToken}` },
+      body: JSON.stringify({ observations: batch }),
+    });
+    if (!res.ok) console.log(`[payout] upload refused (${res.status}) — ${batch.length} still queued`);
+    return res.ok;
+  });
+}
+// Flushed on a timer rather than per capture: the board is re-read every few seconds and
+// a request per read would be pointless traffic for rows that are nearly all duplicates.
+setInterval(() => { void flushPayouts(); }, 30_000).unref?.();
+
+const missionFeedback = new MissionFeedbackStore(userDir);
+
+/** Push answered missions to subliminal.gg. Uses the SAME device token as the blueprint
+ *  sync (there is only one credential and one account), so a player who has connected the
+ *  tracker is already set up — and a player who hasn't simply keeps their answers locally
+ *  until they do. The endpoint upserts per (player, contract), so re-sending the whole
+ *  queue is harmless and rows stay `pending` until a request actually succeeds. */
+async function flushMissionFeedback(): Promise<void> {
+  if (!config.syncEnabled || !config.syncToken) return;
+  const pending = missionFeedback.pending();
+  if (pending.length === 0) return;
+  const base = (process.env.SC_SYNC_BASE || "https://subliminal.gg").replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${base}/api/sc/mission-feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.syncToken}` },
+      body: JSON.stringify({ answers: pending }),
+    });
+    if (!res.ok) {
+      // Leave everything pending and try again later. A 401 means the token needs
+      // re-pasting; anything else is transient as far as this queue is concerned.
+      console.log(`[feedback] upload refused (${res.status}) — ${pending.length} answers still queued`);
+      return;
+    }
+    missionFeedback.markUploaded(pending);
+    console.log(`[feedback] uploaded ${pending.length} answer(s) to ${base}`);
+  } catch (err) {
+    console.log(`[feedback] upload failed (${(err as Error).message}) — ${pending.length} answers still queued`);
+  }
+}
+// Retry the queue periodically: the site may be down, the token may not be pasted yet, or
+// the player may be offline mid-session. Nothing here is urgent enough to warrant more.
+setInterval(() => void flushMissionFeedback(), 10 * 60_000);
+// 🔑 And once at startup. Without this an app that STARTS with a queue — answered offline,
+// or answered before the endpoint existed — sits on it until someone answers something new
+// or ten minutes pass. The delay lets the sidecar finish booting first; nothing about a
+// backlog is urgent enough to race startup for.
+setTimeout(() => void flushMissionFeedback(), 15_000);
+
+// Monotonic per-process counter so two runs of the same dev scenario are two distinct
+// completions rather than one the tracker de-duplicates by missionId.
+let replaySeq = 0;
+// ── Social chat — the sidecar holds ONE backend connection; widgets ride the SSE below.
+const chat = new ChatClient();
+const chatClients = new Set<ServerResponse>();
+chat.on("sse", (frame: unknown) => {
+  const data = `data: ${JSON.stringify(frame)}\n\n`;
+  for (const res of chatClients) res.write(data);
+});
+/** (Re)arm chat from config. The widget being open is the connection gate — closed widget,
+ *  zero sockets. Without any identity (no dev handle, no sync token) there is nothing to
+ *  connect AS, so stay off and let the widget show its verify prompt. */
+function chatConfigure(): void {
+  const active = config.chatOpen && !!(config.chatHandle || config.syncToken);
+  // 🔑 Applied BEFORE the socket is armed, so a restart never leaks one location frame on the
+  // way to honouring the setting. `sendLoc()` runs on `welcome`, which is early enough to matter.
+  chat.setHideLocation(config.chatHideLocation);
+  chat.configure({
+    url: config.chatServerUrl,
+    handle: config.chatHandle,
+    token: config.syncToken,
+    channels: config.chatChannels,
+  }, active);
+}
+// The client is authoritative about which custom rooms it's in (joins and leaves both land
+// asynchronously, from the server). Persist whatever it reports so the next launch rejoins.
+chat.on("channels", (names: string[]) => {
+  if (JSON.stringify(names) === JSON.stringify(config.chatChannels)) return;
+  config.chatChannels = names;
+  void saveConfig();
+});
+
+/** The parser events chat cares about: shard join/hop feeds the region+shard channels,
+ *  and leaving the PU (quit/menu) drops them. Runs on the seed pass too, so a mid-session
+ *  app start knows the current shard without waiting for a hop. */
+function applyChatSignals(ev: import("./missions-parser.js").MissionEvent): void {
+  // `ev.dgs` is undefined on Update Shard Id (that line names no endpoint) — passing it
+  // through unchanged is what keeps the current DGS instead of clearing it.
+  if (ev.kind === "shard") chat.applyShard(ev.shard, ev.dgs);
+  else if (ev.kind === "sessionEnd") chat.applyShard(null, null);
+}
+
+/* 🔴 A LOCATION WE CANNOT REFRESH IS A LOCATION WE MUST NOT PUBLISH.
+ *
+ *  Clearing used to depend ENTIRELY on a `<Channel Destroyed>` line reading as sessionEnd. Quit
+ *  the game any other way — alt-F4, a crash, killing the process — and that line is never
+ *  written, so the client kept its last shard forever while the overlay stayed open. Reported
+ *  twice by Sub (2026-08-10): a player sat in "US East 1B" for hours with the game shut.
+ *
+ *  🔑 The invariant is the LOG FILE'S OWN MTIME, not a parser event. Events only fire when
+ *  something interesting happens, so "no events" is normal during quiet play and would false-
+ *  clear; but the game appends to game.log continuously while it runs, and stops the instant it
+ *  exits. Statting one file is also far cheaper than anything that inspects processes.
+ *
+ *  Deliberately generous (15 min): over-reporting presence is the bug being fixed, but dropping
+ *  someone mid-session would be a worse one, and the same over-reporting is what got the whole
+ *  shard tier deleted in 0.1.42 ("it reported three people when one was genuinely nearby"). */
+const LOC_STALE_MS = 15 * 60 * 1000;
+const LOC_CHECK_MS = 60 * 1000;
+function dropStaleLocation(): void {
+  if (!chat.hasLocation()) return;          // nothing to clear — don't stat for no reason
+  const p = config.logPath;
+  // 🔴 BOTH OF THESE USED TO `return`, AND THAT BROKE THE RULE THIS FUNCTION IS NAMED AFTER.
+  // No log path, or a log we cannot stat, is precisely "a location we cannot refresh" — so it
+  // is precisely the case that must not stay published. Instead the location was pinned
+  // forever, and re-asserted on every reconnect, because `sendLoc()` runs on welcome.
+  // Sub, 2026-08-12, about a tester frozen in US East 1B: "he is not online, he is not in the
+  // game… he's not there." That is what this was: a client with no readable log holding a shard
+  // it saw once. It also makes the new in-game marker lie, which is worse than a stale room.
+  if (!p) { console.log("[chat] no log path — dropping location"); chat.applyShard(null, null); return; }
+  let mtime = 0;
+  try {
+    mtime = statSync(p).mtimeMs;
+  } catch {
+    console.log(`[chat] cannot read ${p} — dropping location`);
+    chat.applyShard(null, null);
+    return;
+  }
+  if (Date.now() - mtime < LOC_STALE_MS) return;
+  console.log(`[chat] game.log untouched for ${Math.round((Date.now() - mtime) / 60000)}m — dropping location`);
+  chat.applyShard(null, null);
+}
+setInterval(dropStaleLocation, LOC_CHECK_MS).unref();
+
 const miningClients = new Set<ServerResponse>();
+// ── Where the player is ─────────────────────────────────────────────────────
+// The body-name map rides in the dataset (`pyro2` -> "Monox"), so it refreshes per
+// patch with everything else rather than being a hard-coded list here.
+const place = new PlaceWatcher(mining.bodyNames());
+// User override. `auto` trusts the log; the other two are the player saying "I know
+// where I am, stop guessing" -- which matters because the log reading can be ten
+// minutes old and a forced value is never stale.
+type PlaceMode = "auto" | "planet" | "space";
+function placeMode(): PlaceMode {
+  const m = (config as { miningPlaceMode?: string }).miningPlaceMode;
+  return m === "planet" || m === "space" ? m : "auto";
+}
+/** The place the widget should actually use, after the override. */
+function effectivePlace(): Place {
+  const mode = placeMode();
+  if (mode === "planet") return { kind: "planet", body: "manual", name: "(set by you)", at: Date.now() };
+  if (mode === "space") return { kind: "space", at: Date.now() };
+  return place.current();
+}
+function miningViewWithPlace() {
+  const v = mining.view();
+  const p = effectivePlace();
+  // 🔑 The debris/harvestable wording is decided HERE, not in the widget. Both step by
+  // exactly 2,000 so the COUNT is never in doubt -- only the kind is -- and the rule for
+  // wording that lives in location.ts. Computing it in the renderer would be the same
+  // rule in two places, which is how the verdict logic drifted before.
+  const sig = v.scan?.signature ?? 0;
+  const wording = v.scan && sig % 2000 === 0 && v.scan.verdict !== "ore"
+    ? debrisStepWording(sig / 2000, p)
+    : null;
+  return { ...v, place: p, placeMode: placeMode(), placeAgeMs: place.ageMs(), wording };
+}
+
 function miningSend(msg: unknown): void {
   const data = `data: ${JSON.stringify(msg)}\n\n`;
   for (const res of miningClients) res.write(data);
@@ -610,10 +1218,39 @@ function miningSend(msg: unknown): void {
 function miningAppearance(): { kind: "appearance"; theme: string; overlayTwist: number; overlayScale: number } {
   return { kind: "appearance", theme: effectiveTheme(), overlayTwist: config.overlayTwist, overlayScale: config.overlayScale };
 }
-mining.on("change", () => miningSend({ kind: "state", view: mining.view() }));
+mining.on("change", () => miningSend({ kind: "state", view: miningViewWithPlace() }));
 // Transient alerts the overlay turns into TTS + sound + a flash.
 mining.on("target-hit", (hit) => miningSend({ kind: "target-hit", hit }));
 mining.on("refinery-done", (job) => miningSend({ kind: "refinery-done", job }));
+
+/* ── What you're doing, published to the people in your channels ────────────
+ *
+ * 🔴 OPT-IN, off by default (`chatShareActivity`). Same rule as publishing your shard on a
+ * party listing: nothing may leak from merely having the widget open. This is the one thing an
+ * external chat can show that the game's own social panel will not — it comes off game.log —
+ * and that is exactly why it has to be asked for rather than assumed.
+ *
+ * 🔑 The MISSION wins over mining. Someone scanning rocks for a contract is running the
+ * contract; naming the rocks would describe the means and hide the point.
+ * 🔑 Mining has no "stopped" event, so it can only be inferred from a scan going stale — hence
+ * the timer as well as the two change hooks. Everything downstream is idempotent
+ * (`setActivity` drops an unchanged value before it reaches the socket), so re-running this on
+ * every mining tick, every mission change and once a minute costs nothing.
+ */
+const ACTIVITY_MINING_MS = 10 * 60 * 1000;
+function chatActivityLabel(): string | null {
+  const title = tracker.view().title;
+  if (title) return `Running ${title}`;
+  const scan = mining.view().scan;
+  if (scan && Date.now() - scan.at < ACTIVITY_MINING_MS) return "Mining";
+  return null;
+}
+function pushChatActivity(): void {
+  chat.setActivity(config.chatShareActivity ? chatActivityLabel() : null);
+}
+tracker.on("change", pushChatActivity);
+mining.on("change", pushChatActivity);
+setInterval(pushChatActivity, 60_000).unref();
 
 // Is SubliminalsTV live on Twitch? Polled via sc-feed's public twitch proxy (which holds the
 // Twitch credentials) so the distributed app never embeds secrets. Drives the overlay diamond
@@ -725,6 +1362,17 @@ sync.setProvider(() => ({
 // Any tracker state change (receipt, manual toggle, verify, mission switch) → resync.
 tracker.on("change", () => sync.markDirty());
 
+// What the player was flying when a mission completed, for the crowdsourced report (Sub's ask,
+// 2026-08-09). Captured the moment the completion appears rather than when they answer, because
+// the card outlives the moment: they can get out, board something else, or quit to the hangar
+// with the report still up. One slot — the card only ever asks about the completion on screen.
+let completionShip: { key: string; ship: string | null; manufacturer: string | null } | null = null;
+tracker.on("change", () => {
+  const c = tracker.view().completion;
+  if (!c?.contractKey || completionShip?.key === c.contractKey) return;
+  completionShip = { key: c.contractKey, ship: shipName, manufacturer: shipManufacturer };
+});
+
 /** Force a resync now (token set / startup / verify). */
 function syncFull(): void {
   sync.markDirty();
@@ -732,9 +1380,14 @@ function syncFull(): void {
 
 /** One-time read of the current log so the overlay knows the tracked mission +
  *  collected state immediately on start (the watcher then tails from the end). */
-function seedTrackerFromLog(): void {
+function seedTrackerFromLog(): number | null {
   try {
-    const text = readFileSync(config.logPath, "utf8");
+    // 🔑 Read as a BUFFER so the exact byte count is known. `text.length` is CHARACTERS, and the
+    // watcher seeks by bytes — any non-ASCII in the log (handles, ship names) would make the two
+    // disagree and re-emit or skip lines at the seam.
+    const buf = readFileSync(config.logPath);
+    seedEndsAt = buf.length;
+    const text = buf.toString("utf8");
     party.setSelf(ownHandleFromLog(text)); // you're always in your own party — pre-fill the roster
     // Also seed the CURRENT ship (last board still in effect) so theme="auto" matches on a cold
     // start while already seated — the watcher only tails NEW lines, so it wouldn't otherwise see it.
@@ -743,7 +1396,7 @@ function seedTrackerFromLog(): void {
       if (!line) continue;
       tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
-      if (ev) { tracker.apply(ev); party.apply(ev); }
+      if (ev) { tracker.apply(ev); party.apply(ev); applyChatSignals(ev); }
       const chan = shipChannelEvent(line);
       if (chan) {
         if (chan.action === "enter" && chan.manufacturer) { seedMfr = chan.manufacturer; seedShip = chan.ship; }
@@ -756,22 +1409,40 @@ function seedTrackerFromLog(): void {
     shipManufacturer = seedMfr; shipName = seedShip;
   } catch {
     /* log not present yet */
+    seedEndsAt = null;
   }
+  return seedEndsAt;
 }
 
 // ── Log watcher → auto ship-switch ──────────────────────────────────────────
 let watcher: LogWatcher | null = null;
+/** Byte offset the seed read stopped at, so the watcher can pick up exactly there.
+ *  Null when there was no seed (no log yet, or a mid-session log-path change). */
+let seedEndsAt: number | null = null;
 function startWatcher(): void {
   watcher?.stop();
-  watcher = new LogWatcher(config.logPath, { pollInterval: 1000 });
+  // 🔴 Hand over from the seed read at its exact byte, not at whatever the file measures NOW.
+  // The two used to be independent, and everything the game logged in between belonged to
+  // neither — see the startPosition note in watcher.ts for what that costs.
+  watcher = new LogWatcher(config.logPath, {
+    pollInterval: 1000,
+    ...(seedEndsAt != null ? { startPosition: seedEndsAt } : {}),
+  });
+  // One handover only: a later restart of the watcher (log-path change) must not rewind to a
+  // stale offset from this boot's seed.
+  seedEndsAt = null;
   watcher.on("event", (e) => {
     // Feed the mission/blueprint tracker on every line (independent of ship auto-switch).
     tracker.detectPatch(e.raw);
+    // Planet-side vs space, off the engine's terrain-streaming report. A HINT only —
+    // it is printed about every 10 minutes, so it can be that stale. It orders the
+    // wording of an ambiguous 2,000-step signature; it never suppresses anything.
+    if (place.push(e.raw)) { miningSend({ kind: "state", view: miningViewWithPlace() }); }
     const me = parseMissionEvent(e);
-    if (me) { tracker.apply(me); party.apply(me); }
+    if (me) { tracker.apply(me); party.apply(me); applyChatSignals(me); }
 
     // Theme auto-switch: track the manufacturer of the ship we're in; re-broadcast so the
-    // overlay retints live when theme="auto". Independent of the erkul loadout autoSwitch.
+    // overlay retints live when theme="auto".
     // Track the flown ship's manufacturer (drives theme="auto" AND the /api/ship signal). The PU
     // comms channel gives enter + EXIT with a ship name; AC's OnVehicleSpawned gives only a spawn.
     // Broadcast on any change so external overlays get it push-live even when theme != "auto"
@@ -796,16 +1467,9 @@ function startWatcher(): void {
         broadcastMissions(); miningSend(miningAppearance());
       }
     }
-
-    if (!config.autoSwitch) return;
-    // Only the LOCAL player's ship is logged as "... by player 0".
-    const m = e.message.match(/OnVehicleSpawned\s+\d+\s+\(([A-Za-z0-9_]+?)_\d+\)\s+by player 0/);
-    if (!m) return;
-    const url = shipIndex.get(m[1].toLowerCase());
-    if (url && url !== config.activeUrl) void setActive(url, `log: ${m[1]}`);
   });
   watcher.start();
-  console.log(`[watcher] watching ${config.logPath} (autoSwitch=${config.autoSwitch})`);
+  console.log(`[watcher] watching ${config.logPath}`);
 }
 
 // ── HTTP ────────────────────────────────────────────────────────────────────
@@ -820,6 +1484,10 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
   ".webp": "image/webp",
   ".jpg": "image/jpeg",
+  // The bundled colour emoji font. Chromium content-sniffs fonts so octet-stream also works,
+  // but a correct type is what keeps it working if that ever tightens.
+  ".ttf": "font/ttf",
+  ".woff2": "font/woff2",
 };
 
 function readBody(req: import("node:http").IncomingMessage): Promise<any> {
@@ -1043,6 +1711,32 @@ async function twitchSend(text: string): Promise<{ ok: boolean; message?: string
   }
 }
 
+// ── OCR health ────────────────────────────────────────────────────────────────
+// 🔑 Diagnostics used to report screen reading as PREFERENCES only — fabCapture on, missionOcr
+// on — which says nothing about whether the engine works on that machine. A user whose OCR was
+// being blocked outright produced a diagnostics report identical to someone whose OCR was fine,
+// which is exactly how "his OCR just isn't working" became unanswerable (2026-08-11).
+//
+// 🔑 Gated on a screen-reading feature actually being ON. Every OCR opt-in is off by default and
+// nothing may start a PowerShell worker on the machine of someone who never asked for screen
+// reading — self-testing a feature nobody enabled would be the app doing the very thing it
+// promises not to.
+let ocrHealth: OcrHealth | null = null;
+let ocrHealthAt = 0;
+function screenReadingOn(): boolean {
+  return config.fabCapture === true || config.missionOcr === true
+    || config.miningAssistant === true || config.fabClaim === true;
+}
+/** Cached, because the first call pays the worker's ~570ms startup. Re-tested on a stale cache so
+ *  someone who allow-lists the app mid-session gets a fresh answer without restarting. */
+async function getOcrHealth(maxAgeMs = 60_000): Promise<OcrHealth | null> {
+  if (!screenReadingOn()) return null;
+  if (ocrHealth && Date.now() - ocrHealthAt < maxAgeMs) return ocrHealth;
+  ocrHealth = await ocrSelfTest();
+  ocrHealthAt = Date.now();
+  return ocrHealth;
+}
+
 const server = createServer((req, res) => {
   // One route throwing must not take the whole sidecar down with it. This handler is async, so
   // an unhandled rejection here IS a process exit — and the app can't tell the difference between
@@ -1057,17 +1751,45 @@ const server = createServer((req, res) => {
 async function handleRequest(req: import("node:http").IncomingMessage, res: ServerResponse) {
   const url = (req.url ?? "/").split("?")[0];
 
-  // Live event stream for the overlay.
-  if (url === "/events") {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    });
-    res.write("\n");
-    clients.add(res);
-    if (activeBuild) res.write(`data: ${JSON.stringify(activeBuild)}\n\n`);
-    req.on("close", () => clients.delete(res));
+  // ── Network policy ────────────────────────────────────────────────────────
+  // 🔴 This server binds ALL interfaces so OBS browser sources on a second PC can read the
+  // widget pages. That makes every route reachable by the whole LAN, and it was previously
+  // open house: a security report from a viewer on Sub's stream (2026-08-09) chained
+  // unauthenticated POST /api/config into full sync-token theft — repoint `chatServerUrl` at
+  // your own WebSocket and the sidecar cheerfully sends `{t:"hello", token}` straight to you.
+  //
+  // The rule now, in one place rather than per-route:
+  //   • ANY mutating request (non-GET/HEAD) must come from this machine. OBS is a DISPLAY
+  //     surface — it reads. Nothing on another PC has business changing this user's settings,
+  //     spending their Twitch credential, or driving their chat identity.
+  //   • Sensitive GETs are loopback-only too: they carry credentials (config), name paths on
+  //     disk (diagnostics/setup), read arbitrary files (mining tone), or fetch arbitrary URLs
+  //     on the LAN's behalf (can-embed, an SSRF hop into the private network).
+  // Everything else — widget pages, their read-only data and event streams — stays public so
+  // OBS keeps working.
+  const SENSITIVE_GET = new Set([
+    // /api/ocr/health names security software running on this PC and how it is failing — a
+    // profile of the machine, useless to the owner's OBS and no business of anything on the LAN.
+    "/api/config", "/api/diagnostics", "/api/setup", "/api/ocr/health", "/api/mining/tone", "/api/scfeed/tone",
+    "/api/can-embed", "/api/dev/note",
+  ]);
+  const mutating = req.method !== "GET" && req.method !== "HEAD";
+  const sensitive = mutating || SENSITIVE_GET.has(url);
+  if (sensitive && !fromThisMachine(req)) {
+    res.writeHead(403, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ error: "This endpoint is only available on the machine running SC Overlay." }));
+    return;
+  }
+  // 🔑 Loopback is NOT enough on its own. The Web Page widget will load any http(s) URL, and a
+  // page open in it runs ON this machine — so a hostile site can fetch http://127.0.0.1:8778/…
+  // and every loopback check above passes. Same for any browser the user happens to have open.
+  // A browser stamps `Origin` on cross-origin requests, and our own widgets are same-origin
+  // (no Origin on same-origin GETs, and our own host when there is one), so an Origin naming
+  // somebody else is proof the caller is a web page that has no business here.
+  const origin = req.headers.origin;
+  if (sensitive && typeof origin === "string" && origin && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(origin)) {
+    res.writeHead(403, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ error: "Cross-origin requests are not accepted." }));
     return;
   }
 
@@ -1104,6 +1826,29 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // Crafting detail (recipe / dismantle / craft time / stats / manufacturer) for one
   // blueprint, looked up by ?item=<uuid> or ?name=<blueprint name>. Powers the overlay's
   // recipe view on demand (kept OUT of the mission-view payload so the SSE stays lean).
+  // Name suggestions for the chat widget's /bp and /item autocomplete. Local dataset only —
+  // typing a blueprint name mid-flight must not wait on the network.
+  // Every blueprint name distinctive enough to link on sight, so the chat widget can turn
+  // "DebBolt3" into a link with nobody typing a command. Fetched ONCE per widget load and
+  // cached — it changes only when the dataset does.
+  if (url === "/api/blueprint-names" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ names: tracker.autoLinkNames() }));
+    return;
+  }
+  if (url === "/api/blueprint-search" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://x").searchParams.get("q") ?? "";
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ names: tracker.searchBlueprintNames(q) }));
+    return;
+  }
+  // Mission titles for the chat widget's /mission command ("let's run this one").
+  if (url === "/api/mission-search" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://x").searchParams.get("q") ?? "";
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ missions: tracker.searchMissionTitles(q) }));
+    return;
+  }
   if (url === "/api/blueprint-detail" && req.method === "GET") {
     const q = new URL(req.url ?? "", "http://x").searchParams;
     const key = (q.get("item") || q.get("name") || "").trim();
@@ -1116,6 +1861,54 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // Commodity economy: ?item=<uuid|name> for one commodity's refine map + material props +
   // per-terminal buy/sell prices; no query returns the whole commodity map.
   if (url === "/api/commodities" && req.method === "GET") {
+    // `?names=1` — just the names, for the Loot Split autocomplete. The full map is ~600KB of
+    // per-terminal prices, which is a silly thing to hand a small always-on-top widget that only
+    // wants to spell "Hephaestanite". 🔑 Autocompleting from THIS list (rather than the 26 mining
+    // rocks) is what makes the ¤ sell-price lookup beside it always resolve: same source, so a
+    // name the widget offered can never be a name the lookup then rejects.
+    if (new URL(req.url ?? "", "http://x").searchParams.get("names")) {
+      // 🔑 ORES ONLY, and grouped raw vs refined (Sub, 2026-08-11). The first cut offered the whole
+      // commodity map and it was unusable: 734 entries carrying ships (Aegis Avenger Titan),
+      // helmets, drugs, a literal "<= PLACEHOLDER =>", the STALE AsteroidCTypeMineableRock family
+      // the game stopped showing, and internal identifiers including CIG's own typo
+      // MineableRock_test_Hephasestanite. A list that long also cannot be got through — the native
+      // control gave up around "Bracer".
+      //
+      // The mining table is the right source precisely because it is the list of things you can
+      // come away with: ship-mined rock plus hand-mined gems. The economy map then supplies the
+      // real commodity spellings and, via `refinesTo`, which side of the refine each one sits on —
+      // an authority in the data instead of guessing from the suffix, which is inconsistent
+      // anyway ("(Ore)", "(Raw)", "(Pure)", "(R)" are all in use.)
+      //
+      // Anything with no commodity at all (Ice) is dropped rather than offered: every name here
+      // must be one the ¤ sell-price lookup beside it can resolve, or the autocomplete would hand
+      // people a spelling the next control rejects. The field stays free text regardless — this
+      // is a suggestion list, never a whitelist.
+      // ⚠️ `refinesTo` is the authority but it is NOT complete: the gem ores "Jaclium (Ore)" and
+      // "Saldynium (Ore)" declare no refine target and landed under Refined on the first run. The
+      // suffix backs it up. "(Pure)" is deliberately NOT a raw marker — Carinite (Pure) is the
+      // processed form, so treating every parenthesis as "raw" would have moved it the wrong way.
+      const RAW_SUFFIX = /\((?:ore|raw|r)\)$/i;
+      const commodities = Object.values(economy.commodities())
+        .map((c) => ({ name: (c.name ?? "").trim(), refines: !!c.refinesTo }))
+        .filter((c) => c.name && !c.name.includes("_"));
+      const raw: string[] = [];
+      const refined: string[] = [];
+      for (const ore of mining.oreNames()) {
+        for (const c of commodities) {
+          if (c.name !== ore && !c.name.startsWith(ore + " (")) continue;
+          const bucket = c.refines || RAW_SUFFIX.test(c.name) ? raw : refined;
+          if (!bucket.includes(c.name)) bucket.push(c.name);
+        }
+      }
+      const groups = [
+        { label: "Raw / unrefined", names: raw.sort((a, b) => a.localeCompare(b)) },
+        { label: "Refined", names: refined.sort((a, b) => a.localeCompare(b)) },
+      ].filter((g) => g.names.length);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ groups }));
+      return;
+    }
     const key = new URL(req.url ?? "", "http://x").searchParams.get("item")?.trim();
     const body = key ? economy.commodity(key) : { commodities: economy.commodities() };
     res.writeHead(key && !body ? 404 : 200, { "Content-Type": "application/json" });
@@ -1135,16 +1928,21 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // Re-scan the current log + all rotated logbackups for received-blueprint receipts
   // and fold them into the collected set (recovers history + accidental un-ticks).
   if (url === "/api/missions/verify" && req.method === "POST") {
-    const paths: string[] = [];
-    if (existsSync(config.logPath)) paths.push(config.logPath);
-    try {
-      const backups = join(dirname(config.logPath), "logbackups");
-      for (const f of readdirSync(backups)) {
-        if (f.toLowerCase().endsWith(".log")) paths.push(join(backups, f));
-      }
-    } catch {
-      /* no logbackups dir */
-    }
+    // 🔑 Scan EVERY channel folder, not just the configured one. A player who has LIVE and
+    // PTU as separate installs gets pointed at whichever they played most recently — so
+    // someone who dabbles in PTU had their entire LIVE history sitting unscanned in a
+    // sibling folder while verify found nothing (the envtag gate correctly rejected every
+    // PTU session it was given). Scanning siblings is safe precisely BECAUSE that gate
+    // reads the environment out of each log's header rather than trusting the folder name:
+    // a renamed or oddly-named channel can neither hide a live log nor smuggle in a test one.
+    // 🔑 Deduped by the file each path RESOLVES to, not by the path as written — see
+    // collectLogPaths, and `npm run test:logpaths` which pins both install layouts. Separate real
+    // channel folders are all still scanned; channel names that are links to one folder are
+    // scanned once. On Sub's install LIVE/PTU/EPTU/HOTFIX/TECH-PREVIEW all link to GAME, so every
+    // log arrived under SIX names: 1746 files for 291 real ones, every completion in them credited
+    // six times (exactly the ~6x his standings were inflated by), and six times the memory churn,
+    // which is what pushed the scan into the 4 GB heap limit.
+    const paths = collectLogPaths(config.logPath);
     const result = tracker.verifyFromLogs(paths);
     syncFull(); // push the recovered collection to subliminal.gg if sync is on
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -1152,10 +1950,65 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
+  // The capture loop saw a blueprint at the Fabrication Kiosk. Decide whether to offer a
+  // tick. Posted on EVERY kiosk frame, so the interesting work is all in FabClaims (which
+  // refuses to re-prompt, nag, or restart its own timer) — this route only supplies the
+  // one thing that module can't know: whether the tracker already accounts for it.
+  if (url === "/api/fab/seen" && req.method === "POST") {
+    const body = await readBody(req);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const item = typeof body.item === "string" && body.item ? body.item : null;
+    const items = Array.isArray(body.items) ? body.items.filter((i: unknown) => typeof i === "string") : [];
+    const d = fabClaims.seen(
+      { item, items, name, enabled: config.fabClaim === true, owned: !!name && tracker.isAlreadyOwned(name) },
+      Date.now(),
+    );
+    // Logged from the SIDECAR, because electron/ stdout goes nowhere on a detached GUI app —
+    // and `why` is emitted verbatim so the log can't drift from the rule that produced it.
+    if (d.why !== "disabled" && d.why !== "already-owned") {
+      console.log(`[fab-claim] ${name || "(unnamed)"}: ${d.why}`);
+    }
+    if (d.prompt) broadcastMissions();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, why: d.why }));
+    return;
+  }
+
+  // The player answered a claim prompt. `accept` ticks it (and every same-named sibling);
+  // anything else just dismisses. Expiry is enforced inside FabClaims, so a click that
+  // lands after the 30s window ticks nothing and says so.
+  if (url === "/api/fab/claim" && req.method === "POST") {
+    const body = await readBody(req);
+    // Accept via BODY (the widget button) or QUERY (the global hotkey, which fires from the
+    // shell with no body). Without the query form a hotkey press would read as a dismissal —
+    // the opposite of what the player just asked for.
+    const accept = body.accept === true || /[?&]accept=1(&|$)/.test(req.url ?? "");
+    if (!accept) {
+      fabClaims.dismiss();
+      broadcastMissions();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, added: false, why: "dismissed" }));
+      return;
+    }
+    const p = fabClaims.accept(Date.now());
+    const added = p ? tracker.setFabOwned(p.name) : false;
+    if (added) {
+      console.log(`[fab-claim] ${p!.name}: CONFIRMED at the fabricator -> ticked (source=fab)`);
+      syncFull(); // push it to subliminal.gg like any other collection change
+    }
+    broadcastMissions();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, added, name: p?.name ?? null, why: p ? (added ? "added" : "already-owned") : "expired" }));
+    return;
+  }
+
   // Re-sync to the current log: wipe the active-mission set and re-read game.log
   // (drops stale missions from a previous shard the log never logged ending).
   if (url === "/api/missions/refresh" && req.method === "POST") {
     tracker.resetSession();
+    // A session reset means a new shard or a fresh log — the cached system may no longer
+    // be where the player is, and a WRONG system silently mis-files a price.
+    lastSystem = null;
     seedTrackerFromLog();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
@@ -1215,7 +2068,54 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // needs to know the player is scanning, so it can keep polling fast instead of idling.
     let scanHud = false;
     if (!screenCatalog) screenCatalog = loadCatalog(dataDir);
-    if (Array.isArray(body.lines)) {
+    if (body.miningCrop === true && Array.isArray(body.lines)) {
+      // RapidOCR re-read of a TIGHT CROP already limited to the configured mining scan region —
+      // every line here is already "in the box" by construction (that's what the crop IS), so this
+      // skips classifyScreen's scanRegion filtering, which is written for a full-frame read, and
+      // looks for the best signature-shaped candidate directly. Same reasoning as the fabricator's
+      // RapidOCR second pass: Windows OCR mangles this small, translucent-backgrounded, stylized
+      // text often enough that most scans never produced a candidate to classify at all.
+      const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
+      const best = bestSignatureLine(ocr.lines, ocr.w / 2);
+      // 🔑 glyphSearchBox MUST be computed in FULL-FRAME coordinates, not crop-relative ones.
+      // It clamps the pin's search box to stay inside "the frame" — but the crop is only ~150px
+      // wide while the pin sits ~20-40px further left than the number, so a crop-relative call
+      // clamped against the CROP's own edge instead of the screen's, silently shifting the search
+      // box right into territory that isn't where the pin actually is. Translate the candidate line
+      // to its true on-screen position first (capture.cjs sends the crop's offset + the real frame
+      // size alongside the lines) so the clamp — and everything downstream that samples `shot`,
+      // the UNCROPPED bitmap — uses the real screen bounds.
+      const offX = Number(body.offsetX) || 0, offY = Number(body.offsetY) || 0;
+      const frameW = Number(body.frameW) || ocr.w, frameH = Number(body.frameH) || ocr.h;
+      result = best
+        ? (() => {
+            const onScreen = { ...best.l, x: best.l.x + offX, y: best.l.y + offY };
+            return { kind: "mineable", signature: best.sig, raw: best.l.text.trim(),
+              pin: glyphSearchBox(onScreen, frameW, frameH),
+              text: { x: onScreen.x, y: onScreen.y, w: onScreen.w, h: onScreen.h } };
+          })()
+        : { kind: "none" };
+    } else if (body.contractCrop === true && Array.isArray(body.lines)) {
+      // RapidOCR re-read of the calibrated offers panel. The crop IS the panel, so every
+      // line is in-region by construction and the parser gets the crop's own bounds.
+      const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
+      if (config.payoutScan) {
+        try {
+          const sc = ensurePayoutScanner();
+          if (sc) {
+            sc.ingest(
+              parseContractList(ocr, { x: 0, y: 0, w: ocr.w, h: ocr.h }, payoutVocab()),
+              currentSystem(),
+            );
+          }
+        } catch (e) {
+          console.log(`[payout] scan error: ${(e as Error).message}`);
+        }
+      }
+      lastPanelLines = ocr.lines.map((l) => `${Math.round(l.x)},${Math.round(l.y)} ${Math.round(l.w)}x${Math.round(l.h)} ${l.text}`);
+      lastFrame = `panel ${ocr.w}x${ocr.h} (RapidOCR)`;
+      result = { kind: "none" };
+    } else if (Array.isArray(body.lines)) {
       // Pre-computed OCR from the main process (RapidOCR reads the fabricator name off a right-
       // panel crop). Classify directly — skip the WinRT OCR entirely for this call.
       const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
@@ -1225,10 +2125,31 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       const ocr = await ocrImage(body.path);
       result = classifyScreen(ocr, screenCatalog, { scanRegion: config.scanRegion });
       scanHud = hasScanHud(ocr);
+      // 🔑 Contract parsing does NOT happen on this branch. This is Windows OCR, which
+      // mangles the panel's ~12px giver line badly enough to lose otherwise-perfect rows
+      // ("UNG FAMILY HAULING" for Ling Family Hauling, "ROUGH B READY" for Rough & Ready,
+      // and a "1M" payout dropped entirely). capture.cjs re-reads the calibrated panel with
+      // RapidOCR and posts it back as `contractCrop`, handled above.
     }
     // Routing applies to BOTH sources. Mining reads feed its tracker (same process); the
     // mission/fabricator reads are routed by capture.cjs off the returned result.
     const rd = result as { kind?: string; signature?: number; name?: string; items?: string[] };
+    // 🔑 DIAGNOSTIC RING — the only record of a read that found NOTHING. /api/mining/scan is the
+    // detailed log, but the caller only posts there once a signature has parsed, so a frame that
+    // yielded no number is invisible everywhere: nothing logged, nothing broadcast, no readout
+    // shown. That is exactly the failure being chased (Sub, 2026-08-08: Torite sat on screen for
+    // ~10s, "it didn't display what number it was looking at"). Held in memory and served over
+    // HTTP on purpose — sidecar.log is not readable from every environment that needs to debug
+    // this, and a diagnostic nobody can retrieve is the same as no diagnostic.
+    noteMiningRead({
+      pass: body.miningCrop === true ? "rapidocr-crop" : Array.isArray(body.lines) ? "lines" : "winocr-full",
+      kind: rd.kind ?? "none",
+      signature: typeof rd.signature === "number" ? rd.signature : null,
+      scanHud,
+      // What the OCR actually saw, so a miss can be told apart from a mangle. Capped hard — this
+      // is a rolling debug buffer, not a transcript.
+      sawText: readTextSample(body),
+    });
     if (rd.kind === "refinery") mining.applyRefineryRead(result as never);
     // A mineable is NOT applied here any more. The number alone doesn't prove a scan happened —
     // that's what put "Debris" in the player's ear while they weren't scanning. The caller has
@@ -1243,6 +2164,126 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
+  // ── Social chat: live stream + snapshot + send ──
+  // 🔴 READING chat is loopback-only, exactly like SENDING it. This server binds ALL interfaces
+  // on purpose (OBS browser sources run on another PC), so an ungated route is readable by
+  // anything that can reach port 8778 — the whole LAN, a flatmate, a VPN peer, a forwarded port.
+  // These two carry the ENTIRE chat state: every DM, every org message, and the JOIN CODE of
+  // every private room the user is in. That last one is the worst of it, because a leaked code
+  // is durable remote access to a private room from anywhere in the world, long after whoever
+  // read it left the network.
+  //
+  // Reported by a viewer on Sub's stream (2026-08-09) as "spoofing into DMs, private chats and
+  // org chats" — one hole, all three symptoms. The POST routes below already carried this rule
+  // and the reasoning behind it; the read paths were simply missed.
+  if (url === "/chat/events" || (url === "/api/chat" && req.method === "GET")) {
+    if (!fromThisMachine(req)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Chat can only be read from this machine." }));
+      return;
+    }
+  }
+  if (url === "/chat/events") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write("\n");
+    chatClients.add(res);
+    res.write(`data: ${JSON.stringify({ type: "state", view: chat.view() })}\n\n`);
+    req.on("close", () => chatClients.delete(res));
+    return;
+  }
+  if (url === "/api/chat" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    // The widget's gate state rides along: it must know WHY chat is off (no identity vs.
+    // widget-off vs. backend down) to show the right prompt. hasToken decides which gate
+    // copy fits — production identity is the sync token's verified handle; the typed
+    // chatHandle only means anything against a local dev chat server.
+    res.end(JSON.stringify({
+      ...chat.view(),
+      open: config.chatOpen,
+      shareActivity: config.chatShareActivity,
+      hideLocation: config.chatHideLocation,
+      hasIdentity: !!(config.chatHandle || config.syncToken),
+      hasToken: !!config.syncToken,
+      handle: config.chatHandle,
+      // Pointing anywhere but production means a dev server, whose auth accepts a typed
+      // handle — the widget only reveals its dev-identity row then.
+      devServer: !config.chatServerUrl.startsWith("wss://chat.subliminal.gg"),
+    }));
+    return;
+  }
+  // Sending speaks AS the user's chat identity — same capability class as the identity
+  // itself, so like /api/twitch/* it must not answer the LAN (OBS sources only read).
+  if (url === "/api/chat/send" && req.method === "POST") {
+    if (!fromThisMachine(req)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, message: "Chat can only be sent from this machine." }));
+      return;
+    }
+    const body = await readBody(req);
+    const out = chat.send(String(body.ch ?? ""), String(body.text ?? ""));
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out));
+    return;
+  }
+  // Joining/creating and leaving custom rooms, inviting, and DMs — same loopback rule as
+  // sending: every one of these ACTS with the user's chat identity, so the LAN must not be
+  // able to drive them. (A DM in particular is a message sent as him to a named person.)
+  // 🔑 pin/unpin/report belong in THIS group, not a laxer one: a pin speaks to a whole room in
+  // his name and a report accuses a named player as him. Both are the "acts with the user's
+  // identity" case, so the LAN (which the sidecar serves for OBS) must not be able to drive them.
+  if ((url === "/api/chat/join" || url === "/api/chat/leave" || url === "/api/chat/invite"
+       || url === "/api/chat/dm" || url === "/api/chat/dmlist"
+       || url === "/api/chat/pin" || url === "/api/chat/unpin" || url === "/api/chat/report"
+       || url === "/api/chat/apply" || url === "/api/chat/application"
+       || url === "/api/chat/color" || url === "/api/chat/hide-location"
+       || url === "/api/chat/delete-room") && req.method === "POST") {
+    if (!fromThisMachine(req)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, message: "Chat channels can only be changed from this machine." }));
+      return;
+    }
+    const body = await readBody(req);
+    const out =
+      url.endsWith("/join") ? chat.join(
+        String(body.name ?? ""),
+        body.mode === "join" || body.mode === "create" ? body.mode : undefined,
+        body.category ? String(body.category) : undefined,
+        body.privacy === "private" || body.privacy === "public" ? body.privacy : undefined,
+        body.party === true ? {
+          party: true,
+          location: body.location ? String(body.location) : null,
+          sizeMax: Number.isFinite(Number(body.sizeMax)) ? Number(body.sizeMax) : null,
+          joinMode: body.joinMode === "apply" ? "apply" : "open",
+          voice: body.voice === "optional" || body.voice === "required" ? body.voice : "none",
+          minutes: Number.isFinite(Number(body.minutes)) ? Number(body.minutes) : undefined,
+        } : undefined)
+      : url.endsWith("/invite") ? chat.invite(String(body.ch ?? ""), String(body.handle ?? ""))
+      : url.endsWith("/delete-room") ? chat.deleteRoom(String(body.ch ?? ""))
+      : url.endsWith("/dmlist") ? chat.dmList()
+      : url.endsWith("/dm") ? chat.dm(String(body.to ?? ""), String(body.text ?? ""))
+      : url.endsWith("/pin") ? chat.pin(String(body.ch ?? ""), Number(body.id))
+      : url.endsWith("/unpin") ? chat.unpin(String(body.ch ?? ""))
+      // Your name colour, as everyone else will see it — so it belongs in the same
+      // "acts with the user's identity" group as the rest, not on the LAN.
+      : url.endsWith("/color") ? (chat.setColor(body.color === null ? null : Number(body.color)), true)
+      // Persisted, because a privacy choice that forgets itself on restart is not one. The
+      // sidecar owns the socket, so this is also the only place that CAN enforce it.
+      : url.endsWith("/hide-location") ? ((config.chatHideLocation = body.hide !== false),
+                                          chat.setHideLocation(config.chatHideLocation),
+                                          void saveConfig(), true)
+      : url.endsWith("/apply") ? chat.apply(String(body.ch ?? ""), body.note ? String(body.note) : undefined)
+      : url.endsWith("/application") ? chat.resolveApplication(
+        String(body.ch ?? ""), String(body.handle ?? ""), body.accept === true)
+      : url.endsWith("/report") ? chat.report(
+        String(body.ch ?? ""), String(body.handle ?? ""),
+        Number.isFinite(Number(body.id)) ? Number(body.id) : null,
+        body.reason ? String(body.reason) : undefined)
+      : chat.leave(String(body.ch ?? ""));
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
   // Mining Assistant: live state stream + snapshot + controls.
   if (url === "/mining/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -1253,9 +2294,172 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     req.on("close", () => miningClients.delete(res));
     return;
   }
+  // Diagnostic frames written by the capture loop when config.miningDebug is on. Listing is a
+  // plain GET; a specific frame comes back as a PNG. Loopback-only — these are screenshots of the
+  // user's desktop, and the sidecar binds every interface for OBS browser sources.
+  if (url.startsWith("/api/mining/debug-frame") && req.method === "GET") {
+    if (process.env.SC_DEV !== "1" || !fromThisMachine(req)) { res.writeHead(403); res.end(); return; }
+    const dir = join(userDir, "debug-frames");
+    const want = new URL(req.url ?? "/", "http://localhost").searchParams.get("file");
+    if (!want) {
+      let files: string[] = [];
+      try { files = readdirSync(dir).filter((f) => f.endsWith(".png")).sort(); } catch { /* not created yet */ }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ enabled: config.miningDebug, dir, files }));
+      return;
+    }
+    // Basename only — never let a query string walk out of the debug directory.
+    const safe = basename(want);
+    if (!safe.endsWith(".png")) { res.writeHead(400); res.end(); return; }
+    try {
+      const buf = readFileSync(join(dir, safe));
+      res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" });
+      res.end(buf);
+    } catch { res.writeHead(404); res.end(); }
+    return;
+  }
+
+  // The diagnostic ring (see noteMiningRead). Read-only, in-memory, no persistence — it answers
+  // "what did the scanner actually see in the last minute, and how fast was it looking".
+  // Replay board rows captured earlier — same matcher, same dedup, same credential as a
+  // live scan, so a replayed row is indistinguishable from one read off the screen.
+  // Exists because a sweep's worth of good reads was lost to app restarts before the
+  // queue was persisted; see tools/payout-replay.mjs.
+  if (url === "/api/payout-scan/replay" && req.method === "POST") {
+    if (!fromThisMachine(req)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "loopback_only" }));
+      return;
+    }
+    const body = await readBody(req);
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    const sc = ensurePayoutScanner();
+    if (!sc || !rows.length) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: sc ? "no_rows" : "no_dataset" }));
+      return;
+    }
+    const before = sc.events(1000).length;
+    sc.ingest(
+      rows.map((r: Record<string, unknown>) => ({
+        category: (r.category as string) ?? null,
+        title: String(r.title ?? ""),
+        giver: (r.giver as string) ?? null,
+        amount: typeof r.amount === "number" ? r.amount : null,
+        kind: (r.kind as "payout" | "fee" | null) ?? null,
+        rounded: r.rounded !== false,
+        y: 0,
+      })),
+      currentSystem(),
+    );
+    const events = sc.events(1000).slice(0, sc.events(1000).length - before);
+    let uploaded: number | null = null;
+    if (body.dry !== true) {
+      const pending = sc.pending();
+      await flushPayouts();
+      uploaded = pending - sc.pending();
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ events, tally: sc.tally, queued: sc.pending(), uploaded }));
+    return;
+  }
+
+  // ── Payout scanner: on/off + what it has seen ────────────────────────────
+  // A MODE, not a hotkey. Sub drives it by saying "turn it on" and later "turn it off",
+  // because gathering these means flying to another system for a different board — so it
+  // has to survive hours of travel, disconnects and shard changes.
+  //
+  // 🔒 Loopback only. It is off by default and it reads the player's screen; a LAN caller
+  // (the sidecar binds all interfaces so OBS on another PC can load widget pages) must not
+  // be able to switch screen-reading on. Same rule as /api/twitch/*.
+  if (url === "/api/payout-scan") {
+    if (!fromThisMachine(req)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "loopback_only" }));
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readBody(req);
+      if (typeof body.on === "boolean") {
+        config.payoutScan = body.on;
+        saveConfig();
+        console.log(`[payout] scanning ${body.on ? "ON" : "OFF"}`);
+        // 🔑 Tell the overlay, because the dashboard lives ON the canvas now and this route is
+        // the ONE place the mode changes — the settings window, the panel's Stop button and
+        // the panel's ✕ all arrive here. Broadcasting from here rather than from each caller
+        // is what makes "the panel is up" and "the screen is being read" the same fact; a
+        // caller that forgot to push would leave an armed scanner with nothing on screen
+        // saying so, which is the exact blindness the dashboard was built to end.
+        // Deliberately NOT routed through /api/config: that endpoint is reachable from the
+        // LAN (widget pages serve to OBS on another PC) and this one is loopback-only on
+        // purpose — arming a screen-reader must stay a decision made at this machine.
+        broadcastMissions();
+        // Flush immediately on the way out so a sweep's tail isn't stranded for 30s.
+        if (!body.on) void flushPayouts();
+      }
+      if (body.region === null) { config.contractRegion = null; saveConfig(); }
+      else if (body.region && typeof body.region === "object") {
+        const r = body.region as Record<string, number>;
+        const ok = ["x", "y", "w", "h"].every((k) => Number.isFinite(r[k]))
+          && r.w > 0.02 && r.h > 0.02
+          && r.x >= 0 && r.y >= 0 && r.x + r.w <= 1.001 && r.y + r.h <= 1.001;
+        // Validated server-side because a bad region silently kills every read — the
+        // same trap the mining scan box already documents.
+        if (ok) { config.contractRegion = { x: r.x, y: r.y, w: r.w, h: r.h }; saveConfig(); }
+      }
+    }
+    const sc = payoutScanner;
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      on: config.payoutScan,
+      region: config.contractRegion,
+      calibrated: !!config.contractRegion,
+      // Says WHY nothing is being recorded, which is the question anyone asks first.
+      ready: config.payoutScan && !!config.contractRegion && !!config.syncToken && config.syncEnabled,
+      syncReady: !!config.syncToken && config.syncEnabled,
+      patch: tracker.view().patch ?? null,
+      system: currentSystem(),
+      inferredSystem: payoutScanner ? payoutScanner.inferredSystem : null,
+      tally: sc ? sc.tally : null,
+      // Per-row feed + freshness, for overlay/payout-scan.html. A stalled scanner and an
+      // idle one look identical in a total, so the page needs to know WHEN the last
+      // capture landed, not just how many rows have ever been seen.
+      events: sc ? sc.events(60) : [],
+      lastCaptureAt: sc ? sc.lastCaptureAt : 0,
+      lastCaptureRows: sc ? sc.lastCaptureRows : 0,
+      frame: lastFrame,
+      panelLines: lastPanelLines,
+    }));
+    return;
+  }
+
+  if (url === "/api/mining/recent" && req.method === "GET") {
+    const now = Date.now();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      now,
+      heartbeat: lastHeartbeat,
+      ticks: recentTicks,
+      reads: recentMiningReads.map((r) => ({ ...r, agoMs: now - r.at })),
+    }));
+    return;
+  }
   if (url === "/api/mining" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(mining.view()));
+    res.end(JSON.stringify(miningViewWithPlace()));
+    return;
+  }
+  // The player's planet/space override. Persisted like any other pref so it survives
+  // a restart -- someone who mines on foot should not have to re-set it every launch.
+  if (url === "/api/mining/place-mode" && req.method === "POST") {
+    const body = await readBody(req);
+    const m = String((body as { mode?: string })?.mode ?? "");
+    if (m !== "auto" && m !== "planet" && m !== "space") { res.writeHead(400); res.end('{"error":"bad mode"}'); return; }
+    (config as { miningPlaceMode?: string }).miningPlaceMode = m;
+    saveConfig();
+    miningSend({ kind: "state", view: miningViewWithPlace() });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, placeMode: m }));
     return;
   }
   if (url === "/api/mining/target" && req.method === "POST") {
@@ -1286,14 +2490,6 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
-  // The active, resolved build.
-  if (url === "/api/loadout") {
-    if (!activeBuild && config.activeUrl) await setActive(config.activeUrl, "on-demand");
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(activeBuild));
-    return;
-  }
-
   // Config read — includes resolved ship name per url for the config UI.
   if (url === "/api/config" && req.method === "GET") {
     // This machine's LAN IPv4 (private range), so the settings page can offer a browser-source
@@ -1307,16 +2503,6 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       }
       return null;
     })();
-    const urls = await Promise.all(
-      config.urls.map(async (u) => {
-        try {
-          const b = await getBuild(u);
-          return { url: u, ship: b.ship.name, ok: true };
-        } catch {
-          return { url: u, ship: "(unreachable)", ok: false };
-        }
-      }),
-    );
     // Never echo the raw token back to the page — only a truncated preview so the settings
     // page can show "the key is in" (scbp_1a2b…wxyz) without exposing the full secret.
     // Never echo real secrets back to a page. The Twitch USER TOKEN is one (it can post as the
@@ -1327,7 +2513,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const { syncToken, twitchUserToken, twitchRefreshToken: _refresh, ...rest } = config;
     const syncTokenPreview = syncToken ? `${syncToken.slice(0, 9)}…${syncToken.slice(-4)}` : "";
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ...rest, premium: entitled(), hasSyncToken: !!syncToken, syncTokenPreview, hasTwitchLogin: !!twitchUserToken, resolved: urls, lanHost, port: PORT }));
+    res.end(JSON.stringify({ ...rest, premium: entitled(), hasSyncToken: !!syncToken, syncTokenPreview, hasTwitchLogin: !!twitchUserToken, lanHost, port: PORT }));
     return;
   }
 
@@ -1387,9 +2573,18 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // Config write.
   if (url === "/api/config" && req.method === "POST") {
     const body = await readBody(req);
-    if (Array.isArray(body.urls)) config.urls = body.urls.filter((u: unknown) => typeof u === "string" && u);
-    if (typeof body.logPath === "string") config.logPath = body.logPath;
-    if (typeof body.autoSwitch === "boolean") config.autoSwitch = body.autoSwitch;
+    // Which concerns this particular save actually touched — every widget shares this one route
+    // (a font-scale tweak in the notepad posts here just like the settings page does), so the
+    // expensive work below (reindex, watcher restart, sync) must be scoped to what the request
+    // actually carried. Un-scoped, EVERY save — however small — re-ran a network fetch per loadout
+    // URL, tore down and rebuilt the log watcher, and re-pushed the whole collection to
+    // subliminal.gg, regardless of which field changed.
+    const touchedLogPath = typeof body.logPath === "string";
+    const touchedSync = typeof body.syncEnabled === "boolean"
+      || (typeof body.syncToken === "string" && body.syncToken.trim().length > 0)
+      || body.clearToken === true;
+    const touchedShareLogs = typeof body.shareLogs === "boolean";
+    if (touchedLogPath) config.logPath = body.logPath;
     // Apply the checkbox first, then let a freshly-pasted token force sync ON — pasting a
     // token IS the intent to sync, so it can't be left silently disabled. The token is only
     // overwritten when a non-empty one is sent (the page leaves the field blank/masked to keep
@@ -1402,6 +2597,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (body.clearToken === true) config.syncToken = "";
     if (typeof body.fabCapture === "boolean") config.fabCapture = body.fabCapture;
     if (typeof body.missionOcr === "boolean") config.missionOcr = body.missionOcr;
+    if (typeof body.fabClaim === "boolean") config.fabClaim = body.fabClaim;
     if (typeof body.miningAssistant === "boolean") config.miningAssistant = body.miningAssistant;
     // The dragged scan region. `null` resets to the default band. Stored as fractions, and only
     // if it's usable: a region dragged off-frame or collapsed to nothing would silently stop all
@@ -1423,6 +2619,9 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       const ch = body.twitchChannel.trim();
       if (!ch || /^[A-Za-z0-9_]{2,40}$/.test(ch)) config.twitchChannel = ch.toLowerCase();
     }
+    // Dev builds only — see the note on the Config field. A packaged sidecar refuses to arm it at
+    // all, so neither a stale config.json nor anything on the LAN can switch desktop capture on.
+    if (typeof body.miningDebug === "boolean") config.miningDebug = body.miningDebug && process.env.SC_DEV === "1";
     if (typeof body.twitchChatOpen === "boolean") config.twitchChatOpen = body.twitchChatOpen;
     if (typeof body.twitchChatFontScale === "number" && isFinite(body.twitchChatFontScale))
       config.twitchChatFontScale = Math.max(0.8, Math.min(2, body.twitchChatFontScale));
@@ -1450,6 +2649,34 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       }
     }
     if (typeof body.bindingChartOpen === "boolean") config.bindingChartOpen = body.bindingChartOpen;
+    if (typeof body.chatOpen === "boolean") config.chatOpen = body.chatOpen;
+    if (typeof body.chatShareActivity === "boolean") {
+      config.chatShareActivity = body.chatShareActivity;
+      // Apply it NOW, not on the next mission event. Turning it OFF has to take effect
+      // immediately — a privacy switch that waits for something to happen is not a switch.
+      pushChatActivity();
+    }
+    // ws/wss only — this string becomes an outbound WebSocket dial.
+    const wsUrl = (v: unknown, fallback: string): string => {
+      if (typeof v !== "string") return fallback;
+      const raw = v.trim();
+      if (!raw) return fallback;
+      try {
+        const u = new URL(raw);
+        return u.protocol === "ws:" || u.protocol === "wss:" ? u.toString() : fallback;
+      } catch { return fallback; }
+    };
+    if (body.chatServerUrl !== undefined) config.chatServerUrl = wsUrl(body.chatServerUrl, config.chatServerUrl);
+    // RSI handle shape; "" is a real value (no dev identity → chat stays gated).
+    if (typeof body.chatHandle === "string") {
+      const h = body.chatHandle.trim();
+      if (!h || /^[A-Za-z0-9._-]{3,30}$/.test(h)) config.chatHandle = h;
+    }
+    // Only ever WRITTEN by the chat client's own "channels" event (see chat.on above) — a
+    // POST may still clear it, which is how a user resets their room list by hand.
+    if (Array.isArray(body.chatChannels)) {
+      config.chatChannels = body.chatChannels.filter((n: unknown) => typeof n === "string" && n.trim()).slice(0, 30);
+    }
     if (typeof body.miningTone === "string") config.miningTone = body.miningTone;
     // GPU accel is read by electron/main.cjs at startup; persist here, restart applies it.
     if (typeof body.hwAccel === "boolean") config.hwAccel = body.hwAccel;
@@ -1463,12 +2690,37 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.overlayHotkey === "string") config.overlayHotkey = body.overlayHotkey.trim();
     if (typeof body.miningHotkey === "string") config.miningHotkey = body.miningHotkey.trim();
     if (typeof body.webViewHotkey === "string") config.webViewHotkey = body.webViewHotkey.trim();
+    if (typeof body.notepadHotkey === "string") config.notepadHotkey = body.notepadHotkey.trim();
+    // Clamped SERVER-side as well as in the input: a hand-edited config.json with 0 (or a string)
+    // would otherwise make a notifier vanish instantly or never leave, with no control to undo it.
+    const showSecs = (v: unknown, fallback: number): number =>
+      typeof v === "number" && Number.isFinite(v) ? Math.max(3, Math.min(60, Math.round(v))) : fallback;
+    // Clamped to one screen's worth in each direction: enough for any real misalignment, and a
+    // typo can never fling the canvas somewhere the user cannot find it to nudge it back.
+    const nudge = (v: unknown, fallback: number): number =>
+      typeof v === "number" && Number.isFinite(v) ? Math.max(-4000, Math.min(4000, Math.round(v))) : fallback;
+    if (body.canvasOffsetX !== undefined) config.canvasOffsetX = nudge(body.canvasOffsetX, config.canvasOffsetX);
+    if (body.canvasOffsetY !== undefined) config.canvasOffsetY = nudge(body.canvasOffsetY, config.canvasOffsetY);
+    // Canvas scale, same reasoning as the nudge: clamped here as well as in the UI, because 0 (or
+    // a string, or a hand-edited 40) collapses the whole canvas to a dot with no visible control
+    // left to undo it. 0.5–3 covers every real Windows scaling ratio (a 225% primary beside 100%
+    // side monitors is the worst case seen) with room either side.
+    const canvasZoom = (v: unknown, fallback: number): number =>
+      typeof v === "number" && Number.isFinite(v) ? Math.max(0.5, Math.min(3, Math.round(v * 100) / 100)) : fallback;
+    if (body.canvasScale !== undefined) config.canvasScale = canvasZoom(body.canvasScale, config.canvasScale);
+    if (body.scFeedShowSeconds !== undefined) config.scFeedShowSeconds = showSecs(body.scFeedShowSeconds, config.scFeedShowSeconds);
+    if (body.unlockAlertShowSeconds !== undefined) config.unlockAlertShowSeconds = showSecs(body.unlockAlertShowSeconds, config.unlockAlertShowSeconds);
     if (typeof body.interactHotkey === "string") config.interactHotkey = body.interactHotkey.trim();
     if (typeof body.holdToInteract === "boolean") config.holdToInteract = body.holdToInteract;
     if (typeof body.moveHotkey === "string") config.moveHotkey = body.moveHotkey.trim();
+    if (typeof body.fabClaimHotkey === "string") config.fabClaimHotkey = body.fabClaimHotkey.trim();
+    if (typeof body.opacityHotkey === "string") config.opacityHotkey = body.opacityHotkey.trim();
+    // Clamped here as well as in the slider: a hand-edited 0 would fade the overlay to
+    // invisible with no visible control left to undo it.
+    if (typeof body.unfocusedOpacity === "number" && Number.isFinite(body.unfocusedOpacity))
+      config.unfocusedOpacity = Math.max(0.2, Math.min(1, Math.round(body.unfocusedOpacity * 100) / 100));
     if (typeof body.timeRelative === "boolean") config.timeRelative = body.timeRelative;
     if (typeof body.shareLogs === "boolean") config.shareLogs = body.shareLogs;
-    if (typeof body.showLoadout === "boolean") config.showLoadout = body.showLoadout;
     if (typeof body.hideCatbar === "boolean") config.hideCatbar = body.hideCatbar;
     if (typeof body.revertThemeOnFoot === "boolean") config.revertThemeOnFoot = body.revertThemeOnFoot;
     if (body.theme === "mobiglas" || body.theme === "drake" || body.theme === "anvil" || body.theme === "greys" || body.theme === "esperia" || body.theme === "misc" || body.theme === "banu" || body.theme === "gatac" || body.theme === "mirai" || body.theme === "origin" || body.theme === "aegis" || body.theme === "crusader" || body.theme === "rsi" || body.theme === "kruger" || body.theme === "argo" || body.theme === "cnou" || body.theme === "auto") {
@@ -1490,27 +2742,25 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     broadcastMissions();
     // The Mining Assistant window shares the same appearance (theme + skew + scale).
     miningSend(miningAppearance());
-    await reindex();
-    startWatcher();
+    // Scoped to what actually changed (see touched* flags above) — a save that never touched
+    // these fields has no reason to tear down the log watcher mid-
+    // session, or push a sync/entitlement round-trip to subliminal.gg.
+    if (touchedLogPath) startWatcher();
     // Re-arm sync with the new settings and reconcile the full collection.
-    if (sync.configure(config.syncToken, config.syncEnabled)) syncFull();
-    // A changed token → re-resolve subscriber entitlement now (don't wait for the 20-min tick).
-    void pollEntitlement();
+    if (touchedSync) {
+      if (sync.configure(config.syncToken, config.syncEnabled)) syncFull();
+      // A changed token → re-resolve subscriber entitlement now (don't wait for the 20-min tick).
+      void pollEntitlement();
+    }
+    // Re-arm chat (widget toggled, backend switched, identity changed). Internally compares
+    // its config and only tears the socket down on a REAL change, so it needs no touched* gate.
+    chatConfigure();
     // If log-sharing was just turned on, upload the current session now.
-    void maybeShareLog(config, APP_VERSION);
+    if (touchedShareLogs) void maybeShareLog(config, APP_VERSION, sharedLogStatePath);
     // Push prefs (e.g. the time-format toggle) to any open overlay immediately.
     broadcastMissions();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
-    return;
-  }
-
-  // Manual switch.
-  if (url === "/api/active" && req.method === "POST") {
-    const body = await readBody(req);
-    const ok = typeof body.url === "string" ? await setActive(body.url, "manual") : false;
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok, active: config.activeUrl }));
     return;
   }
 
@@ -1647,11 +2897,90 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
+  // Who is answering on this port. Deliberately the cheapest route here — no disk, no network —
+  // because the shell polls it on every launch before it will trust this process.
+  // 🔑 `instance` is a nonce the shell mints per launch and injects, so a match proves this is the
+  // sidecar THAT shell spawned. Version alone is not enough: two builds of the same version (a dev
+  // run and an installed one) are exactly the case that bit us — an orphaned sidecar kept the port
+  // and the new app silently served its stale data.
+  if (url === "/api/instance" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      instance: process.env.SC_INSTANCE || null,
+      version: APP_VERSION || null,
+      pid: process.pid,
+    }));
+    return;
+  }
+
+  // The first-run setup wizard's view of the world: which of its steps are ALREADY satisfied,
+  // so it can auto-complete them instead of making a user redo work the app can see is done.
+  // 🔑 Carries no secret — the token is a verdict, never the string (same rule as diagnostics).
+  if (url === "/api/setup" && req.method === "GET") {
+    const logPath = config.logPath || "";
+    let logFound = false;
+    let logChannel = "";
+    try {
+      if (logPath && existsSync(logPath) && statSync(logPath).isFile()) {
+        logFound = true;
+        logChannel = basename(dirname(logPath));
+      }
+    } catch { /* unreadable path — logFound stays false, which is the answer */ }
+
+    const token = await verifySyncToken();
+    // "Skipped" is a real resolution, so a step is DONE when the app can see it done OR the
+    // user said to move on. What must never happen is a step passing silently on neither.
+    const steps = {
+      gameLog: { done: logFound, path: logPath, channel: logChannel, live: logFound && isLiveLog(logPath) },
+      connect: { done: token === "ok", token, syncEnabled: config.syncEnabled === true },
+      settings: { done: config.setupSettingsReviewed === true },
+      share: { done: config.setupShareResolved === true, optional: true },
+    };
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      // `freshInstall` is decided at startup, before anything can write a config — see the
+      // comment there for why an absent `setupDone` can't stand in for it.
+      freshInstall,
+      setupDone: config.setupDone === true,
+      nudgeDismissed: config.setupNudgeDismissed === true,
+      steps,
+    }));
+    return;
+  }
+
+  // The wizard records progress here. Each field is independent so a user who resolves one
+  // step and quits keeps that step — the wizard is resumable, not all-or-nothing.
+  if (url === "/api/setup" && req.method === "POST") {
+    const body = await readBody(req);
+    if (typeof body.settingsReviewed === "boolean") config.setupSettingsReviewed = body.settingsReviewed;
+    if (typeof body.shareResolved === "boolean") config.setupShareResolved = body.shareResolved;
+    if (typeof body.done === "boolean") config.setupDone = body.done;
+    // Dismissing the nudge and finishing the wizard both mean "never nag me again", so
+    // finishing implies dismissal — otherwise a user who completes setup from the banner
+    // would still see the banner on the next launch.
+    if (body.dismissNudge === true || body.done === true) config.setupNudgeDismissed = true;
+    await saveConfig();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // Everything this process can say about its own health, in one request. Support threads are
   // otherwise a guessing game — "it stopped working" with no way to tell a dead sidecar from a
   // missing game.log from an expired token. The Settings button copies this to the clipboard.
   // 🔑 It must NEVER carry a secret: the sync token is reduced to a yes/no plus a live check,
   // and the log PATH is included but never its contents.
+  // What the canvas polls to decide whether to warn the user. Separate from /api/diagnostics so
+  // asking "is OCR alive" doesn't drag the whole health report (and its live token check) with it.
+  if (url === "/api/ocr/health" && req.method === "GET") {
+    const health = await getOcrHealth();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    // `enabled:false` is why the canvas can tell "OCR is off" from "OCR is broken" — it must
+    // never warn someone who deliberately has screen reading switched off.
+    res.end(JSON.stringify({ enabled: screenReadingOn(), health }));
+    return;
+  }
+
   if (url === "/api/diagnostics" && req.method === "GET") {
     const logPath = config.logPath || "";
     let logStat: { exists: boolean; sizeMB?: number; modifiedMinutesAgo?: number } = { exists: false };
@@ -1678,39 +3007,75 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     } catch { /* stays false */ }
 
     // Is the sync token still good? Ask the site rather than trusting that a non-empty string works.
-    let syncToken: "none" | "ok" | "rejected" | "unreachable" = "none";
-    if (config.syncToken) {
-      try {
-        const r = await fetch("https://subliminal.gg/api/sc/fab-needed", {
-          headers: { Authorization: `Bearer ${config.syncToken}` },
-          signal: AbortSignal.timeout(6000),
-        });
-        syncToken = r.ok ? "ok" : r.status === 401 ? "rejected" : "unreachable";
-      } catch { syncToken = "unreachable"; }
-    }
+    const syncToken = await verifySyncToken();
 
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({
       app: { version: APP_VERSION || "unknown", sidecarPort: PORT, uptimeMinutes: Math.round(process.uptime() / 60) },
       gameLog: { path: logPath || "(not set)", ...logStat, watching: watcher ? "yes" : "no" },
-      data: { patch: tracker.view().patch ?? "(none loaded)", userDir, userDirWritable },
-      sync: { enabled: config.syncEnabled === true, token: syncToken },
+      // `userDirWritable` probes the DIRECTORY; `configSave` reports what actually happened to
+      // config.json. They can disagree — a writable dir with an unwritable config file is a real
+      // state, and it presents as "none of my settings stick" with nothing else to go on.
+      data: {
+        patch: tracker.view().patch ?? "(none loaded)", userDir, userDirWritable,
+        configPath,
+        configSave: lastSaveError
+          ? { ok: false, at: lastSaveError.at, error: lastSaveError.error }
+          : { ok: true, lastSavedAt: lastSaveOk ?? "(not saved this session)" },
+      },
+      // `enabled` is the user's setting; `active` is whether sync can actually push. They differ
+      // when SC_NO_SYNC is set (the throwaway first-run profile), and reporting only the setting
+      // made diagnostics say sync was on while every push was being refused.
+      sync: { enabled: config.syncEnabled === true, active: sync.active, token: syncToken },
       screenReading: {
         fabCapture: config.fabCapture === true,
         missionOcr: config.missionOcr === true,
+        fabClaim: config.fabClaim === true,
         miningAssistant: config.miningAssistant === true,
         shareLogs: config.shareLogs === true,
+        // Whether the engine actually WORKS here, not just whether it was asked for. Null when no
+        // screen-reading feature is on, which is not a failure — there is nothing to test.
+        ocr: await getOcrHealth(),
       },
       display: { hwAccel: config.hwAccel === true, amdCompat: config.amdCompat === true, theme: config.theme || "mobiglas" },
       twitch: { chatChannel: config.twitchChannel || "(none)", signedInAs: config.twitchUserLogin || "(not signed in)" },
+      // Mixed-DPI is the one class of bug that is INVISIBLE from a machine whose monitors all
+      // match, and the reports that reach us ("it's offset", "it vanished") can't distinguish a
+      // window in the wrong place from a canvas laid out at the wrong scale. These are the numbers
+      // that tell them apart, so they belong in the paste-able report rather than in a log file.
+      geometry: overlayGeometry ?? "(the overlay has not reported yet — is it switched off?)",
+      // Standing per giver plus the completion count behind it. A sum out of proportion to the
+      // count is an accrual leak, and the count is the half that makes the sum interpretable.
+      reputation: tracker.repDiagnostics(),
     }));
+    return;
+  }
+
+  // Where the overlay window ACTUALLY is, and what the canvas made of it. Reported by the shell
+  // (only it can see `screen` and the window's real bounds) and by the canvas page (only it knows
+  // what it rendered), because a mixed-DPI fault can live in either half.
+  // 🔑 In memory only, and last-write-wins: this is a snapshot of a live window, so persisting it
+  // would just serve a stale answer after a monitor change.
+  if (url === "/api/overlay-geometry" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body && typeof body === "object") {
+      overlayGeometry = { ...(overlayGeometry ?? {}), ...body, at: new Date().toISOString() };
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+  if (url === "/api/overlay-geometry" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(overlayGeometry ?? {}));
     return;
   }
 
   // The verdict on a signature the screen-read found: did the frame also show the scan glyph
   // beside it? Only the caller can answer that (it holds the bitmap; this process only ever sees
-  // the OCR's text). Unconfirmed numbers still resolve a KNOWN rock — a table hit is its own
-  // evidence — but they can't announce debris, which is where the false call-outs came from.
+  // the OCR's text). The glyph corroborates, it never licenses — what the tracker does with a read
+  // is decided by the VALUE (see applyMineableRead), and a number the game cannot draw is refused
+  // however convincing the pixels beside it looked.
   if (url === "/api/mining/scan" && req.method === "POST") {
     const body = await readBody(req);
     const signature = Number(body?.signature);
@@ -1718,7 +3083,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // nowhere, while this lands in sidecar.log — the file a user can read and send. Every read
     // prints its numbers, so the colour band can be tuned from real scans instead of the single
     // frame it was built from.
-    const g = body?.glyph as { fraction?: number; total?: number; mean?: number[]; hitMean?: number[] } | undefined;
+    const g = body?.glyph as { fraction?: number; total?: number; mean?: number[]; hitMean?: number[]; ref?: { mean: number[]; lum: number; lumFloor: number } } | undefined;
     if (Number.isFinite(signature)) {
       // The tracker owns the rules, so it also says what it did with the read — one place to
       // change, and the log can never drift out of step with the behaviour it describes.
@@ -1726,7 +3091,11 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       console.log(
         `[mining] signature ${signature} — glyph ${body?.confirmed === true ? "FOUND" : "not found"}` +
         (g ? ` (${Math.round((g.fraction ?? 0) * 100)}% of ${g.total}px, box mean rgb ${g.mean}` +
-             `${g.hitMean ? `, matched mean rgb ${g.hitMean}` : ""})` : "") +
+             `${g.hitMean ? `, matched mean rgb ${g.hitMean}` : ""}` +
+             `${g.ref ? `, ref ink rgb ${g.ref.mean} lum ${g.ref.lum} floor ${g.ref.lumFloor}` : ""})` : "") +
+        // Cadence rides along so "it feels slower in this ship" is answerable from the log. It
+        // used to be console.log'd in capture.cjs, i.e. into the void — that process has no stdout.
+        ` — polling ${body?.pollMs ?? "?"}ms${body?.scanHud === true ? "" : " (no HUD words seen)"}` +
         ` — ${outcome.why}`,
       );
       // Every read, ANNOUNCED OR NOT, so the "scan read area" outline can print what the OCR saw.
@@ -1749,6 +3118,133 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // ── Dev replay ────────────────────────────────────────────────────────────────────────
+  // Simulate a mission ending so the report card and its questions can be tested without
+  // playing. Feeds real log LINES through the real parser into the live tracker.
+  // 🔑 Gated THREE ways, because this writes to the real collection: dev builds only
+  // (`SC_DEV` is set by main.cjs on the non-packaged spawn and by nothing else), loopback only,
+  // and it can only "receive" a blueprint the player already owns.
+  // Let the overlay WINDOW write a line into sidecar.log. It's a detached GUI process with no
+  // console, so this is the only way anything it observes becomes readable — see the comment on
+  // mrNote() in missions.html. Same dev+loopback gate as the replay below.
+  // Diagnostic liveness ping from the capture loop (electron/capture.cjs), throttled client-side to
+  // ~15s, for an intermittent mining-loop hang that isn't root-caused yet. sidecar.log carries no
+  // per-line timestamps otherwise, which made a real hang indistinguishable from "not at the
+  // scanner" — this settles that question directly from the log. Safe to remove once the hang is
+  // understood; harmless to leave in until then.
+  if (url === "/api/heartbeat" && req.method === "POST") {
+    const body = await readBody(req);
+    console.log(`[mining-heartbeat] ${new Date().toISOString()} rate=${body?.rate}ms lastTick=${body?.lastTickMs}ms fastFor=${body?.fastUntil}ms`);
+    // Also kept in memory so the cadence is retrievable over HTTP, not only from sidecar.log.
+    lastHeartbeat = {
+      at: Date.now(),
+      rate: Number.isFinite(Number(body?.rate)) ? Number(body?.rate) : null,
+      lastTickMs: Number.isFinite(Number(body?.lastTickMs)) ? Number(body?.lastTickMs) : null,
+      fastForMs: Number.isFinite(Number(body?.fastUntil)) ? Number(body?.fastUntil) : null,
+    };
+    // Per-stage tick timings, batched by the capture loop so measuring adds no round-trips of its
+    // own. This is what decides whether the tick cost is fixable and WHERE — the loop's fast rate
+    // is floored at lastTickMs * 1.5, so an expensive stage silently caps how fast scanning can go.
+    if (Array.isArray(body?.ticks)) {
+      for (const t of body.ticks as Record<string, unknown>[]) {
+        if (t && typeof t === "object") recentTicks.push({ at: Date.now(), ...t });
+      }
+      while (recentTicks.length > TICK_RING) recentTicks.shift();
+    }
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (url === "/api/dev/note" && req.method === "GET") {
+    if (process.env.SC_DEV === "1" && fromThisMachine(req)) {
+      console.log(`[overlay] ${new URL(req.url ?? "/", "http://localhost").searchParams.get("msg") ?? ""}`);
+    }
+    res.writeHead(204, { "Cache-Control": "no-store" });
+    res.end();
+    return;
+  }
+
+  if (url === "/api/dev/replay") {
+    if (process.env.SC_DEV !== "1" || !fromThisMachine(req)) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "not available" }));
+      return;
+    }
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ scenarios: SCENARIOS }));
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readBody(req);
+      const s = SCENARIOS.find((x) => x.id === (body as { scenario?: string })?.scenario);
+      if (!s) {
+        res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: "unknown scenario", known: SCENARIOS.map((x) => x.id) }));
+        return;
+      }
+      // Only ever re-receive something already owned — see dev-replay.ts. A scenario that wants
+      // a drop but finds nothing owned still runs; it just has no blueprint, and says so.
+      const blueprint = s.drop ? tracker.ownedPoolBlueprint(s.contractKey) : null;
+      // Pin `now` so the completion timestamp we hand back is exactly the one the card will
+      // carry. The CLI compares them: without that it happily reports the PREVIOUS run's card
+      // as this run's success, which it did for the abandon scenario.
+      const now = Date.now();
+      const lines = replayLines(s, replayMissionId(++replaySeq), blueprint, now);
+      for (const line of lines) {
+        const ev = parseMissionEvent(parseLine(line));
+        if (ev) { tracker.apply(ev); party.apply(ev); }
+      }
+      // Force the tiles for this simulated run. The receipt above genuinely happened, but it
+      // cannot move an already-owned blueprint's unlock date into the window the report reads
+      // from — see forceCompletionBlueprints() for the full reason.
+      if (blueprint) tracker.forceCompletionBlueprints([blueprint]);
+      console.log(`[dev-replay] ${s.id} — ${lines.length} lines, blueprint=${blueprint ?? "none"}`);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({
+        ok: true, scenario: s.id, lines: lines.length, blueprint, at: new Date(now).toISOString(),
+        outcome: s.outcome,
+        note: s.drop && !blueprint ? "you own nothing in this mission's pool, so it ran without a drop" : null,
+      }));
+      return;
+    }
+  }
+
+  // Crowdsourced mission facts. POST one answer from the completion report; GET reads back
+  // what this player already said about a contract so the report can pre-select it.
+  // 🔑 `url` is already stripped of its query string, so the key comes off `req.url` — a route
+  // written as `url.startsWith("/api/mission-feedback?")` could never match.
+  if (url === "/api/mission-feedback" && req.method === "POST") {
+    const body = await readBody(req);
+    // Ship comes from the log, never from a question — the player already told the game what
+    // they were flying. Prefer the one captured AT COMPLETION over whatever they are in now:
+    // the report can sit on screen while they climb out, and a difficulty rating has to answer
+    // for the run, not for where they happen to be standing when they click.
+    const key = typeof (body as { contractKey?: unknown }).contractKey === "string" ? (body as { contractKey: string }).contractKey : "";
+    const at = completionShip && completionShip.key === key ? completionShip : null;
+    const saved = missionFeedback.record({
+      ...(body as object),
+      ship: at ? at.ship : shipName,
+      shipManufacturer: at ? at.manufacturer : shipManufacturer,
+      changelist: tracker.view().build,
+      appVersion: APP_VERSION,
+    });
+    // Push straight away so an answer reaches the site while the player is still at their
+    // desk; the interval above is only the retry path. Deliberately not awaited — the
+    // report card must never wait on the network to acknowledge a click.
+    if (saved) void flushMissionFeedback();
+    res.writeHead(saved ? 200 : 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(saved ? { ok: true, answer: saved } : { ok: false, error: "no answers in submission" }));
+    return;
+  }
+  if (url === "/api/mission-feedback" && req.method === "GET") {
+    const key = new URL(req.url ?? "/", "http://localhost").searchParams.get("key");
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ answer: missionFeedback.get(key), total: missionFeedback.count() }));
     return;
   }
 
@@ -1832,8 +3328,27 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   }
 
   // Static files.
+  // 🔴 PATH TRAVERSAL. This was `join(overlayDir, decodeURIComponent(url))` with no containment
+  // check, so `GET /..%2f..%2f…/config.json` walked straight out of the overlay directory and
+  // returned the user's config — INCLUDING THEIR SYNC TOKEN — to anything that could reach port
+  // 8778. Unauthenticated remote arbitrary file read, and the token is the whole account: chat
+  // identity, collection, the lot. Reported by a viewer on Sub's stream (2026-08-09) and
+  // reproduced here before fixing.
+  //
+  // 🔑 Decode FIRST, then resolve, then verify containment. Checking the raw string for ".."
+  // is the classic non-fix — `%2e%2e%2f` sails past it, and it is `decodeURIComponent` that
+  // turns it back into `../`. Only comparing the RESOLVED absolute path can be trusted, and it
+  // needs the trailing separator or a sibling directory like `overlay-secrets/` also matches.
   let p = url === "/" ? "/index.html" : url;
-  readFile(join(overlayDir, decodeURIComponent(p)), (err, buf) => {
+  let decoded: string;
+  try { decoded = decodeURIComponent(p); } catch { res.writeHead(400); res.end("bad path"); return; }
+  const target = resolve(overlayDir, "." + (decoded.startsWith("/") ? decoded : "/" + decoded));
+  const root = resolve(overlayDir) + sep;
+  if (!target.startsWith(root)) {
+    res.writeHead(403); res.end("forbidden");
+    return;
+  }
+  readFile(target, (err, buf) => {
     if (err) {
       res.writeHead(404);
       res.end("not found");
@@ -1880,7 +3395,13 @@ server.listen(PORT, async () => {
   seedTrackerFromLog();
   // Push the existing collection + tracked mission once the log has been seeded.
   syncFull();
-  await reindex();
-  if (config.activeUrl) await setActive(config.activeUrl, "startup");
   startWatcher();
+  // Arm chat AFTER the seed pass so the current shard (read from the log) rides the first
+  // connection's loc frame instead of arriving as a later correction.
+  chatConfigure();
+  // Settle the OCR question at boot so the verdict is in sidecar.log whether or not anyone
+  // thinks to ask for it — the log is what a user sends when they report "it isn't working",
+  // and it was previously silent on the one thing that mattered. Fire-and-forget: it spawns a
+  // PowerShell worker and nothing here should wait on it (no-op unless screen reading is on).
+  void getOcrHealth().catch(() => { /* the self-test reports its own failures */ });
 });

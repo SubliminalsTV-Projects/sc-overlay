@@ -9,9 +9,6 @@
   /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
     const t = q.get("theme"); if (t) r.setAttribute("data-theme", t); }</script>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* The binding chart as a normal canvas WIDGET (Sub, 2026-07-24) instead of the old full-screen
@@ -27,12 +24,11 @@
     display: flex; flex-direction: column;
     width: 620px; height: 340px; margin: 20px auto;
     border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-    background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
-    -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
-    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(var(--accent-rgb), 0.05);
+    /* Fill, border tint, shadow and blur live in widget-theme.css (#panel.wpanel), which
+       multiplies each one's alpha by --wsurf so the panel fades independently of its text. */
     position: relative;
   }
-  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; background: var(--panel-solid) !important; }
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   body.embedded { overflow: visible; background: transparent; }
   body.embedded #panel { width: 100%; height: 100%; margin: 0; }
 
@@ -67,12 +63,14 @@
       <button id="fitBtn" class="hbtn active" type="button" title="Fit the whole chart into the widget">Fit</button>
       <button id="oneBtn" class="hbtn" type="button" title="Show at full size and scroll around it">1:1</button>
       <button id="reloadBtn" class="hbtn" type="button" title="Re-read the PNG from disk">⟳</button>
+      <button id="swapBtn" class="hbtn" type="button" title="Choose a different image" style="display:none">Change…</button>
     </div>
     <div id="wrap" class="fit">
       <img id="chart" alt="Binding chart" />
       <div class="empty" id="emptyState" style="display:none">
-        No binding chart picked yet.<br>
-        Choose a PNG in <b>Settings → Infographic Viewer</b>, then it shows up here.
+        No infographic picked yet.<br>
+        <span id="pickWrap" style="display:none"><button id="pickBtn" class="hbtn" type="button" style="margin-top:12px">Choose a PNG…</button></span>
+        <span id="pickHint">Choose a PNG in <b>Settings</b>, then it shows up here.</span>
       </div>
     </div>
   </div>
@@ -82,7 +80,12 @@
   const EMBEDDED = new URLSearchParams(location.search).has("embedded");
   if (EMBEDDED) document.body.classList.add("embedded");
   // Same-origin bridge to the parent canvas (present only when embedded on the overlay).
-  const host = () => (EMBEDDED && window.parent) ? window.parent.__bindingHost : null;
+  // 🔑 __bindingChartHost, not __bindingHost. The canvas exposes the bridge as
+  // "__" + the registry KEY + "Host", and this widget's key is bindingChart — so every call
+  // through here had been a silent no-op since the bridge was introduced (optional chaining
+  // meant summoning the global cog just quietly did nothing). Found 2026-08-11 while giving
+  // this widget its own PNG picker, which needs the bridge to work.
+  const host = () => (EMBEDDED && window.parent) ? window.parent.__bindingChartHost : null;
 
   // The sidecar serves the user's chosen PNG; bust the cache so a re-exported chart shows up.
   function reload() {
@@ -92,12 +95,39 @@
   $("chart").addEventListener("load", () => {
     $("chart").style.display = "";
     $("emptyState").style.display = "none";
+    $("swapBtn").style.display = canPick() ? "" : "none";
   });
   $("chart").addEventListener("error", () => {
     // 404 = no bindingPng configured yet.
     $("chart").style.display = "none";
     $("emptyState").style.display = "";
+    $("swapBtn").style.display = "none";
+    // Re-checked here, not only at parse time: this page can finish loading before the canvas has
+    // published its host bridge, and the empty state is exactly when the button matters.
+    armPicker();
   });
+
+  // ── Choosing the image, from the widget itself ──────────────────────────────────────────
+  // It used to be a row in global Settings; it belongs to the thing it fills. Only offered when
+  // there is a shell to open a file dialog — standalone (a browser source, the product page) the
+  // page can only tell you where to go, so the empty state keeps its original wording there.
+  const canPick = () => typeof host()?.pickPng === "function";
+  function armPicker() {
+    const on = canPick();
+    $("pickWrap").style.display = on ? "" : "none";
+    $("pickHint").style.display = on ? "none" : "";
+  }
+  $("pickBtn").addEventListener("click", async () => {
+    host()?.summonCog?.();
+    const p = await host()?.pickPng?.();
+    if (p) reload();            // the host has already saved it
+  });
+  $("swapBtn").addEventListener("click", async () => {
+    host()?.summonCog?.();
+    const p = await host()?.pickPng?.();
+    if (p) reload();
+  });
+  armPicker();
 
   function setMode(fit) {
     $("wrap").classList.toggle("fit", fit);

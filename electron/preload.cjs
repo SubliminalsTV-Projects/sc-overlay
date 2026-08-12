@@ -51,12 +51,17 @@ contextBridge.exposeInMainWorld("overlayApi", {
   // Cursor entered/left the view. The canvas can't see this itself — the view is a native
   // surface, not an iframe — and without it the Web Page widget's bar never comes out.
   onWebViewCursor: (cb) => ipcRenderer.on("webview:cursor", (_e, on) => cb(!!on)),
+  // Canvas chrome is open over the native view and would otherwise be painted behind it.
+  maskWebView: (on) => ipcRenderer.send("overlay:mask-view", !!on),
   // Per-widget canvas layout: read saved positions/sizes on load, and persist them as the
   // user drags/resizes a widget in arrange mode. Layout = { [id]: {x, y, scale, visible} }.
   getWidgets: () => ipcRenderer.invoke("overlay:get-widgets"),
   saveWidget: (id, layout) => ipcRenderer.send("overlay:save-widget", id, layout),
   // Primary-display offset/size within the full-desktop canvas (for default widget placement).
   getCanvasInfo: () => ipcRenderer.invoke("overlay:canvas-info"),
+  // The window was re-fitted (monitor added/removed/rearranged, a Windows display-scaling change,
+  // or the user nudging the canvas) — every number getCanvasInfo returned is now stale.
+  onCanvasChanged: (cb) => ipcRenderer.on("overlay:canvas-changed", () => cb()),
   // Global overlay-app chrome (the in-overlay hub): toggle the other widgets on/off, read
   // their current visibility, enter/leave global arrange, and open the full settings window.
   setMining: (on) => ipcRenderer.send("app:set-mining", !!on),
@@ -116,4 +121,33 @@ contextBridge.exposeInMainWorld("overlayApi", {
   clearTone: () => ipcRenderer.invoke("mining:clear-tone"),
   miningAutoShow: () => ipcRenderer.send("mining:show"),
   onMiningVisible: (cb) => ipcRenderer.on("overlay:mining-visible", (_e, s) => cb(s)),
+
+  // ── Settings as an embedded canvas widget ──────────────────────────────────────
+  // config.html normally runs in its OWN window with its own preload (config-preload.cjs).
+  // Embedded on the canvas it is an iframe and has no preload at all, so the canvas re-exposes
+  // that same API as `__configHost` and the page synthesizes `window.overlayConfig` on top of
+  // it — which is why none of config.html's ~23 existing call sites had to change.
+  // 🔑 Every channel here is one the settings WINDOW already uses; this adds reach, not power.
+  cfg: {
+    pickPng: () => ipcRenderer.invoke("pick-png"),
+    pickLog: (current) => ipcRenderer.invoke("pick-log", current),
+    setOverlayHotkey: (a) => ipcRenderer.invoke("set-overlay-hotkey", a),
+    setBindingHotkey: (a) => ipcRenderer.invoke("set-binding-hotkey", a),
+    setMiningHotkey: (a) => ipcRenderer.invoke("set-mining-hotkey", a),
+    setWebViewHotkey: (a) => ipcRenderer.invoke("set-webview-hotkey", a),
+    setNotepadHotkey: (a) => ipcRenderer.invoke("set-notepad-hotkey", a),
+    setInteractHotkey: (a) => ipcRenderer.invoke("set-interact-hotkey", a),
+    setMoveHotkey: (a) => ipcRenderer.invoke("set-move-hotkey", a),
+    setFabClaimHotkey: (a) => ipcRenderer.invoke("set-fabclaim-hotkey", a),
+    setHoldMode: (on) => ipcRenderer.invoke("app:set-hold-mode", !!on),
+    resetLayout: () => ipcRenderer.invoke("overlay:reset-layout"),
+    canvasCalibration: (cal) => ipcRenderer.invoke("app:canvas-calibration", cal),
+    metrics: () => ipcRenderer.invoke("app:metrics"),
+    openDataFolder: (which) => ipcRenderer.send("app:open-data-folder", String(which)),
+    isElevated: () => ipcRenderer.invoke("app:is-elevated"),
+    restartAsAdmin: () => ipcRenderer.invoke("app:restart-as-admin"),
+    getOverlayEnabled: () => ipcRenderer.invoke("overlay:get-enabled"),
+    setOverlayEnabled: (on) => ipcRenderer.invoke("overlay:set-enabled", on),
+    onOverlayEnabledChanged: (cb) => ipcRenderer.on("overlay:enabled-changed", (_e, on) => cb(on)),
+  },
 });

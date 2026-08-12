@@ -6,7 +6,7 @@
  * Run with:  npx tsx src/screen-classify.test.ts
  * Exits non-zero on any failed case.
  */
-import { classifyScreen, type OcrResult, type CatalogEntry } from "./screen-read.js";
+import { classifyScreen, resolveName, stripSizeGrade, type OcrResult, type CatalogEntry } from "./screen-read.js";
 
 let failed = 0;
 function check(name: string, cond: boolean, detail = ""): void {
@@ -93,6 +93,34 @@ check("kiosk-but-unreadable -> fabricator with no item", unRead.kind === "fabric
 
 const s0Read = classifyScreen(s0, CATALOG);
 check("size-zero 'SO' still classifies as fabricator", s0Read.kind === "fabricator");
+
+// ── The kiosk's size/grade prefix (punkhiji, 0.1.36, 2026-08-03) ─────────────────────────────
+// His radars and components "wouldn't capture". The kiosk prints a manufacturer/size/grade tag
+// ahead of the name ("IND/2/B BROADSPEC") that the DATASET never carries, and the tag's tokens
+// sank the whole-word overlap below its 0.6 floor — so the item resolved to nothing at all and
+// the capture reported "couldn't identify this item". Not reproducible on Sub's machine: another
+// player's log has the same items with no tag, so only a shared log could have found it.
+{
+  const PREFIX_CATALOG: CatalogEntry[] = [
+    { name: "BroadSpec", item: "11111111-1111-1111-1111-111111111111" },
+    { name: "BroadSpec-Go", item: "22222222-2222-2222-2222-222222222222" },
+    { name: "BroadSpec-Max", item: "33333333-3333-3333-3333-333333333333" },
+    { name: "Permafrost", item: "44444444-4444-4444-4444-444444444444" },
+  ];
+  check("the size/grade tag is stripped", stripSizeGrade("IND/2/B BroadSpec") === "BroadSpec", stripSizeGrade("IND/2/B BroadSpec"));
+  check("a mixed-case manufacturer too", stripSizeGrade("Mil/2/B Permafrost") === "Permafrost", stripSizeGrade("Mil/2/B Permafrost"));
+  check("an untagged name is untouched", stripSizeGrade("BroadSpec") === "BroadSpec");
+  // Only a LEADING tag goes. A slash mid-name is part of the name.
+  check("a slash elsewhere is untouched", stripSizeGrade("Widget A/B Thing") === "Widget A/B Thing", stripSizeGrade("Widget A/B Thing"));
+
+  const tagged = resolveName("IND/2/B BROADSPEC", PREFIX_CATALOG);
+  check("a tagged name now resolves at all", tagged.name === "BroadSpec", `${tagged.name} (${tagged.match})`);
+  // Exact, not a fuzzy near-miss — the variants below only stay separable because of that.
+  check("...on the EXACT pass", tagged.match === "exact", tagged.match);
+  const go = resolveName("IND/2/B BROADSPEC-GO", PREFIX_CATALOG);
+  check("...and -Go stays a distinct item", go.name === "BroadSpec-Go", `${go.name} (${go.match})`);
+  check("an untagged name still resolves", resolveName("Permafrost", PREFIX_CATALOG).name === "Permafrost");
+}
 
 if (failed) {
   console.error(`\n${failed} case(s) FAILED`);

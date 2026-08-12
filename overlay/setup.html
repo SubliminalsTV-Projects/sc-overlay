@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SC Overlay — Setup</title>
+<style>
+  /* Same Material-3 dark surfaces + amber accent as config.html, so the wizard and Settings
+     read as one app. Kept as its own sheet rather than shared: config.html is 1100 lines of
+     settings-specific rules, and importing it would drag all of them in. */
+  :root {
+    --bg: #0d0e0f; --card: #1b1c1c; --card-high: #292a2a; --field: #171717;
+    --line: #262626; --line-strong: #404040;
+    --text: #e3e2e2; --muted: #d6c4ae; --outline: #9f8e7a;
+    --amber: #ffb231; --on-amber: #452b00; --amber-deep: #6d4700;
+    --error: #ffb4ab; --ok: #35c46a;
+    --radius: .5rem; --radius-sm: .375rem;
+    --font-head: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  }
+  /* 🔑 Bundled locally, not from Google Fonts — the wizard is the FIRST thing a new user
+     sees, and it used to block on an external CDN to render its own typeface. This page
+     carries its own copy on purpose: it links no external stylesheets at all, and pulling
+     in widget-theme.css to share these would drag the widget tokens in and restyle it. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/Inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/Inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("/fonts/SpaceGrotesk-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("/fonts/SpaceGrotesk-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-body); background: var(--bg); color: var(--text);
+    min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; }
+  * { scrollbar-width: thin; scrollbar-color: rgba(255,178,49,.25) transparent; }
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,178,49,.2); border-radius: 5px; border: 2px solid var(--bg); }
+
+  header { display: flex; align-items: center; gap: 14px; padding: 22px 28px 18px; border-bottom: 1px solid var(--line); }
+  .app-logo { width: 44px; height: 44px; border-radius: 10px; flex: none; }
+  header h1 { font-family: var(--font-head); font-size: 23px; font-weight: 700; color: #fff; letter-spacing: -.015em; }
+  header .sub { font-size: 11.5px; letter-spacing: .13em; color: var(--muted); text-transform: uppercase; font-weight: 600; margin-top: 3px; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+
+  /* Step rail — the whole point is that a user can SEE what setup involves and how far in
+     they are, including which steps the app already answered for them. */
+  .rail { width: 232px; flex: none; border-right: 1px solid var(--line); padding: 18px 0; overflow-y: auto; }
+  .rail .r { display: flex; align-items: flex-start; gap: 11px; padding: 10px 18px; font-size: 13.5px; color: var(--outline); }
+  .rail .r .dot { flex: none; width: 21px; height: 21px; border-radius: 50%; border: 1.5px solid var(--line-strong);
+    display: grid; place-items: center; font-size: 11px; font-weight: 700; margin-top: 1px; }
+  .rail .r .rt { min-width: 0; }
+  .rail .r .rn { font-weight: 600; }
+  .rail .r .rs { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; margin-top: 2px; opacity: .8; }
+  .rail .r.current { color: var(--text); }
+  .rail .r.current .dot { border-color: var(--amber); color: var(--amber); }
+  .rail .r.done { color: var(--muted); }
+  .rail .r.done .dot { border-color: var(--ok); background: var(--ok); color: #06210f; }
+  .rail .r.skipped .dot { border-color: var(--line-strong); color: var(--outline); }
+
+  .pane { flex: 1; min-width: 0; overflow-y: auto; padding: 26px 30px 20px; }
+  .pane h2 { font-family: var(--font-head); font-size: 21px; font-weight: 700; color: #fff; letter-spacing: -.01em; }
+  .pane .lede { color: var(--muted); font-size: 14px; margin-top: 8px; max-width: 62ch; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: .75rem; padding: 17px; margin-top: 18px; }
+  .card.good { border-color: rgba(53,196,106,.35); background: rgba(53,196,106,.05); }
+  .card.warn { border-color: rgba(255,178,49,.35); background: rgba(255,178,49,.05); }
+  .kv { font-size: 13px; color: var(--muted); margin-top: 6px; word-break: break-all; }
+  .kv b { color: var(--text); font-weight: 600; }
+  code { font-family: ui-monospace, monospace; background: var(--field); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 10px; line-height: 1.6; max-width: 66ch; }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ol.steps { margin: 10px 0 0 18px; font-size: 13.5px; color: var(--muted); }
+  ol.steps li { margin-bottom: 5px; }
+
+  input[type=text] { width: 100%; background: var(--field); border: 1px solid var(--line); color: var(--text);
+    padding: 10px 12px; font-family: var(--font-body); font-size: 14px; border-radius: var(--radius-sm); transition: border-color .15s; }
+  input[type=text]::placeholder { color: var(--outline); }
+  input[type=text]:focus { outline: none; border-color: var(--amber); }
+
+  button { font-family: var(--font-body); font-weight: 600; cursor: pointer; border: 1px solid var(--line-strong);
+    background: transparent; color: var(--text); padding: 8px 14px; font-size: 13px; border-radius: var(--radius-sm);
+    transition: background .15s, border-color .15s, opacity .15s; }
+  button:hover { background: var(--card-high); }
+  button.amber { border: none; background: var(--amber); color: var(--amber-deep); font-weight: 700; padding: 9px 18px; border-radius: var(--radius); }
+  button.amber:hover { filter: brightness(1.08); background: var(--amber); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button:disabled:hover { background: transparent; }
+  button.amber:disabled:hover { background: var(--amber); filter: none; }
+  .btnrow { display: flex; gap: 9px; margin-top: 13px; flex-wrap: wrap; align-items: center; }
+
+  .status { font-size: 13px; font-weight: 600; margin-top: 11px; }
+  .status.ok { color: var(--ok); }
+  .status.bad { color: var(--error); }
+  .status.busy { color: var(--muted); }
+
+  footer { display: flex; align-items: center; gap: 10px; padding: 15px 30px; border-top: 1px solid var(--line); }
+  footer .spacer { flex: 1; }
+  .skipnote { font-size: 12px; color: var(--outline); }
+
+  /* The finish screen replaces the rail+pane split entirely. */
+  body.finished .rail, body.finished footer { display: none; }
+  .done-wrap { display: none; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 40px; gap: 6px; height: 100%; }
+  body.finished .done-wrap { display: flex; }
+  body.finished .pane > :not(.done-wrap) { display: none; }
+  .done-wrap .tick { width: 62px; height: 62px; border-radius: 50%; background: var(--ok); color: #06210f;
+    display: grid; place-items: center; font-size: 32px; font-weight: 700; margin-bottom: 12px; }
+  .done-wrap h2 { font-size: 25px; }
+  .done-wrap .summary { margin-top: 16px; font-size: 13.5px; color: var(--muted); text-align: left; }
+  .done-wrap .summary div { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/tray-icon.png" alt="" class="app-logo" />
+  <div>
+    <h1>Welcome to SC Overlay</h1>
+    <div class="sub">First-time setup</div>
+  </div>
+</header>
+
+<main>
+  <nav class="rail" id="rail"></nav>
+  <section class="pane" id="pane">
+    <div id="stepBody"></div>
+    <div class="done-wrap">
+      <div class="tick">&#10003;</div>
+      <h2 id="doneTitle">You're all set</h2>
+      <div class="lede" id="doneLede"></div>
+      <div class="summary" id="doneSummary"></div>
+      <div class="btnrow" style="margin-top:22px; justify-content:center;">
+        <button class="amber" id="finishBtn">Start playing</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <button id="backBtn">&larr; Back</button>
+  <span class="skipnote" id="skipNote"></span>
+  <span class="spacer"></span>
+  <button id="skipBtn">Skip this step</button>
+  <button class="amber" id="nextBtn">Continue</button>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  // Scale up only for displays that genuinely need it (a 4K TV left at 100% OS scaling renders
+  // this as a postage stamp otherwise).
+  // 🔑 Measured on the SHORTER edge, not the height. Height alone assumes "taller = physically
+  // bigger", which is true of a TV and false of a PORTRAIT monitor: Sub's 1080x1920 is ordinary
+  // density but 1920 tall, so the old rule zoomed it 1.78x — and since this window opens on
+  // whichever display the cursor is on, the wizard was a different SIZE run to run.
+  // 🔑 Divisor is 1440, not 1080, so a 1440p display sits at design size instead of 1.33x. The
+  // point of reference is the widgets: this should not feel like a different app.
+  try {
+    var sc = window.screen || {};
+    var edge = Math.min(sc.width || 1920, sc.height || 1080);
+    document.documentElement.style.zoom = Math.max(1, Math.min(2, edge / 1440));
+  } catch (e) { /* zoom is a nicety, never a blocker */ }
+
+  var API = window.overlaySetup || {};
+  // 🔑 ?tab=setup, not bare /blueprints. The token UI and the RSI-handle step live on the site's
+  // Setup TAB, which is not rendered until it is selected — verified: the plain page contains
+  // none of that markup. Linking to /blueprints dropped people on the blueprint catalogue and
+  // then told them to "choose Connect the desktop tracker", which was nowhere on screen.
+  // The site keeps its active tab in the URL, so this is its own supported deep link.
+  var TOKEN_URL = "https://subliminal.gg/blueprints?tab=setup";
+
+  // Every step is one of these three. 🔑 "pending" is NOT a pass — the Continue button stays
+  // disabled on it, which is the whole "no silently bypassing" requirement. A step leaves
+  // pending only by being satisfied (done) or by the user explicitly choosing Skip.
+  var state = { gameLog: "pending", connect: "pending", settings: "pending", share: "pending" };
+  var server = null;      // last GET /api/setup payload
+  var idx = 0;            // which step is showing
+  var pollTimer = null;   // connect-step token poll
+
+  var STEPS = [
+    { key: "gameLog",  name: "Find your game log",  render: renderGameLog },
+    { key: "connect",  name: "Connect your account", render: renderConnect },
+    { key: "settings", name: "Review your settings", render: renderSettings },
+    { key: "share",    name: "Share your profile",   render: renderShare, optional: true },
+  ];
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function el(id) { return document.getElementById(id); }
+
+  function getJson(url) {
+    return fetch(url, { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+  }
+  function postJson(url, body) {
+    return fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }).then(function (r) { return r.ok ? r.json().catch(function () { return {}; }) : null; }).catch(function () { return null; });
+  }
+
+  // ── server state ──────────────────────────────────────────────────────────
+  // Refresh what the app can observe, and auto-satisfy any step it already answers. A user who
+  // set the app up from the website must never be made to redo it here — that was the explicit
+  // requirement. Note this only ever PROMOTES a step: an explicit skip is never undone by a poll.
+  function refresh() {
+    return getJson("/api/setup").then(function (s) {
+      if (!s) return null;
+      server = s;
+      Object.keys(state).forEach(function (k) {
+        if (s.steps[k] && s.steps[k].done && state[k] !== "skipped") state[k] = "done";
+      });
+      return s;
+    });
+  }
+
+  // ── rail ──────────────────────────────────────────────────────────────────
+  function drawRail() {
+    el("rail").innerHTML = STEPS.map(function (st, i) {
+      var s = state[st.key];
+      var cls = s === "done" ? "done" : s === "skipped" ? "skipped" : i === idx ? "current" : "";
+      var mark = s === "done" ? "&#10003;" : s === "skipped" ? "&ndash;" : String(i + 1);
+      var sub = s === "done" ? "Done" : s === "skipped" ? "Skipped" : st.optional ? "Optional" : "";
+      return '<div class="r ' + cls + '">' +
+        '<div class="dot">' + mark + "</div>" +
+        '<div class="rt"><div class="rn">' + esc(st.name) + "</div>" +
+        (sub ? '<div class="rs">' + sub + "</div>" : "") + "</div></div>";
+    }).join("");
+  }
+
+  // ── steps ─────────────────────────────────────────────────────────────────
+  function renderGameLog() {
+    var g = (server && server.steps.gameLog) || {};
+    var body;
+    if (g.done) {
+      body = '<div class="card good"><div class="kv"><b>Found your game log.</b></div>' +
+        '<div class="kv">' + esc(g.path) + "</div>" +
+        (g.channel ? '<div class="kv">Channel: <b>' + esc(g.channel) + "</b>" +
+          (g.live ? " &middot; live game" : ' &middot; <span style="color:var(--error)">not the live game</span>') + "</div>" : "") +
+        "</div>" +
+        (g.live === false ? '<div class="hint">This looks like a PTU or test channel. Only progress on the ' +
+          "live game counts toward your collection, so pick the live log if you have one.</div>" : "") +
+        '<div class="btnrow"><button id="pickLog">Choose a different log&hellip;</button></div>';
+    } else {
+      body = '<div class="card warn"><div class="kv"><b>No game log found yet.</b></div>' +
+        '<div class="kv">Looked for: ' + esc(g.path || "(not set)") + "</div></div>" +
+        '<div class="hint">The app scans the usual install locations on every drive. If Star Citizen ' +
+        "lives somewhere unusual, point it at the file yourself &mdash; it is " +
+        "<code>&lt;your install&gt;\\StarCitizen\\LIVE\\game.log</code>.</div>" +
+        '<div class="btnrow"><button class="amber" id="pickLog">Locate game.log&hellip;</button></div>';
+    }
+    return {
+      title: "Find your game log",
+      lede: "Everything the overlay knows comes from Star Citizen's log file — which missions you run, " +
+            "which blueprints you unlock. Without it the app runs but shows nothing.",
+      html: body,
+      skipNote: g.done ? "" : "Skipping means the overlay will not track anything until you set this in Settings.",
+      wire: function () {
+        var b = el("pickLog");
+        if (!b || !API.pickLog) { if (b) b.disabled = true; return; }
+        b.addEventListener("click", function () {
+          API.pickLog(g.path || "").then(function (p) {
+            if (!p) return; // cancelled — leave the step exactly as it was
+            return postJson("/api/config", { logPath: p }).then(refresh).then(draw);
+          });
+        });
+      },
+    };
+  }
+
+  function renderConnect() {
+    var c = (server && server.steps.connect) || {};
+    var verdictHtml = "";
+    if (c.token === "ok") verdictHtml = '<div class="status ok">Connected — your collection will sync.</div>';
+    else if (c.token === "rejected") verdictHtml = '<div class="status bad">That token was rejected. Copy a fresh one from the website.</div>';
+    else if (c.token === "unreachable") verdictHtml = '<div class="status busy">Can\'t reach subliminal.gg right now — check your connection.</div>';
+
+    return {
+      title: "Connect your account",
+      lede: "Syncing backs your collection up to subliminal.gg so you can browse it on the web, keep it " +
+            "across reinstalls, and show it on your public profile. The overlay works fine without it.",
+      html:
+        '<div class="card"><div class="label" style="font-family:var(--font-head);font-size:11px;letter-spacing:.12em;' +
+        'text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:10px">How to get your token</div>' +
+        '<ol class="steps">' +
+        "<li>Open the button below and sign in (Google, Twitch or Discord).</li>" +
+        '<li>Under <b>&ldquo;Connect the desktop tracker&rdquo;</b>, create a token.</li>' +
+        "<li>Copy the token it gives you and paste it below.</li>" +
+        "</ol>" +
+        '<div class="btnrow"><button id="openSite">Open subliminal.gg</button></div>' +
+        "</div>" +
+        '<div class="card"><input type="text" id="tok" placeholder="scbp_…  paste your token here" ' +
+        'autocomplete="off" spellcheck="false" />' +
+        '<div class="btnrow"><button class="amber" id="saveTok">Save token</button>' +
+        '<button id="checkTok">Check again</button></div>' +
+        verdictHtml + "</div>",
+      skipNote: c.token === "ok" ? "" : "Skipping keeps everything local — you can connect later in Settings.",
+      wire: function () {
+        var site = el("openSite");
+        if (site) site.addEventListener("click", function () { openUrl(TOKEN_URL); });
+
+        var check = el("checkTok");
+        if (check) check.addEventListener("click", function () { refresh().then(draw); });
+
+        var save = el("saveTok");
+        var tok = el("tok");
+        if (save && tok) {
+          save.addEventListener("click", function () {
+            var v = tok.value.trim();
+            if (!v) { tok.focus(); return; }
+            save.disabled = true;
+            save.textContent = "Checking…";
+            // POST /api/config turns sync ON when a non-empty token arrives — pasting one IS
+            // the intent to sync, so the wizard doesn't need its own checkbox for that.
+            postJson("/api/config", { syncToken: v }).then(refresh).then(function () {
+              draw();
+            });
+          });
+          tok.addEventListener("keydown", function (e) { if (e.key === "Enter") save.click(); });
+        }
+
+        // Poll while this step is open so a token pasted on the website's side, or a network
+        // blip clearing, turns the step green without the user hunting for a refresh button.
+        // Cleared by draw() before every re-render, so only the visible step ever polls.
+        if (c.token !== "ok") {
+          pollTimer = setInterval(function () {
+            refresh().then(function () {
+              if (server && server.steps.connect.token === "ok") draw();
+            });
+          }, 3000);
+        }
+      },
+    };
+  }
+
+  function renderSettings() {
+    return {
+      title: "Review your settings",
+      // 🔑 Says nothing about picking a MANUFACTURER. Pinning a specific manufacturer skin is
+      // subscriber-gated; everyone gets Mobiglas or "match my ship". Promising it here would send
+      // a new user to Settings to find a control they cannot use — the worst possible first
+      // impression, and worse than never mentioning it (Sub, 2026-08-02).
+      lede: "Worth two minutes now: the overlay's hotkeys, which widgets appear, how it looks, and " +
+            "the opt-in screen-reading features are all off or at defaults until you say otherwise.",
+      html:
+        '<div class="card"><div class="kv">Settings opens as a panel on the overlay, which you can move and resize like anything else. The things most people change first:</div>' +
+        '<ol class="steps">' +
+        "<li><b>Hotkeys</b> &mdash; show/hide the overlay, arrange mode, the mining scanner.</li>" +
+        "<li><b>Run as administrator</b> &mdash; needed for hotkeys to work while the game has focus.</li>" +
+        "<li><b>Screen reading</b> &mdash; fabricator capture and the mining scanner are opt-in, and off by default.</li>" +
+        "<li><b>Appearance</b> &mdash; keep the Mobiglas look, or have the overlay match the ship you're flying.</li>" +
+        "</ol>" +
+        '<div class="btnrow"><button class="amber" id="openCfg">Open Settings</button>' +
+        '<button id="reviewed">I\'ve reviewed them</button></div>' +
+        '<div class="hint">You can reopen Settings any time &mdash; the overlay&rsquo;s cog, or the tray icon.</div></div>',
+      skipNote: "You can always change these later — nothing here is permanent.",
+      wire: function () {
+        var open = el("openCfg");
+        if (open) {
+          open.addEventListener("click", function () {
+            if (API.openSettings) API.openSettings();
+          });
+        }
+        var rev = el("reviewed");
+        if (rev) {
+          rev.addEventListener("click", function () {
+            postJson("/api/setup", { settingsReviewed: true }).then(refresh).then(draw);
+          });
+        }
+      },
+    };
+  }
+
+  function renderShare() {
+    var connected = server && server.steps.connect && server.steps.connect.token === "ok";
+    return {
+      title: "Share your profile",
+      lede: "Optional. Verify your RSI handle on subliminal.gg and your collection gets a public page " +
+            "at /citizens/your-handle — so people can see what you've unlocked.",
+      html:
+        '<div class="card">' +
+        (connected ? "" : '<div class="kv" style="color:var(--error)"><b>This needs a connected account.</b> ' +
+          "Go back a step if you want to set that up first.</div>") +
+        '<ol class="steps">' +
+        "<li>Open the button below &mdash; it lands on the same setup page.</li>" +
+        "<li>Verify your RSI handle (it puts a short code in your RSI bio).</li>" +
+        "<li>Switch your profile to public.</li>" +
+        "</ol>" +
+        '<div class="btnrow"><button id="openShare">Open subliminal.gg</button>' +
+        '<button id="shareDone">I\'ve done this</button></div>' +
+        "</div>" +
+        '<div class="hint">Nothing about your collection is public until you turn this on yourself.</div>',
+      skipNote: "This one is entirely optional — skipping changes nothing about how the app works.",
+      wire: function () {
+        var open = el("openShare");
+        if (open) open.addEventListener("click", function () { openUrl(TOKEN_URL); });
+        var d = el("shareDone");
+        if (d) {
+          d.addEventListener("click", function () {
+            postJson("/api/setup", { shareResolved: true }).then(refresh).then(draw);
+          });
+        }
+      },
+    };
+  }
+
+  function openUrl(u) {
+    if (API.openExternal) API.openExternal(u);
+  }
+
+  // ── render ────────────────────────────────────────────────────────────────
+  function draw() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    drawRail();
+
+    var st = STEPS[idx];
+    var v = st.render();
+    el("stepBody").innerHTML =
+      "<h2>" + esc(v.title) + "</h2>" +
+      '<div class="lede">' + v.lede + "</div>" +
+      v.html;
+    if (v.wire) v.wire();
+
+    var resolved = state[st.key] !== "pending";
+    el("backBtn").disabled = idx === 0;
+    el("nextBtn").disabled = !resolved;
+    el("nextBtn").textContent = idx === STEPS.length - 1 ? "Finish" : "Continue";
+    el("skipBtn").style.display = resolved ? "none" : "";
+    // The consequence of skipping is spelled out on the step that has one — a skip the user
+    // doesn't understand is the same failure as a silent bypass.
+    el("skipNote").textContent = resolved ? "" : (v.skipNote || "");
+  }
+
+  function finish() {
+    var skipped = STEPS.filter(function (s) { return state[s.key] === "skipped"; });
+    var base = skipped.length
+      ? "The overlay is ready. You skipped " + skipped.length + (skipped.length === 1 ? " step" : " steps") +
+        " — you can pick them up any time from Settings."
+      : "The overlay is ready and everything is connected.";
+    el("doneLede").textContent = base;
+    // 🔑 NAME the key. "Press your overlay hotkey" means nothing to someone who has never used the
+    // app, and this is the last thing setup says to them — the one fact they need to actually see
+    // the overlay. Said on BOTH paths: the skipped-steps wording omitted it entirely, so anyone
+    // who skipped a step finished setup never being told how to open the thing.
+    // Read from config rather than hardcoded, so a cleared or rebound key is reported honestly.
+    getJson("/api/config").then(function (c) {
+      var key = c && typeof c.overlayHotkey === "string" ? c.overlayHotkey.trim() : "F3";
+      el("doneLede").textContent = base + (key
+        ? " Press " + key + " in-game to show and hide it."
+        : " No overlay hotkey is set — add one under Settings → Hotkeys to show and hide it in-game.");
+    });
+    el("doneSummary").innerHTML = STEPS.map(function (s) {
+      var v = state[s.key];
+      var mark = v === "done" ? '<span style="color:var(--ok)">&#10003;</span>' : '<span style="color:var(--outline)">&ndash;</span>';
+      return "<div>" + mark + " " + esc(s.name) + (v === "skipped" ? " (skipped)" : "") + "</div>";
+    }).join("");
+    document.body.classList.add("finished");
+    // Recorded only once the user reaches the end, so quitting halfway leaves the wizard armed
+    // for next launch rather than counting as a completed setup.
+    postJson("/api/setup", { done: true });
+  }
+
+  el("backBtn").addEventListener("click", function () { if (idx > 0) { idx--; draw(); } });
+  el("nextBtn").addEventListener("click", function () {
+    if (idx < STEPS.length - 1) { idx++; draw(); } else { finish(); }
+  });
+  el("skipBtn").addEventListener("click", function () {
+    state[STEPS[idx].key] = "skipped";
+    if (idx < STEPS.length - 1) { idx++; }
+    draw();
+  });
+  el("finishBtn").addEventListener("click", function () {
+    if (API.close) API.close();
+  });
+
+  refresh().then(function (s) {
+    if (!s) {
+      // The sidecar is the only source of step state; without it the wizard can't tell a
+      // finished step from an unfinished one, so it says so rather than inventing answers.
+      el("stepBody").innerHTML = '<h2>Can\'t reach the app\'s background service</h2>' +
+        '<div class="lede">Setup needs it running. Close this window and restart SC Overlay; ' +
+        "if it keeps happening, Settings &rarr; Copy diagnostics says why.</div>";
+      el("nextBtn").disabled = true;
+      el("skipBtn").disabled = true;
+      return;
+    }
+    // Land on the first UNRESOLVED step. Someone who set the app up from the website should
+    // open this and find most of it already ticked.
+    var first = STEPS.findIndex(function (st) { return state[st.key] !== "done"; });
+    idx = first === -1 ? 0 : first;
+    if (first === -1) { drawRail(); finish(); return; }
+    draw();
+  });
+})();
+</script>
+</body>
+</html>

@@ -12,10 +12,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 import type { RefineryRead } from "./screen-read.js";
 
-interface Mineable { name: string; rarity: string; base: number; sigs: number[]; }
+/** `contains` is set only when a signature is SHARED — every hand-mined gem reads 3,000,
+ *  every C-type asteroid 4,700 — so the read names a family and this is what it could be. */
+interface Mineable { name: string; rarity: string; base: number; sigs: number[]; contains?: string[]; }
 interface MineablesData {
   rocks: Mineable[];
-  index: Record<string, { name: string; rarity: string; count: number }[]>;
+  index: Record<string, { name: string; rarity: string; count: number; contains?: string[] }[]>;
 }
 
 /** A tracked refinery job (an active PROCESSING order). `endAt` is absolute so the
@@ -39,7 +41,7 @@ export interface MiningView {
   // real scan rather than being a number the OCR happened to find (see applyMineableRead).
   // `verdict`: what the number MEANS — see classifySignature. The widget renders and speaks off
   // this rather than re-deriving it from `matches.length`, so there is one rule, not two.
-  scan: { signature: number; matches: { name: string; rarity: string; count: number }[]; at: number; confirmed: boolean; verdict: ScanVerdict } | null;
+  scan: { signature: number; matches: { name: string; rarity: string; count: number; contains?: string[] }[]; at: number; confirmed: boolean; verdict: ScanVerdict } | null;
   jobs: {
     id: string; station: string | null; material: string | null; yieldScu: number | null;
     endAt: number; remainingSec: number; done: boolean;
@@ -62,14 +64,15 @@ const DEBRIS_STEP = 2000;
  *    ambiguous, and only flying over will settle it, so it is announced either way: the player
  *    has to go look regardless.
  *  - `debris` — a whole number of panels, no rock at that value.
- *  - `unknown` — in range, but neither. Not ore, not debris; a real scan of something we can't
- *    name (or an OCR read that came out wrong).
+ *  - `unknown` — in range, but neither. The game never draws a signature that isn't one of the
+ *    166 legal values, so this is always a misread or a number off some other part of the HUD.
+ *    It is REFUSED — shown in the scan-read box, never announced (see applyMineableRead).
  *  A read outside [MIN_SIGNATURE, maxSignature] gets no verdict at all — see classifySignature. */
 export type ScanVerdict = "ore" | "ore-or-debris" | "debris" | "unknown";
 
 /** Is this value a whole number of debris panels? Replaces the old "2,000 or anything ≥4,000"
  *  rule, which let every large stray HUD number through as debris. Between 2,000 and the ceiling
- *  there are only 13 debris values, so this is a far tighter filter than a floor ever was. */
+ *  there are only 12 debris values, so this is a far tighter filter than a floor ever was. */
 export function isDebrisValue(signature: number): boolean {
   return signature >= DEBRIS_STEP && signature % DEBRIS_STEP === 0;
 }
@@ -108,35 +111,48 @@ export interface ScanOutcome {
  *  numbers that are consistently making it so that it reads the wrong number". */
 const CONFUSABLE_DIGITS: Record<string, string> = { "6": "8", "8": "6" };
 
-/** Fix a confused digit by CONSTRAINING the read to values the game can actually show.
+/** Fix confused digits by CONSTRAINING the read to values the game can actually show.
  *
  *  This is the answer to "can you train it better": the OCR can't be trained, but it doesn't need to
- *  be. A signature is one of only ~165 legal values spread over 2,000–25,800 — **0.69% of that
+ *  be. A signature is one of only ~166 legal values spread over 2,000–25,800 — **0.70% of that
  *  range** — so a wrong digit almost always lands on a number that cannot exist, and usually exactly
- *  one legal value is a single 6/8 swap away. Measured over the real table: of the 81 misreads a
- *  single 6↔8 slip can produce, **75 have exactly one candidate** and are repaired here.
+ *  one legal value is one or two 6/8 swaps away.
  *
- *  Three rules keep it honest:
- *  - **One digit only.** Allowing two swaps repairs a handful more but starts inventing answers for
- *    reads that were wrong for some other reason.
+ *  🔴 ONE-DIGIT-ONLY WAS TOO NARROW (Rytharr, 2026-08-07): a real read of 18,980 should have been
+ *  16,960 (Copper ×4) — TWO digits confused in the same number, which the original one-swap-only
+ *  version couldn't reach and so left as "unknown" all night. Measured over the real table before
+ *  changing anything: allowing a SECOND simultaneous swap repairs 10 more real misreads (74 -> 84)
+ *  with **zero** new ambiguity — no case that single-swap could uniquely resolve becomes ambiguous
+ *  once pairs are tried too, because the same uniqueness rule below still applies across the whole
+ *  combined search, not just within one swap count.
+ *
+ *  What keeps it honest:
  *  - **A value that is already legal is never touched** — 6,800 (Lindinium ×2) is taken at face
  *    value, not "corrected" to 8,600 (Ice ×2). An exact match is evidence in its own right.
- *  - **Ambiguity is left alone, never guessed.** Only two pairs collide: 16,000 (Savrilium ×5) vs
- *    18,000 (Bexalite ×5), and 6,000 vs 8,000 — and the second is debris either way, so it changes
- *    nothing. Naming the wrong rock is worse than naming none.
+ *  - **Ambiguity is left alone, never guessed** — across EVERY single- and double-swap candidate
+ *    together, not just within one count. Only two pairs collide at one swap: 16,000 (Savrilium ×5)
+ *    vs 18,000 (Bexalite ×5), and 6,000 vs 8,000 (debris either way, so it changes nothing) — both
+ *    already caught by the "already legal" rule above, since 16,000/18,000/6,000/8,000 are all legal
+ *    values in their own right and never reach the swap search at all. Naming the wrong rock is
+ *    worse than naming none.
  *
  *  Returns the repaired value, or null if the read should stand as it is. */
 export function repairConfusableDigits(signature: number, isLegal: (n: number) => boolean): number | null {
   if (!Number.isInteger(signature) || signature < 0) return null;
   if (isLegal(signature)) return null;               // already a value the game can show — trust it
   const s = String(signature);
+  const confusable: number[] = [];
+  for (let i = 0; i < s.length; i++) if (CONFUSABLE_DIGITS[s[i]]) confusable.push(i);
   const found = new Set<number>();
-  for (let i = 0; i < s.length; i++) {
-    const alt = CONFUSABLE_DIGITS[s[i]];
-    if (!alt) continue;
-    const n = Number(s.slice(0, i) + alt + s.slice(i + 1));
+  const tryFlipping = (positions: number[]) => {
+    const chars = s.split("");
+    for (const i of positions) chars[i] = CONFUSABLE_DIGITS[s[i]];
+    const n = Number(chars.join(""));
     if (isLegal(n)) found.add(n);
-  }
+  };
+  for (const i of confusable) tryFlipping([i]);
+  for (let a = 0; a < confusable.length; a++)
+    for (let b = a + 1; b < confusable.length; b++) tryFlipping([confusable[a], confusable[b]]);
   return found.size === 1 ? [...found][0] : null;    // 0 = nothing plausible, 2+ = don't guess
 }
 
@@ -174,6 +190,32 @@ export class MiningTracker extends EventEmitter {
    *  2,000 (so the biggest field this will accept is 12 panels). Every rejection is logged, so if
    *  a real field ever reads higher, sidecar.log will say so and this can be raised on evidence
    *  instead of a guess. */
+  /** Celestial-body key -> display name (`pyro2` -> "Monox"), from the dataset so it
+   *  refreshes per patch. Empty when the table predates the map. */
+  bodyNames(): Record<string, string> {
+    return (this.data as unknown as { bodies?: Record<string, string> })?.bodies ?? {};
+  }
+
+  /** The harvestable plants that share the debris step, for the widget's wording. */
+  harvestPlants(): string[] {
+    return (this.data as unknown as { harvest?: { plants?: string[] } })?.harvest?.plants ?? [];
+  }
+
+  /** Every ORE a player can actually come away with — ship-mined rocks plus the hand-mined gems.
+   *
+   *  🔑 An umbrella entry is replaced by what it CONTAINS, not listed alongside it: "Hand-mined
+   *  Gem" is a signature family (all eight read 3,000), not a thing anyone puts in a loot split.
+   *  Used by the Loot Split name autocomplete, which is why this is the mining table and not the
+   *  commodity map — that map is the whole economy, ships and helmets and drugs included. */
+  oreNames(): string[] {
+    const out = new Set<string>();
+    for (const r of this.data?.rocks ?? []) {
+      if (r.contains?.length) for (const c of r.contains) out.add(c);
+      else out.add(r.name);
+    }
+    return [...out].sort((a, b) => a.localeCompare(b));
+  }
+
   maxSignature(): number {
     if (this.maxSig === null) {
       this.maxSig = Math.max(0, ...(this.data?.rocks ?? []).flatMap((r) => r.sigs));
@@ -195,9 +237,8 @@ export class MiningTracker extends EventEmitter {
    *  it can only ever land on a value the game could have shown.
    *
    *  `confirmed` = the frame showed the scan glyph beside this number, so a real scan produced it.
-   *  A verdict that names a rock is applied either way — matching the table is its own evidence —
-   *  but `debris` and `unknown` need that glyph, because without it a bare number is as likely to
-   *  be some other bit of HUD the OCR grabbed as it is a contact. */
+   *  It is a corroborator, never a licence: the VALUE decides. Ore and debris are self-evident
+   *  (they are values the game can draw); `unknown` is refused outright, glyph or not. */
   applyMineableRead(signature: number, confirmed = false): ScanOutcome {
     if (!this.data) return { verdict: null, announced: false, used: false, why: "no rock table loaded" };
     // 🔑 A repair needs the GLYPH. An exact table hit is evidence on its own, but a repaired one is
@@ -218,8 +259,29 @@ export class MiningTracker extends EventEmitter {
         ? `ignored (below the ${MIN_SIGNATURE.toLocaleString()} floor)`
         : `ignored (above ${this.maxSignature().toLocaleString()}, the largest signature the game can show — misread)` });
     }
-    if (!matches.length && !confirmed) {
-      return out({ verdict, announced: false, used: false, why: `${verdict}, not announced (no scan glyph beside the number)` });
+    // 🔑 THE VALUE IS THE EVIDENCE, AND `unknown` HAS NONE (Sub, 2026-08-09, superseding the
+    // glyph-gate below it). Ore and debris are both self-evident: they are values the game can
+    // actually draw — 156 rock signatures plus 12 whole-panel debris counts, 166 of the 23,801
+    // numbers in the band, 0.70%. 🔑 RECOUNT THIS whenever mineables.json is regenerated: it has
+    // already moved twice in one day (26 hand-typed rocks -> +gems +asteroid types -> asteroid
+    // types pulled again as legacy). It is a measured claim and the whole argument below rests on
+    // the number staying tiny, so a stale one here is worse than none.
+    // An `unknown` read is by definition NOT one of them, so it is
+    // never a real contact: it is an OCR misread the 6/8 repair couldn't rescue, or a number off
+    // some other part of the HUD entirely. Announcing it meant the glyph check alone decided,
+    // and the glyph check is a brightness-and-shape heuristic that any bright pin-sized mark
+    // beside a number can pass. It duly did: a flight-HUD line reading
+    //   `Gas | 0h 2m 52 | 16.98km | 6,730 | c | G | 0 | 28.70°,148.94°,49.51G`
+    // came back `confirmed`, and the scanner popped itself open and spoke while Sub was flying,
+    // nowhere near a rock. So an unknown value is now refused outright — no call-out, no flash,
+    // no auto-show — whatever the glyph says. It is still BROADCAST to the scan-read box (dim +
+    // struck through, see the `read` frame in overlay-server.ts), which is where a number the app
+    // threw away belongs: beside the real signature, where a player calibrating can see it.
+    // 🔑 This is why the glyph can stay a loose heuristic. Its only remaining job is gating the
+    // 6/8 repair, where a wrong answer costs one unrepaired read rather than a false call-out.
+    if (verdict === "unknown") {
+      return out({ verdict, announced: false, used: false,
+        why: `unknown, refused (not a rock signature and not a whole number of debris panels${confirmed ? "; scan glyph found, which is not enough on its own" : ""})` });
     }
     // Ignore a repeat read of the same signature (the loop polls the same rock every ~3s);
     // only a CHANGED signature is news worth re-announcing.

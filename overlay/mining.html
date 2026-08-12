@@ -10,9 +10,6 @@
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
     const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
     const tw = q.get("twist"); if (tw !== null) r.style.setProperty("--twist", tw + "deg"); }</script>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/widget-theme.css" />
 <!-- Relative on purpose — see the header of trinkets.css. -->
 <link rel="stylesheet" href="trinkets.css" />
@@ -33,6 +30,7 @@
     --sans: "Inter", system-ui, sans-serif;
     --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", monospace;
     --leg: #ff9d5c; --epic: #c98bff; --rare: #5aa9ff; --unc: #4fd6a0; --common: #9fb4c0;
+    --gem: #ffd479; --ast: #8fa3b0;
   }
   /* Drake Interplanetary theme (mirrors the HUD): burnt-orange chrome on warm gunmetal. Only
      the tokens change; --border/--divider derive from --accent-rgb so they retint automatically. */
@@ -181,10 +179,17 @@
        and a frame edge would clip them; the site's shim measures the panel's margins for exactly
        that reason; and `auto` still centres it in a plain browser because the sides are auto. */
     margin: 18px auto 20px;
-    background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
     border: 1px solid var(--border);
-    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.08), 0 8px 34px rgba(0, 0, 0, 0.45), 0 0 30px rgba(var(--accent-rgb), 0.16);
-    -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+    /* Fill, border tint, shadow and blur live in widget-theme.css (#panel.wpanel), which
+       multiplies each one's alpha by --wsurf so the panel fades independently of its text.
+       Mining differs from the other panels in two of them, so it hands those over as
+       variables rather than re-declaring the properties — a re-declaration here would be
+       dead code, since #panel.wpanel out-ranks a bare #panel. */
+    --panel-blur: 3px;
+    --panel-shadow:
+      inset 0 0 0 1px rgba(var(--accent-rgb), calc(0.08 * var(--wsurf, 1))),
+      0 8px 34px rgba(0, 0, 0, calc(0.45 * var(--wsurf, 1))),
+      0 0 30px rgba(var(--accent-rgb), calc(0.16 * var(--wsurf, 1)));
     /* Skew (matches the HUD): shares the same --twist as the Blueprint widget, flat (0°) by
        default. rotateY keeps the horizontal extent constant as content grows (no h-scrollbar). */
     transform: perspective(1700px) rotateY(var(--twist, 0deg));
@@ -201,15 +206,16 @@
   body.embedded .tape, body.embedded .bolt, body.embedded .corner { display: none !important; }
   /* CRT scanlines (+ Esperia mesh, Origin stitching) come from the shared widget-theme.css
      via .wpanel, so every widget carries the active theme's surface treatment. */
-  /* visor sheen */
+  /* visor sheen — part of the SURFACE, so its alpha follows --wsurf (see widget-theme.css) */
   #panel::after { content: ""; position: absolute; inset: 0; border-radius: 12px; pointer-events: none; z-index: 3;
-    background: linear-gradient(180deg, var(--sheen), transparent 36%); }
+    background: linear-gradient(180deg, var(--sheen), transparent 36%);
+    opacity: var(--wsurf, 1); transition: opacity var(--wfade-ms, 0.18s) ease; }
 
   /* AMD compatibility "lite" skin (added on <html> via ?lite): strip everything that forces
      continuous GPU recompositing over the game's Vulkan surface — backdrop blur, the blend-mode
      scanlines/sheen, the 3D tilt, and all animations. Panel bg goes near-opaque for legibility. */
   html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
-    background: var(--panel-solid) !important; transform: none !important; }
+    transform: none !important; }
   html.amd-lite #panel::before, html.amd-lite #panel::after { display: none !important; }
   html.amd-lite #moveBanner { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   html.amd-lite *, html.amd-lite *::before, html.amd-lite *::after { animation: none !important; transition: none !important; }
@@ -313,9 +319,11 @@
   #cogMenu .cog-canvas-only { display: none !important; }
   body.canvas #cogMenu .cog-sec.cog-canvas-only { display: block !important; }
   body.canvas #cogMenu .cog-slider.cog-canvas-only { display: flex !important; }
+  body.canvas #cogMenu .cog-opt.cog-canvas-only { display: flex !important; }
   /* Embedded mode keeps the per-widget angle slider (the parent applies the angle it sets). */
   body.embedded #cogMenu .cog-sec.cog-canvas-only { display: block !important; }
   body.embedded #cogMenu .cog-slider.cog-canvas-only { display: flex !important; }
+  body.embedded #cogMenu .cog-opt.cog-canvas-only { display: flex !important; }
   /* Alert-tone row: choose/clear a custom WAV. */
   #cogMenu .cog-tone { display: flex; align-items: center; gap: 8px; padding: 4px 12px 7px; font-size: 11.5px; color: var(--cyan-dim); }
   #cogMenu .cog-tone .lnk { cursor: pointer; color: var(--cyan-text); text-decoration: underline dotted; }
@@ -353,12 +361,26 @@
   .sec-h .badge { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--faint); }
 
   /* Scanner readout */
+  /* Location strip: quiet by default -- it is context, not a readout. The player only
+     needs to notice it when it disagrees with where they actually are. */
+  .place-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 2px 0 6px; font-size: 10.5px; color: var(--faint); }
+  .place-name { color: var(--cyan-dim); font-weight: 600; }
+  .place-age { opacity: .7; }
+  .place-modes { margin-left: auto; display: flex; gap: 3px; }
+  .place-modes .pm { font: inherit; cursor: pointer; padding: 1px 6px; border-radius: 4px;
+    border: 1px solid var(--divider); background: transparent; color: var(--faint); }
+  .place-modes .pm.on { color: var(--cyan); border-color: var(--cyan-dim); }
   .scan-now { margin: 4px 0 8px; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--divider);
     background: rgba(var(--accent-rgb), 0.05); transition: background .2s, border-color .2s; }
   .scan-now.empty { color: var(--faint); font-size: 11.5px; text-align: center; padding: 14px 12px; }
   .scan-now .rock { font-size: 18px; font-weight: 700; color: var(--gold); letter-spacing: .01em;
     text-shadow: 0 0 12px rgba(255, 210, 122, 0.3); }
   .scan-now .meta { margin-top: 3px; font-size: 11px; color: var(--cyan-dim); }
+  /* Planet-side, the 2,000-step wording has no second line to offer any more (see
+     debrisStepWording) — so the line collapses instead of leaving a gap where "or N debris
+     panels" used to sit. Sub on this readout: no extra words that didn't need to be there. */
+  .scan-now .meta:empty { display: none; }
   .scan-now .sig { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 4px; }
   .scan-now.hit { animation: flashhit 1.1s ease-out; border-color: var(--gold); }
   @keyframes flashhit { 0% { background: rgba(255, 210, 122, 0.55); } 100% { background: rgba(var(--accent-rgb), 0.05); } }
@@ -420,19 +442,26 @@
     <div id="cogMenu">
       <div class="cog-sec cog-canvas-only">This widget</div>
       <div class="cog-slider cog-canvas-only"><span>Angle</span><input type="range" id="cogAngle" min="-35" max="35" step="1" value="0" /><b id="cogAngleV">0°</b></div>
+      <!-- 🔑 Lives HERE, not in global Settings (Sub, 2026-08-11). It is a setting about this
+           widget's behaviour, so the place you look for it is this widget. Canvas-only: a browser
+           source cannot pop itself open. -->
+      <label class="cog-opt cog-canvas-only" title="Shows the Mining Scanner on its own when the scanner or Refinement Center is detected. Only a signature matching a known ore counts - debris and stray numbers will not pop it open. If you close it, it stays away for a bit before it can pop again.">
+        <input type="checkbox" id="autoShowChk" /> Pop open when I am scanning or refining
+      </label>
       <div class="cog-sec">Audio</div>
       <label class="cog-opt"><input type="checkbox" id="voiceChk" /> HAL voice announcements</label>
       <div class="cog-slider"><span>Volume</span><input type="range" id="volSlider" min="0" max="100" step="1" /></div>
       <div class="cog-tone">Alert tone <span class="lnk" id="toneBtn">choose WAV…</span><span class="lnk clr hidden" id="toneClr">reset</span></div>
       <div class="cog-sec">Announce</div>
       <div class="cog-seg"><span class="seg" id="segTarget" data-m="target">Targets only</span><span class="seg" id="segEvery" data-m="every">Every rock</span></div>
-      <label class="cog-opt" title="Speak up for a scan that isn't the ore you came for: debris, a signature I can't identify, or a value that could be either a rock or a debris field. Turn this off if you only care about rocks. Rocks you've targeted are always called out.">
-        <input type="checkbox" id="debrisChk" /> Call out debris &amp; unknown
+      <label class="cog-opt" title="Speak up for a scan that isn't the ore you came for: a debris field, or a value that could be either a rock or debris. Turn this off if you only care about rocks. Rocks you've targeted are always called out.">
+        <input type="checkbox" id="debrisChk" /> Call out debris
       </label>
       <div class="cog-sec">Tools</div>
       <label class="cog-opt" title="Draws a box on screen showing the area the app reads for a scan signature. Nothing outside it is looked at.">
         <input type="checkbox" id="scanBoxChk" /> Show the scan read area
       </label>
+      <div class="cog-slider" title="How visible the read-area box is. Turn it right down to keep it out of your way — it still works, and it comes back to full while your cursor is over it."><span>Box opacity</span><input type="range" id="scanBoxOpacity" min="10" max="100" step="5" /></div>
       <button type="button" id="testBtn" class="cog-btn">🔊 Test sound</button>
       <button type="button" id="openSettings" class="cog-btn">⚙ Open full settings…</button>
     </div>
@@ -450,6 +479,7 @@
     <div class="sec">
       <div class="sec-h" data-sec="scan"><span class="car">▾</span>Signature Scanner<span class="badge" id="scanBadge"></span></div>
       <div id="scanBody">
+        <div class="place-bar" id="placeBar"></div>
         <div class="scan-now empty" id="scanNow">Scan a rock — I'll name it here.</div>
         <div class="tgt-lbl">Hunting for <span id="tgtCount"></span></div>
         <div class="targets" id="targets"></div>
@@ -498,8 +528,14 @@
   const DEFAULT_ANGLE = -5; // this widget's resting skew until the user changes it (angles left-in)
   let widget = { x: null, y: null, scale: null };
   let miningBaseScale = 100; // baseline from config.overlayScale; a per-widget scale overrides it
-  const RAR = { Legendary: "--leg", Epic: "--epic", Rare: "--rare", Uncommon: "--unc", Common: "--common" };
-  const RAR_ORDER = ["Legendary", "Epic", "Rare", "Uncommon", "Common"];
+  // 🔑 A rarity missing from RAR_ORDER is INVISIBLE in the target picker — renderTargets
+  // iterates this list, not the data. The datacore-generated table added two groups that are
+  // not ore rarities at all ("Gem" for the hand-mined family, "Asteroid" for the C/S/P/M/Q/E
+  // types); without them you could see a gem scan but never hunt for one. They sort last —
+  // they are rock KINDS, so ordering them among rarities would be arbitrary.
+  const RAR = { Legendary: "--leg", Epic: "--epic", Rare: "--rare", Uncommon: "--unc", Common: "--common",
+                Gem: "--gem", Asteroid: "--ast" };
+  const RAR_ORDER = ["Legendary", "Epic", "Rare", "Uncommon", "Common", "Gem", "Asteroid"];
   let view = { rocks: [], targets: [], scan: null, jobs: [] };
   const targetSet = new Set();
 
@@ -618,17 +654,10 @@
   // was "no table match = debris".
   const verdictOf = (sc) => sc.verdict || (sc.matches.length ? "ore" : "debris");
 
-  // "I don't know what that is, but it's not ore" — Sub's line, five ways, picked at random so a
-  // stubborn unidentifiable contact doesn't repeat the same sentence at you. Each is ONE clip
-  // (whole sentences, unlike the name call-outs, which are stitched); the text is also the
-  // Windows-TTS fallback for anyone whose build has no clips.
-  const UNKNOWN_LINES = [
-    ["c_unknown1", "I don't know what that is, but it's not ore."],
-    ["c_unknown2", "That is not ore. Beyond that, I have no idea."],
-    ["c_unknown3", "I'm unable to identify that. I can tell you it isn't ore."],
-    ["c_unknown4", "No match in my records. Whatever it is, it isn't ore."],
-    ["c_unknown5", "I don't recognize that signature. It is not ore."],
-  ];
+  // (HAL's five "I don't know what that is" lines used to live here. An `unknown` value is one the
+  // game cannot draw as a signature, so it is now refused by the tracker and never reaches this
+  // widget at all — see applyMineableRead. The c_unknown1..5 clips are still in overlay/tts/ if the
+  // call-out is ever wanted back.)
 
   // ---- render ----
   function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
@@ -652,9 +681,15 @@
       // number of salvage panels, and anything else is a real scan of something we can't name —
       // saying "Debris" for that is the guess this replaced.
       const unknown = verdictOf(sc) === "unknown";
-      el.innerHTML = '<div class="rock" style="color:var(--cyan-dim)">' + (unknown ? "Unknown" : "Debris") + '</div>' +
+      // 🔑 A 2,000-step value is NOT necessarily debris. Every harvestable plant in the
+      // game sits at exactly 2,000 too, so the count is certain and the kind is not.
+      // `view.wording` is the server's call on how to say that (it knows where you are);
+      // falling back to "Debris" only when it has nothing to offer.
+      const w = view.wording;
+      el.innerHTML = '<div class="rock" style="color:var(--cyan-dim)">' +
+          (unknown ? "Unknown" : escapeHtml(w ? w.lead : "Debris")) + '</div>' +
         '<div class="meta">' + (unknown ? "Not ore — and not a debris signature either"
-                                       : "Salvageable — not a mineable rock") + '</div>' +
+                                       : escapeHtml(w ? w.detail : "Salvageable — not a mineable rock")) + '</div>' +
         sig + '</div>';
       return;
     }
@@ -664,11 +699,48 @@
     const main = m.find(x => targetSet.has(x.name)) || m[0];
     const rest = m.filter(x => x !== main);
     const maybe = verdictOf(sc) === "ore-or-debris" ? '<span class="maybe">or debris</span>' : '';
+    // A SHARED signature names a family, not a rock — every hand-mined gem reads 3,000 and
+    // every C-type asteroid 4,700. `contains` is the only thing that makes those reads useful,
+    // so it goes on its own line rather than being squeezed into the cluster meta.
+    const could = main.contains?.length
+      ? '<div class="meta">could be ' + main.contains.map(escapeHtml).join(", ") + '</div>' : '';
     el.innerHTML = '<div class="rock">' + escapeHtml(main.name) + maybe + rarPill(main.rarity) + '</div>' +
       '<div class="meta">' + main.count + (main.count > 1 ? " rocks" : " rock") + ' in cluster' +
       (rest.length ? ' · or ' + rest.map(x => escapeHtml(x.name) + " ×" + x.count).join(", ") : '') + '</div>' +
-      sig + (isTarget ? ' · TARGET' : '') + '</div>';
+      could + sig + (isTarget ? ' · TARGET' : '') + '</div>';
   }
+
+  // Where the app thinks you are, and the override. Shown ALWAYS -- including when it
+  // does not know -- because the player has to be able to see that the app is guessing
+  // wrong before they can distrust anything it says off the back of it.
+  const PLACE_MODES = [["auto", "Auto"], ["planet", "Planet"], ["space", "Space"]];
+  function renderPlace() {
+    const el = $("placeBar"); if (!el) return;
+    const p = view.place || { kind: "unknown" };
+    const mode = view.placeMode || "auto";
+    let label = "Location unknown";
+    if (p.kind === "planet") label = escapeHtml(p.name || "Planet-side");
+    else if (p.kind === "space") label = "In space";
+    // Age matters: the log prints this about every 10 minutes, so a reading can be that
+    // old. Saying WHEN is what lets the player judge it.
+    let age = "";
+    if (mode === "auto" && view.placeAgeMs != null) {
+      const m = Math.round(view.placeAgeMs / 60000);
+      age = ' <span class="place-age">' + (m < 1 ? "just now" : m + "m ago") + '</span>';
+    } else if (mode !== "auto") {
+      age = ' <span class="place-age">set by you</span>';
+    }
+    el.innerHTML = '<span class="place-name">' + label + '</span>' + age +
+      '<span class="place-modes">' + PLACE_MODES.map(([k, t]) =>
+        '<button class="pm' + (mode === k ? " on" : "") + '" data-pm="' + k + '">' + t + '</button>').join("") + '</span>';
+  }
+
+  document.addEventListener("click", (ev) => {
+    const b = ev.target.closest && ev.target.closest("button.pm");
+    if (!b) return;
+    fetch("/api/mining/place-mode", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: b.dataset.pm }) }).catch(() => {});
+  });
 
   function renderTargets() {
     $("tgtCount").textContent = targetSet.size ? "(" + targetSet.size + ")" : "(none — tap a rock)";
@@ -700,7 +772,7 @@
     }).join("");
   }
 
-  function renderAll() { renderScan(); renderTargets(); renderJobs(); }
+  function renderAll() { renderPlace(); renderScan(); renderTargets(); renderJobs(); }
 
   // Tick the countdowns client-side (server only pushes on change).
   setInterval(() => {
@@ -712,9 +784,15 @@
   }, 1000);
 
   // ---- settings (all in the cog) ----
+  const scanBoxOpacityPct = () => {
+    const v = parseInt(localStorage.getItem("miningScanBoxOpacity") || "100", 10);
+    return Number.isFinite(v) ? Math.min(100, Math.max(10, v)) : 100;
+  };
   const renderVoice = () => {
     $("voiceChk").checked = voiceOn();
-    $("scanBoxChk").checked = localStorage.getItem("miningScanBox") === "on";
+    // Inverted pref: absent = shown. Default is ON now, so the checkbox reads !hidden.
+    $("scanBoxChk").checked = localStorage.getItem("miningScanBoxHidden") !== "1";
+    $("scanBoxOpacity").value = String(scanBoxOpacityPct());
     $("debrisChk").checked = debrisOn();
   };
   $("debrisChk").addEventListener("change", () => {
@@ -727,8 +805,20 @@
   // box appears the instant you tick it.
   $("scanBoxChk").addEventListener("change", () => {
     const on = $("scanBoxChk").checked;
-    localStorage.setItem("miningScanBox", on ? "on" : "off");
+    // Stored INVERTED (miningScanBoxHidden, absent = show) so the default is shown — this is the
+    // same key the canvas reads, and the only place either writes it.
+    localStorage.setItem("miningScanBoxHidden", on ? "0" : "1");
     try { host()?.scanBox?.(on); } catch { /* standalone: no canvas to draw on */ }
+  });
+  // Scan-box opacity. Floor is 10% rather than 0: at zero it is not "subtle", it is gone, and a
+  // box you cannot see is one you cannot drag, reset or hide — the trapped-user shape again.
+  // Hovering it restores full opacity (see #scanBox:hover), so the controls are always reachable.
+  $("scanBoxOpacity").value = String(scanBoxOpacityPct());
+  $("scanBoxOpacity").addEventListener("input", () => {
+    localStorage.setItem("miningScanBoxOpacity", $("scanBoxOpacity").value);
+    // Same host call as the checkbox: syncScanBox() is the ONE rule and applies opacity too, so
+    // there is no second path that could disagree about what the box should look like.
+    try { host()?.scanBox?.(localStorage.getItem("miningScanBoxHidden") !== "1"); } catch { /* standalone */ }
   });
   $("volSlider").value = Math.round(getVol() * 100);
   $("volSlider").addEventListener("input", () => { localStorage.setItem("miningVol", ($("volSlider").value / 100).toString()); if (master) master.gain.value = getVol(); });
@@ -742,6 +832,11 @@
   });
   $("cogAngle").addEventListener("change", () => { if (EMBEDDED) host()?.persist?.(); else persistWidget(); });
   renderVoice();
+  // The canvas owns the scan box and can hide it from the box's own Hide button, which changes
+  // the pref out from under this sheet. renderVoice() only ran at init, so the checkbox went
+  // stale: it still read "ticked" after a Hide, and clicking it wrote the value it already had —
+  // which is why re-showing the box took a click OFF and then back ON.
+  window.__miningSyncSettings = () => renderVoice();
   let cfg = {};
   // Global UI scale from config. In canvas mode it's only the BASELINE for this widget (a
   // per-widget resize overrides it); in a plain browser it zooms the content as before.
@@ -849,32 +944,44 @@
   //                     dismissive — which is the case Sub asked to make easier (Savrilium ×5 is
   //                     16,000, and someone hunting Savrilium must not hear it called debris).
   //   debris         -> "Debris", flash, no chime, so it stays distinct from a target hit
-  //   unknown        -> one of five HAL ways of saying it isn't ore and it isn't identifiable
+  //   unknown        -> never gets here; the tracker refuses a value the game cannot draw
   function onNewScan(sc) {
     const v = verdictOf(sc);
     const isTarget = sc.matches.some((m) => targetSet.has(m.name));
+    // 🔑 `unknown` is a number the game cannot draw as a signature, so it is never a contact — the
+    // tracker refuses it outright (applyMineableRead) and it should not arrive at all. It still can
+    // from a scan persisted by an older build, and it names no rock, so it has to return HERE
+    // rather than fall through: everything below the debris branch assumes matches[0] exists.
+    if (v === "unknown") return;
     // 🔑 While the widget is HIDDEN (armed for auto-show) it must be silent. It stays subscribed
     // to the event stream purely so auto-show can pop it — announcing from an invisible widget is
     // what made "debris" speak when the Mining Assistant wasn't even open.
-    // Evidence that the player is REALLY scanning is either of: the number resolved to a known
+    // Evidence strong enough to POP THE WIDGET OPEN is either of: the number resolved to a known
     // ore, or the frame showed the scan glyph beside it (sc.confirmed — see findScanGlyph in
-    // capture.cjs). Debris used to be barred from auto-show because a bare number proved nothing
-    // and the widget kept popping itself up mid-flight; a confirmed glyph is proof, so confirmed
-    // debris pops again. An unconfirmed non-match never reaches here — the tracker drops it.
-    const real = (s) => s.matches.length > 0 || s.confirmed === true;
-    // The switch governs everything that ISN'T the ore you came for: debris, an unidentifiable
-    // contact, and an ambiguous one you aren't hunting. None of those is worth a word, a flash, or
-    // popping the widget open if you've said you only care about rocks. A target — even an
-    // ambiguous target — is never suppressed by it.
-    if ((v === "debris" || v === "unknown" || (v === "ore-or-debris" && !isTarget)) && !debrisOn()) return;
-    if (hiddenMode) { if (real(sc)) maybeAutoShow(); return; }
+    // capture.cjs). Debris is deliberately the weaker case: the tracker will announce an exact
+    // panel count with no glyph (13 legal values is evidence in itself), but only a glyph gets it
+    // to un-hide a widget the player closed. `unknown` cannot reach here at all any more.
+    const canPop = (s) => s.matches.length > 0 || s.confirmed === true;
+    // The switch governs everything that ISN'T the ore you came for: debris and an ambiguous read
+    // you aren't hunting. Neither is worth a word, a flash, or popping the widget open if you've
+    // said you only care about rocks. A target — even an ambiguous target — is never suppressed.
+    if ((v === "debris" || (v === "ore-or-debris" && !isTarget)) && !debrisOn()) return;
+    if (hiddenMode) { if (canPop(sc)) maybeAutoShow(); return; }
     const el = $("scanNow");
     const flash = () => { el.classList.remove("hit"); void el.offsetWidth; el.classList.add("hit"); };
-    if (v === "debris") { maybeAutoShow(); flash(); speakClips(["n_debris"], "Debris"); return; }
-    if (v === "unknown") {
+    // 🔑 The WORD follows where you are. A 2,000-step contact is debris in space and a plant
+    // planet-side, and calling it debris down there was wrong out loud (Sub, 2026-08-11: "it
+    // definitely shouldn't say debris when they're playing planetside — I don't know that I've
+    // ever seen debris on a planet"). The place is the server's call, not this widget's — the
+    // panel text already reads off view.wording for exactly that reason, so the spoken line uses
+    // the same source rather than becoming a second copy of the rule.
+    // ⚠️ There is no HAL clip for "harvestables" yet, so that line falls back to Windows TTS
+    // (speakClips does this whenever any clip is missing). Worth generating n_harvestables.ogg
+    // next time the piper box is up — the recipe is in the skill.
+    if (v === "debris") {
       maybeAutoShow(); flash();
-      const line = UNKNOWN_LINES[Math.floor(Math.random() * UNKNOWN_LINES.length)];
-      speakClips([line[0]], line[1]);
+      if ((view.place || {}).kind === "planet") speakClips(["n_harvestables"], "Harvestables");
+      else speakClips(["n_debris"], "Debris");
       return;
     }
     maybeAutoShow();                 // a REAL ore signature => the player is genuinely scanning
@@ -883,8 +990,18 @@
     // Aslarite ×5 — naming matches[0] announced the wrong one at a player targeting Aslarite).
     const name = (sc.matches.find((m) => targetSet.has(m.name)) || sc.matches[0]).name;
     if (v === "ore-or-debris") {
-      if (isTarget) speakClips(["c_thiscouldbe", nameSlug(name)], "This could be " + name);
-      else { flash(); speakClips(["c_debrisor", nameSlug(name)], "Debris, or " + name); }
+      // 🔑 HEDGED, NOT HOPEFUL (Sub, 2026-08-08). There are exactly TWO ore/debris collisions in the
+      // real table — 16,000 (Savrilium ×5, Legendary) and 18,000 (Bexalite ×5, Rare) — and in both
+      // the ore is a rare rock at a five-cluster while the alternative is an ordinary 8 or 9 salvage
+      // panels. Debris is far likelier, so it leads. But "This could be <ore>" promised something the
+      // app cannot know, and "Debris, or <ore>" gave two readings equal weight; both left the player
+      // to discover the doubt themselves. These say which way it leans, admit the uncertainty out
+      // loud, and hand the decision back. A TARGET still leads with the rock — someone hunting
+      // Savrilium must not have it buried under "debris" — it just stops sounding like a promise.
+      if (isTarget) speakClips(["c_mightbe", nameSlug(name), "c_notcertain"],
+                               "That might be " + name + ". I'm not certain. Worth flying over.");
+      else { flash(); speakClips(["c_probablydebris", nameSlug(name), "c_yourcall"],
+                                 "Probably debris. Could be " + name + ". Your call."); }
       return;
     }
     const mode = localStorage.getItem("miningSpeakMode") || "target";
@@ -1019,6 +1136,30 @@
   // The menu itself stays — it's what __widgetSettings (below) opens.
   // The parent bar's per-widget cog opens THIS widget's settings (its presence there is probed
   // from this function existing), so both cogs open the same menu.
+  // ── Pop open when scanning (moved here from global Settings) ────────────────────────────
+  // This one is app CONFIG, not a localStorage preference like the audio rows above it: the SHELL
+  // reads config.miningAutoShow to decide whether to arm the widget while it is hidden. So it
+  // round-trips through /api/config, exactly as the settings page does.
+  // 🔑 The POST is a partial merge server-side (field-by-field), so sending this one key cannot
+  // disturb anything else — and the settings page no longer carries a copy of the value, which
+  // would have made it a second writer able to save a stale one back over this.
+  (async () => {
+    const box = $("autoShowChk");
+    if (!box) return;
+    try {
+      const c = await (await fetch("/api/config", { cache: "no-store" })).json();
+      box.checked = !!c.miningAutoShow;
+    } catch { /* sidecar down - leave it unticked rather than lying about the state */ }
+    box.addEventListener("change", async () => {
+      try {
+        await fetch("/api/config", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ miningAutoShow: box.checked }),
+        });
+      } catch { /* nothing useful to say in a cog menu; it re-reads next open */ }
+    });
+  })();
+
   window.__widgetSettings = () => setCog(true);
   // Lets the parent inject its Text size row INTO this menu, so the bar's cog opens ONE settings
   // surface instead of a separate popover that then points at another one.

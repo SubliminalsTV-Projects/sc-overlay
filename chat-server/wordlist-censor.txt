@@ -1,0 +1,391 @@
+# SC Overlay chat — CENSOR list. A match here is ASTERISKED in place and the message goes
+# through. Nobody is banned for anything in this file.
+#
+# 🔴 SUB'S POLICY, 2026-08-11: "I really don't care if an adult uses profanity amongst other
+# adults. I don't need to censor that. Or I don't need to ban for that. We could just censor it,
+# maybe." Slurs and hate speech are a different file — wordlist-ban.txt — and a different answer.
+#
+# SOURCE: LDNOOBW "List of Dirty, Naughty, Obscene and Otherwise Bad Words", English list
+# (github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words), fetched 2026-08-11,
+# minus everything moved to the ban list, minus the removals noted below.
+#
+# HOW TO EDIT: one term per line, "#" comments a line out. Matching is case-insensitive and on
+# WORD BOUNDARIES, never substrings — "ass" cannot fire on "class", "Cassius" or "Cutlass",
+# "cock" cannot fire on "cockpit", "tit" cannot fire on "Titan". A term with spaces matches
+# across any run of whitespace. Masking keeps the first letter and the length: s***.
+#
+# 🔴 REMOVED OUTRIGHT — this fires nowhere, in either list:
+#   escort   Sub, 2026-08-11: "Escort for sure cannot be censored. Somebody might be using that
+#            word to describe a mission." It is an SC mission type, and "need an escort" is close
+#            to the most-typed sentence in an LFG channel. This is the whole reason the list got
+#            split rather than armed as published.
+#
+# 🔑 If a term in here turns out to be ordinary Star Citizen vocabulary the same way escort was,
+# DELETE it rather than moving it — a censored mission word is a bug, not a milder ban.
+
+# ── REMOVED as ordinary vocabulary (the escort rule). Reasons kept on purpose. ──
+#   big black       a size and a colour
+#   domination      ordinary gaming word
+#   girl on         a two-word fragment that matches inside ordinary sentences
+#   girl on top     same
+#   hard core       ordinary gaming word — "hardcore mining run"
+#   hardcore        ordinary gaming word
+#   how to kill     a legitimate SC question — "how to kill a Hammerhead"
+#   how to murder   same
+#   pikey           an ethnic slur — belongs in the ban list, not here
+#   poof            plain English — "and then poof, it was gone"
+#   santorum        a surname
+#   sexy            ordinary praise — "that ship is sexy"
+#   sexual          neutral descriptive word
+#   sexually        neutral descriptive word
+#   sexuality       neutral descriptive word
+#   snatch          cargo-theft idiom in SC — "snatch and grab"
+#   suck            ordinary complaint — "this mission sucks"
+#   sucks           ordinary complaint
+#   taste my        same
+#   tight white     same
+#   tongue in a     same
+#   twinkie         a snack
+#   wrapping men    same
+#   xx              matches a standalone kiss
+
+2g1c
+2 girls 1 cup
+acrotomophilia
+alabama hot pocket
+alaskan pipeline
+anal
+anilingus
+anus
+apeshit
+arsehole
+ass
+asshole
+assmunch
+auto erotic
+autoerotic
+babeland
+baby batter
+baby juice
+ball gag
+ball gravy
+ball kicking
+ball licking
+ball sack
+ball sucking
+bangbros
+bangbus
+bareback
+barely legal
+barenaked
+bastard
+bastardo
+bastinado
+bbw
+bdsm
+beaver cleaver
+beaver lips
+beastiality
+bestiality
+big breasts
+big knockers
+big tits
+bimbos
+birdlock
+bitch
+bitches
+black cock
+blonde action
+blonde on blonde action
+blowjob
+blow job
+blow your load
+blue waffle
+blumpkin
+bollocks
+bondage
+boner
+boob
+boobs
+booty call
+brown showers
+brunette action
+bukkake
+bullet vibe
+bullshit
+bung hole
+bunghole
+busty
+butt
+buttcheeks
+butthole
+camel toe
+camgirl
+camslut
+camwhore
+chocolate rosebuds
+cialis
+circlejerk
+cleveland steamer
+clit
+clitoris
+clover clamps
+clusterfuck
+cock
+cocks
+coprolagnia
+coprophilia
+cornhole
+creampie
+cum
+cumming
+cumshot
+cumshots
+cunnilingus
+cunt
+date rape
+daterape
+deep throat
+deepthroat
+dendrophilia
+dick
+dildo
+dingleberry
+dingleberries
+dirty pillows
+dirty sanchez
+doggie style
+doggiestyle
+doggy style
+doggystyle
+dog style
+dolcett
+dominatrix
+dommes
+donkey punch
+double dong
+double penetration
+dp action
+dry hump
+dvda
+eat my ass
+ecchi
+ejaculation
+erotic
+erotism
+eunuch
+fecal
+felch
+fellatio
+feltch
+female squirting
+femdom
+figging
+fingerbang
+fingering
+fisting
+foot fetish
+footjob
+frotting
+fuck
+fuck buttons
+fuckin
+fucking
+fucktards
+futanari
+gangbang
+gang bang
+gay sex
+genitals
+giant cock
+girls gone wild
+goatcx
+goatse
+god damn
+gokkun
+golden shower
+goodpoop
+goo girl
+goregasm
+grope
+group sex
+g-spot
+guro
+hand job
+handjob
+hentai
+homoerotic
+hooker
+horny
+hot carl
+hot chick
+huge fat
+humping
+incest
+intercourse
+jack off
+jelly donut
+jerk off
+jizz
+juggs
+kinbaku
+kinkster
+kinky
+knobbing
+leather restraint
+leather straight jacket
+lemon party
+livesex
+lolita
+lovemaking
+make me come
+male squirting
+masturbate
+masturbating
+masturbation
+menage a trois
+milf
+missionary position
+motherfucker
+mound of venus
+mr hands
+muff diver
+muffdiving
+nawashi
+negro
+nimphomania
+nipple
+nipples
+nsfw
+nsfw images
+nude
+nudity
+nutten
+nympho
+nymphomania
+octopussy
+omorashi
+one cup two girls
+one guy one jar
+orgasm
+orgy
+paedophile
+panties
+panty
+pedophile
+pegging
+penis
+phone sex
+piece of shit
+pissing
+piss pig
+pisspig
+playboy
+pleasure chest
+ponyplay
+poon
+poontang
+punany
+poop chute
+poopchute
+porn
+porno
+pornography
+prince albert piercing
+pubes
+pussy
+queaf
+queef
+quim
+raging boner
+rape
+raping
+rapist
+rectum
+reverse cowgirl
+rimjob
+rimming
+rosy palm
+rosy palm and her 5 sisters
+rusty trombone
+sadism
+scat
+schlong
+scissoring
+semen
+sex
+sexcam
+sexo
+shaved beaver
+shaved pussy
+shibari
+shit
+shitblimp
+shitty
+shota
+shrimping
+skeet
+slut
+s&m
+smut
+snowballing
+sodomize
+sodomy
+splooge
+splooge moose
+spooge
+spread legs
+spunk
+strap on
+strapon
+strappado
+strip club
+style doggy
+suicide girls
+sultry women
+swastika
+swinger
+tainted love
+tea bagging
+threesome
+throating
+thumbzilla
+tied up
+tit
+tits
+titties
+titty
+topless
+tosser
+tribadism
+tub girl
+tubgirl
+tushy
+twat
+twink
+two girls one cup
+undressing
+upskirt
+urethra play
+urophilia
+vagina
+venus mound
+viagra
+vibrator
+violet wand
+vorarephilia
+voyeur
+voyeurweb
+voyuer
+vulva
+wank
+wet dream
+whore
+worldsex
+wrinkled starfish
+xxx
+yaoi
+yellow showers
+yiffy
+zoophilia
+🖕

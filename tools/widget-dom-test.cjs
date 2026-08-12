@@ -24,7 +24,11 @@ process.stdout.on("error", (e) => { if (e && e.code !== "EPIPE") throw e; });
 process.stderr.on("error", (e) => { if (e && e.code !== "EPIPE") throw e; });
 
 const PORT = process.env.OVERLAY_PORT || 8778;
-const URL = `http://localhost:${PORT}/missions.html?canvas=1&party&mining&notepad`;
+// `harness=1` marks this page as automation. The suite drives the LIVE sidecar and the LIVE config
+// (see SKILL.md), and the completion report now writes real crowdsourced answers — so a stray
+// synthetic click on a question would file a rating no human ever gave. The page refuses to POST
+// feedback when this flag is present.
+const URL = `http://localhost:${PORT}/missions.html?canvas=1&harness=1&party&mining&notepad`;
 
 const PRELUDE = `
   const out = [];
@@ -53,7 +57,10 @@ const GROUPING = `(async () => {
     saveWidget: (id, l) => saved.push([id, JSON.parse(JSON.stringify(l))]),
   });
 
-  ok("registry has 10 widgets (incl. the Blueprint panel)", typeof WIDGETS !== "undefined" && WIDGETS.length === 10, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
+  // 11 = the 9 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
+  // Bump this deliberately when a widget is added — it is the one assertion that notices a
+  // registry entry going missing, which would otherwise just look like a widget quietly absent.
+  ok("registry has 12 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 12, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
   ok("starts ungrouped", GROUPS.length === 0, GROUPS.length);
   const party = WBY.party, mining = WBY.mining, notepad = WBY.notepad;
   ok("test widgets shown", shown(party) && shown(mining) && shown(notepad));
@@ -105,8 +112,50 @@ const GROUPING = `(async () => {
   groupWidgets(party, mining);
   const gs = saved.filter(s => s[0] === "__groups").pop();
   ok("groups persisted under __groups", !!gs && Array.isArray(gs[1].list), gs ? JSON.stringify(gs[1]).slice(0, 110) : "none");
+  // HIDING IS NOT CLOSING. A hotkey / tray / hub toggle routes through setWidgetVisible, and it
+  // used to detach — so hiding the Mining Scanner by hotkey orphaned it, and it came back as a
+  // lone window sitting behind the stack it used to belong to (Argante, 0.1.35). Only the ✕ means
+  // close. These two assertions are the whole contract, so they are written as a pair.
   setWidgetVisible(WBY.party, false);
-  ok("closing a tab leaves the stack", GROUPS.length === 0, GROUPS.length);
+  ok("hiding a member KEEPS it in the stack", GROUPS.length === 1 && GROUPS[0].members.length === 2,
+     GROUPS[0] ? GROUPS[0].members.join(",") : "no group");
+  // The active tab still points at the hidden member — deliberately, so the tab the user chose is what
+  // returns. That makes the next three assertions load-bearing: a stack that displays a hidden
+  // member paints nothing AND draws no tab strip (tabs live in the displayed member's own bar),
+  // which would leave the whole group invisible and unclickable with no way back.
+  ok("...and the active tab is still remembered", GROUPS[0] && GROUPS[0].active === "party",
+     GROUPS[0] && GROUPS[0].active);
+  ok("...but the stack still shows a member", shown(mining));
+  const hidStrip = el(mining).querySelector(".wh-tabs");
+  ok("...with its tab strip", !!(hidStrip && hidStrip.innerHTML.trim()));
+  ok("...listing only members you can actually see",
+     hidStrip ? hidStrip.querySelectorAll(".gtab:not(.gdetach)").length === 1 : false,
+     hidStrip ? hidStrip.querySelectorAll(".gtab:not(.gdetach)").length + " tab(s)" : "no strip");
+  setWidgetVisible(WBY.party, true);
+  await sleep(30);
+  ok("unhiding rejoins the stack, fronted", GROUPS.length === 1 && GROUPS[0].active === "party" && shown(party),
+     GROUPS[0] && GROUPS[0].active);
+  // The ✕ is the ONE control that means "close", so it is the one that leaves the stack.
+  el(party).querySelector(".wh-close").click();
+  await sleep(30);
+  ok("the ✕ closes OUT of the stack", GROUPS.length === 0, GROUPS.length);
+
+  // Regression: a widget switched on while arrange is ALREADY active used to open undecorated —
+  // no drag banner, "not in move mode like every other app" — because arrange only ever swept the
+  // widgets that existed when it was entered. Leaving and re-entering arrange was the only cure.
+  document.body.classList.add("arranging");
+  setWidgetVisible(WBY.notepad, false);
+  await sleep(60);
+  setWidgetVisible(WBY.notepad, true);
+  await sleep(80);
+  ok("a widget turned on DURING arrange joins arrange", el(WBY.notepad).classList.contains("moving"));
+  // ...and the sweep still agrees with it, so the two paths cannot drift apart.
+  for (const w of WIDGETS) syncArrange(w);
+  ok("...and the arrange sweep agrees", el(WBY.notepad).classList.contains("moving"));
+  document.body.classList.remove("arranging");
+  for (const w of WIDGETS) syncArrange(w);
+  ok("leaving arrange clears it again", !el(WBY.notepad).classList.contains("moving"));
+  setWidgetVisible(WBY.notepad, false);
   return out;
 })()`;
 
@@ -406,6 +455,12 @@ const REACH = `(async () => {
         }
       }
     }
+    // 🔑 Close what this iteration opened. Removing cfgopen only closes the LOCAL popover — a
+    // page's own sheet stayed open for the rest of the suite, so the later "the cog opens its own
+    // sheet" check was really asserting that it was already open. That went unnoticed until the
+    // cog learned to toggle, at which point the same click correctly CLOSED it and the check
+    // failed. The stale state was the bug; the toggle just exposed it.
+    wCloseSettings(w);
     el.classList.remove("cfgopen");
     el.classList.remove("touched");
   }
@@ -598,31 +653,44 @@ const MININGSAY = `(async () => {
   targetSet.clear();
   say(scan("ore-or-debris", 16000, [rock("Savrilium", 5)], true));
   await sleep(30);
+  // Sub, 2026-08-08: lead with the LIKELIER reading and say the doubt out loud. Both real
+  // collisions are a rare ore at x5 against an ordinary panel count, so off-target leads with
+  // debris — "Probably debris. Could be <ore>. Your call." The ore name still rides in the middle,
+  // which is why this is three clips rather than two.
   ok("an ambiguous value is announced even in targets-only mode",
-     said && said.slugs && said.slugs[0] === "c_debrisor" && said.slugs[1] === "n_savrilium",
+     said && said.slugs && said.slugs[0] === "c_probablydebris" && said.slugs[1] === "n_savrilium"
+       && said.slugs[2] === "c_yourcall",
      JSON.stringify(said && said.slugs));
   ok("...and the panel flags it as maybe-debris",
      !!document.getElementById("scanNow").querySelector(".maybe"));
   targetSet.add("Savrilium");
   say(scan("ore-or-debris", 16000, [rock("Savrilium", 5)], true));
   await sleep(30);
-  ok("...and on a TARGET the prefix is hopeful, not dismissive",
-     said && said.slugs && said.slugs[0] === "c_thiscouldbe", JSON.stringify(said && said.slugs));
+  // 🔑 The old assertion here demanded the prefix be "hopeful". That requirement is GONE — Sub
+  // did not want the app implying it knows. A target still LEADS with the rock (never buried under
+  // "debris"), but hedged: "That might be <ore>. I'm not certain. Worth flying over."
+  ok("...and a TARGET leads with the rock, hedged rather than promised",
+     said && said.slugs && said.slugs[0] === "c_mightbe" && said.slugs[1] === "n_savrilium"
+       && said.slugs[2] === "c_notcertain",
+     JSON.stringify(said && said.slugs));
   ok("...with the target chime", chimed);
 
-  // debris and unknown
+  // debris
   targetSet.clear();
   say(scan("debris", 6000, [], true));
   await sleep(30);
   ok("debris says Debris", said && said.slugs && said.slugs[0] === "n_debris", JSON.stringify(said && said.slugs));
   ok("...without the target chime", !chimed);
-  const UNK = ["c_unknown1", "c_unknown2", "c_unknown3", "c_unknown4", "c_unknown5"];
-  const seen = new Set();
-  for (let i = 0; i < 60; i++) { say(scan("unknown", 2500 + i, [], true)); await sleep(2); if (said && said.slugs) seen.add(said.slugs[0]); }
-  ok("unknown says it doesn't know — and varies", seen.size >= 3 && [...seen].every(s => UNK.includes(s)),
-     [...seen].sort().join(", "));
-  ok("...and the panel says Unknown, not Debris",
-     document.getElementById("scanNow").textContent.includes("Unknown"),
+
+  // unknown — a value the game cannot draw as a signature. The tracker refuses these outright now
+  // (Sub, 2026-08-09: the scanner was popping open mid-flight off a HUD number whose glyph check
+  // passed), so one should never arrive here at all. A stale scan persisted from an older build
+  // still has to RENDER without speaking, which is what this asserts.
+  say(scan("unknown", 2500, [], true));
+  await sleep(30);
+  ok("an unknown value is silent even with the glyph confirmed", said === null, JSON.stringify(said));
+  ok("...and never chimes or claims to be a rock", !chimed
+     && document.getElementById("scanNow").textContent.includes("Unknown"),
      document.getElementById("scanNow").textContent.slice(0, 60));
 
   // the switch
@@ -630,16 +698,17 @@ const MININGSAY = `(async () => {
   say(scan("debris", 8000, [], true));
   await sleep(30);
   ok("the switch silences debris", said === null);
-  say(scan("unknown", 9999, [], true));
-  await sleep(30);
-  ok("...and unknown", said === null);
   say(scan("ore-or-debris", 18000, [rock("Bexalite", 5)], true));
   await sleep(30);
   ok("...and an ambiguous read you aren't hunting", said === null);
   targetSet.add("Bexalite");
   say(scan("ore-or-debris", 18000, [rock("Bexalite", 5)], true));
   await sleep(30);
-  ok("...but NEVER a target", said && said.slugs && said.slugs[0] === "c_thiscouldbe",
+  // 18,000 is the OTHER real collision (Bexalite x5, Rare, vs nine panels). The "call out debris"
+  // switch governs everything that isn't the ore you came for — but a target is never suppressed
+  // by it, hedged phrasing or not.
+  ok("...but NEVER a target", said && said.slugs && said.slugs[0] === "c_mightbe"
+       && said.slugs[1] === "n_bexalite",
      JSON.stringify(said && said.slugs));
   localStorage.setItem("miningDebris", "on");
   targetSet.clear();
@@ -655,18 +724,16 @@ const MININGSAY = `(async () => {
 // the failing condition is simulated directly: a primary shorter than the canvas.
 const PATCHNOTES = `(async () => {
   ${PRELUDE}
-  // Render the list exactly the way showWhatsNew does. Its own path needs overlayApi.getVersion,
-  // which this suite has no shell for — but the CONTENT is what makes the card tall, so it has to
-  // be the real changelog and not a two-line fixture.
+  // Render through the PAGE'S OWN builder. showWhatsNew itself needs overlayApi.getVersion, which
+  // this suite has no shell for, but everything below that is __wnListHtml — so the card is sized
+  // against the markup that actually ships. This suite used to keep its own copy of that markup,
+  // which meant it could go on passing against a shape nobody renders.
+  // The CONTENT has to be the real changelog too: it is what makes the card tall.
   const data = await (await fetch("/api/changelog?v=0.1.35")).json();
   const entries = (Array.isArray(data.entries) ? data.entries : []).filter(e => Array.isArray(e.notes) && e.notes.length);
   ok("the sidecar serves real patch notes to size against", entries.length > 0, entries.length + " versions");
-  document.getElementById("wnList").innerHTML = entries.map((e, i) => {
-    const bullets = "<ul>" + e.notes.map(n => "<li>" + escapeHtml(n) + "</li>").join("") + "</ul>";
-    const head = "v" + escapeHtml(e.version) + ' <span class="wn-date">Jan 1, 2026 · 00:00 UTC</span>';
-    return i === 0 ? '<div class="wn-group"><div class="wn-gver">' + head + "</div>" + bullets + "</div>"
-                   : '<details class="wn-group"><summary class="wn-gver">' + head + "</summary>" + bullets + "</details>";
-  }).join("");
+  ok("the card is built by the page, not by this test", typeof window.__wnListHtml === "function");
+  document.getElementById("wnList").innerHTML = window.__wnListHtml(entries);
   document.getElementById("whatsnew").classList.add("show");
 
   const card = document.querySelector("#whatsnew .wn-card");
@@ -696,11 +763,373 @@ const PATCHNOTES = `(async () => {
        Math.round(fBot) + " <= " + (c.top + c.h));
     // Capping without a scroll would just hide notes, which is NOT the ask ("I don't want to just
     // cut it off"): the overflow has to be reachable.
-    ok("[" + c.label + "] the notes scroll rather than being cut off",
-       list.scrollHeight > list.clientHeight && getComputedStyle(list).overflowY === "auto",
-       list.clientHeight + " of " + list.scrollHeight + "px shown");
+    // KEY: assert REACHABILITY, not scrolling. The old form required scrollHeight > clientHeight,
+    // which silently asserts "the changelog is long" - it went red the moment a release shipped
+    // with short notes (0.1.36: 247px of content in a 356px card; nothing to scroll, nothing
+    // wrong). A permanently-failing assertion hides real regressions, which is worse than the gap
+    // it was covering. What matters either way: no note is unreachable.
+    const scrolls = list.scrollHeight > list.clientHeight;
+    ok("[" + c.label + "] no notes are unreachable",
+       scrolls ? getComputedStyle(list).overflowY === "auto" : list.scrollHeight <= list.clientHeight + 1,
+       (scrolls ? "overflows and scrolls" : "fits, no scroll needed") +
+       " - " + list.clientHeight + " of " + list.scrollHeight + "px");
   }
   document.getElementById("whatsnew").classList.remove("show");
+  return out;
+})()`;
+
+// ── Suite: patch notes are grouped and labelled ───────────────────────────────
+// Notes used to be bare paragraphs, so finding what changed meant reading all of them. Each note
+// is now { kind, label, text } and the card groups them New / Improved / Fixed.
+// Two things are worth pinning. First the ORDER, because it is an editorial decision and nothing
+// else enforces it. Second the LEGACY path: 0.1.33 and older are plain strings with no kind, and
+// they must still render — as one unheaded list, not filed under a guessed section. The sidecar
+// serves only the newest 5 versions, so the legacy case is checked against the builder directly
+// rather than waiting for a release to age out and break it in the field.
+const PATCHGROUPS = `(async () => {
+  ${PRELUDE}
+  const list = document.getElementById("wnList");
+  const data = await (await fetch("/api/changelog?v=0.1.38")).json();
+  const entries = (Array.isArray(data.entries) ? data.entries : []).filter(e => Array.isArray(e.notes) && e.notes.length);
+  const newest = entries[0];
+  ok("the newest version's notes carry a kind and a label",
+     newest.notes.every(n => n && n.kind && n.label), newest.version);
+  ok("...and every kind is one we render",
+     newest.notes.every(n => ["new", "improved", "fixed"].includes(n.kind)));
+
+  list.innerHTML = window.__wnListHtml(entries);
+  // 🔑 The card must be SHOWN before anything is measured. #whatsnew is display:none until then,
+  // so every getBoundingClientRect() reads 0 and the two geometry assertions below pass without
+  // testing anything — which is exactly how the first version of this suite reported a label x of
+  // 0 and called it agreement.
+  document.getElementById("whatsnew").classList.add("show");
+  await sleep(40);
+  const first = list.querySelector(".wn-group");
+  ok("the card is laid out, so the measurements below mean something",
+     first.getBoundingClientRect().width > 100, Math.round(first.getBoundingClientRect().width) + "px wide");
+  const headings = [...first.querySelectorAll(".wn-kind")].map(el => el.textContent);
+  const expected = ["New", "Improved", "Fixed"].filter(h =>
+    newest.notes.some(n => n.kind === h.toLowerCase()));
+  ok("sections read New, then Improved, then Fixed", headings.join(",") === expected.join(","),
+     headings.join(" / "));
+  // An empty section must be omitted, never left as a bare heading — 0.1.36 is a single fix.
+  ok("no section is left empty",
+     [...first.querySelectorAll(".wn-kind")].every(h => {
+       const ul = h.nextElementSibling;
+       return ul && ul.tagName === "UL" && ul.children.length > 0;
+     }));
+  const label = first.querySelector(".wn-label");
+  const desc = first.querySelector(".wn-desc");
+  ok("a note shows its label above its description", !!label && !!desc, label && label.textContent);
+  ok("...on its own line", !!label && label.getBoundingClientRect().bottom <= desc.getBoundingClientRect().top + 1);
+  ok("...and the label is not repeated in the description",
+     !desc.textContent.startsWith(label.textContent));
+  // Every label must be reachable in one glance: they are the scan target, so they share a left
+  // edge. Compare within a section — a heading indents nothing, but a wrapped description must
+  // not push the next label right.
+  const lefts = [...first.querySelectorAll(".wn-label")].map(el => Math.round(el.getBoundingClientRect().left));
+  ok("every label starts at the same x", new Set(lefts).size === 1, [...new Set(lefts)].join(","));
+
+  // LEGACY: a plain string, exactly as 0.1.33 and older are stored.
+  list.innerHTML = window.__wnListHtml([{ version: "0.1.33", date: null, notes: ["An old note with no label."] }]);
+  ok("a legacy note still renders", list.textContent.includes("An old note with no label."));
+  ok("...with no invented section heading", list.querySelectorAll(".wn-kind").length === 0);
+  ok("...and is not dimmed like a description under a label",
+     list.querySelector(".wn-note").classList.contains("nolabel"));
+  document.getElementById("whatsnew").classList.remove("show");
+  list.innerHTML = "";
+  return out;
+})()`;
+
+// ── Suite: the setup nudge ────────────────────────────────────────────────────
+// The banner shown to EXISTING users who never finished setup. Three things can go wrong with
+// it, and all three have precedent in this file: it can be sized off the canvas instead of the
+// monitor (the patch-notes bug), its buttons can sit outside the rect the shell hit-tests (the
+// scan-box Reset button), and a hidden one can keep claiming a region and eat game clicks.
+//
+// 🔑 It does NOT drive the real /api/setup. That endpoint writes the user's config, and this
+// harness runs against the LIVE one — a suite that marks setup complete would silently disarm
+// the wizard for whoever ran the tests. The shell decides whether to show the banner; the page
+// only renders it, so rendering is the whole contract worth asserting here.
+// ── Suite: the background-service-down banner ─────────────────────────────────
+// The sidecar does all the work and this window is only the display, so a dead one is invisible
+// unless something says so. Asserts the banner is purely a function of pushed state — it must not
+// linger after recovery, and its button has to be reachable.
+// ── Suite: chrome must not open BEHIND the Web Page widget's native view ──────
+// That widget's content is a native surface painted above all page content, so canvas DOM landing
+// on it is invisible and unclickable while looking perfectly healthy in the inspector — which is
+// exactly how its own settings cog became unreachable. The only observable contract is that the
+// canvas REPORTS a mask, so that is what this asserts.
+const VIEWMASK = `(async () => {
+  ${PRELUDE}
+  const masks = [];
+  try {
+  window.overlayApi = Object.assign({}, window.overlayApi, { maskWebView: (on) => masks.push(!!on) });
+  const web = WBY.webView;
+  ok("the Web Page widget is in the registry", !!web, web ? web.key : "MISSING");
+
+  // 🔑 It is the ONLY native view. Every other widget is a DOM iframe and stacks by z-index, so
+  // none of them can be hidden behind their own content — assert that here, so a second
+  // native-view widget added later trips this test instead of shipping the same bug.
+  ok("only one widget is native-view backed", WIDGETS.filter(w => w.key === "webView").length === 1);
+
+  setWidgetVisible(web, true);
+  await sleep(250);
+  const el = document.getElementById("w-" + web.key);
+  ok("its wrapper exists once shown", !!el);
+  const cog = el && el.querySelector(".wh-cog");
+  ok("it has a settings cog", !!cog);
+
+  if (cog) {
+    masks.length = 0;
+    cog.click();
+    await sleep(120);
+    ok("opening the Web Page cog masks the native view", masks.some(m => m === true),
+       "masks=" + JSON.stringify(masks));
+    masks.length = 0;
+    document.body.click();
+    await sleep(120);
+    ok("closing it un-masks", masks.some(m => m === false), "masks=" + JSON.stringify(masks));
+  }
+
+  setWidgetVisible(web, false);
+  await sleep(100);
+  } catch (err) { ok("suite ran without throwing", false, String(err && err.stack || err).slice(0, 300)); }
+  return out;
+})()`;
+
+const SVCDOWN = `(async () => {
+  ${PRELUDE}
+  const svc = document.getElementById("svcDown");
+  const retry = document.getElementById("sdRetry");
+  const body = document.getElementById("sdBody");
+  const REGION = "#svcDown.show";
+  ok("the banner exists", !!svc && !!retry);
+  ok("a healthy sidecar shows nothing", getComputedStyle(svc).display === "none");
+  ok("...and claims no interactive region", document.querySelectorAll(REGION).length === 0);
+
+  // Automatic retry: honest wording, and no button to press while the app is already trying.
+  svc.classList.add("show");
+  body.textContent = "SC Overlay isn't tracking anything right now. Reconnecting…";
+  retry.style.display = "none";
+  await sleep(40);
+  ok("while reconnecting it says so", body.textContent.indexOf("Reconnecting") > -1, body.textContent);
+  ok("...and offers no button to press", getComputedStyle(retry).display === "none");
+
+  // Given up: the state Sub actually hit — app running, nothing working, nothing said.
+  body.textContent = "SC Overlay isn't tracking missions, blueprints or mining until this restarts.";
+  retry.style.display = "";
+  await sleep(40);
+  ok("once it gives up it says what is broken", body.textContent.indexOf("isn't tracking") > -1);
+  ok("...and offers Try again", getComputedStyle(retry).display !== "none");
+  ok("...which the shell can actually hit-test", document.querySelectorAll(REGION).length === 1);
+  const r = svc.getBoundingClientRect(), b = retry.getBoundingClientRect();
+  ok("...with the button INSIDE the reported rect",
+     b.left >= r.left - 1 && b.right <= r.right + 1 && b.top >= r.top - 1 && b.bottom <= r.bottom + 1,
+     Math.round(b.width) + "x" + Math.round(b.height));
+
+  svc.classList.remove("show");
+  await sleep(40);
+  ok("recovery clears it and releases the region",
+     getComputedStyle(svc).display === "none" && document.querySelectorAll(REGION).length === 0);
+  return out;
+})()`;
+
+const SETUPNUDGE = `(async () => {
+  ${PRELUDE}
+  const nudge = document.getElementById("setupNudge");
+  ok("the nudge exists in the canvas", !!nudge);
+
+  const REGION = "#setupNudge.show";
+  const hiddenClaims = document.querySelectorAll(REGION).length;
+  ok("a hidden nudge claims NO interactive region", hiddenClaims === 0,
+     hiddenClaims + " matches while hidden");
+
+  document.getElementById("snBody").textContent = "2 steps of setup are still unfinished. It takes about a minute.";
+  nudge.classList.add("show");
+  await sleep(80);
+  ok("a shown nudge claims exactly one region", document.querySelectorAll(REGION).length === 1);
+
+  // Same display cases as the patch-notes suite, including the one that actually broke: a
+  // primary monitor SHORTER than the canvas window is the multi-monitor case.
+  const CASES = [
+    { label: "1080p", w: 1920, h: 1080, top: 0, left: 0 },
+    { label: "primary shorter than the canvas (portrait side monitor)", w: 3440, h: 1440, top: 0, left: 1080 },
+    { label: "a small laptop panel", w: 1366, h: 768, top: 0, left: 0 },
+  ];
+  for (const c of CASES) {
+    const s = document.documentElement.style;
+    s.setProperty("--prim-top", c.top + "px");
+    s.setProperty("--prim-left", c.left + "px");
+    s.setProperty("--prim-w", c.w + "px");
+    s.setProperty("--prim-h", c.h + "px");
+    await sleep(60);
+    const r = nudge.getBoundingClientRect();
+    ok("[" + c.label + "] the nudge sits on the primary monitor horizontally",
+       r.left >= c.left - 1 && r.right <= c.left + c.w + 1,
+       Math.round(r.left) + ".." + Math.round(r.right) + " within " + c.left + ".." + (c.left + c.w));
+    ok("[" + c.label + "] the nudge sits on the primary monitor vertically",
+       r.top >= c.top - 1 && r.bottom <= c.top + c.h + 1,
+       Math.round(r.top) + ".." + Math.round(r.bottom) + " within " + c.top + ".." + (c.top + c.h));
+    // A banner, not a takeover. If it ever grows to cover the screen it has become the modal
+    // this was deliberately not built as.
+    ok("[" + c.label + "] the nudge stays a banner, not a takeover",
+       r.height < c.h * 0.25 && r.width < c.w * 0.9,
+       Math.round(r.width) + "x" + Math.round(r.height) + " on " + c.w + "x" + c.h);
+
+    // 🔑 Both controls INSIDE the banner's own box. The shell hit-tests the element rect it is
+    // told about, so a button hanging outside it is visible and permanently unclickable.
+    for (const id of ["snGo", "snX"]) {
+      const b = document.getElementById(id).getBoundingClientRect();
+      ok("[" + c.label + "] " + id + " is inside the reported rect",
+         b.left >= r.left - 1 && b.right <= r.right + 1 && b.top >= r.top - 1 && b.bottom <= r.bottom + 1,
+         Math.round(b.left) + "," + Math.round(b.top) + " in " +
+         Math.round(r.left) + "," + Math.round(r.top) + " " + Math.round(r.width) + "x" + Math.round(r.height));
+      ok("[" + c.label + "] " + id + " has a clickable size", b.width > 8 && b.height > 8,
+         Math.round(b.width) + "x" + Math.round(b.height));
+    }
+  }
+
+  nudge.classList.remove("show");
+  await sleep(40);
+  ok("dismissing releases the region", document.querySelectorAll(REGION).length === 0);
+  return out;
+})()`;
+
+// ── Suite: the contract payout scan session's dashboard ───────────────────────
+// It is chrome tied to a MODE, and every way it can break is invisible from a screenshot of a
+// working app: the panel can render perfectly and refuse every click (not in RSEL), it can keep
+// polling after it is dismissed (src left set), it can drift out of step with the scanner (the ✕
+// hiding the panel instead of ending the session), or it can strand itself off-monitor. Each of
+// those gets an assertion here, because a green sweep of the other suites proves none of them.
+//
+// 🔑 Driven through PREFS + applyPrefs(), which is the REAL path — the mode arrives from the
+// sidecar's prefs broadcast and nothing else is allowed to show or hide the panel. Poking
+// syncPayoutPanel() directly would test a function nobody calls that way.
+// (No backticks and no backslash escapes anywhere in a suite body — this is a template literal.)
+const PAYOUTPANEL = `(async () => {
+  ${PRELUDE}
+  const panel = document.getElementById("payoutPanel");
+  const frame = document.getElementById("ppFrame");
+  ok("the panel exists", !!panel);
+  ok("...and hosts the dashboard in an iframe", !!frame && frame.tagName === "IFRAME");
+
+  // OFF is the state every launch starts in, so it is the one that has to be right by default.
+  PREFS.payoutScan = false; applyPrefs();
+  await sleep(80);
+  ok("with the mode off it is not on screen", getComputedStyle(panel).display === "none");
+  ok("...and it is not polling", !frame.getAttribute("src"), String(frame.getAttribute("src")));
+  // Region membership is measured off the rects the page actually SENDS the shell (captured by
+  // the stub preload), never off the RSEL string. RSEL is block-scoped inside the page's
+  // "if window.overlayApi" guard, so a typeof check on it is false here and a guarded read
+  // returns the truthy fallback TEXT — an assertion in that shape passes with the selector
+  // deleted, which was confirmed by deleting it.
+  const regionHas = (el) => {
+    const b = el.getBoundingClientRect();
+    return (window.__regions || []).some((r) =>
+      Math.abs(r.x - b.left) <= 1 && Math.abs(r.y - b.top) <= 1 &&
+      Math.abs(r.w - b.width) <= 1 && Math.abs(r.h - b.height) <= 1);
+  };
+  await sleep(180);   // the region report is on a 100ms interval and only fires on a real change
+  ok("...and it claims no clickable region, so it cannot swallow game clicks while gone",
+     !regionHas(panel), JSON.stringify(window.__regions || []).slice(0, 120));
+
+  PREFS.payoutScan = true; applyPrefs();
+  await sleep(120);
+  ok("arming the mode puts it on screen", getComputedStyle(panel).display === "flex");
+  ok("...and it loads the dashboard page", frame.getAttribute("src") === "/payout-scan.html",
+     String(frame.getAttribute("src")));
+  // Anything outside a widget's own rect is unclickable unless the page REPORTS it, so an
+  // unlisted panel renders perfectly and refuses every click — including the Stop button it
+  // exists to offer, which would leave the scanner armed with no way to reach the control that
+  // stops it.
+  await sleep(180);
+  ok("...and the shell is told to make the window interactive over it", regionHas(panel),
+     JSON.stringify(window.__regions || []).slice(0, 160));
+
+  // On the PRIMARY monitor, in full. The canvas spans the whole virtual desktop, so a panel sized
+  // or placed against the window rather than --prim-* can land on a monitor that is not there, or
+  // hang off both edges of the one it is centred on.
+  const ci = canvasInfo || { px: 0, py: 0, pw: innerWidth, ph: innerHeight };
+  const r = panel.getBoundingClientRect();
+  ok("it sits wholly inside the primary display",
+     r.left >= ci.px - 1 && r.top >= ci.py - 1 &&
+     r.right <= ci.px + ci.pw + 1 && r.bottom <= ci.py + ci.ph + 1,
+     Math.round(r.left) + "," + Math.round(r.top) + " " +
+     Math.round(r.width) + "x" + Math.round(r.height) + " in " +
+     ci.pw + "x" + ci.ph + " at " + ci.px + "," + ci.py);
+  ok("...at a size the dashboard is readable at", r.width >= 320 && r.height >= 260,
+     Math.round(r.width) + "x" + Math.round(r.height));
+
+  // Dragging the header moves it, and the gesture runs under the shield — without that, the first
+  // pointermove over the iframe would go to the dashboard's document and the drag would freeze.
+  //
+  // 🔑 Placed in the MIDDLE of the primary display before the drag, deliberately. The default
+  // position is hard against the right edge (the board renders on mobiGlas's left, so the panel
+  // sits opposite it), and the first version of this suite dragged right FROM there: the clamp
+  // stopped it at +28 of a +50 drag and the assertion failed on working code. A drag test has to
+  // start somewhere the drag can actually complete.
+  const head = document.getElementById("ppHead");
+  ppGeom = ppClamp({ x: ci.px + Math.round(ci.pw / 2) - 230, y: ci.py + 60, w: 460, h: 620 });
+  ppApplyGeom();
+  await sleep(40);
+  const d0 = panel.getBoundingClientRect();
+  head.dispatchEvent(new PointerEvent("pointerdown", { clientX: d0.left + 40, clientY: d0.top + 8, bubbles: true }));
+  const shield = document.getElementById("dragShield");
+  ok("dragging raises the shield, so the iframe cannot swallow the gesture",
+     !!shield && shield.classList.contains("on"));
+  ok("...without advertising a drop into a group, which cannot happen",
+     !document.body.classList.contains("dragging"));
+  window.dispatchEvent(new PointerEvent("pointermove", { clientX: d0.left + 90, clientY: d0.top + 38, bubbles: true }));
+  await sleep(60);
+  const d1 = panel.getBoundingClientRect();
+  ok("the header drags it", Math.round(d1.left - d0.left) === 50 && Math.round(d1.top - d0.top) === 30,
+     "moved " + Math.round(d1.left - d0.left) + "," + Math.round(d1.top - d0.top));
+  // The clamp is what makes this thing recoverable — a panel dragged off the monitor takes its own
+  // header, ✕ and Stop button with it, and the only way back would be clearing localStorage. It is
+  // asserted here because it already caught this suite out once, so it is demonstrably not obvious.
+  window.dispatchEvent(new PointerEvent("pointermove", { clientX: d0.left + 9000, clientY: d0.top + 9000, bubbles: true }));
+  await sleep(60);
+  const dFar = panel.getBoundingClientRect();
+  ok("...and it cannot be dragged off the monitor, controls and all",
+     dFar.right <= ci.px + ci.pw + 1 && dFar.bottom <= ci.py + ci.ph + 1 &&
+     dFar.left >= ci.px - 1 && dFar.top >= ci.py - 1,
+     Math.round(dFar.left) + "," + Math.round(dFar.top) + " " +
+     Math.round(dFar.width) + "x" + Math.round(dFar.height));
+  window.dispatchEvent(new PointerEvent("pointerup", { clientX: d0.left + 90, clientY: d0.top + 38, bubbles: true }));
+  await sleep(60);
+  ok("...and the shield comes back down", !shield.classList.contains("on"));
+
+  // 🔴 THE ONE THAT MATTERS. The ✕ must END THE SESSION, not hide the panel: a dashboard you can
+  // dismiss while the scanner stays armed leaves screen-reading running with nothing on screen
+  // explaining it, which is the exact blindness this page was built to end. So the click has to
+  // reach the sidecar as on:false, and it must NOT hide the panel by itself — the panel may only
+  // go away when the mode change comes back round on the prefs broadcast.
+  let posted = null;
+  const realFetch = window.fetch;
+  window.fetch = (u, o) => {
+    if (String(u).indexOf("/api/payout-scan") >= 0 && o && o.method === "POST") {
+      posted = JSON.parse(o.body);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }
+    return realFetch(u, o);
+  };
+  document.getElementById("ppClose").click();
+  await sleep(80);
+  ok("the close button ends the scan session", posted && posted.on === false, JSON.stringify(posted));
+  ok("...and does NOT hide the panel on its own — only the mode may do that",
+     getComputedStyle(panel).display === "flex");
+  window.fetch = realFetch;
+
+  // The broadcast arriving is what takes it down, and it must stop the poll on the way out.
+  PREFS.payoutScan = false; applyPrefs();
+  await sleep(80);
+  ok("the mode going off takes the panel with it", getComputedStyle(panel).display === "none");
+  ok("...and clears the iframe so it stops polling unseen", !frame.getAttribute("src"),
+     String(frame.getAttribute("src")));
+  await sleep(180);
+  ok("...and gives the region back, so the rest of the session clicks through to the game",
+     !regionHas(panel), JSON.stringify(window.__regions || []).slice(0, 160));
   return out;
 })()`;
 
@@ -725,7 +1154,16 @@ const SCANBOX = `(async () => {
   const userRegion = cfg0 && cfg0.scanRegion ? JSON.parse(JSON.stringify(cfg0.scanRegion)) : null;
   ok("the user's calibrated region was captured from the sidecar before touching anything",
      cfg0 != null, JSON.stringify(userRegion));
-  ok("...and is off until asked for", getComputedStyle(box).display === "none");
+  // 🔑 Put the box in a KNOWN state before asserting on it. This used to assert display:none on
+  // arrival, which is not a property of the code at all — it is a property of whoever last used
+  // the app: the pref driving it is same-origin localStorage on localhost:8778, SHARED with the
+  // real overlay window, so anyone who has the scan read area switched on failed here on a clean
+  // tree. A test that reports the user's own settings as a defect hides real ones.
+  // (setScanBox only toggles the body class; the pref itself is untouched, which is why this is
+  // safe to call and why the later userPref capture still sees what the user actually chose.)
+  setScanBox(false);
+  await sleep(80);
+  ok("...and hides when told to", getComputedStyle(box).display === "none");
 
   setScanBox(true);
   await sleep(150);
@@ -779,8 +1217,10 @@ const SCANBOX = `(async () => {
   // ── it belongs to the Mining Scanner, so it goes when the scanner goes ────────
   // Closing the scanner (hotkey, hub, tray, or a stack bringing another member forward) used to
   // leave the dashed outline on the game with nothing left on screen to explain or remove it.
-  const userPref = localStorage.getItem("miningScanBox");
-  localStorage.setItem("miningScanBox", "on");
+  // Pref is INVERTED now: miningScanBoxHidden, absent = shown (the box auto-shows with the
+  // scanner). "on" therefore means REMOVING the hidden flag, not setting one.
+  const userPref = localStorage.getItem("miningScanBoxHidden");
+  localStorage.removeItem("miningScanBoxHidden");
   setWidgetVisible(WBY.mining, true);
   await sleep(120);
   syncScanBox();
@@ -790,21 +1230,46 @@ const SCANBOX = `(async () => {
   await sleep(120);
   ok("closing the Mining Scanner takes the outline with it", getComputedStyle(box).display === "none");
   ok("...without clearing the pref, so reopening restores it",
-     localStorage.getItem("miningScanBox") === "on");
+     localStorage.getItem("miningScanBoxHidden") !== "1");
   setWidgetVisible(WBY.mining, true);
   await sleep(120);
   ok("...and reopening brings it back", getComputedStyle(box).display === "block");
-  localStorage.setItem("miningScanBox", "off");
+  localStorage.setItem("miningScanBoxHidden", "1");
   syncScanBox();
   await sleep(60);
   ok("the pref still wins on its own", getComputedStyle(box).display === "none");
-  if (userPref === null) localStorage.removeItem("miningScanBox"); else localStorage.setItem("miningScanBox", userPref);
+  if (userPref === null) localStorage.removeItem("miningScanBoxHidden"); else localStorage.setItem("miningScanBoxHidden", userPref);
+
+  // ── user-set opacity ─────────────────────────────────────────────────────────
+  // Turning the box right down must never make it unreachable, so the floor is enforced in the
+  // canvas rather than trusted from storage, and hover always returns it to full.
+  const userOp = localStorage.getItem("miningScanBoxOpacity");
+  const opNow = () => getComputedStyle(document.documentElement).getPropertyValue("--sb-op").trim();
+  localStorage.setItem("miningScanBoxOpacity", "40");
+  syncScanBox();
+  await sleep(40);
+  ok("the box takes the opacity you set", opNow() === "0.4", opNow());
+  // A value below the floor (or a junk one) must be clamped, not obeyed: an invisible box cannot
+  // be dragged, reset or hidden.
+  localStorage.setItem("miningScanBoxOpacity", "0");
+  syncScanBox();
+  await sleep(40);
+  ok("...but zero is clamped to the 10% floor", opNow() === "0.1", opNow());
+  localStorage.setItem("miningScanBoxOpacity", "banana");
+  syncScanBox();
+  await sleep(40);
+  ok("...and junk falls back to full", opNow() === "1", opNow());
+  ok("hovering always restores it to full",
+     [...document.styleSheets].some(sh => { try { return [...sh.cssRules].some(r => r.selectorText && r.selectorText.includes("#scanBox:hover")); } catch (e) { return false; } }));
+  if (userOp === null) localStorage.removeItem("miningScanBoxOpacity"); else localStorage.setItem("miningScanBoxOpacity", userOp);
+  syncScanBox();
+  await sleep(40);
 
   // ── the number the OCR read, centered under the box ──────────────────────────
   // Just the number: Sub asked for it outside the box, centered, without the labels the first
   // version carried. A REFUSED read still has to show — a number the app threw away is exactly
   // the one worth seeing next to the real signature.
-  localStorage.setItem("miningScanBox", "on");
+  localStorage.removeItem("miningScanBoxHidden");
   syncScanBox();
   await sleep(60);
   const val = document.getElementById("sbReadVal"), read = document.getElementById("sbRead");
@@ -824,13 +1289,29 @@ const SCANBOX = `(async () => {
   await sleep(60);
   ok("the size does NOT follow the OCR bbox", parseFloat(getComputedStyle(val).fontSize) === fsBig,
      fsBig + "px both times");
-  ok("...and stays modest", fsBig <= 18, fsBig + "px");
-  // Centered on the box, and below it — the middle of the box is where the real signature sits.
+  // Sub, 2026-08-08: bigger. The old ceiling was 18px, set when the fear was a readout sized off a
+  // refused read's big HUD lettering — that fear is handled by it being FIXED, not by it being
+  // small. This still has to be a constant, so the assertion is on the range, not on the absence
+  // of size.
+  ok("...and is legible without following the bbox", fsBig >= 20 && fsBig <= 40, fsBig + "px");
+  // TWO copies now — left and top. Both carry the same number so whichever is nearer the player's
+  // eye does the work; a wide box put the single old readout far from what they were looking at.
+  const val2 = document.getElementById("sbReadVal2");
+  ok("there is a second copy of the readout", !!val2);
+  ok("...showing the SAME number", val2 && val2.textContent === val.textContent,
+     JSON.stringify(val2 && val2.textContent));
+  const rTop = read.getBoundingClientRect(), rBox = box.getBoundingClientRect();
+  const rLeft = val2.parentElement.getBoundingClientRect();
   const cBox = (b) => (b.left + b.right) / 2;
-  ok("it is centered on the box", Math.abs(cBox(read.getBoundingClientRect()) - cBox(box.getBoundingClientRect())) <= 1,
-     Math.round(cBox(read.getBoundingClientRect())) + " vs " + Math.round(cBox(box.getBoundingClientRect())));
-  ok("...and sits OUTSIDE it, below", read.getBoundingClientRect().top >= box.getBoundingClientRect().bottom - 1,
-     Math.round(read.getBoundingClientRect().top) + " vs " + Math.round(box.getBoundingClientRect().bottom));
+  ok("the top copy is centered on the box", Math.abs(cBox(rTop) - cBox(rBox)) <= 1,
+     Math.round(cBox(rTop)) + " vs " + Math.round(cBox(rBox)));
+  ok("...and sits OUTSIDE it, above", rTop.bottom <= rBox.top + 1,
+     Math.round(rTop.bottom) + " vs " + Math.round(rBox.top));
+  ok("the left copy sits OUTSIDE the box, to its left", rLeft.right <= rBox.left + 1,
+     Math.round(rLeft.right) + " vs " + Math.round(rBox.left));
+  ok("...and is vertically within the box's span",
+     rLeft.top >= rBox.top - 1 && rLeft.bottom <= rBox.bottom + 1,
+     Math.round(rLeft.top) + "-" + Math.round(rLeft.bottom));
   // A refused read is the diagnostic case: it must appear, and be tellable apart without words.
   showScanRead({ signature: 30000, raw: "3O,OOO", box: null, verdict: null, announced: false, used: false,
                  why: "ignored (above 25,800, the largest signature the game can show — misread)" });
@@ -850,7 +1331,7 @@ const SCANBOX = `(async () => {
      "announced=false, used=true");
   ok("...and a struck-through read means only one thing: it was not used",
      getComputedStyle(val).textDecorationLine === "none", getComputedStyle(val).textDecorationLine);
-  if (userPref === null) localStorage.removeItem("miningScanBox"); else localStorage.setItem("miningScanBox", userPref);
+  if (userPref === null) localStorage.removeItem("miningScanBoxHidden"); else localStorage.setItem("miningScanBoxHidden", userPref);
   syncScanBox();
 
   // Hand the user's own calibration back — see the note at the top of this suite. Verified by
@@ -953,8 +1434,16 @@ const DRAG = `(async () => {
   document.getElementById("hub").classList.add("open"); // it's display:none until the cog opens it
   await sleep(20);
   const rows = [...document.querySelectorAll("#hub .hub-row.tog")];
-  ok("every widget row has a reset", rows.length === WIDGETS.length
-     && rows.every(r => r.querySelector(".hub-reset")), rows.length + " rows");
+  // Every TOGGLEABLE widget gets a hub row. Settings is the deliberate exception: it is not a
+  // widget you switch on in the list, it is a panel you open from "Open settings" (and the
+  // tray), which merely happens to render as a widget so it can be placed, sized and skinned.
+  // Asserted by name rather than as a bare count-1, so a row going missing still fails.
+  const HUBLESS = ["config"];
+  const toggleable = WIDGETS.filter(w => !HUBLESS.includes(w.key));
+  ok("every toggleable widget has a hub row with a reset", rows.length === toggleable.length
+     && rows.every(r => r.querySelector(".hub-reset")), rows.length + " rows for " + toggleable.length + " toggleable");
+  ok("Settings is deliberately absent from the hub list",
+     !document.querySelector('#hub .hub-reset[data-w="config"]'));
   ok("every reset names a real widget",
      [...document.querySelectorAll("#hub .hub-reset")].every(b => !!WBY[b.dataset.w]));
   const mRow = document.querySelector('#hub .hub-reset[data-w="mining"]').closest(".hub-row");
@@ -965,6 +1454,14 @@ const DRAG = `(async () => {
   ok("the reset is flush right in the row",
      Math.abs(mRow.getBoundingClientRect().right - mBtn.getBoundingClientRect().right) < 20,
      Math.round(mRow.getBoundingClientRect().right - mBtn.getBoundingClientRect().right) + "px from the edge");
+  // The column is HEADED, because a bare circular arrow reads as "refresh" and refreshing a widget
+  // is a plausible-sounding action that does not exist. The header only works if it sits over the
+  // buttons it names, so assert the alignment rather than just the text.
+  const hdr = [...document.querySelectorAll("#hub .hub-sec.cols span")].pop();
+  ok("the reset column is headed", hdr && hdr.textContent.trim() === "Reset", hdr && hdr.textContent);
+  ok("...and the header sits over the reset buttons", hdr
+     && Math.abs(hdr.getBoundingClientRect().right - mBtn.getBoundingClientRect().right) < 12,
+     hdr && Math.round(hdr.getBoundingClientRect().right - mBtn.getBoundingClientRect().right) + "px off");
   const wasChecked = mChk.checked;
   mining.s.x = -4000; mining.s.y = 9000; applyFrame(mining);
   mBtn.click();
@@ -1041,6 +1538,24 @@ const ANCHOR = `(async () => {
   ok("the grouped panel's bar is a reportable region", !!document.querySelector("#panel.grouped .whead"));
   detachFromGroup(WBY.blueprint);
   await sleep(30);
+
+  // 1b. The GROUP HERE drop highlight, both kinds of widget. highlightDrop() sets .droptarget on
+  //     whatever you are dragging onto, and the rule was ".widget.droptarget" only — so dragging
+  //     onto the tracker (which is #panel, not .widget) showed nothing at all, on the one widget
+  //     people aim at most. Asserted via the ::after content because that IS the affordance.
+  const groupHere = (w) => {
+    const bar = el(w).querySelector(".whead");
+    return getComputedStyle(bar, "::after").content.replace(/"/g, "");
+  };
+  highlightDrop(WBY.notepad);
+  await sleep(30);
+  ok("an iframe widget shows GROUP HERE", groupHere(WBY.notepad) === "GROUP HERE", groupHere(WBY.notepad));
+  highlightDrop(WBY.blueprint);
+  await sleep(30);
+  ok("...and so does the tracker panel", groupHere(WBY.blueprint) === "GROUP HERE", groupHere(WBY.blueprint));
+  highlightDrop(null);
+  await sleep(30);
+  ok("clearing the target removes it", groupHere(WBY.blueprint) !== "GROUP HERE", groupHere(WBY.blueprint));
 
   // 2. The cog lives in the BOTTOM bar, so its menu has to open down there — it was anchored
   //    inside .head (position:relative) and opened at the TOP of the panel instead.
@@ -1248,6 +1763,560 @@ const ANGLE = `(async () => {
   return out;
 })()`;
 
+// ── Suite: split fade — the panel and its text, independently ──────────────────
+// 🔑 Half of these assertions exist because the FIRST attempt at this feature shipped a
+// regression that 545 green assertions did not notice. It put the surface layer on
+// ::after, which on a widget panel is already the skin's SHEEN, so the highlight
+// silently vanished in all 16 themes and the whole suite stayed green — nothing had
+// ever asserted the sheen exists. A green sweep is not coverage of what you changed.
+const SPLITFADE = `(async () => {
+  ${PRELUDE}
+  const saved = [];
+  window.overlayApi = Object.assign({}, window.overlayApi, {
+    saveWidget: (id, l) => saved.push([id, JSON.parse(JSON.stringify(l))]),
+  });
+  for (const w of WIDGETS) setWidgetVisible(w, true);
+  await sleep(1200);                        // iframes must LOAD before we can reach into them
+  const party = WBY.party, mining = WBY.mining, bp = WBY.blueprint;
+  const fdoc = (w) => document.getElementById("wf-" + w.key).contentDocument;
+  // 🔑 A hidden window never composites, so a TRANSITIONED property reads as its start value
+  // forever. The fade is transitioned on purpose, so transitions have to be switched off
+  // inside each frame before a single value is measured — otherwise every assertion below
+  // would read the pre-change number and the suite would pass while testing nothing.
+  const killT = (d) => {
+    const s = d.createElement("style");
+    s.textContent = "*{transition:none !important}";
+    d.head.appendChild(s);
+  };
+  killT(document); killT(fdoc(party)); killT(fdoc(mining));
+
+  // ── the regression that forced the revert ───────────────────────────────────
+  const pseudoBg = (d, which) => getComputedStyle(d.getElementById("panel"), which).backgroundImage;
+  const hasGradient = (s) => String(s).indexOf("gradient") >= 0;
+  ok("the Mining Scanner still has its skin sheen (::after)", hasGradient(pseudoBg(fdoc(mining), "::after")), pseudoBg(fdoc(mining), "::after").slice(0, 46));
+  ok("...and so does the tracker", hasGradient(pseudoBg(document, "::after")), pseudoBg(document, "::after").slice(0, 46));
+  ok("scanlines survive on a shared-sheet panel (::before)", hasGradient(pseudoBg(fdoc(party), "::before")), pseudoBg(fdoc(party), "::before").slice(0, 46));
+  ok("...and on the tracker", hasGradient(pseudoBg(document, "::before")));
+
+  // ── the two alphas are genuinely independent ────────────────────────────────
+  // Compared as whole computed strings rather than parsed alphas: the point is only whether a
+  // slider moved this property or left it alone, and string equality cannot be fooled by a
+  // rounding difference the way a hand-rolled alpha parser can.
+  const bgOf = (d) => getComputedStyle(d.getElementById("panel")).backgroundImage;
+  const headOf = (d) => Number(getComputedStyle(d.getElementById("panel").querySelector(".head")).opacity);
+  const setFade = (w, s, t) => { setWidgetDim(w, s * 100); setWidgetDimText(w, t * 100); };
+
+  setFade(party, 1, 1);
+  const bgFull = bgOf(fdoc(party)), headFull = headOf(fdoc(party));
+  setFade(party, 0.3, 1);
+  const bgGhost = bgOf(fdoc(party)), headGhost = headOf(fdoc(party));
+  setFade(party, 1, 0.3);
+  const bgSolid = bgOf(fdoc(party)), headFaint = headOf(fdoc(party));
+
+  ok("the panel fill follows the PANEL slider", bgGhost !== bgFull);
+  ok("...and ignores the TEXT slider", bgSolid === bgFull);
+  ok("the content follows the TEXT slider", headFaint < 0.9, headFaint);
+  ok("...and ignores the PANEL slider", headGhost > 0.99, headGhost);
+  ok("the panel is unchanged at rest", headFull === 1 && hasGradient(bgFull));
+  // The case the whole rebuild exists for. With one opacity the widget composites as a single
+  // unit so text can only ever be DIMMER than its panel; with a nested one the two multiply.
+  // Either way this combination does not exist at any setting.
+  ok("a faint panel carrying FULL-strength text is reachable", bgGhost !== bgFull && headGhost > 0.99);
+  ok("the wrapper carries no opacity of its own, so nothing multiplies",
+     getComputedStyle(el(party)).opacity === "1", getComputedStyle(el(party)).opacity);
+
+  // ── hover, which is no longer a CSS rule ────────────────────────────────────
+  setFade(party, 0.3, 0.3);
+  ok("full-on-hover defaults ON", wHoverFull(party));
+  el(party).classList.add("touched"); applyFade(party);
+  ok("engaging a widget restores it to full", bgOf(fdoc(party)) === bgFull);
+  el(party).classList.remove("touched"); applyFade(party);
+  ok("...and letting go fades it again", bgOf(fdoc(party)) !== bgFull);
+  setWidgetHoverFull(party, false);
+  ok("the preference is stored per widget", !wHoverFull(party));
+  el(party).classList.add("touched"); applyFade(party);
+  ok("interaction restores it even with full-on-hover OFF", bgOf(fdoc(party)) === bgFull,
+     "the switch is about the cursor crossing, never about the widget you are using");
+  el(party).classList.remove("touched"); setWidgetHoverFull(party, true);
+
+  // Arrange mode and the override hotkey have to reach INSIDE the frame now — html.no-dim
+  // cannot cross the boundary, so a CSS-only override would leave every widget ghosted while
+  // you tried to place it.
+  document.documentElement.classList.add("no-dim"); applyAllFades();
+  ok("the fade override reaches into the frames", bgOf(fdoc(party)) === bgFull);
+  document.documentElement.classList.remove("no-dim"); applyAllFades();
+  ok("...and lifting it fades them again", bgOf(fdoc(party)) !== bgFull);
+
+  // ── inheritance is a DEFAULT, never visible coupling ────────────────────────
+  // The panel slider used to drag the text slider along with it, because text inherits the panel
+  // value until it is set and the readouts showed the inherited number. It appeared to fix itself
+  // once you touched Text, which is exactly what an inheritance bug looks like from outside.
+  bp.s.dim = null; bp.s.dimText = null;
+  const inherited = wDimText(bp);
+  ok("text inherits the PANEL value while nothing is set", Math.abs(inherited - wDim(bp)) < 0.001, inherited);
+  setWidgetDim(bp, 40);
+  ok("moving the PANEL slider leaves the text alpha where it was",
+     Math.abs(wDimText(bp) - inherited) < 0.001, "panel=" + wDim(bp) + " text=" + wDimText(bp));
+  ok("...and the panel actually moved", Math.abs(wDim(bp) - 0.4) < 0.001, wDim(bp));
+  setWidgetDimText(bp, 100);
+  ok("the text slider still moves only itself", wDimText(bp) === 1 && Math.abs(wDim(bp) - 0.4) < 0.001);
+
+  // ── dragging must not be transitioned ───────────────────────────────────────
+  // A 0.18s transition is right for idle <-> hover and exactly wrong under a continuously
+  // changing value: each input restarts it, so the panel trails the thumb and only arrives once
+  // you let go. Sub reported it as "it does nothing, then catches up".
+  const fadeMs = () => fdoc(party).documentElement.style.getPropertyValue("--wfade-ms");
+  const partySlider = el(party).querySelector(".wcfg-dim");
+  ok("the panel has a fade slider in its popover", !!partySlider);
+  partySlider.value = "50";
+  partySlider.dispatchEvent(new Event("input", { bubbles: true }));
+  ok("dragging drops the transition to zero", fadeMs() === "0ms", fadeMs());
+  partySlider.dispatchEvent(new Event("change", { bubbles: true }));
+  ok("...and releasing gives it back", fadeMs() === "0.18s", fadeMs());
+
+  // The tracker is local to THIS document, which hosts every other widget too.
+  ok("the tracker fades on its own panel, never on :root",
+     document.getElementById("panel").style.getPropertyValue("--wsurf") !== ""
+     && document.documentElement.style.getPropertyValue("--wsurf") === "",
+     "root=[" + document.documentElement.style.getPropertyValue("--wsurf") + "]");
+
+  // ── persistence ─────────────────────────────────────────────────────────────
+  saved.length = 0;
+  persistW(party);
+  const rec = saved.find((s) => s[0] === "party");
+  ok("all three values persist", !!rec && "dim" in rec[1] && "dimText" in rec[1] && "hoverFull" in rec[1],
+     rec ? Object.keys(rec[1]).join(",") : "nothing saved");
+  // 🔑 persistW, not persistLayout: the fade is per WIDGET, but persistLayout writes to the
+  // GROUP when one is stacked, so a grouped widget used to save its fade where nothing read
+  // it back and silently forgot the setting on restart.
+  saved.length = 0;
+  groupWidgets(party, mining);
+  await sleep(60);
+  setWidgetDim(party, 45); persistW(party);
+  ok("a STACKED widget still saves its fade to itself",
+     saved.some((s) => s[0] === "party" && s[1] && s[1].dim === 0.45), saved.map((s) => s[0]).join(","));
+  while (GROUPS.length) detachFromGroup(WBY[GROUPS[0].active]);
+
+  // ── notifiers keep the old single-opacity path ──────────────────────────────
+  const alert = WBY.unlockAlert;
+  ok("a notifier is not split (it has no widget panel)",
+     el(alert).style.getPropertyValue("--wsurf") === "" && el(alert).style.getPropertyValue("--wdim") !== "",
+     "wdim=[" + el(alert).style.getPropertyValue("--wdim") + "]");
+
+  for (const w of WIDGETS) resetWidget(w);
+  return out;
+})()`;
+
+// ── Suite: nothing animates at rest ────────────────────────────────────────────
+// 🔴 An infinite CSS animation on an always-on-top TRANSPARENT window makes the desktop
+// compositor redraw the overlay — and the game under it — every single frame, forever,
+// even with nothing happening. Measured 2026-08-11: the tracker sat at 240 composited
+// frames per 4s at rest and ONE 7px element, the `.eyebrow` diamond, was 100% of it.
+// A user with a 5080 independently measured the overlay costing 5fps in the hangar with
+// GPU acceleration on and 35fps with it off, and volunteered that infinite animations
+// force redraws.
+// The pulse now runs only in the two states that mean something. This suite is the guard,
+// because the cost is completely invisible in every other kind of test.
+const IDLEPAINT = `(async () => {
+  ${PRELUDE}
+  const dot = document.querySelector(".dot");
+  ok("the tracker has its diamond", !!dot);
+  // The real page may genuinely be live on Twitch or at a fabricator while the suite runs, and
+  // both are legitimate reasons to be animating — so drive it to a known state first rather
+  // than asserting whatever today happens to be.
+  dot.classList.remove("live", "fab");
+  await sleep(120);
+  // 🔑 CSS ANIMATIONS only, never transitions. A transition ENDS, so it cannot hold the
+  // compositor open the way an infinite animation does — and in this hidden window it would
+  // never end at all, because a window that never composites never advances one. Counting
+  // getAnimations() raw made this suite fail on the .dot's own 0.2s colour transition.
+  const running = () => document.getAnimations().filter((a) => a.playState === "running" && a.animationName);
+  const names = () => running().map((a) => {
+    const t = a.effect && a.effect.target;
+    return a.animationName + " on " + (t ? t.tagName.toLowerCase() + "." + String(t.className || "").trim().split(" ").join(".") : "?");
+  }).join(", ");
+  ok("NOTHING animates on an idle overlay", running().length === 0, names() || "nothing running");
+
+  // ...but the two states that carry information still do — and specifically the CHEAP pulse.
+  // A plain "something is animating" assertion would pass just as happily for the 60fps version
+  // this replaced, which is the regression actually worth catching.
+  const cheap = (w) => {
+    const cs = getComputedStyle(dot);
+    ok(w + " still pulses", running().length === 1, names());
+    ok("..." + w + " uses the slow keyframes", cs.animationName === "pulse-slow", cs.animationName);
+    // steps() is what quantises the PAINTS, not just the values — it is the frame-rate dial CSS
+    // does not otherwise give you, and dropping it silently costs ~20x the redraws.
+    ok("..." + w + " is stepped, not continuous", cs.animationTimingFunction.indexOf("steps") === 0, cs.animationTimingFunction);
+    ok("..." + w + " holds still for most of its cycle", parseFloat(cs.animationDuration) >= 5, cs.animationDuration);
+  };
+  dot.classList.add("live");
+  await sleep(120);
+  cheap("live on Twitch");
+  dot.classList.remove("live"); dot.classList.add("fab");
+  await sleep(120);
+  cheap("at the fabricator");
+  dot.classList.remove("fab");
+  await sleep(120);
+  ok("...and it stops again when the state clears", running().length === 0, names() || "nothing running");
+
+  // The fade is transitioned rather than animated, precisely so it cannot become another
+  // permanent redraw. Nothing it does may start an animation.
+  setWidgetDim(WBY.party, 40);
+  await sleep(300);
+  ok("fading a widget starts no animation", running().length === 0, names() || "nothing running");
+  resetWidget(WBY.party);
+  return out;
+})()`;
+
+// ── Suite: the mission-info rows built from community data ─────────────────────
+// 🔑 Every one of these is about NOT overstating thin evidence. 108 contracts have any payout
+// observation at all and most come from a single player, so the failure mode is not a missing
+// row — it is a lone reading rendered as though it were a settled fact. The site takes the same
+// line, and the two must not disagree about what counts as known.
+const MISSIONINFO = `(async () => {
+  ${PRELUDE}
+  const strip = (h) => h.replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim();
+  const pay = (payout) => strip(payBlock({ community: { payout } }));
+  const facts = (f) => factChips({ community: { facts: f } }).map(strip).join(" ");
+
+  // ── payouts ──────────────────────────────────────────────────────────────
+  ok("no observations renders NOTHING, not a zero", pay(null) === "" && pay({ samples: 0 }) === "");
+  const lone = pay({ samples: 1, contributors: 1, min: 48000, max: 48000, median: 48000, currency: "UEC", singleContributor: true });
+  ok("a lone reading says so", lone.indexOf("1 report") >= 0, lone);
+  ok("...and invents no range from one sample", lone.indexOf("Range") < 0, lone);
+  const oneGuy = pay({ samples: 4, contributors: 1, min: 48000, max: 52000, median: 50000, currency: "UEC", singleContributor: true });
+  ok("several readings from ONE player disclose that", oneGuy.indexOf("one player") >= 0, oneGuy);
+  const many = pay({ samples: 12, contributors: 5, min: 31500, max: 64000, median: 47250, currency: "UEC", singleContributor: false });
+  ok("a real spread shows the range", many.indexOf("31,500") >= 0 && many.indexOf("64,000") >= 0, many);
+  ok("...and does not cry lone-source when it is not", many.indexOf("one player") < 0, many);
+  const flat = pay({ samples: 6, contributors: 3, min: 20000, max: 20000, median: 20000, currency: "UEC", singleContributor: false });
+  ok("identical readings show no pointless range", flat.indexOf("Range") < 0, flat);
+  const merits = pay({ samples: 2, contributors: 2, min: 900, max: 1100, median: 1000, currency: "Merits", singleContributor: false });
+  ok("merits are not printed as aUEC", merits.indexOf("Merits") >= 0 && merits.indexOf("aUEC") < 0, merits);
+
+  // ── crowdsourced facts ───────────────────────────────────────────────────
+  ok("no answers renders nothing", facts(null) === "" && facts({ samples: 0 }) === "");
+  // 🔑 The count is shown only while the evidence is thin — always printing it is clutter, never
+  // printing it lets one opinion pass for a fact.
+  const thinSolo = facts({ samples: 1, difficulty: null, difficultyAnswers: 0, soloRate: 1, soloAnswers: 1, combatTop: null, ships: [] });
+  ok("a lone solo report is qualified on the chip", thinSolo.indexOf("1 report") >= 0, thinSolo);
+  const fatSolo = facts({ samples: 9, difficulty: null, difficultyAnswers: 0, soloRate: 1, soloAnswers: 9, combatTop: null, ships: [] });
+  ok("a well-attested one just states it", fatSolo.indexOf("Soloable") >= 0 && fatSolo.indexOf("report") < 0, fatSolo);
+  ok("...and a question nobody answered is absent, not blank", fatSolo.indexOf("Difficulty") < 0, fatSolo);
+
+  // ── the difficulty meter ─────────────────────────────────────────────────
+  // Rounded segments matching the site's mission pages, not stars (Sub, 2026-08-12).
+  const met = (f) => difficultyMeter(f);
+  ok("no rating, no meter", met(null) === "" && met({ difficulty: null, difficultyAnswers: 0 }) === "");
+  const m3 = met({ difficulty: 2.7, difficultyAnswers: 9 });
+  ok("the meter draws five segments", (m3.match(/<i /g) || []).length === 5, (m3.match(/<i /g) || []).length);
+  ok("...and fills to the rounded rating", (m3.match(/class="on"/g) || []).length === 3, (m3.match(/class="on"/g) || []).length);
+  // 🔑 The bar rounds, so the number has to survive alongside it — otherwise 2.4 and 2.6 become
+  // the same picture and the precision is gone.
+  ok("...while the exact mean is still printed", m3.indexOf("2.7") >= 0);
+  ok("the info icon carries the report count", m3.indexOf("9 reports") >= 0);
+  ok("a 1 does not fill zero segments", (met({ difficulty: 1, difficultyAnswers: 1 }).match(/class="on"/g) || []).length === 1);
+  ok("a 5 fills them all", (met({ difficulty: 5, difficultyAnswers: 4 }).match(/class="on"/g) || []).length === 5);
+  // 🔑 The conventional circled "i", and it must be a plain ASCII LETTER in a CSS circle — this
+  // page bundles no emoji face, so a real ⓘ character would be at the mercy of the OS font. That
+  // is the o7-as-a-box trap. An eye glyph was tried first and read as something else entirely.
+  ok("the affordance is an info icon", m3.indexOf("mi-info") >= 0, m3);
+  ok("...drawn from an ASCII letter, not a glyph the OS might not have",
+     m3.indexOf(">i<") >= 0 && !/[\u{1F300}-\u{1FAFF}ⓘℹ]/u.test(m3));
+  const solo = facts({ samples: 2, difficulty: null, difficultyAnswers: 0, soloRate: 1, soloAnswers: 2, combatTop: null, ships: [] });
+  ok("a unanimous solo rate reads as a verdict, not a statistic", solo.indexOf("Soloable") >= 0 && solo.indexOf("100%") < 0, solo);
+  const split = facts({ samples: 5, difficulty: null, difficultyAnswers: 0, soloRate: 0.6, soloAnswers: 5, combatTop: null, ships: [] });
+  ok("a split one gives the number", split.indexOf("60%") >= 0, split);
+  const grp = facts({ samples: 3, difficulty: null, difficultyAnswers: 0, soloRate: 0, soloAnswers: 3, combatTop: null, ships: [] });
+  ok("nobody soloing it says so plainly", grp.indexOf("Needs a group") >= 0, grp);
+  // combatTop is null whenever the site could not find a real majority; a plurality is not a fact.
+  const nomaj = facts({ samples: 7, difficulty: null, difficultyAnswers: 0, soloRate: null, soloAnswers: 0, combatTop: null, ships: [] });
+  ok("no majority on combat means no Fighting row", nomaj.indexOf("Fighting") < 0, nomaj || "(empty)");
+  const ship = facts({ samples: 1, difficulty: null, difficultyAnswers: 0, soloRate: null, soloAnswers: 0, combatTop: "fps", ships: [{ ship: "Mirai Guardian", count: 1 }] });
+  ok("a majority combat profile is worded, not coded", ship.indexOf("On-foot combat") >= 0, ship);
+  ok("the most-flown ship is read off the log", flownShip({ community: { facts: { samples: 1, ships: [{ ship: "Mirai Guardian", count: 1 }] } } }) === "Mirai Guardian");
+  ok("...and no ship seen is an absence, not on-foot", flownShip({ community: { facts: { samples: 1, ships: [] } } }) === null);
+
+  // ── where to pick it up ──────────────────────────────────────────────────
+  // Measured over the real dataset: 898 lists name 2-4 places (specific, worth showing) and 761
+  // name 5+ (the big ones are every body in the system, which is the same as saying nothing).
+  const pu = (list) => pickupOf({ whereToGet: list });
+  ok("no list, no row", pu([]) === null && pu(null) === null);
+  const four = pu(["Checkmate", "Patch City", "Monox", "Pyro I"]);
+  ok("a specific list names ONE place", four && four.name === "Checkmate", four && four.name);
+  ok("...and counts the rest rather than listing them", four && four.more === 3, four && four.more);
+  // 🔑 Order does not encode type — 289 real lists interleave — so a station is CHOSEN, not taken
+  // from the front. A station is where you dock; a planet is not somewhere you can fly to and
+  // take a contract.
+  const planetFirst = pu(["Monox", "Pyro I", "Checkmate"]);
+  ok("a station is preferred even when a planet comes first", planetFirst && planetFirst.name === "Checkmate", planetFirst && planetFirst.name);
+  const allPlanets = pu(["Nyx I", "Nyx II", "Nyx III"]);
+  ok("all-planet lists still name one", allPlanets && allPlanets.name === "Nyx I", allPlanets && allPlanets.name);
+  ok("a system-wide list is DROPPED, not truncated",
+     pu(["ArcCorp", "Crusader", "Hurston", "microTech", "Aberdeen", "Arial", "Calliope", "Cellin",
+         "Clio", "Daymar", "Euterpe", "Ita", "Lyria", "Magda", "Wala", "Yela"]) === null);
+  ok("an unknown name is treated as a station", isStation("Some New Outpost") === true);
+  ok("...but a roman-numeral body is not", isStation("Pyro VI") === false);
+
+  // ── the local dataset fields, as chips ───────────────────────────────────
+  const info = (v) => strip(missionInfoHtml(Object.assign({ giver: "Headhunters", missionType: "Bounty Hunter", reputationGained: [], reputationLost: [], whereToGet: [] }, v), true));
+  ok("an illegal contract is flagged", info({ illegal: true }).indexOf("Illegal") >= 0);
+  ok("...and a legal one is not", info({ illegal: false }).indexOf("Illegal") < 0);
+  ok("a rank gate is shown", info({ rankRequired: 2 }).indexOf("Rank needed 2") >= 0, info({ rankRequired: 2 }));
+  // 🔑 null is "the dataset carries no gate", NOT rank 0 — givers use 0 and null side by side.
+  ok("...but an absent gate is not rendered as rank 0", info({ rankRequired: null }).indexOf("Rank needed") < 0);
+  ok("rank 0 IS a real gate and shows", info({ rankRequired: 0 }).indexOf("Rank needed 0") >= 0);
+
+  // ── two groups, so the faction half can be collapsed on its own ──────────
+  const V = { giver: "Headhunters", missionType: "Bounty Hunter", illegal: true, rankRequired: 1,
+    contractKey: "HH_Test_Contract", ambiguous: false,
+    reputationGained: [{ faction: "Headhunters", amount: 50 }], reputationLost: [], whereToGet: ["Checkmate", "Monox"],
+    repBar: { noData: true, faction: "Headhunters", standing: "" } };
+  const full = missionInfoHtml(V, true);
+  ok("Mission Info and Faction Info are SEPARATE drawers",
+     full.indexOf("miHead") >= 0 && full.indexOf("facHead") >= 0);
+  ok("...each with its own header", (full.match(/mi-head/g) || []).length === 2, (full.match(/mi-head/g) || []).length);
+  // Sub's order: reputation belongs under the faction it is with, not beside the contract.
+  const facHalf = full.slice(full.indexOf("facHead"));
+  ok("faction, rank and reputation are all in the FACTION group",
+     facHalf.indexOf("Faction") >= 0 && facHalf.indexOf("Rank needed") >= 0 && facHalf.indexOf("Reputation") >= 0);
+  ok("...and reputation comes after faction", facHalf.indexOf("Reputation") > facHalf.indexOf("Headhunters"));
+  const missionHalf = full.slice(0, full.indexOf("facHead"));
+  ok("the contract's own details stay in the MISSION group",
+     missionHalf.indexOf("Pick up") >= 0 && missionHalf.indexOf("Illegal") >= 0);
+  ok("standing sits in its own group behind a rule", full.indexOf("mi-standing") >= 0);
+  ok("the facts that explain themselves are chips, not rows", full.indexOf("mi-chips") >= 0);
+  ok("the reputation value does not repeat its own label", strip(full).indexOf("+50 rep") < 0, strip(full));
+  ok("standing explains itself through the info icon, not the word est.", strip(full).indexOf("est.") < 0);
+  ok("...and it says WHY the number is an estimate", full.indexOf("never reports your reputation") >= 0);
+
+  // 🔑 "+3" means nothing on its own — the count is only useful next to the names (Sub).
+  const puFull = missionInfoHtml(Object.assign({}, V, {
+    whereToGet: ["Rat's Nest", "Starlight Service Station", "Orbituary", "Bloom"] }), true);
+  ok("a truncated pickup list carries an info icon", puFull.indexOf("mi-more") >= 0 && puFull.indexOf("mi-info") >= 0);
+  ok("...naming the places the count stands for",
+     puFull.indexOf("Starlight Service Station, Orbituary and Bloom") >= 0, puFull.slice(puFull.indexOf("Pick up"), puFull.indexOf("Pick up") + 320));
+  // One place needs no explanation, so it gets no icon to explain.
+  const puOne = missionInfoHtml(Object.assign({}, V, { whereToGet: ["Rat's Nest"] }), true);
+  ok("a single place gets no count and no icon", puOne.indexOf("mi-more") < 0);
+  // 🔑 The listed places are ONE variant, so they do draw the pool on screen — but that must not
+  // be sold as "it does not matter where you take it". For 71 titles the place is exactly what
+  // decides the pool, which is the row below. Sub caught this claim being both wrong and the
+  // opposite of the useful thing to say.
+  ok("...and the tooltip does not claim the location is irrelevant",
+     puFull.indexOf("same contract wherever") < 0 && puFull.indexOf("draw the pool shown above") >= 0);
+
+  // ── the pools you CANNOT get from here ───────────────────────────────────
+  const withOthers = missionInfoHtml(Object.assign({}, V, {
+    whereToGet: ["Checkmate", "Patch City"],
+    otherPools: [
+      { places: ["Rat's Nest", "Starlight Service Station"], total: 5, owned: 5 },
+      { places: ["Ruin Station", "Terminus"], total: 8, owned: 3 },
+    ] }), true);
+  ok("other regions with a different pool are surfaced", withOthers.indexOf("Other pools") >= 0);
+  ok("...named by a station you can actually fly to", withOthers.indexOf("Rat's Nest") >= 0 && withOthers.indexOf("Ruin Station") >= 0);
+  // 5/5 + 3/8 = 5 still to win somewhere else. That number is the whole point of the row.
+  ok("...with how many are still missing across them", withOthers.indexOf("5 to go") >= 0, strip(withOthers));
+  ok("...and says finishing this pool is not finishing the contract",
+     withOthers.indexOf("does not finish the contract") >= 0);
+  ok("a contract with nothing elsewhere gets no such row",
+     missionInfoHtml(Object.assign({}, V, { otherPools: [] }), true).indexOf("Other pools") < 0);
+  // Nothing left to win elsewhere is still worth naming (you may not have run it there), but it
+  // must not advertise a count of zero.
+  const allOwned = missionInfoHtml(Object.assign({}, V, {
+    otherPools: [{ places: ["Ruin Station"], total: 8, owned: 8 }] }), true);
+  ok("...and no '0 to go' when the other pool is complete", allOwned.indexOf("Other pools") >= 0 && allOwned.indexOf("0 to go") < 0);
+
+  // ── the link out to the site ─────────────────────────────────────────────
+  ok("a resolved contract links to its page", full.indexOf("subliminal.gg/missions/HH_Test_Contract") >= 0);
+  // 🔑 An ambiguous mission must NOT link: the tracker does not yet know WHICH variant you took,
+  // so the page would describe a different one — and the site 404s on a key it does not know.
+  const amb = missionInfoHtml(Object.assign({}, V, { ambiguous: true }), true);
+  ok("an ambiguous one does not", amb.indexOf("mi-link") < 0);
+  const noKey = missionInfoHtml(Object.assign({}, V, { contractKey: null }), true);
+  ok("nor does one we cannot name", noKey.indexOf("mi-link") < 0);
+  return out;
+})()`;
+
+// A widget's settings popover closes itself after 15s of not being used (Sub, 2026-08-03). Not just
+// tidiness: an open popover is in RSEL, so it is a permanently CLICKABLE box over the game, and it
+// masks the Web Page widget's native view for as long as it is up.
+// Driven with ?wcfgidle=250 so the suite doesn't wait a quarter-minute per assertion.
+const WCFGIDLE = `(async () => {
+  ${PRELUDE}
+  const masked = [];
+  window.overlayApi = Object.assign({}, window.overlayApi, { maskWebView: (on) => masked.push(!!on) });
+  const w = WBY.notepad;               // a plain widget: the shell owns its popover
+  setWidgetVisible(w, true);
+  await sleep(200);
+  const open = () => el(w).classList.contains("cfgopen");
+  const cog = () => el(w).querySelector(".wh-cog");
+
+  cog().click();
+  await sleep(30);
+  ok("the cog opens the settings popover", open());
+  ok("...and it masks the native view while up", masked.length > 0 && masked[masked.length - 1] === true, JSON.stringify(masked.slice(-1)));
+
+  // 🔑 THE COG TOGGLES. It used to only ever open: the handler cleared the open class from every
+  // widget and then immediately put it back on this one, so a second click was a no-op and the
+  // 15s idle timer was the only way to dismiss the panel. Sub hit this on the chat widget, which
+  // has no settings sheet of its own and therefore uses this popover.
+  cog().click();
+  await sleep(30);
+  ok("clicking the cog again CLOSES it", !open());
+  ok("...and the native view is unmasked again", masked[masked.length - 1] === false, JSON.stringify(masked.slice(-1)));
+  cog().click();
+  await sleep(30);
+  ok("...and a third click reopens it", open());
+  cog().click(); await sleep(30);
+
+  // 🔑 The TRACKER is the one widget whose bar cog IS #cog — a single button carrying both
+  // wh-cog and id=cog, so it has TWO click listeners on the same element and stopPropagation
+  // does nothing about that. If the bar handler acts on it too, the two fight: one opens, the
+  // other sees it open and closes it, and the menu never appears at all. That stayed hidden for
+  // as long as the bar handler was a no-op for local widgets.
+  const menu = document.getElementById("cogMenu");
+  const bpCog = document.getElementById("panel").querySelector(".wh-cog");
+  ok("the tracker bar cog is the same element as #cog", bpCog && bpCog.id === "cog", bpCog ? bpCog.id : "missing");
+  bpCog.click(); await sleep(40);
+  ok("the tracker cog OPENS its menu", menu.classList.contains("open"));
+  bpCog.click(); await sleep(40);
+  ok("...and closes it again", !menu.classList.contains("open"));
+
+  await sleep(500);
+  ok("it closes itself once idle", !open());
+  ok("...and releases the view mask", masked[masked.length - 1] === false, JSON.stringify(masked.slice(-1)));
+
+  // Using it keeps it alive. A click on the WIDGET is what counts as use — that is the signal
+  // embedded pages forward via summonCog, so it also covers clicks inside an iframe's own panel.
+  cog().click();
+  await sleep(30);
+  ok("reopens", open());
+  for (let i = 0; i < 5; i++) { await sleep(120); el(w).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); }
+  ok("still open after 600ms of being clicked", open());
+  await sleep(500);
+  ok("...and closes once the clicking stops", !open());
+
+  // Closing by hand must not leave a timer that fires later and stamps on something else.
+  cog().click();
+  await sleep(30);
+  document.body.click();
+  await sleep(30);
+  ok("an outside click closes it immediately", !open());
+  cog().click();
+  await sleep(30);
+  ok("and it can still be reopened afterwards", open());
+  await sleep(500);
+  ok("...with the timer working again", !open());
+  return out;
+})()`;
+
+// Canvas calibration for mixed-DPI desktops — the nudge (move) and the scale (size), both aimed at
+// the dotted primary outline in arrange mode.
+//
+// The property that matters is that the outline stays a USABLE ALIGNMENT TARGET: the outline and
+// the widgets have to move and scale as ONE coordinate space, or the user lines the outline up
+// with their monitor and the widgets land somewhere else. Both derive from canvas-info's px/py,
+// which is exactly what is asserted here.
+//
+// The shell is absent in this harness, so canvasInfo is driven directly — the same shape
+// overlay:canvas-info returns.
+const CALIBRATE = `(async () => {
+  ${PRELUDE}
+  const root = document.documentElement;
+  const primLeft = () => getComputedStyle(root).getPropertyValue("--prim-left").trim();
+  const w = WBY.notepad;
+  setWidgetVisible(w, true);
+  await sleep(200);
+  w.s.x = 300; w.s.y = 120;
+
+  // Baseline: no calibration at all, which is what every correctly-aligned user has.
+  canvasInfo = { px: 40, py: 20, pw: 1000, ph: 800, vw: 3000, vh: 1200, scale: 1 };
+  applyCanvasVars(); applyAllFrames();
+  await sleep(30);
+  ok("no scale set means no zoom on the document", root.style.zoom === "", JSON.stringify(root.style.zoom));
+  ok("the outline pins to px", primLeft() === "40px", primLeft());
+  ok("a widget sits at its saved x PLUS px", cs(w, "--wx") === "340px", cs(w, "--wx"));
+  // 🔑 Measure a FIXED-SIZE control, not the panel: the panel wraps, so at 2x it re-flows to fit
+  // the narrower CSS viewport and comes out well under double — a real behaviour that would make
+  // this assertion look like a broken zoom. A button's height cannot wrap.
+  const btnH = () => document.querySelector("#canvasNudge .nrow button").getBoundingClientRect().height;
+  const btnH0 = btnH();
+
+  // A nudge: canvas-info carries the shift in px/py, so BOTH the outline and the widget move by it
+  // and the gap between them is untouched. That gap is what makes the outline an alignment target.
+  canvasInfo = { px: 40 + 150, py: 20 + 60, pw: 1000, ph: 800, vw: 3000, vh: 1200, scale: 1 };
+  applyCanvasVars(); applyAllFrames();
+  await sleep(30);
+  ok("nudging moves the outline", primLeft() === "190px", primLeft());
+  ok("...and moves the widget by exactly the same amount", cs(w, "--wx") === "490px", cs(w, "--wx"));
+  ok("...so the widget's offset FROM the outline is unchanged", 490 - 190 === 300);
+
+  // A scale: applied as CSS zoom on the root, so the whole canvas renders bigger — the outline,
+  // the widgets and (measured in Electron 43) the content inside each widget's iframe.
+  // 🔑 px/pw stay RAW canvas px; the zoom is what multiplies them on the way to the screen. If
+  // canvas-info pre-divided by the scale, the outline would never change size and there would be
+  // nothing to calibrate against.
+  canvasInfo = { px: 40, py: 20, pw: 1000, ph: 800, vw: 1500, vh: 600, scale: 2 };
+  applyCanvasVars(); applyAllFrames();
+  await sleep(30);
+  ok("the scale becomes a document zoom", root.style.zoom === "2", root.style.zoom);
+  ok("the outline's CSS position is NOT pre-divided", primLeft() === "40px", primLeft());
+  ok("a widget keeps its canvas coordinates too", cs(w, "--wx") === "340px", cs(w, "--wx"));
+  // Ground truth that the zoom really scales rendering: a fixed-size control measures double.
+  // getBoundingClientRect reports zoom-ADJUSTED px, which is also why the regions this page hands
+  // the shell for cursor hit-testing need no correction at either end.
+  ok("chrome really renders at 2x", Math.abs(btnH() - btnH0 * 2) < 2, btnH0 + " -> " + btnH());
+
+  canvasInfo = { px: 40, py: 20, pw: 1000, ph: 800, vw: 3000, vh: 1200, scale: 1 };
+  applyCanvasVars(); applyAllFrames();
+  await sleep(30);
+  ok("going back to 100% clears the zoom", root.style.zoom === "", JSON.stringify(root.style.zoom));
+
+  // The control itself. Every button must sit INSIDE the panel's own rect — the shell only makes
+  // the window clickable over the rects this page reports, and the scan box's Reset button was
+  // unreachable for exactly this reason (it hung 19px above the box it belonged to).
+  const nudge = document.getElementById("canvasNudge");
+  const nr = nudge.getBoundingClientRect();
+  // Centred on the PRIMARY monitor, both axes. It used to sit under the arrange banner at the top
+  // edge — right where the dotted outline's own top edge is, so the control overlapped the thing it
+  // adjusts. Measured against the primary's rect, not the window's: the canvas spans every display.
+  ok("the calibration panel is centred on the primary, horizontally",
+     Math.abs((nr.left + nr.right) / 2 - (canvasInfo.px + canvasInfo.pw / 2)) < 2,
+     Math.round((nr.left + nr.right) / 2) + " vs " + Math.round(canvasInfo.px + canvasInfo.pw / 2));
+  ok("...and vertically",
+     Math.abs((nr.top + nr.bottom) / 2 - (canvasInfo.py + canvasInfo.ph / 2)) < 2,
+     Math.round((nr.top + nr.bottom) / 2) + " vs " + Math.round(canvasInfo.py + canvasInfo.ph / 2));
+  const btns = [...nudge.querySelectorAll("button")];
+  ok("the calibration panel carries move AND size controls", btns.length === 7, btns.length + " buttons");
+  ok("every control is inside the rect the shell hit-tests", btns.every((b) => {
+    const r = b.getBoundingClientRect();
+    return r.left >= nr.left - 1 && r.right <= nr.right + 1 && r.top >= nr.top - 1 && r.bottom <= nr.bottom + 1;
+  }));
+
+  // Readouts. With no shell the round-trip resolves to nothing and the page keeps its own value,
+  // so this exercises the stepping and clamping rather than persistence.
+  const readScale = () => document.getElementById("nudgeScale").textContent;
+  const readOff = () => document.getElementById("nudgeVal").textContent;
+  ok("it opens at no calibration", readOff() === "0, 0" && readScale() === "100%", readOff() + " / " + readScale());
+  nudge.querySelector('[data-nz="5"]').click();
+  await sleep(30);
+  ok("+ grows the canvas 5% at a time", readScale() === "105%", readScale());
+  nudge.querySelector('[data-nx="10"]').click();
+  await sleep(30);
+  ok("an arrow nudges 10px", readOff() === "10, 0", readOff());
+  for (let i = 0; i < 45; i++) nudge.querySelector('[data-nz="5"]').click();
+  await sleep(60);
+  ok("scale clamps at 300%", readScale() === "300%", readScale());
+  for (let i = 0; i < 60; i++) nudge.querySelector('[data-nz="-5"]').click();
+  await sleep(60);
+  ok("...and at 50%", readScale() === "50%", readScale());
+  document.getElementById("nudgeReset").click();
+  await sleep(30);
+  ok("Reset returns both to neutral", readOff() === "0, 0" && readScale() === "100%", readOff() + " / " + readScale());
+  return out;
+})()`;
+
 // `page` targets a widget's OWN page instead of the canvas — a notifier is easiest to drive
 // standalone, without the whole canvas around it.
 async function run(label, script, preload, query, page) {
@@ -1265,7 +2334,17 @@ async function run(label, script, preload, query, page) {
   // The unlock-pop suite points an <img> at a URL that must 404 — that IS the assertion (no
   // capture for this item yet → fall back to the render). Named so it can't be mistaken for a real
   // missing asset.
-  const EXPECTED_404 = /(^|\/\/)(api\.frankerfacez\.com|7tv\.io|api\.betterttv\.net)\/|deliberate-404-for-test\.webp/;
+  // 🔑 `/api/binding-image` 404s when no chart has been chosen, and that is a SHIPPED state, not a
+  // fault — the Infographic Viewer reads the 404 as "show the pick-a-PNG empty state". Without it
+  // here the whole suite only passes for a developer who happens to have a chart configured, and
+  // fails outright against a fresh profile (npm run dev:fresh), which is exactly when you most
+  // want to be able to run it.
+  // 🔑 `/api/fab-img/<uuid>` 404s for any item with no CROWDSOURCED capture, which is 70% of the
+  // catalogue — the thumbnail then falls back to the clay render, exactly as designed. It only
+  // shows up when a live item that happens to lack one is on screen, so this suite went red for
+  // 16 suites at once purely because the tracker's state had moved on (it drives the LIVE
+  // sidecar). Same class as binding-image below: a shipped state, not a fault.
+  const EXPECTED_404 = /(^|\/\/)(api\.frankerfacez\.com|7tv\.io|api\.betterttv\.net)\/|deliberate-404-for-test\.webp|\/api\/binding-image(\?|$)|\/api\/fab-img\//;
   win.webContents.session.webRequest.onCompleted({ urls: ["*://*/*"] }, (d) => {
     if (d.statusCode < 400) return;
     if (d.statusCode === 404 && EXPECTED_404.test(d.url)) return;
@@ -1338,6 +2417,1102 @@ const COGHIDE = `(async () => {
 // It must: prefer the fabricator capture over the clay render, fall back when there's no capture,
 // never re-announce a receipt it has already shown, ignore stale ones an SSE reconnect replays,
 // and queue a burst instead of flickering. Local URLs stand in for the two image endpoints.
+// The completion card's auto-hide. Sub, 2026-08-09: he picked the rating, alt-tabbed, came back
+// and could no longer answer the solo question. The post-answer ceiling was a flat deadline that
+// kept counting while he was away in the game.
+const REPORTHOLD = `(async () => {
+  ${PRELUDE}
+  const card = document.getElementById("mreport");
+  const up = () => card.classList.contains("show");
+
+  const completion = {
+    title: "Deep space hit", at: new Date().toISOString(), contractKey: "TEST_KEY",
+    aUEC: 42000, payout: null, durationMs: 600000, blueprints: [], giver: "Headhunters",
+    missionType: "Assassination", rank: null, reputationGained: [], aUecPerHour: null,
+    timesCompleted: 3, poolProgress: { owned: 7, total: 15 },
+    classification: { combat: null, activity: null, source: null },
+  };
+
+  // Caught deliberately: a throw here surfaces as a bare "harness error" with no line and no
+  // suite name, which costs a bisection run every time. Naming it is one line.
+  try { showReport(completion); } catch (e) { ok("showReport threw", false, e && e.message); return out; }
+  ok("the card shows", up());
+  ok("...on the plain countdown, not the ceiling", !card.classList.contains("answered"));
+
+  // Answering is what switches it to the ceiling.
+  const opt = card.querySelector(".mr-opt");
+  ok("the questions rendered", !!opt);
+  opt.click();
+  await sleep(30);
+  ok("answering marks the card answered", card.classList.contains("answered"));
+  ok("...and it is still up", up());
+
+  // 🔑 The reported bug: away in the game, the ceiling ran and took the card with it. Blur then
+  // focus must leave the card up and cancel any pending deadline.
+  window.dispatchEvent(new Event("blur"));
+  await sleep(20);
+  window.dispatchEvent(new Event("focus"));
+  await sleep(20);
+  ok("coming back to the overlay keeps the card up", up());
+  ok("...with no deadline pending while it has focus", (mrTimer === null), String(mrTimer));
+
+  // Hovering counts as using it too.
+  window.dispatchEvent(new Event("blur"));
+  card.dispatchEvent(new MouseEvent("mouseenter"));
+  await sleep(20);
+  ok("a pointer on the card also holds it open", (mrTimer === null));
+  card.dispatchEvent(new MouseEvent("mouseleave"));
+  await sleep(20);
+  // Unattended: pointer off AND the window blurred. The ceiling has to come back, or a
+  // forgotten card lives forever — the trapped-user bug.
+  ok("left unattended, the ceiling re-arms", (mrTimer !== null));
+
+  ok("Close still dismisses it", (document.getElementById("mrClose").click(), !up()));
+  return out;
+})()`;
+
+// Chat's outbound links and the slash menu. Two things Sub reported on 2026-08-09: a blueprint
+// link and a starcitizen.tools item lookup rendered identically (only the tooltip differed), and
+// the command menu never appeared mid-sentence so the inline commands were undiscoverable.
+const CHATLINKS = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(300);
+
+  // ── link kind tags ──────────────────────────────────────────────────────
+  const render = (t) => { const d = document.createElement("div"); d.className = "msg";
+    d.appendChild(renderBody(t).frag); return d; };
+  const tagOf = (t) => { const e = render(t).querySelector(".lkk"); return e ? e.textContent : null; };
+
+  ok("a blueprint token is tagged BP", tagOf("[bp:Deadbolt III Cannon|abc-123]") === "BP",
+     tagOf("[bp:Deadbolt III Cannon|abc-123]"));
+  ok("an item token is tagged ITEM", tagOf("[item:Deadbolt III Cannon]") === "ITEM",
+     tagOf("[item:Deadbolt III Cannon]"));
+  ok("a mission token is tagged MISSION", tagOf("[mission:Deep space hit|HH_Pyro_RegionB]") === "MISSION",
+     tagOf("[mission:Deep space hit|HH_Pyro_RegionB]"));
+  // The whole bug: the SAME name as a blueprint and as an item must not look the same.
+  ok("the same name reads differently as a blueprint and as an item",
+     tagOf("[bp:Deadbolt III Cannon|abc-123]") !== tagOf("[item:Deadbolt III Cannon]"));
+
+  const bpNode = render("[bp:Deadbolt III Cannon|abc-123]").querySelector(".lnk");
+  ok("the link still shows the plain name, not the token",
+     bpNode.querySelector(".lkt").textContent === "Deadbolt III Cannon",
+     bpNode.querySelector(".lkt").textContent);
+  ok("the tag and the text are SIBLINGS", bpNode.querySelector(".lkk .lkt") === null);
+  // text-decoration draws through descendants and a child cannot cancel it, so a tag nested
+  // inside the underlined span would be underlined too. Measure, don't assume.
+  const deco = (el) => getComputedStyle(el).textDecorationLine;
+  document.body.appendChild(bpNode.parentNode ? bpNode.parentNode : bpNode);
+  ok("the name is underlined", deco(bpNode.querySelector(".lkt")).indexOf("underline") >= 0,
+     deco(bpNode.querySelector(".lkt")));
+  ok("the tag is NOT underlined", deco(bpNode.querySelector(".lkk")).indexOf("underline") < 0,
+     deco(bpNode.querySelector(".lkk")));
+
+  // A mention next to a token must still render as a mention, not get swallowed by it.
+  const mixed = render("hey @Rytharr want to run [mission:Deep space hit|HH_Pyro_RegionB]");
+  ok("a mention beside a token survives", mixed.querySelector(".at") !== null);
+  ok("...and the token beside it still links", mixed.querySelector(".lnk") !== null);
+
+  // ── /build: an erkul loadout the sender names ───────────────────────────
+  // erkul's share link is an opaque hash and its old API host no longer exists, so nothing can
+  // look the ship up — the sender supplies the name.
+  ok("a valid link becomes a build token",
+     applyCommand("/build Vulture salvage fit https://erkul.games/s/akeei4v0")
+       === "[build:Vulture salvage fit|https://erkul.games/s/akeei4v0]",
+     applyCommand("/build Vulture salvage fit https://erkul.games/s/akeei4v0"));
+  ok("www and the older /loadout/ form both work",
+     applyCommand("/build Old one https://www.erkul.games/loadout/Zjbboonv")
+       === "[build:Old one|https://erkul.games/loadout/Zjbboonv]",
+     applyCommand("/build Old one https://www.erkul.games/loadout/Zjbboonv"));
+  ok("a non-erkul link is refused", applyCommand("/build Sneaky https://evil.example/s/abcd") === null);
+
+  // 🔑 INLINE. It was anchored to the start of the message while being offered as an inline
+  // command, so this exact shape sent raw text and produced no link (Sub, 2026-08-09).
+  const inl = applyCommand("hey @Rytharr check this /build Vulture salvage fit https://erkul.games/s/akeei4v0 what do you reckon");
+  ok("/build works MID-MESSAGE",
+     inl === "hey @Rytharr check this [build:Vulture salvage fit|https://erkul.games/s/akeei4v0] what do you reckon", inl);
+  ok("...and the text after the link survives", (inl || "").endsWith("what do you reckon"));
+  const two = applyCommand("/build A https://erkul.games/s/aaaa1111 and /build B https://erkul.games/s/bbbb2222");
+  // 🔑 split(), not a regex: this suite is a TEMPLATE LITERAL, so a backslash escape like
+  // \[ collapses before the regex is ever compiled and leaves an unterminated character
+  // class - which throws at runtime and surfaces as a bare "harness error".
+  ok("...twice in one message", (two || "").split("[build:").length - 1 === 2, two);
+  const rendered = render(inl || "");
+  ok("...and the mention beside it still renders", rendered.querySelector(".at") !== null);
+  ok("...with the build as a real link", rendered.querySelector(".lnk .lkk").textContent === "BUILD");
+  ok("a name with no link is refused", applyCommand("/build just a name") === null);
+  ok("no arguments at all is refused", applyCommand("/build") === null);
+
+  const bt = render("[build:Vulture salvage fit|https://erkul.games/s/akeei4v0]");
+  ok("a build token renders tagged BUILD", bt.querySelector(".lkk").textContent === "BUILD",
+     bt.querySelector(".lkk").textContent);
+  ok("...showing the sender's name", bt.querySelector(".lkt").textContent === "Vulture salvage fit",
+     bt.querySelector(".lkt").textContent);
+  ok("...with the destination on hover, so you see where it goes",
+     (bt.querySelector(".lnk").title || "").indexOf("https://erkul.games/s/akeei4v0") >= 0,
+     bt.querySelector(".lnk").title);
+
+  // 🔴 The token arrives over the wire from another player, so validating only on SEND
+  // guarantees nothing. A hostile client must not be able to put an arbitrary URL — least of
+  // all a javascript: one — into somebody's real browser.
+  for (const nasty of ["javascript:alert(1)", "https://evil.example/s/abcd",
+                       "https://erkul.games.evil.example/s/abcd", "https://erkul.games/../etc"]) {
+    const n = render("[build:Click me|" + nasty + "]");
+    ok("a hostile build URL never becomes a link: " + nasty.slice(0, 34),
+       n.querySelector(".lnk") === null && n.textContent.indexOf("Click me") >= 0,
+       n.innerHTML.slice(0, 60));
+  }
+
+  // ── the slash menu, mid-message ─────────────────────────────────────────
+  const box = document.getElementById("slash");
+  const input = document.getElementById("sendInput");
+  const openCmds = () => [...box.children].map((r) => r.querySelector(".sc-cmd").textContent.split(" ")[0]);
+  const type = (v) => { input.value = v; renderSlash(v); };
+
+  type("/");
+  ok("a lone slash at the start opens the menu", box.classList.contains("open"));
+  ok("...offering every command", openCmds().indexOf("/me") >= 0 && openCmds().indexOf("/bp") >= 0,
+     openCmds().join(" "));
+
+  // This is the reported bug: the menu was anchored to the start of the message.
+  type("hey Bob, want to run /");
+  ok("a slash MID-MESSAGE opens the menu too", box.classList.contains("open"));
+  ok("...offering the inline link commands",
+     openCmds().indexOf("/bp") >= 0 && openCmds().indexOf("/mission") >= 0, openCmds().join(" "));
+  // /me rewrites the WHOLE message, so accepting it after the first word would mangle what is
+  // already typed. It is start-only on purpose.
+  ok("...but NOT the whole-message commands",
+     openCmds().indexOf("/me") < 0 && openCmds().indexOf("/shrug") < 0, openCmds().join(" "));
+
+  type("hey Bob, want to run /mis");
+  ok("a partial command mid-message filters", openCmds().join(" ") === "/mission", openCmds().join(" "));
+  acceptSugg(0);
+  ok("accepting it keeps the text before the slash",
+     input.value === "hey Bob, want to run /mission ", JSON.stringify(input.value));
+
+  // A slash inside a word is just a slash - "km/h" must not pop a menu.
+  type("we were doing 400 km/h");
+  ok("a slash inside a word opens nothing", !box.classList.contains("open"), input.value);
+  type("plain text with no slash");
+  ok("ordinary text opens nothing", !box.classList.contains("open"));
+
+  // ── creating a room: activity + privacy ─────────────────────────────────
+  // Drive off a stubbed view: the harness has no chat connection, and these are pure UI rules.
+  const CATS = [
+    { slug: "org-ops", label: "Org Operations" },
+    { slug: "mining", label: "Mining" },
+    { slug: "social", label: "Social / Other" },
+  ];
+  view = {
+    status: "connected", you: { handle: "IMC-Subliminal", verified: true },
+    channels: [], directory: [], categories: CATS, dmThreads: [], hasIdentity: true,
+  };
+
+  setCreatePop(true);
+  ok("the create panel opens", document.getElementById("createPop").classList.contains("open"));
+
+  // 🔴 It shipped 6px ABOVE the whole widget: off the canvas, and outside the rect the shell
+  // hit-tests, so unclickable as well as invisible. MEASURE it — reasoning about the CSS is
+  // exactly what missed it: rail-foot is not a positioned ancestor.
+  // The final clamp runs on the next frame, deliberately: the hint re-wraps and focusing the
+  // name field can scroll the panel, both after the arithmetic. Measure once it has settled.
+  await sleep(120);
+  {
+    const p = document.getElementById("createPop").getBoundingClientRect();
+    const box = document.getElementById("panel").getBoundingClientRect();
+    const inside = p.top >= box.top - 1 && p.left >= box.left - 1
+                && p.bottom <= box.bottom + 1 && p.right <= box.right + 1;
+    ok("...INSIDE the widget, on every edge", inside,
+       "pop " + Math.round(p.top) + "," + Math.round(p.left) + "," + Math.round(p.bottom) + "," + Math.round(p.right)
+       + " vs panel " + Math.round(box.top) + "," + Math.round(box.left) + "," + Math.round(box.bottom) + "," + Math.round(box.right));
+    ok("...and has real size", p.width > 40 && p.height > 40, p.width + "x" + p.height);
+  }
+  const opts = [...document.getElementById("cpCat").options].map((o) => o.value);
+  ok("the activity dropdown is built from the SERVER list",
+     opts.join(",") === "org-ops,mining,social", opts.join(","));
+  ok("...defaulting to Social / Other", document.getElementById("cpCat").value === "social");
+  const privOpts = [...document.getElementById("cpPriv").options].map((o) => o.value);
+  ok("privacy offers public and private", privOpts.join(",") === "public,private", privOpts.join(","));
+  ok("...defaulting to public", document.getElementById("cpPriv").value === "public");
+
+  document.getElementById("cpPriv").value = "private";
+  updateCreateHint();
+  const hintPriv = document.getElementById("cpHint").textContent;
+  ok("the private hint explains how people get in",
+     hintPriv.indexOf("code") >= 0 && hintPriv.indexOf("invite") >= 0, hintPriv);
+  document.getElementById("cpPriv").value = "public";
+  document.getElementById("cpCat").value = "mining";
+  updateCreateHint();
+  ok("the public hint names the activity it will be listed under",
+     document.getElementById("cpHint").textContent.indexOf("Mining") >= 0,
+     document.getElementById("cpHint").textContent);
+  setCreatePop(false);
+  ok("it closes again", !document.getElementById("createPop").classList.contains("open"));
+
+  // ── the directory groups by activity ────────────────────────────────────
+  view.directory = [
+    { ch: "custom:a", label: "Halo Run", category: "mining", count: 4 },
+    { ch: "custom:b", label: "Quant Run", category: "mining", count: 1 },
+    { ch: "custom:c", label: "Sunday Ops", category: "org-ops", count: 9 },
+  ];
+  // Browse is collapsed by default, so open it before asserting on its contents.
+  localStorage.removeItem("chatCollapsed");
+  collapsed = new Set();
+  renderChannels();
+  const subs = [...document.querySelectorAll("#chanList .subgrp")].map((e) => e.textContent);
+  ok("rooms you could join are grouped by activity", subs.length === 2, subs.join(" | "));
+  ok("...busiest activity first", subs[0] === "Org Operations", subs.join(" | "));
+
+  // 🔴 The heading has to tell the truth: other people's rooms are NOT "Your channels".
+  const groupOf = (label) => {
+    const g = [...document.querySelectorAll("#chanList .grp")].find((x) => x.textContent.indexOf(label) >= 0);
+    const out = [];
+    for (let n = g && g.nextElementSibling; n && !n.classList.contains("grp"); n = n.nextElementSibling) {
+      const nm = n.querySelector(".nm"); if (nm) out.push(nm.textContent);
+    }
+    return out;
+  };
+  ok("browsable rooms live under Browse rooms",
+     groupOf("Browse rooms").indexOf("Sunday Ops") >= 0, groupOf("Browse rooms").join(","));
+  ok("...and NOT under Your channels",
+     groupOf("Your channels").indexOf("Sunday Ops") < 0, groupOf("Your channels").join(","));
+  // Real check, not a tautology: with no stored preference the default must roll Browse up.
+  localStorage.removeItem("chatCollapsed");
+  ok("Browse is rolled up by default", listPref("chatCollapsed", ["browse"]).indexOf("browse") >= 0,
+     JSON.stringify(listPref("chatCollapsed", ["browse"])));
+
+  // ── the per-channel cog (replaced the always-on room bar, 2026-08-10) ────
+  const csShown = (id) => document.getElementById(id).hidden === false;
+  view.channels = [{ ch: "global", kind: "global", label: "Global", members: [], msgs: [], count: 1 }];
+  activeCh = "global";
+  setChanSettings(true);
+  // 🔑 The cog is present on EVERY channel. The old bar appeared and vanished, and a control that
+  // comes and goes is one people stop looking for.
+  ok("the cog is always there", document.getElementById("chanCog").offsetParent !== null);
+  ok("an ordinary channel still opens settings", csShown("chanSettings"));
+  ok("...offering the mute, which every channel has", !!document.getElementById("csMute").textContent);
+  ok("...but no code, invite or delete",
+     !csShown("csCodeRow") && !csShown("csInviteRow") && !csShown("csDangerRow"));
+  ok("...and it says so rather than showing an empty box", csShown("csNothing"));
+
+  view.channels.push({ ch: "custom:pub", kind: "custom", label: "Open Room", members: [], msgs: [],
+                       count: 2, privacy: "public", owner: "imc-subliminal" });
+  activeCh = "custom:pub";
+  renderChanSettings();
+  ok("a PUBLIC room you own offers Delete", csShown("csDangerRow"));
+  ok("...with no join code", !csShown("csCodeRow"));
+  ok("...and no invite box — anyone can already walk in", !csShown("csInviteRow"));
+
+  view.channels[1].owner = "someoneelse";
+  renderChanSettings();
+  ok("a public room you DON'T own offers no Delete", !csShown("csDangerRow"));
+  view.channels[1].owner = "imc-subliminal";
+
+  view.channels.push({ ch: "custom:ops", kind: "custom", label: "Sunday Ops", members: [], msgs: [],
+                       count: 3, privacy: "private", owner: "imc-subliminal", code: "K7M2QD" });
+  activeCh = "custom:ops";
+  renderChanSettings();
+  ok("a private room you own shows the join code", csShown("csCodeRow")
+     && document.getElementById("csCode").textContent === "K7M2QD",
+     document.getElementById("csCode").textContent);
+  ok("...the invite box, because it's yours", csShown("csInviteRow"));
+  ok("...and Delete", csShown("csDangerRow"));
+  ok("...titled with the room it belongs to",
+     document.getElementById("csTitle").textContent === "Sunday Ops",
+     document.getElementById("csTitle").textContent);
+
+  // Someone who was let in can pass the code on, but must not be able to invite or delete.
+  view.channels[2].owner = "someoneelse";
+  renderChanSettings();
+  ok("a private room you DON'T own still shows the code", csShown("csCodeRow"));
+  ok("...but hides the invite box", !csShown("csInviteRow"));
+  ok("...and hides Delete", !csShown("csDangerRow"));
+
+  // 🔑 Delete must not sit exposed — reaching it is a deliberate act now (Sub's complaint).
+  setChanSettings(false);
+  ok("with the cog closed, Delete is not on screen at all",
+     document.getElementById("csDelete").offsetParent === null);
+
+  // The pin section is the room's notice, so everyone sees it; only the owner may clear it.
+  view.channels[2].owner = "imc-subliminal";
+  view.channels[2].pin = { ch: "custom:ops", id: 7, handle: "Rytharr", text: "form up at Orison", by: "IMC-Subliminal", at: Date.now() };
+  activeCh = "custom:ops";
+  setChanSettings(true);
+  ok("the pin shows in settings", csShown("csPinRow")
+     && /form up at Orison/.test(document.getElementById("csPinText").textContent));
+  ok("...and the owner can clear it", document.getElementById("csPinRemove").hidden === false);
+  view.channels[2].owner = "someoneelse";
+  renderChanSettings();
+  ok("...but a member cannot", document.getElementById("csPinRemove").hidden === true);
+  view.channels[2].pin = null;
+  setChanSettings(false);
+
+  // The padlock in the channel list marks what isn't in the public directory.
+  view.directory = [];
+  renderChannels();
+  const locked = [...document.querySelectorAll("#chanList .crow")]
+    .filter((r) => r.querySelector(".lock")).map((r) => r.querySelector(".nm").textContent);
+  ok("only the private room gets a padlock", locked.join(",") === "Sunday Ops", locked.join(","));
+
+  // ── DMs ─────────────────────────────────────────────────────────────────
+  ok("a DM key is the ordered lowercase pair", dmChKey("Rytharr") === "dm:imc-subliminal|rytharr",
+     dmChKey("Rytharr"));
+  ok("...and the same both ways round", dmChKey("Rytharr") === dmChKey("RYTHARR"));
+  ok("the other person is read back out of the key",
+     dmOther("dm:imc-subliminal|rytharr") === "rytharr");
+
+  // Sub's call: DMs carry a standing disclaimer. Private from other PLAYERS, not encrypted.
+  ok("no DM warning on an ordinary channel",
+     !document.getElementById("dmWarn").classList.contains("show"));
+
+  openDm("Rytharr");
+  ok("opening a DM selects it", activeCh === "dm:imc-subliminal|rytharr", activeCh);
+  ok("...and the DM shows the privacy disclaimer",
+     document.getElementById("dmWarn").classList.contains("show"));
+  ok("...which says it plainly, and cannot be dismissed",
+     /not.{0,4}encrypted/i.test(document.getElementById("dmWarn").textContent)
+       && document.getElementById("dmWarn").querySelector("button") === null,
+     document.getElementById("dmWarn").textContent.slice(0, 70));
+  const dmRows = [...document.querySelectorAll("#chanList .crow .nm")].map((e) => e.textContent);
+  ok("...and it appears in the rail before any message exists", dmRows.indexOf("Rytharr") >= 0,
+     dmRows.join(","));
+  // A pending DM has no server room, so a state re-render must not bounce you back to Global.
+  renderAll();
+  ok("a state refresh keeps you in the unsent conversation",
+     activeCh === "dm:imc-subliminal|rytharr", activeCh);
+
+  openDm("IMC-Subliminal");
+  ok("you can't open a conversation with yourself", activeCh === "dm:imc-subliminal|rytharr", activeCh);
+
+  // 🔑 A DM opened from the menu must NOT also appear as a waiting conversation — that is the
+  // duplicate Sub saw pinned at the top of his DM list, which looked undeletable because a
+  // pending DM has no leave button until the room exists server-side.
+  view.dmThreads = [{ other: "rytharr", lastAt: new Date().toISOString() }];
+  renderChannels();
+  const rytharrRows = [...document.querySelectorAll("#chanList .crow .nm")]
+    .filter((e) => e.textContent.toLowerCase() === "rytharr");
+  ok("an open DM is not duplicated as a waiting thread", rytharrRows.length === 1, rytharrRows.length);
+
+  // ── collapsing groups, and hiding rooms you don't care about ────────────
+  view.dmThreads = [];
+  view.directory = [
+    { ch: "custom:a", label: "Halo Run", category: "mining", count: 4 },
+    { ch: "custom:b", label: "Quant Run", category: "mining", count: 1 },
+  ];
+  localStorage.removeItem("chatCollapsed"); localStorage.removeItem("chatHiddenRooms");
+  collapsed = new Set(); hiddenRooms = new Set();
+  renderChannels();
+  const grpFor = (title) => [...document.querySelectorAll("#chanList .grp")]
+    .find((g) => g.textContent.indexOf(title) >= 0);
+  const rowsAfter = (title) => {
+    const g = grpFor(title); const out = [];
+    for (let n = g.nextElementSibling; n && !n.classList.contains("grp"); n = n.nextElementSibling) out.push(n);
+    return out;
+  };
+  ok("a group lists its rooms when open", rowsAfter("Your channels").length > 0);
+  grpFor("Your channels").click();
+  ok("clicking the header collapses it", rowsAfter("Your channels").length === 0);
+  ok("...and it shows a count so the group stays honest",
+     !!grpFor("Your channels").querySelector(".gct"), grpFor("Your channels").textContent);
+  grpFor("Your channels").click();
+  ok("clicking again expands it", rowsAfter("Your channels").length > 0);
+
+  // Hiding is a DISPLAY choice — it must never join or leave anything.
+  const before = rowsAfter("Your channels").length;
+  const haloRow = [...document.querySelectorAll("#chanList .crow")]
+    .find((r) => r.querySelector(".nm")?.textContent === "Halo Run");
+  haloRow.querySelector(".x").click();
+  ok("hiding a browsable room removes it from the list",
+     ![...document.querySelectorAll("#chanList .crow .nm")].some((e) => e.textContent === "Halo Run"));
+  ok("...and it is remembered", JSON.parse(localStorage.getItem("chatHiddenRooms")).includes("custom:a"));
+  const un = [...document.querySelectorAll("#chanList .crow.unhide")][0];
+  ok("...with an obvious way back", !!un && /1 hidden/.test(un.textContent), un && un.textContent);
+  un.click();
+  ok("...which restores it", [...document.querySelectorAll("#chanList .crow .nm")].some((e) => e.textContent === "Halo Run"));
+  ok("...and the room count is back where it started", rowsAfter("Your channels").length === before);
+  localStorage.removeItem("chatCollapsed"); localStorage.removeItem("chatHiddenRooms");
+
+  // ── the member list offers the SAME right-click menu as a name in the log ──
+  view.channels[0].members = [{ handle: "Rytharr", verified: true }, { handle: "IMC-Subliminal", verified: true }];
+  activeCh = "global";
+  renderMembers();
+  const mrow = [...document.querySelectorAll("#memList .mrow")]
+    .find((r) => r.querySelector(".nm")?.textContent === "Rytharr");
+  ok("the member list has a row for them", !!mrow);
+  mrow.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 200, clientY: 200 }));
+  const ctxOpen = document.getElementById("ctx").classList.contains("open");
+  const items = [...document.getElementById("ctx").querySelectorAll("button")].map((b) => b.textContent);
+  ok("right-clicking a member opens the menu", ctxOpen);
+  ok("...with direct message, mention, friends and profile",
+     items.some((t) => /direct message/i.test(t)) && items.some((t) => /Mention/i.test(t))
+       && items.some((t) => /friends/i.test(t)) && items.some((t) => /profile/i.test(t)),
+     items.join(" | "));
+  closeCtx();
+
+  // ── timestamps say HOW LONG AGO, not what o'clock ───────────────────────
+  // 🔴 The bug: a clock time on week-old scrollback reads as today. Sub, 2026-08-12: "a user
+  // might think that that was actually sent today, but it's not."
+  {
+    const tsOf = (minsAgo) => {
+      const gCh2 = view.channels[0];
+      gCh2.msgs = [{ id: 900, from: { handle: "Rytharr", verified: true }, text: "hi",
+                     at: new Date(Date.now() - minsAgo * 60000).toISOString() }];
+      renderLog();
+      return document.querySelector("#log .msg .ts");
+    };
+    ok("a message from seconds ago says now", tsOf(0.1).textContent === "now", tsOf(0.1).textContent);
+    ok("...minutes ago in minutes", tsOf(7).textContent === "7m", tsOf(7).textContent);
+    ok("...hours ago in hours", tsOf(200).textContent === "3h", tsOf(200).textContent);
+    ok("...and days ago in DAYS, which is the whole point",
+       tsOf(60 * 24 * 3).textContent === "3d", tsOf(60 * 24 * 3).textContent);
+    // 🔴 NO BACKSLASH ESCAPES IN A SUITE REGEX. Every suite is a template literal, so a written
+    // backslash-d collapses to a literal "d" before the regex is ever compiled — the pattern
+    // then quietly tests for the LETTER d, and the syntax check cannot see it. Use [0-9]. This
+    // is the documented trap in SKILL.md and it cost two false failures here.
+    // (And no backticks in this comment either — that is the sibling trap, hit one edit later.)
+    // 🔑 Evaluate the render ONCE per assertion too: calling a rendering helper three times
+    // inside one expression makes a failure unreadable, which is how the above looked like a
+    // product bug for a minute.
+    const hasDigit = (s) => /[0-9]/.test(String(s));
+    // Past a week the compressed form stops helping and it says the date outright.
+    const old = tsOf(60 * 24 * 30).textContent;
+    ok("beyond a week it gives the date instead", hasDigit(old) && !/^[0-9]+d$/.test(old), old);
+    // 🔑 The exact time is never lost — it moves to the tooltip, where it costs nothing.
+    const hover = tsOf(90).title;
+    ok("the exact time is still there, on hover", hasDigit(hover) && hover.length > 8, hover);
+    view.channels[0].msgs = [];
+  }
+
+  // ── what someone is doing, when they have chosen to share it ─────────────
+  // 🔑 The interesting assertion is the NEGATIVE one. Almost nobody will turn this on, so the
+  // row with no activity is the common case — and rendering anything at all in its place
+  // ("idle", a dash) would be a confident claim about someone we know nothing about.
+  view.channels[0].members = [
+    { handle: "Rytharr", verified: true, activity: "Running Deep space hit" },
+    { handle: "IMC-Subliminal", verified: true },
+  ];
+  renderMembers();
+  const acRowOf = (h) => [...document.querySelectorAll("#memList .mrow")]
+    .find((r) => r.querySelector(".nm")?.textContent === h);
+  ok("a shared activity shows on that person's row",
+     acRowOf("Rytharr").querySelector(".act")?.textContent === "Running Deep space hit",
+     acRowOf("Rytharr").querySelector(".act")?.textContent);
+  ok("...and someone not sharing gets NOTHING in its place, not a placeholder",
+     !acRowOf("IMC-Subliminal").querySelector(".act"));
+
+  // ── YOUR settings, as opposed to the per-CHANNEL cog ─────────────────────
+  // Everything in here is about you and applies in every channel — which is the entire reason it
+  // is not beside a channel's mute.
+  view.shareActivity = false;
+  view.hideLocation = false;
+  setMePop(true);
+  const mpRow = (label) => [...document.querySelectorAll("#mePop .mp-row")]
+    .find((r) => r.querySelector(".mp-lbl")?.textContent.indexOf(label) === 0);
+  const mpSw = (label) => mpRow(label)?.querySelector(".sw");
+
+  ok("your settings hold the three per-user choices",
+     !!mpRow("Hide where I am") && !!mpRow("Share what I'm doing") && !!mpRow("My name colour"));
+  ok("sharing what you're doing reads off by default",
+     mpSw("Share what I'm doing").getAttribute("aria-pressed") === "false");
+  // 🔑 The label must say WHAT would be published. "Share my activity" invites a shrug; the
+  // contract you are running is something a person can actually decide about.
+  ok("...and says what turning it on would publish",
+     /contract/i.test(mpRow("Share what I'm doing").textContent),
+     mpRow("Share what I'm doing").textContent);
+  view.shareActivity = true;
+  renderMePop();
+  ok("...and reads on once it is", mpSw("Share what I'm doing").getAttribute("aria-pressed") === "true");
+  view.shareActivity = false;
+
+  // 🔴 Invisible mode. The description has to name the CHANNELS it removes you from — "hide my
+  // location" could mean anything, and this one silently drops you out of two rooms.
+  ok("hiding your location is off by default",
+     mpSw("Hide where I am").getAttribute("aria-pressed") === "false");
+  ok("...and says which channels it takes you out of",
+     /Nearby/i.test(mpRow("Hide where I am").textContent)
+       && /server/i.test(mpRow("Hide where I am").textContent),
+     mpRow("Hide where I am").textContent);
+  view.hideLocation = true;
+  renderMePop();
+  ok("...and reads on once it is", mpSw("Hide where I am").getAttribute("aria-pressed") === "true");
+  view.hideLocation = false;
+  setMePop(false);
+  ok("your settings close again", !document.getElementById("mePop").classList.contains("open"));
+
+  // 🔑 No verified tick anywhere. Chat is RSI-verified accounts only, so a badge saying so is
+  // true of every row and therefore says nothing.
+  view.channels[0].members = [{ handle: "Rytharr", verified: true }, { handle: "IMC-Subliminal", verified: true }];
+  renderMembers();
+  renderLog();
+  ok("no RSI-verified tick on a member row — every row would have one",
+     !document.querySelector("#memList .vf"));
+  ok("...nor in the message log", !document.querySelector("#log .vf"));
+
+  // ── the marker means ONLINE now, and the colour means identity ───────────
+  // 🔴 The dot used to be a per-handle hash colour and Sub asked what the red one meant. It
+  // meant nothing. A marker reads as a status light, so it had better be a status.
+  view.channels[0].members = [
+    { handle: "Rytharr", verified: true, inGame: true, color: 2 },
+    { handle: "Zed", verified: true },
+    { handle: "IMC-Subliminal", verified: true },
+  ];
+  renderMembers();
+  const stOf = (h) => acRowOf(h).querySelector(".st");
+  ok("someone in the PU is marked in-game", stOf("Rytharr").classList.contains("ingame"));
+  ok("...and says so in words on hover", /verse/i.test(stOf("Rytharr").title), stOf("Rytharr").title);
+  ok("someone connected but not in game is marked, but not as in-game",
+     !!stOf("Zed") && !stOf("Zed").classList.contains("ingame"));
+  // 🔴 There is no "offline" anywhere in this system, and there must not be: presence only covers
+  // rooms you are both in, so it would be a confident lie about someone you simply cannot see.
+  ok("...and nothing anywhere claims they are offline",
+     !/offline/i.test(document.getElementById("memList").textContent + (stOf("Zed").title ?? "")),
+     stOf("Zed").title);
+
+  // The colour is a CHOICE, shared by the server, and it falls back to the old name hash.
+  const nmColor = (h) => acRowOf(h).querySelector(".nm").style.color;
+  ok("a chosen colour is what the name renders in",
+     nmColor("Rytharr") === "rgb(95, 224, 138)", nmColor("Rytharr"));
+  ok("...and someone who never chose keeps the colour their name always had",
+     !!nmColor("Zed") && nmColor("Zed") !== nmColor("Rytharr"), nmColor("Zed"));
+  // The same person reads the same in the log as in the rail — one lookup, not two.
+  view.channels[0].msgs = [{ id: 901, from: { handle: "Rytharr", verified: true }, text: "o7", at: new Date().toISOString() }];
+  renderLog();
+  ok("the log agrees with the member list about their colour",
+     document.querySelector("#log .msg .nm").style.color === nmColor("Rytharr"),
+     document.querySelector("#log .msg .nm").style.color);
+  view.channels[0].msgs = [];
+
+  // ── org standing: the BADGE is the star count, the label is only a label ─
+  // 🔴 Measured across real dossiers, the rank NAME is free text each org picks: "SSGT",
+  // "President", "Expendable Crew Member", "Soon to be Casual". Nothing can be ordered from it.
+  // RSI's underlying 1-5 is the same scale for every org, so that is what the badge shows.
+  view.channels[0].members = [
+    { handle: "Rytharr", verified: true, org: "pxp", orgRank: "Expendable Crew Member", orgStars: 1 },
+    { handle: "Xan-Man", verified: true, org: "sbb", orgRank: "President", orgStars: 5 },
+    { handle: "Zed", verified: true },
+  ];
+  renderMembers();
+  const orgOf = (h) => acRowOf(h).querySelector(".orgr");
+  // 🔴 In GLOBAL, nothing. A rank issued by one org means nothing to anyone outside it (Sub:
+  // "does it need to show on the global chat what rank you are? I think it'll be just fine in
+  // the person's org chat").
+  ok("no rank badge outside that org's own channel", !orgOf("Xan-Man"));
+
+  // In the org's OWN room it shows the org's own word for the tier — no asterisks, because
+  // inside the org everybody already knows what that word means.
+  view.channels[0].kind = "org";
+  renderMembers();
+  ok("in org chat, the badge is the org's own name for the rank",
+     orgOf("Rytharr").textContent === "Expendable Crew Member", orgOf("Rytharr").textContent);
+  ok("...with no asterisks anywhere in it", orgOf("Xan-Man").textContent.indexOf("*") < 0
+     && orgOf("Xan-Man").textContent === "President", orgOf("Xan-Man").textContent);
+  // The 1-5 stays in the data and rides the tooltip: it is what makes "who leads this org"
+  // answerable, but it is not what anyone reads.
+  ok("the comparable 1-5 is still there, on hover",
+     /5 of 5/.test(orgOf("Xan-Man").title), orgOf("Xan-Man").title);
+  ok("someone with no public org gets no badge at all", !orgOf("Zed"));
+  view.channels[0].kind = "global";
+  renderMembers();
+
+  // The picker: eight, plus a way back to no choice at all.
+  setMePop(true);
+  const swatches = [...document.querySelectorAll("#mePop .mp-colors button")];
+  ok("the picker offers eight colours plus 'no colour'", swatches.length === 9, swatches.length);
+  ok("...and marks which one is yours", swatches.filter((b) => b.classList.contains("sel")).length === 1);
+  setMePop(false);
+
+  view.channels[0].members = [{ handle: "Rytharr", verified: true }, { handle: "IMC-Subliminal", verified: true }];
+  renderMembers();
+
+  // ── per-channel notification mute ────────────────────────────────────────
+  const savedMuted = localStorage.getItem("chatMuted");
+  mutedChans = new Set();
+  renderChannels();
+  const chRow = (label) => [...document.querySelectorAll("#chanList .crow")]
+    .find((r) => r.querySelector(".nm")?.textContent === label);
+  const gName = view.channels[0].label;
+  const wasActive = activeCh;
+  let bell = chRow(gName)?.querySelector(".bell");
+  ok("a joined channel carries a mute control", !!bell);
+  ok("...which is not muted to start with", !bell.classList.contains("off"));
+  bell.click();
+  ok("clicking it mutes that channel", isMuted(view.channels[0].ch));
+  ok("...without selecting the channel", activeCh === wasActive, activeCh);
+  ok("...and it is remembered",
+     JSON.parse(localStorage.getItem("chatMuted")).includes(view.channels[0].ch),
+     localStorage.getItem("chatMuted"));
+  bell = chRow(gName).querySelector(".bell");
+  ok("...and a muted channel SAYS so at rest, not only on hover", bell.classList.contains("off"));
+  ok("...with a slash, so it survives a skin that recolours it",
+     bell.querySelectorAll("svg path").length === 2);
+  bell.click();
+  ok("clicking again unmutes", !isMuted(view.channels[0].ch)
+     && !chRow(gName).querySelector(".bell").classList.contains("off"));
+  mutedChans = new Set(savedMuted ? JSON.parse(savedMuted) : []);
+  if (savedMuted === null) localStorage.removeItem("chatMuted"); else localStorage.setItem("chatMuted", savedMuted);
+
+  // ── the right rail's SECOND MODE: Friends (Sub, 2026-08-10 — a button, not a widget) ──
+  // 🔑 chatFriends / chatRight / chatRightMode are REAL user preferences on this origin, and this
+  // harness shares localStorage with the running overlay. Save them and hand them back.
+  const savedFriends = localStorage.getItem("chatFriends");
+  const savedRight = localStorage.getItem("chatRight");
+  const savedMode = localStorage.getItem("chatRightMode");
+  const railTitle = () => document.getElementById("memTitle").textContent;
+  const railClosed = () => document.getElementById("panel").classList.contains("no-right");
+  const whereOf = (h) => {
+    const r = [...document.querySelectorAll("#memList .mrow")]
+      .find((x) => x.querySelector(".nm")?.textContent === h);
+    return r ? (r.querySelector(".where")?.textContent ?? "") : null;
+  };
+  const gLabel = view.channels[0].label;
+
+  friends = [];
+  showRight = true; rightMode = "here"; renderMembers(); applyRails();
+  ok("the rail starts on the room's members", railTitle() === "Here", railTitle());
+
+  document.getElementById("friendsBtn").click();
+  ok("the friends button flips the SAME rail", railTitle() === "Friends", railTitle());
+  ok("...it is the rail that moved, not a second list",
+     document.querySelectorAll("#memList").length === 1 && !railClosed());
+  ok("...and only one of the two buttons reads active",
+     document.getElementById("friendsBtn").classList.contains("active")
+       && !document.getElementById("rightBtn").classList.contains("active"));
+  ok("...with an empty state that says how to add one",
+     /Right-click/i.test(document.querySelector("#memList .empty")?.textContent ?? ""),
+     document.querySelector("#memList .empty")?.textContent);
+
+  toggleFriend("Rytharr");        // a member of channels[0], so a shared room can see them
+  toggleFriend("NoOneSeesMe");    // in none of your channels
+  ok("a friend is listed", whereOf("Rytharr") !== null);
+  ok("...marked with the friend star",
+     document.querySelectorAll("#memList .mrow .fav").length === 2);
+  ok("...and named the channel that can see them", whereOf("Rytharr") === gLabel, whereOf("Rytharr"));
+  ok("a friend no shared room can see says NOTHING, never 'offline'",
+     whereOf("NoOneSeesMe") === "", whereOf("NoOneSeesMe"));
+  ok("...and the count counts friends, not the room",
+     document.getElementById("memCount").textContent === "2",
+     document.getElementById("memCount").textContent);
+
+  document.getElementById("rightBtn").click();
+  ok("the members button switches back rather than closing",
+     railTitle() === "Here" && !railClosed(), railTitle());
+  document.getElementById("friendsBtn").click();
+  ok("...and the chosen mode is remembered",
+     localStorage.getItem("chatRightMode") === "friends", localStorage.getItem("chatRightMode"));
+  document.getElementById("friendsBtn").click();
+  ok("clicking the mode already showing closes the rail", railClosed());
+
+  friends = savedFriends ? JSON.parse(savedFriends) : [];
+  for (const [k, v] of [["chatFriends", savedFriends], ["chatRight", savedRight], ["chatRightMode", savedMode]]) {
+    if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v);
+  }
+  showRight = true; rightMode = "here"; renderMembers(); applyRails();
+
+  // ── pinned notice + the message context menu ─────────────────────────────
+  // 🔑 Names here are suffixed because this suite is ONE scope: rows and items are already taken
+  // further up, and a duplicate const is a SyntaxError that kills the WHOLE suite before a single
+  // assertion runs. It surfaces as a bare "harness error" with no line, and node --check cannot
+  // see it, because every suite is a template literal and only the STRING is malformed.
+  const gCh = view.channels[0];
+  const myHandle = view.you.handle;
+  activeCh = gCh.ch;
+  gCh.msgs = [
+    { id: 41, from: { handle: "Rytharr", verified: true }, text: "meet at Checkmate", at: new Date().toISOString() },
+    { id: 42, from: { handle: myHandle, verified: true }, text: "on my way", at: new Date().toISOString() },
+  ];
+  gCh.pin = null;
+  renderPin(); renderLog();
+  ok("no pin means no notice bar", document.getElementById("pinbar").hidden);
+
+  gCh.pin = { ch: gCh.ch, id: 41, handle: "Rytharr", text: "meet at Checkmate", by: "Rytharr", at: Date.now() };
+  renderPin();
+  const pinbar = document.getElementById("pinbar");
+  ok("a pin shows the notice bar", !pinbar.hidden);
+  ok("...naming who said it and what they said",
+     /Rytharr/.test(pinbar.textContent) && /Checkmate/.test(pinbar.textContent), pinbar.textContent);
+  // 🔑 The bare attribute is not enough when a rule sets display — this is the 0.1.38 bug.
+  gCh.pin = null; renderPin();
+  ok("the [hidden] guard really hides it, not just the attribute",
+     getComputedStyle(document.getElementById("pinbar")).display === "none",
+     getComputedStyle(document.getElementById("pinbar")).display);
+
+  gCh.pin = { ch: gCh.ch, id: 41, handle: "Rytharr", text: "meet at Checkmate", by: "Rytharr", at: Date.now() };
+  renderPin();
+  ok("you cannot clear a pin in a room you do not own", document.getElementById("pinX").hidden);
+  // A custom room you own is the case where the widget may pin.
+  const owned = { ch: "custom:mine", kind: "custom", label: "Mine", count: 1, members: [], msgs: gCh.msgs,
+                  owner: myHandle.toLowerCase(), privacy: "public", category: "social",
+                  pin: { ch: "custom:mine", id: 41, handle: "Rytharr", text: "meet at Checkmate", by: myHandle, at: Date.now() } };
+  view.channels.push(owned);
+  activeCh = "custom:mine";
+  renderPin();
+  ok("...but you can in one you do", !document.getElementById("pinX").hidden);
+
+  renderLog();
+  const msgRows = [...document.querySelectorAll("#log .msg")];
+  const theirMsg = msgRows.find((r) => /Checkmate/.test(r.textContent));
+  const myMsg = msgRows.find((r) => /on my way/.test(r.textContent));
+  const menuOf = () => [...document.getElementById("ctx").querySelectorAll("button")].map((b) => b.textContent);
+  ok("messages rendered for the menu test", !!theirMsg && !!myMsg);
+  theirMsg.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 120, clientY: 120 }));
+  let menu = menuOf();
+  ok("right-clicking a MESSAGE offers report", menu.some((t) => /Report this message/i.test(t)), menu.join(" | "));
+  ok("...and pin, because this room is yours", menu.some((t) => /Pin this message/i.test(t)), menu.join(" | "));
+  ok("...and it is NOT the person menu", !menu.some((t) => /Open their profile/i.test(t)), menu.join(" | "));
+  // The confirmation is a second MENU, never a native modal over a click-through overlay.
+  [...document.getElementById("ctx").querySelectorAll("button")]
+    .find((b) => /Report this message/i.test(b.textContent)).click();
+  menu = menuOf();
+  ok("reporting asks first, in a menu rather than a dialog",
+     menu.some((t) => /Yes, report it/i.test(t)) && menu.some((t) => /Cancel/i.test(t)), menu.join(" | "));
+  ok("...and says the reporter is not named",
+     /not told who reported/i.test(document.querySelector("#ctx .ct-note")?.textContent ?? ""),
+     document.querySelector("#ctx .ct-note")?.textContent);
+  closeCtx();
+
+  myMsg.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 120, clientY: 120 }));
+  menu = menuOf();
+  ok("you are not offered a way to report yourself",
+     !menu.some((t) => /Report this message/i.test(t)), menu.join(" | "));
+  closeCtx();
+
+  // 🔑 The NAME keeps its own menu — the row handler must not swallow it.
+  theirMsg.querySelector(".nm")
+    .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 120, clientY: 120 }));
+  menu = menuOf();
+  ok("right-clicking the NAME still opens the person menu",
+     menu.some((t) => /Open their profile/i.test(t)) && !menu.some((t) => /Report this message/i.test(t)),
+     menu.join(" | "));
+  closeCtx();
+  view.channels.pop();
+  activeCh = gCh.ch;
+  gCh.pin = null;
+  renderPin();
+
+  // ── the menu must always FIT: this page is an iframe and cannot paint outside it ──────────
+  const ctxPanel = () => document.getElementById("panel").getBoundingClientRect();
+  const ctxBox0 = ctxPanel();
+  const ctxCorners = [[6, 6], [ctxBox0.width - 6, ctxBox0.height - 6],
+                      [ctxBox0.width - 6, 6], [6, ctxBox0.height - 6]];
+  let ctxEscaped = null;
+  for (const [cx, cy] of ctxCorners) {
+    openCtx("Rytharr", cx, cy);
+    const cb = document.getElementById("ctx").getBoundingClientRect();
+    const pb = ctxPanel();
+    if (cb.left < pb.left - 1 || cb.top < pb.top - 1 || cb.right > pb.right + 1 || cb.bottom > pb.bottom + 1) {
+      ctxEscaped = "from " + Math.round(cx) + "," + Math.round(cy)
+        + " menu " + Math.round(cb.left) + "," + Math.round(cb.top) + " " + Math.round(cb.width) + "x" + Math.round(cb.height)
+        + " vs panel " + Math.round(pb.left) + "," + Math.round(pb.top) + " " + Math.round(pb.width) + "x" + Math.round(pb.height);
+    }
+    closeCtx();
+  }
+  ok("the menu stays inside the widget from every corner", ctxEscaped === null, ctxEscaped);
+
+  // ── party listings: create form, board rows, applicants ──────────────────
+  // The opt-in must not be offered when we have nothing to offer.
+  view.shard = null; view.regionLabel = null;
+  $("cpParty").checked = true;
+  syncPartyFields();
+  ok("ticking Looking for people reveals the listing fields", $("cpPartyFields").hidden === false);
+  ok("...but NOT the use-my-location opt-in, with no shard known", $("cpHereRow").hidden === true);
+  view.shard = "pub_use1b_12326004_040"; view.regionLabel = "US East 1B";
+  syncPartyFields();
+  ok("...which appears once the log has told us where we are", $("cpHereRow").hidden === false);
+  ok("...and is OFF by default — publishing your shard is opt-in", $("cpHere").checked === false);
+  $("cpParty").checked = false;
+  syncPartyFields();
+  ok("unticking hides them again", $("cpPartyFields").hidden === true);
+
+  // The board row has to say enough to be worth choosing.
+  view.directory = [
+    { ch: "custom:halo-run", label: "Halo Run", category: "mining", count: 2,
+      party: true, location: "Aaron Halo", sizeMax: 4, joinMode: "apply", voice: "required" },
+    { ch: "custom:just-chat", label: "Just Chat", category: "social", count: 5 },
+  ];
+  collapsed.delete("browse");
+  renderChannels();
+  const pfRow = [...document.querySelectorAll("#chanList .crow")]
+    .find((r) => r.querySelector(".nm")?.textContent === "Halo Run");
+  ok("a listing appears on the board", !!pfRow);
+  ok("...flagged ASK when the owner approves people",
+     pfRow.querySelector(".pflag")?.textContent === "ASK", pfRow.querySelector(".pflag")?.textContent);
+  ok("...showing where and the voice expectation",
+     /Aaron Halo/.test(pfRow.querySelector(".pmeta")?.textContent ?? "")
+       && /voice req/.test(pfRow.querySelector(".pmeta")?.textContent ?? ""),
+     pfRow.querySelector(".pmeta")?.textContent);
+  // 🔑 The live number is PRESENCE; sizeMax is only what the leader wants.
+  ok("...with the live count against the wanted size",
+     pfRow.querySelector(".ct")?.textContent === "2/4", pfRow.querySelector(".ct")?.textContent);
+  const pfPlain = [...document.querySelectorAll("#chanList .crow")]
+    .find((r) => r.querySelector(".nm")?.textContent === "Just Chat");
+  ok("an ordinary room is not dressed up as a listing",
+     !pfPlain.querySelector(".pflag") && pfPlain.querySelector(".ct").textContent === "5");
+
+  // Applicants: owner only, and visible without opening anything.
+  const pfMine = { ch: "custom:halo-run", kind: "custom", label: "Halo Run", count: 2, members: [], msgs: [],
+                   privacy: "public", owner: myHandle.toLowerCase(), party: true, joinMode: "apply",
+                   applications: [{ handle: "seeker", note: "have a Prospector", at: Date.now() },
+                                  { handle: "zed", note: null, at: Date.now() }] };
+  view.channels.push(pfMine);
+  activeCh = "custom:halo-run";
+  setChanSettings(true);
+  ok("the owner sees who wants in", $("csAppsRow").hidden === false
+     && /2 people want in/.test($("csAppsLbl").textContent), $("csAppsLbl").textContent);
+  ok("...each with accept and decline",
+     document.querySelectorAll("#csApps .ap").length === 2
+       && document.querySelectorAll("#csApps .ap .hbtn").length === 4);
+  ok("...and their note, which is how you decide",
+     /have a Prospector/.test($("csApps").textContent), $("csApps").textContent.slice(0, 60));
+  renderTabs();
+  const pfTab = [...document.querySelectorAll("#tabs .tab")].find((t) => /Halo Run/.test(t.textContent));
+  ok("the TAB carries the count, so it is seen without opening the cog",
+     pfTab?.querySelector(".apps")?.textContent === "2", pfTab?.querySelector(".apps")?.textContent);
+
+  // 🔴 The applicant bar — Sub's own question about this feature: the cog may be the wrong home,
+  // because an application arriving mid-mission is invisible inside a popover and the applicant
+  // waits on an owner who never knew. The cog keeps the full list; the bar is the part that must
+  // not need opening.
+  setChanSettings(false);
+  renderApps();
+  const abBar = $("appbar");
+  ok("pending applications show IN the room, not only behind the cog", abBar.hidden === false);
+  ok("...counting them when there is more than one",
+     /2 people want in/.test($("appText").textContent), $("appText").textContent);
+  ok("...offering Review rather than a guess at which one you meant",
+     $("appMore").hidden === false && $("appYes").hidden === true, $("appText").textContent);
+
+  pfMine.applications = [{ handle: "seeker", note: "have a Prospector", at: Date.now() }];
+  renderApps();
+  ok("one applicant is named on the bar, with their note",
+     /seeker/.test($("appText").textContent) && /have a Prospector/.test($("appText").textContent),
+     $("appText").textContent);
+  ok("...and is actionable without opening anything",
+     $("appYes").hidden === false && $("appNo").hidden === false && $("appMore").hidden === true);
+  // 🔑 The handle is read off the bar at CLICK time, never captured in a listener — a render
+  // between seeing a name and pressing Accept must not admit the person who used to be there.
+  ok("...with the handle carried on the bar itself", abBar.dataset.handle === "seeker", abBar.dataset.handle);
+
+  pfMine.owner = "someoneelse";
+  renderChanSettings(); renderTabs(); renderApps();
+  ok("a non-owner is shown no applicant list", $("csAppsRow").hidden === true);
+  ok("...and no bar either", abBar.hidden === true);
+  // 🔑 The bare attribute is not enough when any rule sets display — the shipped 0.1.38 bug.
+  ok("...with a real [hidden] guard behind it, not just the attribute",
+     getComputedStyle(abBar).display === "none", getComputedStyle(abBar).display);
+  const pfTab2 = [...document.querySelectorAll("#tabs .tab")].find((t) => /Halo Run/.test(t.textContent));
+  ok("...and no tab marker either", !pfTab2?.querySelector(".apps"));
+  setChanSettings(false);
+  view.channels.pop();
+
+  // A new applicant in a room you are NOT looking at has to reach you somehow.
+  const abRoom = { ch: "custom:other-run", kind: "custom", label: "Other Run", count: 1, members: [], msgs: [],
+                   privacy: "public", owner: myHandle.toLowerCase(), party: true, joinMode: "apply",
+                   applications: [{ handle: "newbie", note: null, at: Date.now() }] };
+  view.channels.push(abRoom);
+  activeCh = gCh.ch;
+  unread.delete(abRoom.ch); seenApps.delete(abRoom.ch);
+  noteApplications();
+  // 🔑 First sight seeds SILENTLY. This iframe reloads on every regroup and the server re-sends
+  // the whole list on join, so without it a stack, a restart or an arrange pass would re-announce
+  // applicants the owner already dealt with — the same trap the mining scanner hit on mount.
+  ok("a room seen for the first time does not shout about applicants it already had",
+     !unread.has(abRoom.ch));
+  abRoom.applications.push({ handle: "second", note: null, at: Date.now() });
+  noteApplications();
+  ok("...but a genuinely new one lights the unread dot from another tab", unread.has(abRoom.ch));
+  unread.delete(abRoom.ch);
+  activeCh = abRoom.ch;
+  abRoom.applications.push({ handle: "third", note: null, at: Date.now() });
+  noteApplications();
+  ok("...and never while you are looking at that room — the bar is already saying it",
+     !unread.has(abRoom.ch));
+  activeCh = gCh.ch;
+  view.channels.pop();
+  seenApps.delete(abRoom.ch);
+  renderApps();
+  view.directory = [];
+  activeCh = gCh.ch;
+
+  // ── what the create form actually SENDS, and what a board row DOES ───────
+  // 🔑 Everything above this point asserts what the party UI LOOKS like. None of it could
+  // catch the two things that matter most about it: which location leaves the machine, and
+  // whether clicking an apply-only listing sends a join we know will bounce. Both are request
+  // bodies, so the only way to test them is to be the server.
+  const crPost = post;                 // function declaration in page scope — reassignable
+  let crSent = null;
+  post = async (path, body) => { crSent = { path, body: JSON.parse(JSON.stringify(body)) }; return true; };
+  try {
+    setCreatePop(true);
+    await sleep(60);
+    $("cpName").value = "Halo Mining Run";
+
+    // 🔑 A <select> silently defaults to its FIRST option, so "nobody touched it" is whatever
+    // happens to be listed first rather than a considered default. Assert the defaults rather
+    // than assuming the markup order is the intent.
+    ok("joining defaults to open", $("cpJoin").value === "open", $("cpJoin").value);
+    ok("voice defaults to none — we host no voice and must not imply otherwise",
+       $("cpVoice").value === "none", $("cpVoice").value);
+
+    // An ordinary room is an ordinary room: no listing fields ride along uninvited.
+    $("cpParty").checked = false;
+    syncPartyFields();
+    await createRoom();
+    ok("creating a plain room sends no listing fields at all",
+       crSent.path === "/api/chat/join" && crSent.body.mode === "create"
+         && crSent.body.party === undefined && crSent.body.minutes === undefined,
+       JSON.stringify(crSent.body));
+
+    // 🔴 THE PRIVACY CALL, and the one assertion in this file worth the most: publishing your
+    // shard is OPT-IN PER LISTING (Sub, 2026-08-10). Unticked, only what they typed goes out —
+    // merely having the widget open, or having a region known, must leak nothing.
+    view.shard = "pub_use1b_12326004_040"; view.regionLabel = "US East 1B";
+    $("cpName").value = "Halo Mining Run";
+    $("cpParty").checked = true;
+    syncPartyFields();
+    $("cpWhere").value = "Aaron Halo";
+    $("cpHere").checked = false;
+    syncPartyFields();
+    await createRoom();
+    ok("with the opt-in OFF, the real region never leaves the machine",
+       crSent.body.location === "Aaron Halo", JSON.stringify(crSent.body.location));
+    ok("...and the listing fields are all present",
+       crSent.body.party === true && crSent.body.joinMode === "open" && crSent.body.voice === "none"
+         && crSent.body.sizeMax === 4,
+       JSON.stringify(crSent.body));
+    // 🔑 A DURATION, never an expiresAt. A wall-clock stamp off a machine we do not control is a
+    // listing that never expires or is dead on arrival, and desktop clocks are wrong often
+    // enough for that to look random rather than broken.
+    ok("expiry is sent as minutes, not as a wall-clock time",
+       typeof crSent.body.minutes === "number" && crSent.body.minutes === 120
+         && crSent.body.expiresAt === undefined && crSent.body.expires_at === undefined,
+       JSON.stringify(crSent.body.minutes));
+
+    $("cpName").value = "Halo Mining Run";
+    $("cpParty").checked = true;
+    $("cpHere").checked = true;
+    syncPartyFields();
+    ok("ticking it takes the free-text field out of play, so the two can't disagree",
+       $("cpWhere").disabled === true);
+    await createRoom();
+    ok("...and THEN the real region is what publishes",
+       crSent.body.location === "US East 1B", JSON.stringify(crSent.body.location));
+
+    $("cpHere").checked = false; $("cpParty").checked = false;
+    syncPartyFields();
+    setCreatePop(false);
+
+    // ── clicking a row ────────────────────────────────────────────────────
+    view.directory = [
+      { ch: "custom:open-run", label: "Open Run", category: "mining", count: 2,
+        party: true, joinMode: "open", sizeMax: 4 },
+      { ch: "custom:ask-run", label: "Ask Run", category: "mining", count: 1,
+        party: true, joinMode: "apply", sizeMax: 6 },
+    ];
+    collapsed.delete("browse");
+    renderChannels();
+    const crRowOf = (label) => [...document.querySelectorAll("#chanList .crow")]
+      .find((r) => r.querySelector(".nm")?.textContent === label);
+
+    ok("an open listing is flagged OPEN, not ASK",
+       crRowOf("Open Run").querySelector(".pflag")?.textContent === "OPEN",
+       crRowOf("Open Run").querySelector(".pflag")?.textContent);
+    // Anything absent is left out rather than rendered as an empty field — a listing carrying a
+    // bare separator reads as missing data, which on a board is worse than a shorter row.
+    ok("a listing with no location and no voice carries no meta line at all",
+       !crRowOf("Ask Run").querySelector(".pmeta"),
+       crRowOf("Ask Run").querySelector(".pmeta")?.textContent);
+
+    crSent = null;
+    crRowOf("Open Run").click();
+    await sleep(30);
+    ok("clicking an open listing joins it",
+       crSent && crSent.path === "/api/chat/join" && crSent.body.name === "Open Run"
+         && crSent.body.mode === "join",
+       JSON.stringify(crSent));
+
+    // 🔴 The UI half of the gate bug. The server refuses an apply-mode join by name — that
+    // refusal is what makes "you approve people" mean anything — but sending a join we KNOW
+    // will bounce, purely to show the user an error, is a worse experience than asking
+    // properly. This is the assertion that notices if the row handler is ever simplified.
+    crSent = null;
+    crRowOf("Ask Run").click();
+    await sleep(30);
+    ok("clicking an apply-only listing ASKS instead of trying to walk in",
+       crSent && crSent.path === "/api/chat/apply" && crSent.body.ch === "custom:ask-run",
+       JSON.stringify(crSent));
+    ok("...and the row says so before you click it",
+       /Ask to join/i.test(crRowOf("Ask Run").title), crRowOf("Ask Run").title);
+
+    // The bar's buttons go down the SAME path the cog's list uses — one way to admit someone,
+    // not two, so a fix to one can never leave the other behind.
+    const crMine = { ch: "custom:bar-run", kind: "custom", label: "Bar Run", count: 1, members: [], msgs: [],
+                     privacy: "public", owner: myHandle.toLowerCase(), party: true, joinMode: "apply",
+                     applications: [{ handle: "seeker", note: null, at: Date.now() }] };
+    view.channels.push(crMine);
+    activeCh = "custom:bar-run";
+    renderApps();
+    crSent = null;
+    $("appYes").click();
+    await sleep(30);
+    ok("accepting from the bar resolves that application",
+       crSent && crSent.path === "/api/chat/application" && crSent.body.handle === "seeker"
+         && crSent.body.accept === true,
+       JSON.stringify(crSent));
+    crSent = null;
+    $("appNo").click();
+    await sleep(30);
+    ok("...and No declines the same one", crSent && crSent.body.accept === false, JSON.stringify(crSent));
+    view.channels.pop();
+  } finally {
+    // Leave the page exactly as it was: this suite shares an origin and a live sidecar with the
+    // real overlay window, and a stubbed post() left behind would silently swallow real calls.
+    post = crPost;
+    view.directory = [];
+    $("cpName").value = "";
+    activeCh = gCh.ch;
+    setCreatePop(false);
+    renderChannels(); renderApps();
+  }
+
+  // ── the bundled colour emoji font ────────────────────────────────────────
+  // 🔑 Assert the font actually LOADS, not merely that the CSS mentions it. A 404 on the file
+  // fails silently back to the OS font, which is the exact bug being fixed — and on the
+  // machine of whoever runs this suite the OS font probably has the glyph, so it would look
+  // fine while being broken for the user who reported boxes.
+  const fontRes = await fetch("/fonts/NotoColorEmoji.ttf", { method: "HEAD" });
+  ok("the bundled emoji font is served", fontRes.ok, "HTTP " + fontRes.status);
+  // 🔑 The face carries a unicode-range, so it is only fetched for characters INSIDE that range.
+  // load() must therefore be given the text — asking for the family alone loads nothing and
+  // check() then answers false for a font that is perfectly fine.
+  const o7 = String.fromCodePoint(0x1FAE1);
+  await document.fonts.load('16px "SCO Emoji"', o7);
+  // o7 is the whole reason this exists: U+1FAE1, Unicode 14, missing from older Segoe UI Emoji.
+  ok("...and covers o7 (U+1FAE1), the one that was a box", document.fonts.check('16px "SCO Emoji"', o7));
+  // Order matters: behind Segoe UI Emoji it would never be consulted on the Windows machines
+  // that have the problem. Measured off a REAL message node, not off the stylesheet text.
+  const fontProbe = document.createElement("div");
+  fontProbe.className = "msg";
+  const fontProbeTx = document.createElement("span");
+  fontProbeTx.className = "tx";
+  fontProbe.appendChild(fontProbeTx);
+  document.getElementById("log").appendChild(fontProbe);
+  const fam = getComputedStyle(fontProbeTx).fontFamily;
+  ok("the bundled font is in the message stack", /SCO Emoji/.test(fam), fam);
+  ok("...ahead of the OS emoji fonts, or it would never be reached",
+     fam.indexOf("SCO Emoji") < fam.indexOf("Segoe UI Emoji"), fam);
+  fontProbe.remove();
+
+  // Conversations the server knows about but that aren't open tabs.
+  view.dmThreads = [{ other: "zed", lastAt: new Date().toISOString() }];
+  renderChannels();
+  const waiting = [...document.querySelectorAll("#chanList .crow")]
+    .filter((r) => r.querySelector(".dmdot")).map((r) => r.querySelector(".nm").textContent);
+  ok("a conversation waiting for you is listed", waiting.join(",") === "zed", waiting.join(","));
+
+  return out;
+})()`;
+
 const UNLOCK = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
@@ -1446,12 +3621,33 @@ app.whenReady().then(async () => {
     fails += await run("chrome anchoring + latches", ANCHOR, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("lifecycle: closed = idle", LIFECYCLE, null);
     fails += await run("per-widget angle", ANGLE, null);
+    fails += await run("split fade: panel vs text", SPLITFADE, null);
+    fails += await run("nothing animates at rest", IDLEPAINT, null);
+    fails += await run("mission info from community data", MISSIONINFO, null);
     fails += await run("cog auto-hide on game focus", COGHIDE,
       path.join(__dirname, "widget-dom-stub-preload.cjs"), "coghide=250");
     fails += await run("unlock notifier", UNLOCK, null, null, "unlockalert.html");
     fails += await run("scan read area", SCANBOX, null);
+    // Stub preload, and not optional: the whole region-reporting block is behind
+    // `if (window.overlayApi)`, so without a shell the panel renders and reports NOTHING — the
+    // clickability assertions would be measuring an empty list against an empty list.
+    fails += await run("payout scan session panel", PAYOUTPANEL,
+      path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    fails += await run("widget settings close when idle", WCFGIDLE, null, "wcfgidle=250");
+    // ?arrange: the calibration panel lives INSIDE the arrange scrim, so a suite that doesn't open
+    // arrange mode measures a display:none control — every size assertion then passes on 0 == 0.
+    // The stub preload is needed as well: the whole arrange-chrome block is behind
+    // `if (window.overlayApi)`, so with no shell the control renders but nothing is wired to it.
+    fails += await run("canvas calibration (mixed-DPI)", CALIBRATE,
+      path.join(__dirname, "widget-dom-stub-preload.cjs"), "arrange");
     fails += await run("patch notes fit the monitor", PATCHNOTES, null);
+    fails += await run("patch notes are grouped and labelled", PATCHGROUPS, null);
+    fails += await run("setup nudge", SETUPNUDGE, null);
+    fails += await run("background service down", SVCDOWN, null);
+    fails += await run("chrome over the native view", VIEWMASK, null);
     fails += await run("mining call-outs by verdict", MININGSAY, null, null, "mining.html");
+    fails += await run("chat links + slash menu", CHATLINKS, null, null, "chat.html");
+    fails += await run("completion card holds while you use it", REPORTHOLD, null);
   } catch (e) {
     // The message alone ("Cannot read properties of null") doesn't say WHICH suite or line, and
     // hunting that by bisection wastes a run each time.

@@ -46,7 +46,67 @@ const SCRIPT = [
   "}",
 ].join("\n");
 
+// ── In-process fast path (0.1.41) ───────────────────────────────────────────────────────────
+// koffi FFI straight to user32/kernel32 — the exact three calls the PowerShell helper made,
+// minus the ~40-68 MB PowerShell host it made them from. The helper below is NOT dead code:
+// it is the fallback if koffi fails to load or a call ever throws, so a broken native module
+// degrades to the shipped 0.1.40 behavior rather than to blindness (hold-to-interact and the
+// OCR gate both read this).
+let native = null;
+try {
+  const koffi = require("koffi");
+  const user32 = koffi.load("user32.dll");
+  const kernel32 = koffi.load("kernel32.dll");
+  const GetForegroundWindow = user32.func("void* GetForegroundWindow()");
+  const GetWindowThreadProcessId = user32.func("uint32 GetWindowThreadProcessId(void* h, _Out_ uint32* pid)");
+  koffi.struct("FGRECT", { left: "long", top: "long", right: "long", bottom: "long" });
+  const GetWindowRect = user32.func("bool GetWindowRect(void* h, _Out_ FGRECT* r)");
+  const OpenProcess = kernel32.func("void* OpenProcess(uint32 access, bool inherit, uint32 pid)");
+  const CloseHandle = kernel32.func("bool CloseHandle(void* h)");
+  const QueryFullProcessImageNameW = kernel32.func("bool QueryFullProcessImageNameW(void* h, uint32 flags, void* buf, _Inout_ uint32* size)");
+  const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+  let lastHwnd = null; // resolve the process name only when the HWND changes — same economy as the helper
+  let lastName = "";
+  native = {
+    read() {
+      const h = GetForegroundWindow();
+      if (!h) return { name: "", rect: null };
+      const addr = koffi.address(h);
+      if (addr !== lastHwnd) {
+        lastHwnd = addr;
+        lastName = "";
+        const pidOut = [0];
+        GetWindowThreadProcessId(h, pidOut);
+        if (pidOut[0]) {
+          const ph = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pidOut[0]);
+          if (ph) {
+            const buf = Buffer.alloc(1040);
+            const size = [519];
+            if (QueryFullProcessImageNameW(ph, 0, buf, size)) {
+              // Match the helper's Get-Process .ProcessName: basename, no extension.
+              const full = buf.toString("utf16le", 0, size[0] * 2);
+              lastName = path.basename(full).replace(/\.exe$/i, "");
+            }
+            CloseHandle(ph);
+          }
+        }
+      }
+      const r = {};
+      let rect = null;
+      if (GetWindowRect(h, r)) {
+        const w = r.right - r.left, ht = r.bottom - r.top;
+        if (w > 0 && ht > 0) rect = { x: r.left, y: r.top, width: w, height: ht };
+      }
+      return { name: lastName, rect };
+    },
+  };
+} catch {
+  native = null; // no koffi (or no prebuild for this machine) — the PowerShell helper takes over
+}
+
 let proc = null;
+let nativeTimer = null;
+let lastNativeLine = null;
 let stopped = false;
 let restartT = null;
 let current = { name: "", rect: null };
@@ -74,7 +134,31 @@ function handleLine(line) {
 }
 
 function start() {
-  if (proc || stopped) return;
+  if (stopped) return;
+  if (native) {
+    if (nativeTimer) return;
+    nativeTimer = setInterval(() => {
+      let next;
+      try {
+        next = native.read();
+      } catch {
+        // A native call threw — permanently hand this session to the PowerShell helper.
+        native = null;
+        clearInterval(nativeTimer);
+        nativeTimer = null;
+        lastNativeLine = null;
+        start();
+        return;
+      }
+      everRead = true;
+      const line = next.rect
+        ? `${next.name}|${next.rect.x}|${next.rect.y}|${next.rect.width}|${next.rect.height}`
+        : `${next.name}|`;
+      if (line !== lastNativeLine) { lastNativeLine = line; current = next; emit(); }
+    }, POLL_MS);
+    return;
+  }
+  if (proc) return;
   try { fs.writeFileSync(ps1, SCRIPT); } catch { return; } // no temp dir — callers fall back
   try {
     proc = spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1], {
@@ -98,6 +182,7 @@ function start() {
 }
 
 function halt() {
+  if (nativeTimer) { clearInterval(nativeTimer); nativeTimer = null; lastNativeLine = null; }
   if (restartT) { clearTimeout(restartT); restartT = null; }
   if (proc) { try { proc.kill(); } catch { /* already gone */ } proc = null; }
   everRead = false;            // stale the moment we stop looking
