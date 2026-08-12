@@ -7,6 +7,66 @@
    NOTE: missions.html / mining.html / notepad.html still carry their own inline copy of these
    tokens (they predate this file). If they're ever touched, folding them onto this stylesheet
    would remove the duplication. */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("/fonts/SpaceGrotesk-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("/fonts/SpaceGrotesk-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* 🔑 BUNDLED Inter, not fetched from Google Fonts.
+   Every widget page used to <link> fonts.googleapis.com at load. Three problems, one fix:
+   it is a network dependency on someone else's CDN on EVERY widget load (this app runs over a
+   game, often on a connection already busy); Google rotates the file URLs, so a cached
+   stylesheet can point at a 404 — which is exactly what the widget suite caught, users silently
+   falling back to system-ui; and it made our own test suite depend on the public internet.
+   130KB for both subsets, versus 13 external requests. Subsets and unicode-ranges are Google's
+   own, so coverage is unchanged.
+   Inter, SIL Open Font License 1.1 — see overlay/fonts/OFL-Inter.txt. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/Inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/Inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* 🔑 BUNDLED colour emoji, because the OS font cannot be relied on.
+   Two real failures, one fix: `o7` is 🫡 U+1FAE1, added in Unicode 14 (2021) and absent from an
+   un-updated Segoe UI Emoji — it is the FIRST emoji in the picker and the one SC players
+   actually use, so it rendered as a box; and the Linux port may have no colour emoji font at
+   all. Shipping the font makes emoji identical everywhere instead of a function of the user's
+   OS patch level.
+   @font-face is LAZY — the 4.8MB file is only fetched by a page that actually renders emoji, so
+   declaring it in the shared sheet costs the other widgets nothing.
+   Noto Color Emoji (COLRv1), SIL Open Font License 1.1 — see overlay/fonts/OFL-NotoColorEmoji.txt. */
+@font-face {
+  font-family: "SCO Emoji";
+  src: url("/fonts/NotoColorEmoji.ttf") format("truetype");
+  font-display: swap;
+  /* Only the emoji planes, so this font can never win for ordinary Latin text. */
+  unicode-range: U+203C-3299, U+1F000-1FAFF, U+FE0F, U+200D, U+E0020-E007F;
+}
+
   :root {
     --cyan: #45D0E0; --cyan-bright: #7fe3ef; --cyan-text: #c4dbe6; --cyan-dim: #7fa7bb; --faint: #5d7e90;
     --gold: #FFD27A; --amber: #F5A623; --green: #2ee6a0; --red: #ff8478;
@@ -124,6 +184,72 @@
     --menu-bg: #0a1519; --scan: rgba(207, 240, 246, 0.06); --sheen: rgba(220, 245, 250, 0.10);
   }
 
+/* ── Panel surface vs panel content: TWO independent alphas ─────────────────────
+   Sub's ask (2026-08-11): fade a widget's PANEL and its TEXT independently, so a
+   near-invisible panel can still carry perfectly readable text.
+
+   Why it needs a layer rather than a second number: one `opacity` composites the
+   widget as a single unit, so text can only ever be dimmer than the panel it sits on
+   — the case actually worth having is unreachable by construction. Nesting a second
+   opacity inside the first cannot fix it either, because they multiply.
+
+   🔑 NOTHING MOVES. Every painted property stays exactly where it is and has its ALPHA
+   multiplied by --wsurf in place, so an un-faded widget renders byte-identically to
+   before. The obvious design — lift the fill onto a `.wsurface` child so it can carry
+   its own opacity — was planned and then rejected on measurement, because it loses on
+   three counts a plan cannot see: an outer box-shadow on a child is CLIPPED AWAY by the
+   panel's own `overflow: hidden` (six of the eight panels have it), a child cannot cover
+   the 1px border region of a clipped panel, and moving the border changes the box model.
+
+   What makes "no move" possible is `color-mix()`, which multiplies a baked rgba token's
+   alpha without decomposing it. The earlier attempt at this feature concluded the only
+   ways forward were converting ~80 colour definitions across 16 skins to rgb triplets,
+   or a surface layer; color-mix is the third door and it needs neither. Verified in this
+   Chromium: at 100% it returns the token unchanged (0.72 -> 0.721569) and RGB is
+   untouched at every step, because color-mix interpolates premultiplied.
+
+   🔑 Specificity: this must out-rank each page's own `#panel {}` block, which is an ID
+   selector in a <style> that loads AFTER this file. `#panel.wpanel` (1,2,0) does it
+   with no !important anywhere. */
+:root { --wsurf: 1; --wtext: 1; }
+
+#panel.wpanel {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--panel-top) calc(var(--wsurf, 1) * 100%), transparent),
+    color-mix(in srgb, var(--panel-bot) calc(var(--wsurf, 1) * 100%), transparent));
+  border-color: rgba(var(--accent-rgb), calc(0.38 * var(--wsurf, 1)));
+  box-shadow: var(--panel-shadow,
+    0 10px 34px rgba(0, 0, 0, calc(0.5 * var(--wsurf, 1))),
+    inset 0 0 0 1px rgba(var(--accent-rgb), calc(0.05 * var(--wsurf, 1))));
+  /* A ghosted panel that still blurs the game behind it reads as broken, so the blur
+     goes with the fade. Pages that want a different strength set --panel-blur. */
+  -webkit-backdrop-filter: blur(calc(var(--panel-blur, 9px) * var(--wsurf, 1)));
+  backdrop-filter: blur(calc(var(--panel-blur, 9px) * var(--wsurf, 1)));
+  /* 🔑 --wfade-ms is 0ms WHILE A SLIDER IS BEING DRAGGED. A 0.18s ease is right for the fade
+     itself (idle <-> hover is a state change and should glide), but it is exactly wrong under a
+     continuously changing value: every input event restarts the transition from wherever the
+     last one had got to, so the panel permanently trails the thumb and only arrives once you
+     stop moving. Sub reported that as "sometimes it does nothing and takes a while to catch up",
+     which is precisely the shape of a transition chasing an input. */
+  transition: background var(--wfade-ms, 0.18s) ease, border-color var(--wfade-ms, 0.18s) ease,
+    box-shadow var(--wfade-ms, 0.18s) ease, backdrop-filter var(--wfade-ms, 0.18s) ease;
+}
+/* The AMD-lite skin trades the translucent glass for a near-opaque fill (it exists to stop
+   continuous recompositing over the game's Vulkan surface). It still fades. */
+html.amd-lite #panel.wpanel {
+  background: color-mix(in srgb, var(--panel-solid) calc(var(--wsurf, 1) * 100%), transparent);
+}
+
+/* The content side. Applied per direct child rather than through one wrapper, because
+   wrapping would be a DOM move inside eight pages and these children carry the panel's
+   flex layout. At the default of 1, `opacity` creates no stacking context and costs
+   nothing — an un-faded widget is unchanged.
+   Trinkets are the skin's IDENTITY, not content, so they follow the SURFACE. (A page's
+   own copies are hidden when embedded — the canvas injects its own onto the wrapper —
+   but they are live on the product page and in a plain browser.) */
+.wpanel > * { opacity: var(--wtext, 1); transition: opacity var(--wfade-ms, 0.18s) ease; }
+.wpanel > .tape, .wpanel > .bolt, .wpanel > .corner { opacity: var(--wsurf, 1); }
+
 /* ── Universal surface treatments ───────────────────────────────────────────────
    Sub's rule (2026-07-24): a theme's SURFACE treatment belongs on every widget —
    Origin's contrast stitching, Esperia's triangular mesh, the base CRT scanlines.
@@ -131,11 +257,17 @@
    Anvil's screws stay on the main Blueprint panel only, or they'd be everywhere.
 
    Any widget panel that opts in with class="wpanel" gets the surface set. The panel
-   must be position:relative (they all are) — these draw as ::before/::after layers. */
+   must be position:relative (they all are) — these draw as ::before/::after layers.
+
+   These stay ABOVE the content (z-index 3) rather than moving down onto .wsurface,
+   because scanlines crossing the text is what the CRT look actually is. Multiplying
+   their opacity by --wsurf is what makes them part of the SURFACE for fading, with no
+   change to how they render at rest. */
 
 .wpanel::before {
   content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 3;
-  background: repeating-linear-gradient(0deg, transparent 0 2px, var(--scan) 2px 3px); opacity: 0.5;
+  background: repeating-linear-gradient(0deg, transparent 0 2px, var(--scan) 2px 3px);
+  opacity: calc(0.5 * var(--wsurf, 1)); transition: opacity var(--wfade-ms, 0.18s) ease;
 }
 html.amd-lite .wpanel::before { display: none; }
 
@@ -154,8 +286,9 @@ html.amd-lite .wpanel::before { display: none; }
    OUTLINE rather than a ::after layer: mining.html already owns #panel::after for its visor
    sheen, and an ID selector would beat a class one. Same look, nothing to collide over. */
 :root[data-theme="origin"] .wpanel {
-  outline: 1.5px dashed rgba(var(--value-rgb), 0.5);
+  outline: 1.5px dashed rgba(var(--value-rgb), calc(0.5 * var(--wsurf, 1)));
   outline-offset: -5px;
+  transition: outline-color 0.18s ease;
 }
 
 /* ── No accidental text selection ───────────────────────────────────────────────

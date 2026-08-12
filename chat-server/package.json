@@ -1,0 +1,15 @@
+{
+  "name": "sc-overlay-chat-server",
+  "version": "0.0.1",
+  "private": true,
+  "description": "SC Overlay social chat server (A/B option 1: custom). Prototype home — production home is the subliminal-gg stack.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "ws": "^8.18.0"
+  }
+}

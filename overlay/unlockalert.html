@@ -9,9 +9,6 @@
   /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
     const t = q.get("theme"); if (t) r.setAttribute("data-theme", t); }</script>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* "Blueprint Received" toast, as a PLACEABLE widget.
@@ -42,6 +39,9 @@
      player has to act, and the accent border is what says so at a glance. */
   #card.claiming { border-color: var(--warn, #e8b44a); }
   .claim { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+  /* The author display:flex above beats the UA's [hidden]{display:none} — without this guard
+     the claim prompt rode along on every ordinary receipt toast (shipped 0.1.38–0.1.40). */
+  .claim[hidden] { display: none; }
   .claim button {
     font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
     padding: 4px 11px; border-radius: 7px; color: #1a1400;

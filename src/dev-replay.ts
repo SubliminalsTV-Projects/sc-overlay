@@ -76,6 +76,24 @@ export const SCENARIOS: ReplayScenario[] = [
     aUEC: 9000,
   },
   {
+    id: "bounty",
+    label: "Bounty Hunter — ship kill, no drop, no payout line",
+    note: "Sub's real 2026-08-10 run, copied out of Game.log. Auto-classified, so the combat question is STATED not asked — and with no blueprint and no aUEC the card has to look right with BOTH missing. The sparsest report the app can produce.",
+    // Straight off the CreateMarker line. ⚠️ `KIllShip` is CIG's own typo (capital I) and is what
+    // the classifier matches on — correcting it here would silently stop this auto-classifying.
+    contractKey: "BountyHuntersGuild_Bounty_Pyro_VeryEasy",
+    generator: "BountyHuntersGuild_KIllShip",
+    // ⚠️ The TRAILING SPACE is real: the game logs "...Minimal Support) : " and acceptTitle's
+    // `(.+?):\s*"` captures it. Same reason the double space above is kept — do not tidy it.
+    title: "Verified Bounty: Hachiro Fiorini | Very Low-Risk Target (Single Seater Craft, Minimal Support) ",
+    durationMin: 4.73, // accepted 20:57:14.266 → complete 21:01:58.136 = 283.9s, so the card reads 4:44
+    drop: false,
+    // 🔑 null, not 0. Nothing in the log awarded aUEC for this contract — bounty payouts are
+    // calculated at runtime — and the report omits the stat rather than showing a zero.
+    aUEC: null,
+    outcome: "completed",
+  },
+  {
     id: "abandoned",
     label: "Abandoned mission — must show NOTHING",
     note: "Regression check, not a demo. An abandon shows no report at all (Sub, 2026-07-30): there is no reward to summarise and nothing worth asking about a contract you walked away from.",

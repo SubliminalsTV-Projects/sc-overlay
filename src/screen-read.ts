@@ -15,6 +15,7 @@ import { execFile, spawn } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { assetDir } from "./paths.js";
 
 export interface OcrLine { text: string; x: number; y: number; w: number; h: number; }
 export interface OcrResult { w: number; h: number; lines: OcrLine[]; }
@@ -141,6 +142,21 @@ export function parseSignature(text: string): number | null {
     return v >= 1000 && v <= 30000 ? v : null;
   }
   return null;
+}
+
+/** Pick the best signature-shaped candidate out of a set of lines already known to be "the
+ *  region" — either the scan-region-filtered subset of a full-frame read, or the entirety of a
+ *  tight crop taken OF that region (see the mining RapidOCR re-read in capture.cjs, which crops
+ *  to the configured scan region before OCR-ing it specifically because Windows OCR mangles this
+ *  small, translucent-backgrounded, stylized text — the same reason the fabricator kiosk gets a
+ *  RapidOCR second pass). Closest-to-centre wins, same as before this was extracted. */
+export function bestSignatureLine(lines: OcrLine[], centerX: number): { l: OcrLine; sig: number } | null {
+  const cands = lines
+    .map((l) => ({ l, sig: parseSignature(l.text) }))
+    .filter((c): c is { l: OcrLine; sig: number } => c.sig != null);
+  if (!cands.length) return null;
+  cands.sort((a, b) => Math.abs(a.l.x - centerX) - Math.abs(b.l.x - centerX));
+  return cands[0];
 }
 
 /** Parse an SC duration string ("41m 35s", "14h 53m", "1 h 5 m") to seconds, or null.
@@ -282,6 +298,33 @@ function killOcrWorker(): void {
   while (workerQueue.length) workerQueue.shift()?.({ w: 0, h: 0, lines: [] });
 }
 
+/** Why Windows OCR isn't answering — the evidence, kept because it used to be thrown away.
+ *
+ *  🔑 Every failure here used to be silent: a worker that could not spawn, or was killed the
+ *  instant it did, resolved its pending reads as `{w:0,h:0,lines:[]}` — the SAME value a frame
+ *  with no text on it produces. So a machine where OCR was blocked outright looked identical to
+ *  one that was simply pointed at empty sky, in the log and in diagnostics alike, and a real user
+ *  report ("his OCR just isn't working") had nothing to go on (2026-08-11).
+ *
+ *  These three tell the causes apart, which is the whole point — see ocrSelfTest():
+ *    spawnError        Windows refused to START powershell. EPERM/EACCES is the security-software
+ *                      signature; ENOENT means it genuinely isn't on PATH.
+ *    exitedBeforeReady it started and died before printing its banner — i.e. something killed it.
+ *    everReady         it has answered at least once this session, so the pipe itself is fine and
+ *                      an empty read points at Windows OCR (a missing language pack) instead. */
+const ocrSignal = {
+  spawnError: null as string | null,
+  exitedBeforeReady: false,
+  lastExitCode: null as number | null,
+  everReady: false,
+};
+
+function noteOcrFailure(what: string): void {
+  // Logged from the SIDECAR on purpose: the shell is a detached GUI process whose stdout goes
+  // nowhere, and sidecar.log is the file a user can actually find and send.
+  console.error("[ocr] " + what);
+}
+
 function ensureOcrWorker(): ReturnType<typeof spawn> | null {
   if (worker) return worker;
   try {
@@ -289,6 +332,7 @@ function ensureOcrWorker(): ReturnType<typeof spawn> | null {
     writeFileSync(p, OCR_WORKER_PS1, "utf8");
     const w = spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", p], { windowsHide: true });
     worker = w;
+    let ready = false;   // per-worker: an exit before this is the "something killed it" signature
     w.stdout?.setEncoding("utf8");
     w.stdout?.on("data", (chunk: string) => {
       workerBuf += chunk;
@@ -296,14 +340,111 @@ function ensureOcrWorker(): ReturnType<typeof spawn> | null {
       while ((i = workerBuf.indexOf("\n")) >= 0) {
         const line = workerBuf.slice(0, i).trim();
         workerBuf = workerBuf.slice(i + 1);
-        if (!line || line === "OCR-READY") continue;   // the banner, not a result
+        if (line === "OCR-READY") { ready = true; ocrSignal.everReady = true; continue; }  // the banner, not a result
+        if (!line) continue;
         workerQueue.shift()?.(parseOcrJson(line));
       }
     });
-    w.on("exit", () => { if (worker === w) killOcrWorker(); });
-    w.on("error", () => { if (worker === w) killOcrWorker(); });
+    w.on("exit", (code) => {
+      if (worker !== w) return;
+      ocrSignal.lastExitCode = code ?? null;
+      ocrSignal.exitedBeforeReady = !ready;
+      // A worker that reached READY and later exits is an ordinary death; the next read respawns
+      // it. One that never got there is the interesting case, so only that one is worth a line.
+      if (!ready) noteOcrFailure(`the OCR helper exited (code ${code}) before it was ready - something on this PC may be stopping it from running`);
+      killOcrWorker();
+    });
+    w.on("error", (err: NodeJS.ErrnoException) => {
+      if (worker !== w) return;
+      ocrSignal.spawnError = err?.code || String(err?.message || err);
+      noteOcrFailure(`could not start the OCR helper: ${ocrSignal.spawnError}`);
+      killOcrWorker();
+    });
     return w;
-  } catch { killOcrWorker(); return null; }
+  } catch (e) {
+    ocrSignal.spawnError = (e as NodeJS.ErrnoException)?.code || String(e);
+    noteOcrFailure(`could not start the OCR helper: ${ocrSignal.spawnError}`);
+    killOcrWorker();
+    return null;
+  }
+}
+
+// ── The self-test ─────────────────────────────────────────────────────────────
+// 🔑 An empty OCR result is AMBIGUOUS, and that ambiguity is the whole reason a broken engine
+// could never be reported. A screenshot of the game legitimately contains no text plenty of the
+// time, so "no lines" cannot be alerted on. Reading an image WE ship, whose contents we already
+// know, removes the ambiguity: nothing coming back from this file means the engine is broken,
+// full stop. Nothing is displayed and nothing is captured - it is a file on disk handed to the
+// same ocrImage() the capture loop uses.
+//
+// ⚠️ This proves the OCR ENGINE link only. The chain is
+//     foreground detection -> screen capture -> OCR engine -> classify
+// and a self-test can pass while capture or the foreground watcher is the thing being blocked.
+// Don't let a green self-test be read as "screen reading works".
+const SELFTEST_IMAGE = join(assetDir(import.meta.url, "overlay"), "ocr-selftest.png");
+/** Keep in sync with tools/make-ocr-selftest.ps1, which draws these into the image. */
+const OCR_SELFTEST_WORDS = ["SC", "OVERLAY", "OCR", "SELF", "TEST", "12345"];
+
+export interface OcrHealth {
+  /** The engine answered with text. This is the one that decides whether to warn anybody. */
+  ok: boolean;
+  /** ...and what came back resembles what we know is in the image. A true `ok` with a false
+   *  `matched` is a working engine reading badly - worth reporting, never worth an alert. */
+  matched: boolean;
+  lines: number;
+  text: string;
+  ranAt: string;
+  ms: number;
+  /** Plain words for a human, chosen from the failure signature. Null when ok. */
+  reason: string | null;
+  signal: { spawnError: string | null; exitedBeforeReady: boolean; lastExitCode: number | null; everReady: boolean };
+}
+
+/** 🔑 The point of keeping the signals: these causes need DIFFERENT fixes from the user, and
+ *  "OCR isn't working" cost a real support thread precisely because they were indistinguishable.
+ *  Deliberately worded as "something on this PC" rather than naming antivirus - we can prove the
+ *  engine is broken, we cannot prove what broke it, and talking someone into disabling their
+ *  protection over what turns out to be a missing language pack is a bad trade. */
+function selfTestReason(): string {
+  if (ocrSignal.spawnError === "ENOENT") return "Windows PowerShell could not be found on this PC, and Windows OCR is reached through it.";
+  if (ocrSignal.spawnError) return `Windows refused to start the OCR helper (${ocrSignal.spawnError}). Security software blocking it is the usual cause.`;
+  if (ocrSignal.exitedBeforeReady) return "The OCR helper started and was shut down again before it could answer. Security software doing that is the usual cause.";
+  if (ocrSignal.everReady) return "The OCR helper is running but read no text at all, which usually means Windows' own OCR is unavailable - most often a missing language pack.";
+  return "The OCR helper did not answer.";
+}
+
+/** Ask the engine a question we already know the answer to. */
+export async function ocrSelfTest(): Promise<OcrHealth> {
+  const ranAt = new Date().toISOString();
+  const signal = { ...ocrSignal };
+  if (!existsSync(SELFTEST_IMAGE)) {
+    // Not the user's problem and not worth alerting on - it means a packaging mistake, so say so
+    // plainly rather than letting a missing asset masquerade as broken OCR on their machine.
+    return { ok: false, matched: false, lines: 0, text: "", ranAt, ms: 0,
+      reason: "The self-test image is missing from this install (packaging problem, not your PC).", signal };
+  }
+  const started = Date.now();
+  const r = await ocrImage(SELFTEST_IMAGE);
+  const ms = Date.now() - started;
+  const text = r.lines.map((l) => l.text).join(" ").trim();
+  const norm = text.toUpperCase().replace(/[^A-Z0-9]+/g, " ");
+  const found = OCR_SELFTEST_WORDS.filter((word) => norm.includes(word)).length;
+  const ok = r.lines.length > 0;
+  const health: OcrHealth = {
+    ok,
+    // Half is deliberately generous: this is a liveness check, not an accuracy one, and holding it
+    // to a perfect read would start warning people whose OCR works fine.
+    matched: found >= Math.ceil(OCR_SELFTEST_WORDS.length / 2),
+    lines: r.lines.length,
+    text: text.slice(0, 200),
+    ranAt,
+    ms,
+    reason: ok ? null : selfTestReason(),
+    signal: { ...ocrSignal },
+  };
+  if (!ok) noteOcrFailure(`self-test FAILED after ${ms}ms - ${health.reason}`);
+  else if (!health.matched) noteOcrFailure(`self-test read text but not the expected words (got "${health.text}") - the engine works, its accuracy on this PC may not`);
+  return health;
 }
 
 /** Run Windows OCR over an image file, returning lines with bounding boxes. */
@@ -677,14 +818,9 @@ export function classifyScreen(
     // the only way to cope with a HUD that doesn't sit where we assume — a different aspect
     // ratio, a UI scale, or the whole thing on a second monitor.
     const r = scanRegion(opts?.scanRegion, ocr.w, ocr.h);
-    const cx = r.x + r.w / 2;
-    const cands = lines
-      .filter((l) => l.y > r.y && l.y < r.y + r.h && l.x > r.x && l.x < r.x + r.w)
-      .map((l) => ({ l, sig: parseSignature(l.text) }))
-      .filter((c): c is { l: OcrLine; sig: number } => c.sig != null);
-    if (cands.length) {
-      cands.sort((a, b) => Math.abs(a.l.x - cx) - Math.abs(b.l.x - cx));
-      const best = cands[0];
+    const inBox = lines.filter((l) => l.y > r.y && l.y < r.y + r.h && l.x > r.x && l.x < r.x + r.w);
+    const best = bestSignatureLine(inBox, r.x + r.w / 2);
+    if (best) {
       return {
         kind: "mineable",
         signature: best.sig,

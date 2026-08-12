@@ -4,9 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SC Overlay — Settings</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <!-- Embedded on the canvas this page is a widget like any other, so it takes the shared widget
      tokens + surface treatment. Harmless in the standalone window: nothing there uses .wpanel or
      the widget token names, and the remap below is scoped to html.embedded. -->
@@ -149,9 +146,6 @@
   input[type=range]::-webkit-slider-thumb:hover { filter: brightness(1.1); }
   .presets { display: flex; gap: 8px; margin-top: 8px; }
   .presets button { flex: 1; padding: 7px 8px; font-size: 12.5px; }
-  /* Loadout-overlay settings (erkul URLs + ship auto-switch) are hidden for normal users —
-     they're Sub's stream-overlay feature. Revealed by the hidden unlock (title ×5). */
-  body:not(.show-loadout) .loadout-only { display: none; }
   /* Support links (Sub Club / Patreon / Twitch) */
   .support-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .support { display: flex; align-items: center; gap: 11px; padding: 11px 13px;
@@ -282,7 +276,8 @@
       setOverlayHotkey: call("setOverlayHotkey"), setBindingHotkey: call("setBindingHotkey"),
       setMiningHotkey: call("setMiningHotkey"), setWebViewHotkey: call("setWebViewHotkey"),
       setInteractHotkey: call("setInteractHotkey"), setMoveHotkey: call("setMoveHotkey"),
-      setFabClaimHotkey: call("setFabClaimHotkey"),
+      setFabClaimHotkey: call("setFabClaimHotkey"), setOpacityHotkey: call("setOpacityHotkey"),
+      setUnfocusedOpacity: call("setUnfocusedOpacity"),
       setHoldMode: call("setHoldMode"), resetLayout: call("resetLayout"),
       canvasCalibration: call("canvasCalibration"),
       metrics: call("metrics"), openDataFolder: call("openDataFolder"),
@@ -437,7 +432,6 @@
     </div>
     <div id="logWarn" class="hint" style="display:none; color:#ffb4a8"></div>
     <div id="detected" class="hint"></div>
-    <label class="opt loadout-only"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
   </div>
 
   <div class="card">
@@ -611,6 +605,20 @@
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Off by default — the overlay renders on the CPU, avoiding crashes some GPUs hit. Turn on only if you have GPU headroom and no crashes. Requires restarting the app.</span></span>
     </div>
     <div class="hkrow">
+      <span class="hklabel">Fade while you play</span>
+      <input type="range" id="unfocusedOpacity" min="20" max="100" step="5" style="width:180px;vertical-align:middle" />
+      <b id="unfocusedOpacityV" style="margin-left:8px">Off</b>
+      <div class="hint">How visible the overlay is while you are <em>not</em> focused on it. It returns to
+        full the moment you click or Alt-Tab to it. <strong>100% turns the fade off.</strong></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Full opacity (hold-off) key</span>
+      <button type="button" id="opacityHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('opacity')">Set…</button>
+      <button type="button" class="hkclear" id="opacityHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('opacity')">✕</button>
+      <input type="hidden" id="opacityHotkey" />
+      <div class="hint" id="opacityHotkeyHint">Snaps the overlay back to full opacity without leaving the game &mdash; press again to let it fade.</div>
+    </div>
+    <div class="hkrow">
       <span class="hklabel">What this is costing your PC</span>
       <button type="button" id="perfBtn" class="hkbtn">Measure now</button>
       <div class="hint">Widgets that pull live content (Twitch chat, a web page) cost far more than the text-only ones.</div>
@@ -747,15 +755,6 @@
 
   
 
-  <div class="card loadout-only">
-    <div class="label">Erkul Loadout URLs</div>
-    <div id="list"></div>
-    <div class="add">
-      <input type="text" id="newUrl" placeholder="https://www.erkul.games/loadout/XXXXXXXX" />
-      <button onclick="addUrl()">Add</button>
-    </div>
-    <div class="hint">Paste an erkul share URL per ship. The overlay reads the ship from each build automatically — when that ship spawns in-game, it switches to it. Click a row to make it the active overlay now.</div>
-  </div>
 
   <div style="margin-top:20px; display:flex; align-items:center;">
     <button class="amber" id="saveBtn" onclick="save()">Save</button>
@@ -778,7 +777,7 @@
 </div>
 
 <script>
-  let cfg = { urls: [], activeUrl: null, logPath: "", autoSwitch: true, resolved: [] };
+  let cfg = { logPath: "" };
 
   // FREE: Mobiglas + Auto (match my ship). SUBSCRIBER: pinning a specific manufacturer regardless of ship.
   const PREMIUM_THEMES = ["drake","anvil","greys","esperia","misc","banu","gatac","mirai","origin","aegis","crusader","rsi","kruger","argo"];
@@ -852,7 +851,6 @@
     }
     document.getElementById("logPath").value = cfg.logPath || "";
     checkLogPath();
-    document.getElementById("autoSwitch").checked = !!cfg.autoSwitch;
     document.getElementById("hwAccel").checked = !!cfg.hwAccel;
     document.getElementById("amdCompat").checked = !!cfg.amdCompat;
     document.getElementById("bindingPng").value = cfg.bindingPng || "";
@@ -863,9 +861,9 @@
       setHotkeyDisplay(which, typeof saved === "string" ? saved : HOTKEYS[which].def);
     }
     hotkeysLoaded = true;
+    setOpacitySlider(Number.isFinite(cfg.unfocusedOpacity) ? Math.round(cfg.unfocusedOpacity * 100) : 100);
     document.getElementById("holdToInteract").checked = !!cfg.holdToInteract;
     document.getElementById("revertThemeOnFoot").checked = !!cfg.revertThemeOnFoot;
-    document.body.classList.toggle("show-loadout", !!cfg.showLoadout);
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
     document.getElementById("fabClaim").checked = !!cfg.fabClaim;
@@ -884,7 +882,6 @@
     const tokenEl = document.getElementById("syncToken");
     tokenEl.value = cfg.hasSyncToken ? cfg.syncTokenPreview : "";
     document.getElementById("syncStatus").textContent = cfg.hasSyncToken ? "" : "No token yet — paste one to connect.";
-    renderList();
     refreshAdmin();
   }
 
@@ -899,41 +896,6 @@
   }
   function restartAsAdmin() {
     if (window.overlayConfig && window.overlayConfig.restartAsAdmin) window.overlayConfig.restartAsAdmin();
-  }
-
-  function renderList() {
-    const host = document.getElementById("list");
-    host.innerHTML = "";
-    if (!cfg.urls.length) { host.innerHTML = '<div class="hint">No loadouts yet — add one below.</div>'; return; }
-    cfg.urls.forEach((u, i) => {
-      const r = (cfg.resolved || []).find((x) => x.url === u) || { ship: "…", ok: true };
-      const isActive = u === cfg.activeUrl;
-      const row = document.createElement("div");
-      row.className = "row";
-      row.innerHTML =
-        '<span class="ship' + (r.ok ? "" : " bad") + '">' + r.ship + "</span>" +
-        '<span class="u">' + u + "</span>" +
-        (isActive ? '<span class="active-tag">ACTIVE</span>' : '<button onclick="setActive(\'' + u + "')\">Set Active</button>") +
-        '<button class="danger" onclick="removeUrl(' + i + ')">✕</button>';
-      host.appendChild(row);
-    });
-  }
-
-  function addUrl() {
-    const el = document.getElementById("newUrl");
-    const v = el.value.trim();
-    if (!v) return;
-    if (!/loadout\/[A-Za-z0-9_-]+/.test(v)) {
-      alert("That's not a shareable build link. In erkul, click Share to save your build, then paste the /loadout/<id> URL it gives you.\n\nThe /live/calculator URL only exists in your browser and can't be loaded.");
-      return;
-    }
-    cfg.urls.push(v); el.value = ""; renderList(); save();
-  }
-  function removeUrl(i) { cfg.urls.splice(i, 1); renderList(); save(); }
-  async function setActive(url) {
-    const r = await (await fetch("/api/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })).json();
-    if (!r.ok) { alert("Couldn't load that build — make sure it's a saved erkul /loadout/ link, not the calculator."); return; }
-    cfg.activeUrl = url; renderList();
   }
 
 
@@ -961,13 +923,11 @@
 
   async function save() {
     cfg.logPath = document.getElementById("logPath").value.trim();
-    cfg.autoSwitch = document.getElementById("autoSwitch").checked;
     const body = {
-      urls: cfg.urls,
       logPath: cfg.logPath,
-      autoSwitch: cfg.autoSwitch,
       hwAccel: document.getElementById("hwAccel").checked,
       amdCompat: document.getElementById("amdCompat").checked,
+      unfocusedOpacity: Number(document.getElementById("unfocusedOpacity").value || 100) / 100,
       bindingPng: document.getElementById("bindingPng").value,
       holdToInteract: document.getElementById("holdToInteract").checked,
       revertThemeOnFoot: document.getElementById("revertThemeOnFoot").checked,
@@ -1101,7 +1061,23 @@
                apply: (a) => window.overlayConfig && window.overlayConfig.setMoveHotkey && window.overlayConfig.setMoveHotkey(a) },
     fabClaim: { input: "fabClaimHotkey", btn: "fabClaimHotkeyBtn", hint: "fabClaimHotkeyHint", def: "F4",
                apply: (a) => window.overlayConfig && window.overlayConfig.setFabClaimHotkey && window.overlayConfig.setFabClaimHotkey(a) },
+    opacity: { input: "opacityHotkey", btn: "opacityHotkeyBtn", hint: "opacityHotkeyHint", def: "",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setOpacityHotkey && window.overlayConfig.setOpacityHotkey(a) },
   };
+  // The fade slider applies LIVE (like the canvas controls) — you judge a transparency by
+  // looking at it, not by saving and alt-tabbing. 100 reads as "Off" because that is what it is.
+  function setOpacitySlider(pct) {
+    const el = document.getElementById("unfocusedOpacity");
+    const out = document.getElementById("unfocusedOpacityV");
+    const v = Math.max(20, Math.min(100, Math.round(Number(pct) || 100)));
+    el.value = String(v);
+    out.textContent = v >= 100 ? "Off" : v + "%";
+  }
+  document.getElementById("unfocusedOpacity")?.addEventListener("input", () => {
+    setOpacitySlider(document.getElementById("unfocusedOpacity").value);
+    window.overlayConfig?.setUnfocusedOpacity?.(Number(document.getElementById("unfocusedOpacity").value) / 100);
+  });
+
   let capturing = null; // which HOTKEYS key is mid-capture, or null
   // 🔑 Have the hotkey fields been filled from the config yet? Save is clickable the moment the page
   // renders, but loadCfg() is async — and now that "" is a REAL saved value meaning "removed", an
@@ -1240,22 +1216,6 @@
     oc.onOverlayEnabledChanged && oc.onOverlayEnabledChanged((on) => { box.checked = !!on; });
   }
 
-  // Hidden unlock: tap the title 5× to reveal/hide the loadout-overlay settings.
-  // (They're Sub's erkul stream feature — off by default so normal users aren't confused.)
-  let titleTaps = 0, titleTapTimer = null;
-  document.getElementById("appTitle").addEventListener("click", async () => {
-    clearTimeout(titleTapTimer);
-    titleTapTimer = setTimeout(() => { titleTaps = 0; }, 1500);
-    if (++titleTaps < 5) return;
-    titleTaps = 0;
-    const next = !cfg.showLoadout;
-    await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ showLoadout: next }) });
-    await loadCfg();
-    const s = document.getElementById("saved");
-    s.textContent = next ? "Loadout settings shown" : "Loadout settings hidden";
-    s.classList.add("show"); setTimeout(() => { s.classList.remove("show"); s.textContent = "Saved ✓"; }, 1600);
-  });
-
   document.getElementById("logPath").addEventListener("input", checkLogPath);
   // ...and PERSIST it. `input` only validates as you type. Everything else on this page either
   // auto-saves or is deliberately manual (the sync token), which left a typed-by-hand game.log
@@ -1266,7 +1226,7 @@
   // Auto-save the plain checkboxes the instant they're toggled, so a change can never be lost by
   // closing/scrolling away without clicking Save. (Theme, hotkeys, hold-to-interact and the file
   // pickers already save on change; the sync token stays manual so a half-typed token isn't sent.)
-  ["syncEnabled", "shareLogs", "fabCapture", "fabClaim", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
+  ["syncEnabled", "shareLogs", "fabCapture", "fabClaim", "missionOcr", "miningAutoShow", "hwAccel", "amdCompat", "revertThemeOnFoot"]
     .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
   // The sync field shows the truncated saved key; clear it on focus so a new token pastes
   // cleanly, and restore the preview on blur if nothing was typed.

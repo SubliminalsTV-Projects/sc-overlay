@@ -33,6 +33,13 @@ export interface MissionAnswer {
   /** Did they complete it alone? Drives "can I run this solo" — the most-asked planning question
    *  after "what does it drop". null = not answered. */
   solo: boolean | null;
+  /** What they flew it in, captured from the log rather than asked (Sub, 2026-08-09). A
+   *  difficulty rating means something very different in a Hammerhead than in an Aurora, so
+   *  without this the 1–5 scale is comparing runs that aren't comparable. Display name as the
+   *  comms channel gives it ("Drake Cutlass Black") + the manufacturer on its own for grouping.
+   *  null = on foot, or never seen boarding (the app can attach mid-session). */
+  ship: string | null;
+  shipManufacturer: string | null;
   /** ISO time the answer was given, and the build it was given against — a mission can be
    *  rebalanced between patches, so a difficulty rating without a changelist ages badly. */
   at: string;
@@ -47,6 +54,8 @@ export interface FeedbackInput {
   combat?: unknown;
   difficulty?: unknown;
   solo?: unknown;
+  ship?: unknown;
+  shipManufacturer?: unknown;
   changelist?: unknown;
   appVersion?: unknown;
 }
@@ -63,13 +72,22 @@ export function sanitizeAnswer(input: FeedbackInput, now = new Date()): MissionA
   const dRaw = Number(input.difficulty);
   const difficulty = Number.isInteger(dRaw) && dRaw >= 1 && dRaw <= 5 ? (dRaw as Difficulty) : null;
   const solo = typeof input.solo === "boolean" ? input.solo : null;
+  // 🔑 The ship is METADATA, not an answer — it must not on its own make a submission worth
+  // storing, or every completion would file an empty row just because the player was seated.
   if (combat === null && difficulty === null && solo === null) return null;
+
+  const str = (v: unknown, max: number): string | null => {
+    const s = typeof v === "string" ? v.trim() : "";
+    return s ? s.slice(0, max) : null;
+  };
 
   return {
     contractKey,
     combat,
     difficulty,
     solo,
+    ship: str(input.ship, 60),
+    shipManufacturer: str(input.shipManufacturer, 40),
     at: now.toISOString(),
     changelist: typeof input.changelist === "string" && input.changelist ? input.changelist : null,
     appVersion: typeof input.appVersion === "string" && input.appVersion ? input.appVersion : null,

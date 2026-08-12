@@ -1,6 +1,6 @@
 {
   "name": "sc-log-watcher",
-  "version": "0.1.39",
+  "version": "0.1.42",
   "description": "SubliminalsTV SC Overlay - game.log watcher + widget canvas for Star Citizen.",
   "type": "module",
   "main": "electron/main.cjs",
@@ -8,9 +8,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "loadout": "tsx src/erkul-dump.ts",
     "overlay": "tsx src/overlay-server.ts",
-    "agent": "tsx src/agent.ts",
     "missions-dump": "tsx src/missions-dump.ts",
     "missions-replay": "tsx src/missions-replay.ts",
     "screen-read-dump": "tsx src/screen-read-dump.ts",
@@ -19,7 +17,7 @@
     "overlay-app": "electron electron/main.cjs",
     "package": "node tools/package.mjs",
     "build:server": "node tools/build-server.mjs",
-    "dist": "npm run build:server && electron-builder",
+    "dist": "npm run check:dataset && npm run build:server && electron-builder",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test:glyph": "tsx tools/glyph-geom-test.ts && electron tools/glyph-test.cjs",
@@ -28,14 +26,23 @@
     "test:fabclaim": "tsx src/fab-claim.test.ts",
     "simulate": "node tools/simulate.mjs",
     "test:logenv": "tsx src/log-env.test.ts",
+    "test:mining": "tsx src/mining-debris.test.ts",
+    "test:report": "tsx src/report-blueprints.test.ts",
+    "test:screenocr": "tsx src/screen-resurrect.test.ts",
     "test:repaccrual": "tsx src/rep-accrual.test.ts",
     "test:logpaths": "tsx src/log-paths.test.ts",
     "test:logshare": "tsx src/log-share.test.ts",
-    "dev:fresh": "node tools/dev-fresh.mjs"
+    "test:chat": "node chat-server/automod.test.mjs && node chat-server/server.test.mjs && tsx src/chat.test.ts",
+    "chat-server": "node chat-server/server.mjs",
+    "dev:fresh": "node tools/dev-fresh.mjs",
+    "test:location": "tsx src/location.test.ts",
+    "check:dataset": "node tools/check-dataset-fresh.mjs --strict",
+    "test:contracts": "tsx src/contract-list.test.ts && tsx src/contract-match.test.ts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
     "electron-updater": "^6.3.9",
+    "koffi": "^3.1.4",
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
@@ -58,13 +65,18 @@
       "!**/node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
       "!**/node_modules/onnxruntime-node/bin/napi-v6/linux/**",
       "!**/node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**",
-      "!**/node_modules/onnxruntime-node/bin/napi-v6/win32/ia32/**"
+      "!**/node_modules/onnxruntime-node/bin/napi-v6/win32/ia32/**",
+      "!**/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/DirectML.dll",
+      "!**/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/dxcompiler.dll",
+      "!**/node_modules/onnxruntime-node/bin/napi-v6/win32/x64/dxil.dll"
     ],
     "asarUnpack": [
       "**/node_modules/uiohook-napi/**",
       "**/node_modules/onnxruntime-node/**",
       "**/node_modules/@gutenye/**",
-      "**/node_modules/@techstark/**"
+      "**/node_modules/@techstark/**",
+      "**/node_modules/koffi/**",
+      "**/node_modules/@koromix/**"
     ],
     "npmRebuild": false,
     "extraResources": [

@@ -142,6 +142,17 @@ export interface DatasetMission {
    *  Empty/absent for the many missions the game data carries no rep for. */
   reputationGained?: RepEntry[];
   reputationLost?: RepEntry[];
+  /** Every place this variant touches (offer sites + objective sites), resolved to
+   *  starmap names. Null when the game data places it nowhere (~51% of missions).
+   *  Load-bearing, not display: same-title variants can draw from DIFFERENT pools, and
+   *  matching the log's objective text against these names is what picks the right one. */
+  places?: string[] | null;
+  /** Objective-site names only — the subset that says where the WORK is. */
+  objective?: string[] | null;
+  /** Short, station-first list of places the contract is OFFERED at — the display
+   *  counterpart to `places`, which is deliberately unfiltered for matching and runs to
+   *  30+ asteroid-cluster names on some variants. Absent on older datasets. */
+  where?: string[] | null;
   /** Reputation RANK this mission requires (0,1,2…); null/absent = no rank gate (intro
    *  + story missions). The game only offers it once you've reached that rank, so
    *  accepting it proves you're at least there — that's how we infer standing. */
@@ -268,6 +279,13 @@ export interface TrackedView {
    *  unrecoverable, so it reads low, never high). `noData` until a completion is seen. */
   repBar: RepBar | null;
   missionType: string | null;
+  /** Short station-first list of places this contract is OFFERED at, so the widget can
+   *  answer "where do I go to get this?". Empty when the game data places it nowhere
+   *  (~59% of missions) — and empty is the honest answer, not a guess.
+   *  🔑 Only meaningful once the variant is resolved: same-title variants are offered in
+   *  DIFFERENT regions with different pools, so an ambiguous mission's list would mix
+   *  places that lead to different rewards. `view()` omits it while ambiguous. */
+  whereToGet: string[];
   /** Reputation gained (+) / lost (−) on completion, biggest first (may be empty). */
   reputationGained: RepEntry[];
   reputationLost: RepEntry[];
@@ -430,6 +448,60 @@ interface MissionHistoryEntry {
 /** "Geist Armor Arms" matches an observed "Geist Armor Arms Whiteout" (variant suffix). */
 function norm(s: string): string {
   return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+const ROMAN = ["", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"];
+
+/** The runtime objective text and the starmap disagree on how to name a planet: the log
+ *  says "Pyro 5a Abandoned Outpost", the starmap says "Pyro V" (moons carry proper names
+ *  like "Adir", not letters). So a literal match on "Pyro 5a" finds nothing.
+ *
+ *  Rewrite "<Word> <digit><optional moon letter>" to the Roman-numeral planet form and
+ *  keep the original too, so both notations can match. The trailing letter is dropped on
+ *  purpose — the dataset lists the PARENT planet, and "Pyro V" is the discriminating
+ *  token; nothing is lost because a moon's real name would already match literally. */
+function placeAliases(text: string): string {
+  const t = norm(text);
+  return (
+    t +
+    " " +
+    t.replace(/\b([a-z]+)\s*(\d{1,2})[a-z]?\b/g, (whole, word: string, num: string) => {
+      const r = ROMAN[parseInt(num, 10)];
+      return r ? `${whole} ${word} ${r}` : whole;
+    })
+  );
+}
+
+/** Pick the ONE mission variant whose place names the objective text names.
+ *
+ *  Scores each candidate by the LONGEST of its place names found in the text, because
+ *  specificity is what discriminates: RegionC and RegionD both list "Pyro", and only the
+ *  longer "Pyro V" / "Terminus" tells them apart. A tie, or no hit at all, returns null —
+ *  the caller then keeps the merged view rather than guessing, since a confidently wrong
+ *  variant is worse than an honestly ambiguous one.
+ *
+ *  🔑 "Pyro" alone is never enough. Short names are matched on a word boundary so
+ *  "Adir" cannot hit inside another word. */
+function narrowByPlace(
+  text: string,
+  candidates: { key: string; places: string[] }[],
+): string | null {
+  const hay = placeAliases(text);
+  let best: { key: string; len: number } | null = null;
+  let tied = false;
+  for (const c of candidates) {
+    let len = 0;
+    for (const p of c.places) {
+      const n = norm(p);
+      if (n.length < 3) continue;
+      const re = new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+      if (re.test(hay) && n.length > len) len = n.length;
+    }
+    if (len === 0) continue;
+    if (!best || len > best.len) { best = { key: c.key, len }; tied = false; }
+    else if (len === best.len) tied = true;
+  }
+  return best && !tied ? best.key : null;
 }
 
 /** SC ship-component blueprints are logged with a classification designation the
@@ -763,6 +835,9 @@ export class MissionTracker extends EventEmitter {
    *  a stale mission from a previous shard — wait for a marker or a manual pick. */
   private markerSinceJoin = false;
   private completedMissionIds = new Set<string>();
+  /** missionId → when it completed. The fence completionBlueprints() uses to keep one
+   *  mission's receipts off the next mission's card when contracts overlap. */
+  private completedAtByMission = new Map<string, number>();
   /** Any mission that logged an end (complete/fail/abandon) — dropped from the
    *  active picker and auto-follow so only missions you currently have show. */
   private endedMissionIds = new Set<string>();
@@ -960,6 +1035,75 @@ export class MissionTracker extends EventEmitter {
         this.emit("change");
         break;
       }
+      // The objective text names WHERE the mission sends you, and that is the only log
+      // signal that separates same-title variants drawing from DIFFERENT pools.
+      //
+      // Why this matters concretely: "Kill the king" has RegionA variants on a 10-blueprint
+      // pool and RegionC/D variants on a different 8-blueprint pool. Resolving by title
+      // alone, the app merged both into a fictional 18 and told Sub he had 4 left to win
+      // while the variant he was actually running was 8/8 and could never drop anything.
+      // He farmed a dead pool for a week. "Go to Pyro 5a Abandoned Outpost" → Pyro V →
+      // RegionC, unambiguously.
+      //
+      // Only ever NARROWS an already-ambiguous title guess: a real marker (contractKey) is
+      // authoritative and left alone, and a text that doesn't resolve to exactly one
+      // candidate changes nothing.
+      case "newObjective": {
+        if (!ev.missionId || !this.dataset) break;
+        const info = this.missions.get(ev.missionId);
+        if (!info || !info.ambiguous || !info.acceptKeys || info.acceptKeys.length < 2) break;
+        const candidates = info.acceptKeys
+          .map((key) => ({ key, places: this.dataset!.missions[key]?.places ?? [] }))
+          .filter((c) => c.places.length > 0);
+        if (candidates.length < 2) break;
+        const picked = narrowByPlace(ev.text, candidates);
+        if (!picked) break;
+        info.contractKey = picked;
+        info.acceptKeys = [picked];
+        info.ambiguous = false;
+        this.missions.set(ev.missionId, info);
+        this.noteRank(ev.missionId);
+        this.emit("change");
+        break;
+      }
+      // Routing to a region-scoped encounter set names the region OUTRIGHT
+      // ("destination RegionB_1base_ab_pyro…"), and that token is literally what
+      // separates HH_Pyro_RegionB_… from HH_Pyro_RegionC_…. Stronger than matching place
+      // NAMES: no numeral translation, no shared-name ties. It is the signal that would
+      // have resolved 2026-08-09's "Deep space hit", whose objective text was a bare
+      // "Go to Asteroid Base" with no place in it at all.
+      //
+      // ⚠️ The line carries NO MissionId, so this is correlation, not attribution. Two
+      // guards keep it honest:
+      //   1. Only ACTIVE, still-ambiguous missions are considered.
+      //   2. It must resolve to EXACTLY ONE mission and EXACTLY ONE of its variants. If
+      //      two ambiguous missions could both take this region, nothing happens — a
+      //      wrong pool is worse than an admittedly unknown one.
+      case "routeRegion": {
+        if (!this.dataset) break;
+        // 🔑 Boundary-anchored, NOT a plain substring. The dataset has 16 keys containing
+        // "Regional" and 20 containing "RegionLink", so a bare includes("regiona") would
+        // match "Regional" and pick a completely unrelated variant. The token must not be
+        // followed by another letter or digit.
+        const token = new RegExp(`region${ev.region.replace(/[^a-z0-9]/gi, "")}(?![a-z0-9])`, "i");
+        const hits: { missionId: string; key: string }[] = [];
+        for (const [missionId, info] of this.missions) {
+          if (!info.ambiguous || !info.acceptKeys || info.acceptKeys.length < 2) continue;
+          if (this.endedMissionIds.has(missionId)) continue;
+          const matching = info.acceptKeys.filter((k) => token.test(k));
+          if (matching.length === 1) hits.push({ missionId, key: matching[0] });
+        }
+        if (hits.length !== 1) break;
+        const { missionId, key } = hits[0];
+        const info = this.missions.get(missionId)!;
+        info.contractKey = key;
+        info.acceptKeys = [key];
+        info.ambiguous = false;
+        this.missions.set(missionId, info);
+        this.noteRank(missionId);
+        this.emit("change");
+        break;
+      }
       case "marker": {
         const info = this.missions.get(ev.missionId) ?? {};
         info.contractKey = ev.contractKey;
@@ -1093,6 +1237,12 @@ export class MissionTracker extends EventEmitter {
   ): void {
     const completedAtMs = ts ? Date.parse(ts) : Date.now();
     if (!Number.isFinite(completedAtMs)) return;
+    // 🔑 Recorded BEFORE the freshness gate below and for every completion, carded or not:
+    // completionBlueprints() uses these to stop one mission's receipts landing on the next
+    // card, and a completion whose card was suppressed still produced a receipt that has to
+    // be fenced off. Keyed by missionId so the two completion signals (contractComplete and
+    // MissionEnded) can't record the same mission twice with slightly different times.
+    if (!this.completedAtByMission.has(missionId)) this.completedAtByMission.set(missionId, completedAtMs);
     const info = this.missions.get(missionId);
     const aUEC =
       this.lastReward && Math.abs(this.lastReward.atMs - completedAtMs) <= REWARD_WINDOW_MS
@@ -1178,12 +1328,35 @@ export class MissionTracker extends EventEmitter {
     return Math.round(amount / (ms / 3_600_000));
   }
 
-  /** Blueprint names received during the completed mission (receipt time between its
-   *  accept and completion) — the "+N blueprints" line on the completion card. */
+  /** Blueprint names received during the completed mission — the tiles on the completion card.
+   *
+   *  🔴 THE WINDOW MAY NOT REACH BACK PAST THE PREVIOUS COMPLETION. It used to open at this
+   *  mission's ACCEPT time, which is wrong the moment two contracts overlap — and running
+   *  several at once is the normal way to play. Finish A at 10:10 and B (accepted 10:05) at
+   *  10:12 and B's window was [10:05, 10:12], so A's blueprint was inside it: Sub unlocked ONE
+   *  blueprint and the card showed two, the second being an M8A from an earlier mission
+   *  (2026-08-09, "when I do missions in rapid succession it might just merge the images").
+   *
+   *  🔑 The floor is the previous completion's window END, not the completion itself. A receipt
+   *  lands 0–1s AFTER the completion it belongs to, so a floor at the bare completion time
+   *  leaves it sitting inside the next mission's window — which is the bug, not the fix.
+   *
+   *  Two completions closer together than REWARD_WINDOW_MS therefore leave the second card
+   *  empty. That is the honest answer: with the receipts interleaved there is no evidence in
+   *  the log saying which mission paid out, and the log never attributes a blueprint to a
+   *  mission (every receipt carries an all-zeros MissionId). A confidently wrong tile is worse
+   *  than a missing one — the same rule the split-pool fix rests on.
+   *
+   *  🔑 A missing accept no longer means -Infinity. It used to, so an app that attached
+   *  mid-session (no accept seen) matched EVERY receipt it had ever replayed. */
   private completionBlueprints(): BlueprintReward[] {
     const c = this.completion;
     if (!c) return [];
-    const lo = c.acceptedAtMs ?? -Infinity;
+    let priorEnd = -Infinity;
+    for (const [id, t] of this.completedAtByMission) {
+      if (id !== c.missionId && t < c.completedAtMs) priorEnd = Math.max(priorEnd, t + REWARD_WINDOW_MS);
+    }
+    const lo = Math.max(c.acceptedAtMs ?? c.completedAtMs - REWARD_WINDOW_MS, priorEnd);
     const hi = c.completedAtMs + REWARD_WINDOW_MS;
     const out: BlueprintReward[] = [];
     for (const [name, ts] of this.observedAt) {
@@ -1440,8 +1613,22 @@ export class MissionTracker extends EventEmitter {
     this.trackedMissionId = null;
     this.selectedMissionId = null;
     this.markerSinceJoin = false;
+    // 🔑 The mission RECORDS go too, not just the sequences that index them. Mission ids are
+    // per-connection instance GUIDs, so none of these survive a shard change — but leaving the
+    // map populated while clearing endedMissionIds below un-ends every mission the tracker has
+    // ever seen, and a stale record is not reachable through the seqs yet IS reachable through
+    // setScreenMission(), which scans the whole map. Sub, 2026-08-08: a "Deep space hit"
+    // completed at 22:00 came back hours and three session resets later, because OCR matched
+    // its leftover record on title and pushed it into acceptedSeq as a live mission.
+    this.missions.clear();
+    // Per-shard too, and the one pointer nothing else clears — it outranks trackedMissionId in
+    // effectiveMissionId(), so a stale value re-shows the previous shard's mission on spawn-in.
+    this.screenMissionId = null;
     this.endedMissionIds.clear();
     this.completedMissionIds.clear();
+    // Mission ids are per-connection GUIDs, so none of these times can describe anything on
+    // the other side of a shard change.
+    this.completedAtByMission.clear();
     if (this.completionTimer) clearTimeout(this.completionTimer);
     this.completionTimer = null;
     this.completion = null;
@@ -1471,10 +1658,40 @@ export class MissionTracker extends EventEmitter {
     // resolve the OCR'd title straight from the dataset and re-register it. OCR reads the
     // CURRENT screen, so this can only ever surface a mission you're actually on now.
     if (!matched) {
+      // 🔑 Never RESURRECT a mission that already ended in this shard. The in-game title
+      // lingers on screen after a contract completes, so the next OCR read finds no active
+      // candidate and used to fall straight through to the synthetic registration below —
+      // re-registering the mission you just finished under a GUESSED contract key. That
+      // phantom then outranks the real one in effectiveMissionId() (screenMissionId beats
+      // trackedMissionId), can never be flagged completed or ended (completion events carry
+      // the runtime GUID, not this id), and shows the MERGED pool of every dataset variant
+      // sharing the title. Sub, 2026-08-07: "Kill the king" (really RegionC Derelict, one
+      // pool, 8/8 owned) came back as Rustville, 14/18, stuck on screen as incomplete.
+      // Matched one candidate at a time on purpose — matchScreenTitle is tie-safe and would
+      // return null if the same title ended TWICE, which is exactly when we most want to
+      // refuse. The genuine recovery case is untouched: Alt-F4 → relaunch runs through
+      // resetSession(), which clears endedMissionIds, so there is nothing here to match.
+      const endedSameTitle = [...this.missions].some(
+        ([id, info]) => info.title && this.endedMissionIds.has(id) && matchScreenTitle(title, [{ id, title: info.title }]),
+      );
+      if (endedSameTitle) return false;
       const res = this.resolveAcceptTitle(title);
       const key = res?.keys[0];
       if (key) {
-        const existing = [...this.missions].find(([id, info]) => info.contractKey === key && !this.endedMissionIds.has(id));
+        // 🔑 Match against EVERY key this title can resolve to, not just keys[0]. A `marker`
+        // event sets contractKey but NOT title, so a mission is title-less — and therefore
+        // invisible to the matcher above — until its accept line is parsed. Those two lines are
+        // ~6ms apart in the log but land in separate watcher reads often enough to matter, and
+        // an OCR poll in that gap used to mint a phantom beside the real, marker-identified
+        // mission. Comparing only keys[0] guaranteed a miss whenever the player was on any
+        // variant BUT the first: Sub, 2026-08-07, was on RegionC "Deep space hit" (8/8) and
+        // keys[0] is RegionA, so the panel showed the correct 8/8 and then flipped to a
+        // merged 14/18 the moment OCR ran. A marker's key is authoritative; a title guess is
+        // not, so an existing mission always wins over minting a new one.
+        const keys = new Set(res!.keys);
+        const live = [...this.missions].filter(([id, info]) => info.contractKey && keys.has(info.contractKey) && !this.endedMissionIds.has(id));
+        // Prefer a real log-registered mission over a synthetic one left by an earlier read.
+        const existing = live.find(([id]) => !id.startsWith("ocr:")) ?? live[0];
         if (existing) matched = existing[0];
         else {
           matched = "ocr:" + key;
@@ -1706,6 +1923,20 @@ export class MissionTracker extends EventEmitter {
    *  the giver's standing tier, which lines up 1:1 with the rep scope's rank ladder — that's how
    *  the rank-gated ships (Golem @3, Prospector @4, MOLE @5) are surfaced. Returns null when the
    *  giver has no missions or no usable rep scope in the loaded dataset. */
+  /** Title / giver / type for every contract in the loaded dataset, for matching a row
+   *  read off the mobiGlas board back to a debug_name. Exposed rather than handing out
+   *  `dataset` so the payout scanner can't reach into anything else, and so it follows
+   *  whatever patch the tracker resolved instead of loading its own copy. */
+  matchCandidates(): { debugName: string; title: string; giver: string; missionType: string }[] {
+    if (!this.dataset) return [];
+    return Object.entries(this.dataset.missions).map(([debugName, m]) => ({
+      debugName,
+      title: m.title ?? "",
+      giver: m.giver ?? "",
+      missionType: m.missionType ?? "",
+    }));
+  }
+
   giverTrack(giver: string): GrindTrack | null {
     if (!this.dataset) return null;
     const want = norm(giver);
@@ -2075,6 +2306,118 @@ export class MissionTracker extends EventEmitter {
    *  looked up in the detail dataset. Returns null when the detail file isn't loaded or
    *  the blueprint has no recipe on record. Reachable by the overlay via the server's
    *  /api/blueprint-detail endpoint. */
+  /** Blueprint names DISTINCTIVE enough to link on sight in chat, without anyone asking for it
+   *  (Sub, 2026-08-09: "nobody typing those letters in that order means anything else").
+   *
+   *  🔑 The whole risk is over-linking. Of 1,572 blueprint names, 301 are a single word and 24
+   *  are under five characters — among them `Bolt`, `Echo`, `Nova`, `INK`, `PIN` and `HEX`,
+   *  which are ordinary chat words. Turning those into links would make the feature feel broken
+   *  and would put a wrong link in front of the reader. So a name auto-links only when it cannot
+   *  plausibly be ordinary English:
+   *    · more than one word          ("Geist Armor Arms")      — always distinctive
+   *    · or contains a digit         ("DebBolt3", "10-Series") — Sub's own example
+   *    · or is camelCase             ("AbsoluteZero")          — a capital after the first letter
+   *    · or is >= 6 letters and not a common word ("Agrippa")
+   *  Anything shorter or word-like is still reachable through /bp, which is explicit. */
+  autoLinkNames(): { match: string; name: string; item: string }[] {
+    const idx = this.dataset?.index;
+    if (!idx) return [];
+    // Words that ARE blueprint names but are also things people say. Kept small on purpose —
+    // it only has to cover names that survive the shape rules above.
+    const COMMON = new Set([
+      "bolt", "echo", "nova", "endo", "eos", "kama", "ink", "pin", "hex", "bloc", "agni",
+      "ezra", "salvo", "surge", "spirit", "flash", "frost", "ghost", "hammer", "shield",
+      "cooler", "armor", "helmet", "light", "medium", "heavy", "core", "arms", "legs",
+      "power", "quantum", "radar", "scraper", "storm", "sentry", "shard", "global",
+    ]);
+    // 🔑 People do not type names the way the game files spell them. The real item is
+    // "Deadbolt III Cannon"; Sub reached for "DebBolt3" from memory, and a player will type
+    // "Deadbolt 3". So each name also matches with its ROMAN numeral written as a digit, and
+    // without the trailing category word ("… Cannon"). Both aliases still resolve to the one
+    // canonical name, so the link is never ambiguous.
+    const ROMAN: Record<string, string> = { i: "1", ii: "2", iii: "3", iv: "4", v: "5", vi: "6", vii: "7", viii: "8", ix: "9", x: "10" };
+    const TRAILING = /\s+(Cannon|Repeater|Scattergun|Helmet|Core|Arms|Legs|Undersuit|Backpack|Module|Rifle|Pistol|SMG|Shotgun|LMG|Sniper)$/i;
+    const out: { match: string; name: string; item: string }[] = [];
+    const seen = new Set<string>();
+    // 🔑 The site's blueprint page is /blueprints/<ITEM UUID>, not the name — a name-based link
+    // 404s (measured against production). The uuid rides with every entry so the widget never
+    // has to guess.
+    const push = (match: string, name: string, item: string) => {
+      const l = match.toLowerCase();
+      if (!match || match.length < 4 || seen.has(l) || COMMON.has(l) || !item) return;
+      seen.add(l);
+      out.push({ match, name, item });
+    };
+    for (const e of idx) {
+      const n = (e.name ?? "").trim();
+      const uuid = e.item ?? "";
+      if (!n || n.length < 4 || !uuid) continue;
+      const multiWord = /\s/.test(n);
+      const hasDigit = /\d/.test(n);
+      const camel = /^[A-Za-z][a-z]+[A-Z]/.test(n);
+      const longEnough = /^[A-Za-z'’-]{6,}$/.test(n);
+      if (!(multiWord || hasDigit || camel || longEnough)) continue;
+      push(n, n, uuid);
+      // "Deadbolt III Cannon" → also match "Deadbolt 3 Cannon" and "Deadbolt 3".
+      const arabic = n.replace(/\b([ivx]+)\b/gi, (w) => ROMAN[w.toLowerCase()] ?? w);
+      if (arabic !== n) push(arabic, n, uuid);
+      for (const variant of [n, arabic]) {
+        const stem = variant.replace(TRAILING, "");
+        // Only when the stem still carries something distinctive of its own — a bare
+        // "Deadbolt" could be any mark, and a link that picks one silently is worse than none.
+        if (stem !== variant && /\d/.test(stem)) push(stem, n, uuid);
+      }
+    }
+    // Longest first, so "Geist Armor Arms" wins over "Geist Armor" when both match.
+    return out.sort((a, b) => b.match.length - a.match.length);
+  }
+
+  /** Blueprint names matching a typed fragment, for the chat widget's /bp autocomplete.
+   *  Reads `dataset.index` — the global name→uuid index of EVERY blueprint in the game, not
+   *  just the ones in mission pools, which is what makes it usable as a lookup rather than a
+   *  list of what you happen to be running. Prefix matches rank above contains-matches, so
+   *  typing "geist" offers "Geist Armor…" before "…Geist variant". */
+  searchBlueprintNames(q: string, limit = 8): { name: string; item: string }[] {
+    const needle = q.trim().toLowerCase();
+    if (!needle || !this.dataset?.index) return [];
+    const seen = new Set<string>();
+    const starts: { name: string; item: string }[] = [];
+    const has: { name: string; item: string }[] = [];
+    for (const e of this.dataset.index) {
+      const name = e.name;
+      if (!name || !e.item) continue;
+      const l = name.toLowerCase();
+      if (seen.has(l)) continue;
+      if (l.startsWith(needle)) { seen.add(l); starts.push({ name, item: e.item }); }
+      else if (l.includes(needle)) { seen.add(l); has.push({ name, item: e.item }); }
+      if (starts.length >= limit) break;
+    }
+    return [...starts, ...has].slice(0, limit);
+  }
+
+  /** Mission TITLES matching a fragment, for the chat widget's /mission command — "hey, I want
+   *  to run this" with a link back to the site's mission page (/missions/<contract key>).
+   *  🔑 Titles are not unique (the same title exists as a one-time intro and a repeatable rank
+   *  contract), so the KEY is what the link carries and the title is only what it reads as. */
+  searchMissionTitles(q: string, limit = 8): { title: string; key: string }[] {
+    const needle = q.trim().toLowerCase();
+    const missions = this.dataset?.missions;
+    if (!needle || !missions) return [];
+    const seen = new Set<string>();
+    const starts: { title: string; key: string }[] = [];
+    const has: { title: string; key: string }[] = [];
+    for (const [key, m] of Object.entries(missions)) {
+      const title = (m.title ?? "").trim();
+      if (!title) continue;
+      const l = title.toLowerCase();
+      if (seen.has(l)) continue;
+      if (l.startsWith(needle)) { seen.add(l); starts.push({ title, key }); }
+      else if (l.includes(needle)) { seen.add(l); has.push({ title, key }); }
+      if (starts.length >= limit) break;
+    }
+    return [...starts, ...has].slice(0, limit);
+  }
+
   blueprintDetail(nameOrUuid: string): BlueprintDetail | null {
     if (!nameOrUuid) return null;
     // A UUID-shaped argument is looked up directly; otherwise resolve the name → UUID(s).
@@ -2219,6 +2562,10 @@ export class MissionTracker extends EventEmitter {
       inferredRank: mission?.giver ? this.inferredRank.get(mission.giver) ?? null : null,
       repBar: this.computeRepBar(mission),
       missionType: mission?.missionType ?? null,
+      // Suppressed while ambiguous on purpose: the candidates are offered in different
+      // regions that draw from DIFFERENT pools, so listing all their places would point
+      // the player at somewhere that cannot drop what the panel is showing.
+      whereToGet: ambiguous ? [] : mission?.where ?? [],
       reputationGained: mission?.reputationGained ?? [],
       reputationLost: mission?.reputationLost ?? [],
       eventTrack,

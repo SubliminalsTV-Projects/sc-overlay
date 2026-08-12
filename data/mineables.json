@@ -1,7 +1,128 @@
 {
- "schema": "sc-mineables/1",
- "source": "SubliminalsTV mining signature table",
+ "schema": "sc-mineables/2",
+ "source": "p4k datacore 4.9.0-LIVE.12344265",
+ "note": "Generated from the p4k datacore (entities/mineable signature arrays). Supersedes the hand-typed table, whose 26 values were all confirmed correct against this source. `contains` lists what a shared signature can be — a read at that value cannot narrow it.",
+ "maxCluster": 6,
+ "gemMaxCluster": 1,
+ "debrisStep": 2000,
+ "excluded": [
+  {
+   "signature": 4000,
+   "reason": "collides with debris at every cluster size (4000/8000/…/24000 are all multiples of DEBRIS_STEP=2000), and identifies only 'a surface deposit' with no ore — it would make every debris read ambiguous for no gain",
+   "entities": 2
+  },
+  {
+   "signature": 4700,
+   "reason": "the C/S/P/M/Q/E asteroid TYPES are legacy — the game stopped displaying them once it started naming the mineral instead (community report, corroborated by every variant sharing one signature regardless of ore, which is what a pre-mineral-name design looks like). A call-out here could only name something the player has nothing on screen to check it against.",
+   "entities": 10
+  },
+  {
+   "signature": 4720,
+   "reason": "the C/S/P/M/Q/E asteroid TYPES are legacy — the game stopped displaying them once it started naming the mineral instead (community report, corroborated by every variant sharing one signature regardless of ore, which is what a pre-mineral-name design looks like). A call-out here could only name something the player has nothing on screen to check it against.",
+   "entities": 10
+  },
+  {
+   "signature": 4750,
+   "reason": "the C/S/P/M/Q/E asteroid TYPES are legacy — the game stopped displaying them once it started naming the mineral instead (community report, corroborated by every variant sharing one signature regardless of ore, which is what a pre-mineral-name design looks like). A call-out here could only name something the player has nothing on screen to check it against.",
+   "entities": 10
+  },
+  {
+   "signature": 4850,
+   "reason": "the C/S/P/M/Q/E asteroid TYPES are legacy — the game stopped displaying them once it started naming the mineral instead (community report, corroborated by every variant sharing one signature regardless of ore, which is what a pre-mineral-name design looks like). A call-out here could only name something the player has nothing on screen to check it against.",
+   "entities": 10
+  },
+  {
+   "signature": 4870,
+   "reason": "the C/S/P/M/Q/E asteroid TYPES are legacy — the game stopped displaying them once it started naming the mineral instead (community report, corroborated by every variant sharing one signature regardless of ore, which is what a pre-mineral-name design looks like). A call-out here could only name something the player has nothing on screen to check it against.",
+   "entities": 10
+  },
+  {
+   "signature": 4900,
+   "reason": "the C/S/P/M/Q/E asteroid TYPES are legacy — the game stopped displaying them once it started naming the mineral instead (community report, corroborated by every variant sharing one signature regardless of ore, which is what a pre-mineral-name design looks like). A call-out here could only name something the player has nothing on screen to check it against.",
+   "entities": 10
+  }
+ ],
+ "debrisAmbiguous": [
+  {
+   "signature": 16000,
+   "rock": "Savrilium"
+  },
+  {
+   "signature": 18000,
+   "rock": "Bexalite"
+  }
+ ],
+ "harvest": {
+  "plants": [
+   "Amiant",
+   "Amioship Lague",
+   "Armillaria",
+   "Decari",
+   "Degnous",
+   "Flareweed",
+   "Fotia",
+   "Golden Medmon",
+   "Heart of the Woods",
+   "Molina Mold",
+   "Pingala",
+   "Pitambu",
+   "Prota",
+   "Ranta Dung",
+   "Revenant",
+   "Sunset Berry",
+   "Wuotan"
+  ],
+  "alsoAtThisSignature": [
+   "Asteroidfpsmineable",
+   "Prisonstash 01",
+   "Prisonstash 02",
+   "Prisonstash 03"
+  ]
+ },
+ "bodies": {
+  "pyro1": "Pyro I",
+  "pyro2": "Monox",
+  "pyro3": "Bloom",
+  "pyro4": "Pyro IV",
+  "pyro5": "Pyro V",
+  "pyro6": "Terminus",
+  "stanton1": "Hurston",
+  "stanton1a": "Arial",
+  "stanton1b": "Aberdeen",
+  "stanton1c": "Magda",
+  "stanton1d": "Ita",
+  "stanton2": "Crusader",
+  "stanton2a": "Cellin",
+  "stanton2b": "Daymar",
+  "stanton2c": "Yela",
+  "stanton3": "ArcCorp",
+  "stanton3a": "Lyria",
+  "stanton3b": "Wala",
+  "stanton4": "microTech",
+  "stanton4a": "Calliope",
+  "stanton4b": "Clio",
+  "stanton4c": "Euterpe"
+ },
  "rocks": [
+  {
+   "name": "Hand-mined Gem",
+   "rarity": "Gem",
+   "base": 3000,
+   "sigs": [
+    3000
+   ],
+   "contains": [
+    "Aphorite",
+    "Carinite",
+    "Dolivine",
+    "Hadanite",
+    "Jaclium",
+    "Janalite",
+    "Sadaryx",
+    "Saldynium"
+   ],
+   "silent": true
+  },
   {
    "name": "Quantainium",
    "rarity": "Legendary",
@@ -342,6 +463,23 @@
   }
  ],
  "index": {
+  "3000": [
+   {
+    "name": "Hand-mined Gem",
+    "rarity": "Gem",
+    "count": 1,
+    "contains": [
+     "Aphorite",
+     "Carinite",
+     "Dolivine",
+     "Hadanite",
+     "Jaclium",
+     "Janalite",
+     "Sadaryx",
+     "Saldynium"
+    ]
+   }
+  ],
   "3170": [
    {
     "name": "Quantainium",

@@ -125,6 +125,13 @@ let scFeedVisible = false; // is the in-canvas SC Feed notifier armed (it only S
 let unlockAlertVisible = true;
 let partyVisible = false; // is the in-canvas Party split widget currently shown
 let battagliaVisible = false; // is the in-canvas Battaglia grind tracker currently shown
+let chatVisible = false; // is the in-canvas social Chat widget shown (also gates the sidecar's chat socket)
+// Fade the whole overlay while you're actually playing. 1 = the feature is OFF, which is the
+// default, so no existing user's overlay changes appearance until they ask for it.
+let unfocusedOpacity = 1;
+// Hotkey override: force full opacity regardless of focus (read the overlay mid-fight without
+// alt-tabbing). Toggles back to automatic on a second press.
+let opacityOverride = false;
 // Settings as a canvas WIDGET. Named ...Widget... throughout to keep it distinct from
 // `configWin`, the standalone settings WINDOW — both exist, same page, two host modes.
 let configWidgetVisible = false;
@@ -279,19 +286,23 @@ function startServer() {
   const out = sidecarLogStream();
   const stdio = out === "ignore" ? "ignore" : ["ignore", out, out];
   if (app.isPackaged) {
-    // Prod: the bun-compiled server binary shipped as an extraResource (no Node/tsx
-    // on the user's machine). cwd = its dir so assetDir finds overlay/ + data/.
-    const exe = path.join(process.resourcesPath, "server", "sc-overlay-server.exe");
-    // 🔑 `windowsHide` is NOT optional here. The bun-compiled sidecar is a CONSOLE-subsystem
-    // executable, and this app is a GUI process with no console of its own — so without
-    // CREATE_NO_WINDOW, Windows hands the child a brand new console, which appears as a terminal
-    // window sitting on the user's desktop for as long as the app runs (0.1.35 shipped exactly that;
-    // on a machine whose default terminal is Windows Terminal it opens as a WT window titled
-    // "…\sc-overlay-server.exe"). Every OTHER spawn in this codebase already sets it; this one was
-    // missed, and it only became visible when the sidecar stopped being spawned stdio:"ignore".
-    // Inject the authoritative app version — the bun sidecar can't read package.json.
-    server = spawn(exe, {
-      cwd: path.dirname(exe), env: { ...process.env, APP_VERSION, SC_INSTANCE: INSTANCE_ID }, stdio, windowsHide: true,
+    // Prod: the esbuild-bundled server shipped as an extraResource, run by OUR OWN exe
+    // with ELECTRON_RUN_AS_NODE (plain Node mode — no BrowserWindow, no second app).
+    // It replaced a 112 MB bun-compiled standalone exe in 0.1.41: the machine already
+    // ships a Node runtime inside Electron, so the sidecar borrows it instead of
+    // carrying its own. cwd = the bundle's dir so assetDir finds overlay/ + data/.
+    const serverJs = path.join(process.resourcesPath, "server", "server.mjs");
+    // 🔑 `windowsHide` stays NOT optional here. The bun-era sidecar was a CONSOLE-subsystem
+    // executable and 0.1.35 shipped a persistent terminal window on every desktop by omitting
+    // it (emergency 0.1.36). Electron-run-as-node is GUI-subsystem so no console should appear
+    // either way — but the flag costs nothing and this exact spawn is where the regression
+    // lived, so it does not come off on an argument from subsystem flags.
+    // Inject the authoritative app version — the bundled sidecar can't read package.json.
+    server = spawn(process.execPath, [serverJs], {
+      cwd: path.dirname(serverJs),
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", APP_VERSION, SC_INSTANCE: INSTANCE_ID },
+      stdio,
+      windowsHide: true,
     });
   } else {
     // Dev: run the TS server via tsx. Same flag, same reason — `shell:true` means cmd.exe, which is
@@ -581,6 +592,10 @@ function reportGeometry() {
         visible: overlay && !overlay.isDestroyed() ? overlay.isVisible() : null,
         enabled: overlayEnabled,
       },
+      // Fade-while-playing: the setting, and what the window actually reports back. `want` vs
+      // `got` is the same trick as asked/got above — "I called setOpacity" and "the user sees a
+      // change" are different claims, and only the readback separates them.
+      opacity: { setting: unfocusedOpacity, override: opacityOverride, ...(lastOpacityApplied ?? {}) },
     };
     void postJson("/api/overlay-geometry", { shell });
   } catch { /* diagnostics must never be the thing that breaks a refit */ }
@@ -675,6 +690,7 @@ function createOverlay() {
     sendUnlockAlertVisible({ on: unlockAlertVisible, initial: true });
     sendPartyVisible({ on: partyVisible, initial: true });
     sendBattagliaVisible({ on: battagliaVisible, initial: true });
+    sendChatVisible({ on: chatVisible, initial: true });
     sendConfigWidgetVisible({ on: configWidgetVisible, initial: true });
     sendWebViewVisible({ on: webViewVisible, initial: true });
     sendBindingChartVisible({ on: bindingChartVisible, initial: true });
@@ -694,8 +710,9 @@ function createOverlay() {
   const sendFocus = (on) => {
     if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:window-focus", on);
   };
-  overlay.on("focus", () => sendFocus(true));
-  overlay.on("blur", () => sendFocus(false));
+  overlay.on("focus", () => { sendFocus(true); applyOverlayOpacity(); });
+  overlay.on("blur", () => { sendFocus(false); applyOverlayOpacity(); });
+  applyOverlayOpacity();
   overlay.on("closed", () => {
     overlay = null;
     overlayLoaded = false;
@@ -834,6 +851,7 @@ function pollCursor() {
     const over = insideRegions(overlayRegions, overlay, pt);
     if (over !== hovering) {
       hovering = over; applyMouse();
+      applyOverlayOpacity(); // reaching for a widget brings it back to full — see below
       // Tell the page when the cursor has left everything. It can't work this out on its own:
       // the window is click-through by then, so it gets no mousemove and therefore no mouseleave
       // — which is why a widget whose header was revealed by a CLICK (any page with a text field
@@ -895,7 +913,7 @@ function sendMiningVisible(state) {
 }
 // Push widget on/off state to the in-overlay hub checkboxes (kept in sync with the tray).
 function pushWidgetStates() {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }); }
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }); }
   catch { /* renderer gone */ }
 }
 // The Notepad widget is a plain in-canvas iframe (no auto-show / SSE), so its visibility is a
@@ -972,6 +990,21 @@ function setPartyVisible(on) {
   refreshTray();
 }
 function toggleParty() { setPartyVisible(!partyVisible); }
+// Social Chat widget — plain in-canvas iframe, same shell-owned visibility as the Notepad.
+// chatOpen doubles as the SIDECAR's connection gate: closed widget = no chat socket at all,
+// so this postConfig is also what connects/disconnects chat (see chatConfigure, overlay-server).
+function sendChatVisible(state) {
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:chat-visible", state); }
+  catch { /* renderer gone */ }
+}
+function setChatVisible(on) {
+  chatVisible = !!on;
+  sendChatVisible({ on: chatVisible });
+  postConfig({ chatOpen: chatVisible }); // remember open/closed for next launch + gate the socket
+  pushWidgetStates();
+  refreshTray();
+}
+function toggleChat() { setChatVisible(!chatVisible); }
 // Battaglia grind tracker - same shell-owned visibility as the widgets above. Retires when the
 // giver does (4.10): drop this block, its config flag, and overlay/battaglia.html.
 function sendBattagliaVisible(state) {
@@ -1073,6 +1106,55 @@ function toggleMining() {
 // combo is already claimed by another app).
 // Live-rebindable global shortcut for showing/hiding the overlay HUD. Same shape as
 // registerBindingHotkey so the config window can warn on an invalid / in-use combo.
+// ── Unfocused opacity ───────────────────────────────────────────────────────
+// The overlay fades while you're playing and comes back to full the moment you switch TO it
+// (Alt-Tab / clicking it), so reading it is always one focus away rather than a settings trip.
+// 🔑 Window opacity, not a CSS filter: the canvas is a transparent always-on-top window over
+// the game, and a CSS opacity on its body would fade widgets against each other rather than
+// against what's behind the window.
+// 🔑 Never fade while ARRANGING — you cannot place what you cannot see — and never below the
+// 0.2 clamp the settings enforce, or the overlay becomes a thing you can't find to fix.
+// 🔑 The fade is PER WIDGET, so it lives in the canvas as CSS — one window opacity cannot say
+// "fade the chat widget but not the tracker", which is what Sub asked for (2026-08-09). All the
+// shell owns now is the OVERRIDE: a hotkey that forces every widget back to full, and arrange
+// mode, which must never be faded. The canvas applies both by toggling `html.no-dim`.
+function applyOverlayOpacity() {
+  if (!overlay || overlay.isDestroyed()) return;
+  const off = opacityOverride || moveMode;
+  try {
+    overlay.webContents.send("overlay:dim-override", off);
+    lastOpacityApplied = { override: opacityOverride, moveMode, sentNoDim: off };
+  } catch { /* window going away */ }
+}
+let lastOpacityApplied = null;
+function setUnfocusedOpacity(v) {
+  const n = Number(v);
+  const next = Number.isFinite(n) ? Math.max(0.2, Math.min(1, n)) : 1;
+  const changed = next !== unfocusedOpacity;
+  unfocusedOpacity = next;
+  // Live preview while the slider moves: the saved value reaches the canvas on the next prefs
+  // broadcast, but a transparency is judged by watching it change, so push it straight through.
+  try { overlay?.webContents.send("overlay:dim-global", unfocusedOpacity); } catch { /* no window */ }
+  applyOverlayOpacity();
+  // Republish the diagnostic when the SETTING changes (not on every hover tick) — otherwise
+  // /api/overlay-geometry reports whatever was true at the last canvas refit, which is exactly
+  // the stale answer that makes "did it apply?" unanswerable from outside.
+  if (changed) reportGeometry();
+}
+function toggleOpacityOverride() {
+  opacityOverride = !opacityOverride;
+  applyOverlayOpacity();
+}
+let opacityAccel = null;
+function registerOpacityHotkey(accel) {
+  if (opacityAccel) hotkeys.unregister(opacityAccel);
+  opacityAccel = null;
+  if (!accel || typeof accel !== "string") return { ok: true };
+  const r = hotkeys.register(accel, toggleOpacityOverride);
+  if (r.ok) opacityAccel = accel;
+  return r;
+}
+
 let overlayAccel = null;
 function registerOverlayHotkey(accel) {
   if (overlayAccel) hotkeys.unregister(overlayAccel);
@@ -1185,6 +1267,7 @@ function setMoveMode(on) {
   applyMouse();
   if (on && overlay) overlay.focus();
   overlay?.webContents.send("overlay:move-mode", on);
+  applyOverlayOpacity(); // arranging is always full-opacity — you can't place what you can't see
   refreshTray();
 }
 // Global arrange: one cohesive overlay app. Both widgets (Blueprint + Mining) now live in the
@@ -1378,7 +1461,11 @@ function restartAsAdmin() {
       `W 'started; waiting for old instance (pid ${process.pid}) to exit'`,
       `Wait-Process -Id ${process.pid} -Timeout 10 -ErrorAction SilentlyContinue`,
       `W 'old instance gone (or 10s timeout); sweeping leftover sidecar'`,
+      // The sidecar is our own exe running server.mjs as node (0.1.41+); match the command line,
+      // never the bare name — every overlay window is also named 'SC Overlay'. The old bun-exe
+      // name sweep stays one more release: an orphan from 0.1.40 can survive into this update.
       `Get-Process -Name 'sc-overlay-server' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
+      `Get-CimInstance Win32_Process -Filter "Name='SC Overlay.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*server.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
       `try {`,
       `  W 'requesting elevated relaunch (UAC): ${exe.replace(/'/g, "''")}'`,
       `  Start-Process -FilePath ${q(exe)}${argList} -WorkingDirectory ${q(wd)} -Verb RunAs -ErrorAction Stop`,
@@ -1467,11 +1554,14 @@ function setupUpdater() {
     if (!updateDownload) updateDownload = { version: "", percent: 0, bps: 0 };
     const pct = Math.floor(p.percent);
     updateDownload.bps = p.bytesPerSecond;
+    // ONLY the tooltip updates during a download. setContextMenu() here QUIT the app for
+    // anyone who opened the tray to watch progress: replacing the Menu object while its
+    // native popup is open tears it down and the process exits cleanly — no WER, no log
+    // (shipped 0.1.39–0.1.40; Sub diagnosed it). The menu itself still rebuilds on
+    // update-downloaded and on error, when no popup can be up. Never rebuild a tray
+    // context menu on a high-frequency event.
     if (tray) tray.setToolTip(`SC Overlay — downloading update ${pct}%`);
-    if (pct !== updateDownload.percent) {
-      updateDownload.percent = pct;
-      refreshTray();
-    }
+    updateDownload.percent = pct;
   });
   autoUpdater.on("update-not-available", () => {
     if (!manualCheck) return;
@@ -1543,6 +1633,7 @@ function refreshTray() {
       { label: "Unlock Alerts", type: "checkbox", checked: unlockAlertVisible, click: toggleUnlockAlert },
       { label: "Loot Split", type: "checkbox", checked: partyVisible, click: toggleParty },
       { label: "Event Tracker", type: "checkbox", checked: battagliaVisible, click: toggleBattaglia },
+      { label: "Chat", type: "checkbox", checked: chatVisible, click: toggleChat },
       { label: "Web Page", type: "checkbox", checked: webViewVisible, click: toggleWebView },
       { label: "Infographic Viewer", type: "checkbox", checked: bindingChartVisible, click: toggleBindingChart },
       { type: "separator" },
@@ -1680,6 +1771,8 @@ if (!app.requestSingleInstanceLock()) {
       if (typeof c.interactHotkey === "string") interactKey = c.interactHotkey;
       if (typeof c.moveHotkey === "string") moveKey = c.moveHotkey;
       if (typeof c.fabClaimHotkey === "string") fabClaimKey = c.fabClaimHotkey;
+      if (Number.isFinite(c.unfocusedOpacity)) setUnfocusedOpacity(c.unfocusedOpacity);
+      if (typeof c.opacityHotkey === "string") registerOpacityHotkey(c.opacityHotkey);
       if (c.holdToInteract === true) holdMode = true; // opt-in: require holding the interact key
     } catch { /* defaults */ }
     foreground.want("hold", holdMode); // only track the foreground app if something asks
@@ -1708,6 +1801,7 @@ if (!app.requestSingleInstanceLock()) {
       unlockAlertVisible = c.unlockAlertOpen !== false; // default ON — it replaced an existing toast
       partyVisible = c.partyOpen === true;
       battagliaVisible = c.battagliaOpen === true;
+      chatVisible = c.chatOpen === true;
       webViewVisible = c.webViewOpen === true;
       bindingChartVisible = c.bindingChartOpen === true;
     } catch { /* default off */ }
@@ -1717,6 +1811,13 @@ if (!app.requestSingleInstanceLock()) {
     startFabCapture({
       port: PORT,
       configDir: path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker"),
+      // 🔑 Passed in, never read from config alone. `miningDebug` writes SCREENSHOTS OF THE USER'S
+      // DESKTOP to disk, and this app's whole position on screen reading is that it does not happen
+      // unless you ask for it. A config flag would ship that capability to everyone — off by
+      // default and with no UI, but present, and a stale `true` left in a config.json would arm it
+      // on a packaged build. Same gate as the dev-replay endpoint: non-packaged only, decided here
+      // where `app.isPackaged` is authoritative, so a release physically cannot turn it on.
+      devTools: !app.isPackaged,
       onStatus: (s) => { try { overlay?.webContents.send("overlay:ocr", s); } catch { /* window gone */ } },
     });
   });
@@ -1821,6 +1922,9 @@ if (!app.requestSingleInstanceLock()) {
     registerMoveHotkey(typeof accel === "string" ? accel : ""));
   ipcMain.handle("set-fabclaim-hotkey", (_e, accel) =>
     registerFabClaimHotkey(typeof accel === "string" ? accel : ""));
+  ipcMain.handle("set-opacity-hotkey", (_e, accel) =>
+    registerOpacityHotkey(typeof accel === "string" ? accel : ""));
+  ipcMain.handle("app:set-unfocused-opacity", (_e, v) => { setUnfocusedOpacity(v); return true; });
   ipcMain.handle("overlay:reset-layout", () => { resetWidgetLayout(); return true; });
   // Primary display's offset + size within the full-desktop canvas, so the page can default a
   // new/reset widget onto the PRIMARY monitor (not a corner of a left/top secondary display).
@@ -1972,7 +2076,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     return { x: canvasOffset.x, y: canvasOffset.y, scale: canvasScale };
   });
-  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }));
+  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }));
   ipcMain.on("app:set-mining", (_e, on) => {
     if (on) { miningAutoSuppress = 0; setMiningVisible(true); }
     else setMiningVisible(false, { manual: true });
@@ -1983,6 +2087,7 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("app:set-unlockalert", (_e, on) => setUnlockAlertVisible(!!on));
   ipcMain.on("app:set-party", (_e, on) => setPartyVisible(!!on));
   ipcMain.on("app:set-battaglia", (_e, on) => setBattagliaVisible(!!on));
+  ipcMain.on("app:set-chat", (_e, on) => setChatVisible(!!on));
   ipcMain.on("app:set-config", (_e, on) => setConfigWidgetVisible(!!on));
   // SC Feed alert tone picker, mirroring mining:pick-tone (renderers can't open OS dialogs).
   ipcMain.handle("scfeed:pick-tone", async () => {

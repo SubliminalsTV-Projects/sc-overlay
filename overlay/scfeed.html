@@ -9,9 +9,6 @@
   /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
     const t = q.get("theme"); if (t) r.setAttribute("data-theme", t); }</script>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* Star Citizen news toast, fed by sc-feed.subliminal.gg's OmniFeed (proxied + flattened by the

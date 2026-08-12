@@ -9,8 +9,11 @@
 // else is true of it. Weakening that would silently cost real ore call-outs, which is much worse
 // than a missed piece of debris. The two values where both readings are live (16,000 Savrilium ×5
 // and 18,000 Bexalite ×5) are the interesting cases and are checked against the real dataset.
-import { readFileSync } from "node:fs";
-import { classifySignature, isDebrisValue, repairConfusableDigits } from "./mining.js";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { MiningTracker, classifySignature, isDebrisValue, repairConfusableDigits } from "./mining.js";
 
 let failed = 0;
 const check = (name: string, cond: boolean, detail = "") => {
@@ -99,6 +102,16 @@ check("16,000 and 18,000 are left as they are (Savrilium ×5 vs Bexalite ×5)",
 check("6,000 and 8,000 too (both debris, so it changes nothing anyway)",
   fix(6000) === null && fix(8000) === null);
 
+// ── the TWO-digit extension (Rytharr, 2026-08-07) ──────────────────────────────
+// A real read of 18,980 should have been 16,960 (Copper ×4) — two digits confused in the same
+// number. Neither single-digit swap alone resolves to anything legal (16,980 and 18,960 are both
+// nowhere near a real value), only flipping both at once does — this is exactly the case the
+// one-swap-only version couldn't reach.
+console.log("\nrepairing TWO confused 6/8 digits at once");
+check("18,980 -> 16,960 (Copper ×4)", fix(18980) === 16960, String(fix(18980)));
+check("a single swap of 18,980 alone resolves nothing (both are illegal)",
+  !legal(16980) && !legal(18960));
+
 // Exhaustive: every single-digit 6/8 misread of every legal value.
 const swap1 = (s: string) => {
   const out: string[] = [];
@@ -127,6 +140,37 @@ check(`most single-digit slips are recovered (${recovered} recovered, ${refused}
 // And a repair can only ever produce something the game could have shown.
 check("every repair output is itself a legal signature",
   all.flatMap((v) => swap1(String(v))).map(Number).map(fix).filter((n): n is number => n !== null).every(legal));
+
+// ── what a read is ALLOWED to do (Sub, 2026-08-09) ────────────────────────────
+// The scanner was popping itself open while Sub was flying. Cause: `unknown` was the one verdict
+// decided by the glyph check alone, and the glyph check is a brightness-and-shape heuristic that a
+// bright mark beside any HUD number can pass — a flight-HUD line reading "... 16.98km | 6,730 | c"
+// came back confirmed. The value is the evidence now: a number the game cannot draw as a signature
+// is refused however convincing the pixels beside it looked.
+console.log("\nwhat a read is allowed to do");
+const tracker = () => new MiningTracker({
+  dataDir: fileURLToPath(new URL("../data", import.meta.url)),
+  stateDir: mkdtempSync(join(tmpdir(), "sc-mining-test-")),
+});
+const read = (sig: number, confirmed: boolean) => tracker().applyMineableRead(sig, confirmed);
+
+check("6,730 with a CONFIRMED glyph is still refused (the shipped false pop-up)",
+  read(6730, true).announced === false && read(6730, true).used === false,
+  read(6730, true).why);
+check("...and says why, naming the glyph so the log doesn't look like a glyph failure",
+  /not a rock signature/.test(read(6730, true).why) && /scan glyph found/.test(read(6730, true).why));
+check("no unknown value announces, glyph or not",
+  [2500, 4001, 6730, 15555, 3171].every((s) => !read(s, true).announced && !read(s, false).announced));
+check("a rock signature still announces with NO glyph (the asymmetry that must not regress)",
+  read(3170, false).announced === true && read(3170, false).verdict === "ore");
+check("an exact debris value still announces with no glyph",
+  read(4000, false).announced === true && read(4000, false).verdict === "debris");
+check("16,000 stays ore-or-debris and still announces", read(16000, false).announced === true
+  && read(16000, false).verdict === "ore-or-debris");
+check("a repaired 6/8 read announces as the repaired rock",
+  read(3565, true).announced === true && read(3565, true).repairedFrom === 3565);
+check("out-of-range is still refused before any of this", read(900, true).verdict === null
+  && read(99999, true).verdict === null);
 
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
 process.exit(failed ? 1 : 0);

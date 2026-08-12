@@ -77,6 +77,21 @@ try {
   store.markUploaded(store.pending());
   check("acking the current row does clear it", store.get("Covalex_Hauling_1")?.pending, false);
 
+  // ── the ship they flew it in (Sub, 2026-08-09) ──
+  const withShip = sanitizeAnswer({
+    contractKey: "Ship_Test_1", difficulty: 4, ship: "  Drake Cutlass Black  ", shipManufacturer: "drake",
+  });
+  check("ship is recorded", withShip?.ship, "Drake Cutlass Black");
+  check("ship is trimmed", withShip?.ship?.startsWith(" "), false);
+  check("manufacturer is recorded", withShip?.shipManufacturer, "drake");
+  const onFoot = sanitizeAnswer({ contractKey: "Ship_Test_2", difficulty: 2 });
+  check("no ship reads as null, not empty string", onFoot?.ship, null);
+  // 🔑 Ship alone must NOT make a submission worth storing — otherwise every completion files
+  // an empty row just because the player happened to be sitting in a ship.
+  check("ship alone is not an answer", sanitizeAnswer({ contractKey: "Ship_Test_3", ship: "Drake Cutlass Black" }), null);
+  const longName = sanitizeAnswer({ contractKey: "Ship_Test_4", solo: true, ship: "x".repeat(200) });
+  check("a runaway ship name is capped", longName?.ship?.length, 60);
+
   check("file written", existsSync(join(dir, "mission-feedback.json")), true);
   const onDisk = JSON.parse(readFileSync(join(dir, "mission-feedback.json"), "utf8"));
   check("file holds both rows", onDisk.length, 2);

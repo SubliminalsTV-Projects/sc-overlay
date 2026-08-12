@@ -1,4 +1,134 @@
 {
+  "0.1.42": {
+    "date": "2026-08-10T02:38:21Z",
+    "notes": [
+      {
+        "kind": "fixed",
+        "label": "Security: update as soon as you can",
+        "text": "This release closes two holes in the app's local service that anything on your network could reach. The worse one let a request walk out of the overlay's own folder and read files from your disk — including the file holding your subliminal.gg sync token. The second let an unauthenticated request rewrite your settings, which could be chained to point chat at somebody else's server and hand them that token. Both are fixed: the service now refuses any request from another machine for anything that carries credentials or changes a setting, and refuses page-initiated requests from a website open in the Web Page widget. Widget pages still serve to OBS on a second PC, so browser sources are unaffected. Found and reported by a viewer during a stream — thank you."
+      },
+      {
+        "kind": "new",
+        "label": "Chat: your own rooms, private ones, and direct messages",
+        "text": "Create a room and say what it is FOR — Org Operations, Mining, Salvage, Bounty Hunting, twelve activities in all — and the room browser groups by that, so you can see what people are actually doing rather than a flat list of names. Rooms can be private: a private room is not listed anywhere, and you let people in with a six-character join code or by inviting their RSI handle. And you can now message a player directly: right-click any name, in the chat or in the member list, and pick Send a direct message. Conversations wait for you if you were offline. You can delete a room you made, which removes it for everyone in it."
+      },
+      {
+        "kind": "new",
+        "label": "Chat: Nearby replaces the Shard channel",
+        "text": "There are now two location channels instead of three. Your region channel (US East 1B, EU West 1A and so on) is everyone on that exact server. Nearby is the Dynamic Game Server actually running the area you are in — the people who could genuinely be around you. The old Shard channel sat between the two and reported far more people than were anywhere near you, so it is gone. Nearby is worked out from your game log and follows you as server meshing hands you between DGSs."
+      },
+      {
+        "kind": "improved",
+        "label": "Chat: scrollback survives, and the channel list calms down",
+        "text": "Conversations are no longer lost when the chat service restarts — history, your rooms and your invites all persist now. The left rail splits into the channels you are IN and a Browse rooms list you can roll up, every group collapses with a click, and you can hide rooms from the browser you are not interested in. Links you share are labelled BP, ITEM or MISSION so a blueprint and a wiki lookup no longer look identical, the slash-command menu now appears mid-sentence instead of only at the start of a message, and a new /build command shares an erkul loadout under a name you choose. Direct messages carry a standing note that they are private from other players but not encrypted."
+      },
+      {
+        "kind": "fixed",
+        "label": "One blueprint no longer shows as two on the mission report",
+        "text": "If you ran contracts back to back, a blueprint awarded by the mission you finished earlier could appear on the NEXT mission's report as well — one unlock, two pictures. The report now refuses to reach back past the previous completion, so each card shows only what that contract actually paid out. Where two missions finish so close together that the log genuinely cannot say which one paid, the card now shows nothing rather than guessing."
+      },
+      {
+        "kind": "fixed",
+        "label": "The mission report waits while you answer it",
+        "text": "Picking an answer and then alt-tabbing into the game could leave you coming back to a card that had already closed, with the remaining questions unanswerable. The card now only counts down while you are away from it — pointer off it and the overlay not focused — so you can go and fly and come back to finish."
+      },
+      {
+        "kind": "fixed",
+        "label": "The Mining Scanner stopped calling out numbers that are not rocks",
+        "text": "It could announce a reading while you were flying nowhere near a rock, triggered by an ordinary number on your flight HUD. The game only ever draws 165 legal signature values, so anything that is not one of them cannot be a contact — those are now refused outright instead of being talked into a call-out by the scan marker beside them. The number still appears in the scan box, dimmed and struck through, so you can see what was read and thrown away."
+      },
+      {
+        "kind": "improved",
+        "label": "Missions now say whether they are Verified",
+        "text": "Mission pages on subliminal.gg show whether a contract is Verified or Unverified, the same way the mobiGlas Contract Manager does, and the blueprint tracker can filter by it. 704 of the 4,075 contracts in the current patch are unverified."
+      }
+    ]
+  },
+  "0.1.41": {
+    "date": "2026-08-08T23:18:09Z",
+    "notes": [
+      {
+        "kind": "new",
+        "label": "Player chat — Global, your server, your shard",
+        "text": "The overlay now has an in-game chat with three channels that manage themselves: Global (everyone running SC Overlay), your server region (US East 1B, EU West 1A, and so on), and your shard — the actual instance you are flying in, meaning everyone in that channel can genuinely meet you in the verse. The app reads which shard you land on from the game's own log and moves you between channels automatically as you play. Turn it on from the hub or the tray: it's the new Chat widget. Chat is for verified RSI accounts only — connect your subliminal.gg account and verify your handle on your profile, and you're in. That rule is what keeps the place moderated: everyone chatting is accountable for their handle."
+      },
+      {
+        "kind": "improved",
+        "label": "A much smaller, much lighter app",
+        "text": "This update is a full optimization pass with no visible change: the download is 40 MB smaller (135 MB, down from 175 MB), the app on disk shrank by about a quarter, and the background service that does the tracking now uses about a quarter of the memory it used to — roughly 350 MB less while the app is running. The screen-watcher that notices when the game is focused no longer needs its own helper process either."
+      },
+      {
+        "kind": "fixed",
+        "label": "Opening the tray menu during an update download quit the app",
+        "text": "If you right-clicked the tray icon to watch an update download, the app could close on the spot — the menu was being rebuilt underneath its own open popup once a second. The download itself was always fine and resumed on relaunch, which made it look stranger than it was. The tray tooltip still shows live progress on hover; the menu simply leaves itself alone until the download finishes."
+      },
+      {
+        "kind": "fixed",
+        "label": "Unlock Alerts offered to claim blueprints you already had",
+        "text": "Every ordinary \"Blueprint Received\" toast was carrying an \"Add to my collection\" button and a countdown that belonged only to fabricator claims. The prompt now appears only when there is actually something to claim."
+      }
+    ]
+  },
+  "0.1.40": {
+    "date": "2026-08-08T20:46:47Z",
+    "notes": [
+      {
+        "kind": "new",
+        "label": "The scan readout, where you can see it",
+        "text": "The number the scanner read now shows in two places — to the left of the scan box and above it — instead of one spot underneath, and it is about twice the size. The box is wide and the signature can sit anywhere along it, so a single readout was often nowhere near what you were looking at. Both copies always show the same number, and each one moves itself out of the way if it would run off the edge of your screen."
+      },
+      {
+        "kind": "improved",
+        "label": "The mining scanner is around eight times faster",
+        "text": "A scan used to take about four and a half seconds to come back, and often longer, because every check read your entire screen and ran text recognition over all of it before it even looked at the number. Now, once it has found a signature, it looks only at the small patch of screen where that number actually sits. A reading comes back in a little over half a second. Picking up a brand-new rock is quicker too."
+      },
+      {
+        "kind": "improved",
+        "label": "It reads the number correctly now",
+        "text": "The scanner used two different text engines, and the one doing most of the work was the one getting it wrong — in testing it did not read a single mining signature correctly, producing things like 2006 where the screen clearly showed 2,000. The better engine is in charge now, and a nonsense value from the other one is thrown away instead of being announced."
+      },
+      {
+        "kind": "improved",
+        "label": "The scan marker is found on any ship",
+        "text": "Confirming that you are really scanning means spotting the small map-pin drawn next to the number. That check used to depend on the pin's colour — but the pin is drawn in your ship's HUD colour, which changes with the manufacturer, and on some ships it is nearly white. It no longer looks at colour at all. It looks for a small solid bright mark of roughly the right shape, which holds true whatever your HUD looks like."
+      },
+      {
+        "kind": "improved",
+        "label": "Signatures that could be two things now say so",
+        "text": "A couple of readings are genuinely ambiguous. 16,000 is either a five-rock Savrilium cluster or eight panels of salvage, and 18,000 is either Bexalite or nine panels. The scanner used to pick a side and sound certain about it. Now it leads with the likelier answer and admits the doubt: \"Probably debris. Could be Bexalite. Your call.\" If it is a rock you have targeted it still leads with the rock — \"That might be Savrilium. I'm not certain. Worth flying over.\""
+      },
+      {
+        "kind": "fixed",
+        "label": "A finished mission would not go away",
+        "text": "Complete a contract and the tracker could keep showing it as unfinished, sometimes for the rest of your session. It was re-reading the mission title still sitting on your screen after the contract ended and registering it all over again as a new one."
+      },
+      {
+        "kind": "fixed",
+        "label": "The wrong blueprint list",
+        "text": "Several different contracts share a name. When the tracker could not tell which one you were on it merged all of their reward lists together — so a mission with eight blueprints you already owned showed as \"14 of 18\", including four you could never get from it. It now uses the exact contract the game reports."
+      },
+      {
+        "kind": "fixed",
+        "label": "Missions coming back from hours ago",
+        "text": "A contract you finished earlier could reappear as though it were live, even after you had gone back out to the menu and returned. Leaving the game now properly clears the missions from that session."
+      },
+      {
+        "kind": "fixed",
+        "label": "Half of all mining scans were failing silently",
+        "text": "Every check wrote a screenshot to the same temporary file, which collided with the previous check still reading it. Around half of them failed outright and produced nothing at all — no reading, no call-out, and no error to explain it. That is most of what \"it just sits there\" was."
+      },
+      {
+        "kind": "fixed",
+        "label": "Saving settings no longer does unnecessary work",
+        "text": "Changing anything — even a widget's text size — used to re-fetch every loadout URL, restart the game-log watcher mid-session, and re-upload your whole collection to the site. It now only does the work the change actually needs. Thanks to Rytharr for finding this one."
+      },
+      {
+        "kind": "fixed",
+        "label": "Better recovery from misread digits",
+        "text": "The scanner could already correct a single 6 mistaken for an 8. It now handles two in the same number, recovering about ten more real misreadings without introducing any new ambiguity. Thanks to Rytharr for the fix and the measurements behind it."
+      }
+    ]
+  },
   "0.1.39": {
     "date": "2026-08-05T21:06:56Z",
     "notes": [

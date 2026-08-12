@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld("overlayConfig", {
   setInteractHotkey: (accel) => ipcRenderer.invoke("set-interact-hotkey", accel),
   setMoveHotkey: (accel) => ipcRenderer.invoke("set-move-hotkey", accel),
   setFabClaimHotkey: (accel) => ipcRenderer.invoke("set-fabclaim-hotkey", accel),
+  setOpacityHotkey: (accel) => ipcRenderer.invoke("set-opacity-hotkey", accel),
+  // Live-applied while the slider moves — a transparency is judged by looking at it.
+  setUnfocusedOpacity: (v) => ipcRenderer.invoke("app:set-unfocused-opacity", v),
   // Opt-in "hold to interact" mode (live-applied), and a layout reset for lost widgets.
   setHoldMode: (on) => ipcRenderer.invoke("app:set-hold-mode", !!on),
   resetLayout: () => ipcRenderer.invoke("overlay:reset-layout"),
