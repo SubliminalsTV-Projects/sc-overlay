@@ -30,6 +30,12 @@ if (process.platform === "win32") {
   renameSync(`${out}/overlay-server.js`, `${out}/sc-overlay-server.mjs`);
 }
 
+// Per-changelist datasets stay in the repo for dev, but only `latest` ships: the newest
+// per-changelist pair is byte-identical to the .latest files (checked 0.1.41 — cmp says so),
+// and old generations (4.8.x) are unreachable on live servers. A player on an unbundled
+// changelist resolves exact → remote fetch (subliminal.gg/sc) → latest, same as today.
+// Shipping all generations cost 25.5 MB of the 32 MB data dir.
+const OLD_DATASET = /^blueprint(?:s|-detail)\.\d+\.json$/;
 for (const dir of ["overlay", "data"]) {
   // Never ship overlay/config.json — it may contain a developer's personal
   // configuration. The server seeds defaults and writes runtime state under

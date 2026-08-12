@@ -4,9 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SC Overlay — Settings</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<!-- Embedded on the canvas this page is a widget like any other, so it takes the shared widget
+     tokens + surface treatment. Harmless in the standalone window: nothing there uses .wpanel or
+     the widget token names, and the remap below is scoped to html.embedded. -->
+<link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* Matches subliminal.gg — Material-3 dark surfaces, amber accent, Space Grotesk + Inter. */
   :root {
@@ -18,6 +19,52 @@
     --font-head: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
     --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
   }
+  /* ── embedded on the canvas: wear the HUD ──────────────────────────────────────────────
+     🔑 Rather than restyle ~1,100 lines of rules, remap this page's OWN tokens onto the shared
+     widget tokens from widget-theme.css. Every existing rule keeps working and simply renders in
+     HUD colours — and since widget-theme.css retints those tokens per manufacturer skin, Settings
+     picks up all 16 skins for free with nothing further to write.
+     Scoped to html.embedded (specificity 0,1,1) so it beats the :root block above without
+     touching the standalone window, which must keep its amber subliminal.gg identity. */
+  html.embedded {
+    --bg: transparent;
+    --card: rgba(var(--accent-rgb), 0.06);
+    --card-high: rgba(var(--accent-rgb), 0.14);
+    --field: var(--track);
+    --line: var(--divider);
+    --line-strong: var(--border);
+    --line-soft: var(--divider);
+    --text: var(--cyan-text);
+    --muted: var(--cyan-dim);
+    --outline: var(--faint);
+    --amber: var(--cyan);            /* the page's accent becomes the skin's accent */
+    --on-amber: #06121a;             /* dark ink on an accent-filled button */
+    --amber-deep: #06121a;
+    --error: var(--red);
+    --font-head: var(--sans);
+    --font-body: var(--sans);
+  }
+  /* The widget owns the box: no page padding, no min-height, and the panel itself scrolls.
+     `.wrap` becomes the panel surface (the JS adds .wpanel to it for the shared scanlines /
+     Esperia mesh / Origin stitching that every other widget carries). */
+  html.embedded body { padding: 0; min-height: 0; background: transparent; height: 100%; overflow: hidden; }
+  html.embedded { height: 100%; }
+  html.embedded .wrap {
+    max-width: none; margin: 0; height: 100%; overflow-y: auto; padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: 10px;
+    /* 🔑 Two layers, not a hand-picked colour: the skin's translucent gradient sits ON TOP of
+       the skin's own near-opaque panel colour. The other widgets are glanceable readouts where
+       seeing the game through them is the point; Settings is dense body text and long labels,
+       and at the shared ~0.75 alpha it was hard to read against a bright planet. Layering keeps
+       it correct across all 16 manufacturer skins — no literal colour is written here, so
+       nothing has to be maintained per skin. */
+    background: linear-gradient(180deg, var(--panel-top), var(--panel-bot)), var(--panel-solid);
+  }
+  html.amd-lite.embedded .wrap { background: var(--panel-solid); }
+  /* The window's big hero header is dead weight in a widget — the widget's own bar names it. */
+  html.embedded .apphead { display: none; }
+  html.embedded .card { margin-top: 10px; }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: var(--font-body); background: var(--bg); color: var(--text); min-height: 100vh; padding: 40px 24px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
   /* themed scrollbar — amber tint, matches the site */
@@ -39,6 +86,25 @@
   input[type=text] { width: 100%; background: var(--field); border: 1px solid var(--line); color: var(--text); padding: 10px 12px; font-family: var(--font-body); font-size: 14px; border-radius: var(--radius-sm); transition: border-color .15s; }
   input[type=text]::placeholder { color: var(--outline); }
   input[type=text]:focus { outline: none; border-color: var(--amber); }
+  /* 🔑 Number inputs had NO rule at all — only [type=text] and [type=range] were ever styled — so
+     the pop-up durations rendered as raw platform controls: white field, system font, native
+     spinners, sitting in the middle of a dark panel (Sub, 2026-08-03).
+     `color-scheme: dark` is the part that matters and the part that is easy to miss: the up/down
+     spinner is drawn by the browser and cannot be recoloured with normal properties, so on a dark
+     field its arrows come out dark-on-dark and effectively invisible. That switch is what makes
+     the browser draw them light. The spinners are kept deliberately — nudging the number up and
+     down is how the control is used. */
+  input[type=number] { width: 78px; background: var(--field); border: 1px solid var(--line); color: var(--text);
+    padding: 10px 12px; font-family: var(--font-body); font-size: 14px; border-radius: var(--radius-sm);
+    transition: border-color .15s; color-scheme: dark; accent-color: var(--amber); }
+  input[type=number]:focus { outline: none; border-color: var(--amber); }
+  /* Canvas-calibration control groups: a row of nudge buttons plus its readout, sitting UNDER the
+     row's label rather than squeezed to the right of it — there are nine controls between the two
+     rows and they do not fit beside a label at any sensible window width. */
+  .calgrp { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .calgrp button { min-width: 34px; }
+  .calval { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+    min-width: 62px; text-align: center; }
   input[readonly] { color: var(--muted); }
   .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .row .ship { font-weight: 600; min-width: 150px; }
@@ -80,9 +146,6 @@
   input[type=range]::-webkit-slider-thumb:hover { filter: brightness(1.1); }
   .presets { display: flex; gap: 8px; margin-top: 8px; }
   .presets button { flex: 1; padding: 7px 8px; font-size: 12.5px; }
-  /* Loadout-overlay settings (erkul URLs + ship auto-switch) are hidden for normal users —
-     they're Sub's stream-overlay feature. Revealed by the hidden unlock (title ×5). */
-  body:not(.show-loadout) .loadout-only { display: none; }
   /* Support links (Sub Club / Patreon / Twitch) */
   .support-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .support { display: flex; align-items: center; gap: 11px; padding: 11px 13px;
@@ -175,12 +238,111 @@
   // being a 4K TV left at 100% OS scaling (→ 2×). Users can still Ctrl+= to zoom further on top.
   // Runs pre-paint (in <head>) so there's no flash of tiny text.
   (function () {
+    // 🔑 Embedded on the canvas the widget owns the box, and the canvas already applies its own
+    // per-widget text scaling — screen-scaling on top of that compounds into an unreadable size.
+    if (new URLSearchParams(location.search).has("embedded")) return;
     function applyScale() {
       var h = (window.screen && window.screen.height) || 1080;
       document.documentElement.style.zoom = Math.max(1, Math.min(2.25, h / 1080));
     }
     applyScale();
     window.addEventListener("resize", applyScale);
+  })();
+
+  // ── running as a canvas WIDGET instead of a window ──────────────────────────────────────
+  // Two host modes, one file (the same pattern the Journal and Mining Scanner use). In a window
+  // this page gets `window.overlayConfig` from config-preload.cjs; as an iframe on the canvas it
+  // gets no preload at all, so synthesize the identical API on top of the parent's __configHost.
+  // Doing it HERE — before any of the page's own script runs — is what lets all ~23 existing
+  // `window.overlayConfig.…` call sites work untouched instead of being rewritten to a bridge.
+  (function () {
+    if (!new URLSearchParams(location.search).has("embedded")) return;
+    document.documentElement.classList.add("embedded");
+    if (window.overlayConfig) return; // a real preload wins; never shadow it
+    var host = function () {
+      try { return (window.parent && window.parent.__configHost) || null; } catch (e) { return null; }
+    };
+    // Absent host → every call is a no-op resolving to null, exactly as the page already expects
+    // from an older shell (it guards each of these before use).
+    var call = function (name) {
+      return function () {
+        var h = host();
+        if (!h || typeof h[name] !== "function") return Promise.resolve(null);
+        try { return Promise.resolve(h[name].apply(h, arguments)); } catch (e) { return Promise.resolve(null); }
+      };
+    };
+    window.overlayConfig = {
+      pickPng: call("pickPng"), pickLog: call("pickLog"),
+      setOverlayHotkey: call("setOverlayHotkey"), setBindingHotkey: call("setBindingHotkey"),
+      setMiningHotkey: call("setMiningHotkey"), setWebViewHotkey: call("setWebViewHotkey"),
+      setInteractHotkey: call("setInteractHotkey"), setMoveHotkey: call("setMoveHotkey"),
+      setFabClaimHotkey: call("setFabClaimHotkey"), setOpacityHotkey: call("setOpacityHotkey"),
+      setUnfocusedOpacity: call("setUnfocusedOpacity"),
+      setHoldMode: call("setHoldMode"), resetLayout: call("resetLayout"),
+      canvasCalibration: call("canvasCalibration"),
+      metrics: call("metrics"), openDataFolder: call("openDataFolder"),
+      isElevated: call("isElevated"), restartAsAdmin: call("restartAsAdmin"),
+      getOverlayEnabled: call("getOverlayEnabled"), setOverlayEnabled: call("setOverlayEnabled"),
+      onOverlayEnabledChanged: function (cb) { var h = host(); if (h && h.onOverlayEnabledChanged) h.onOverlayEnabledChanged(cb); },
+    };
+
+    // The standard embedded-widget handshake every other page does.
+    // 🔑 `ready()` is not optional: it is what makes the canvas apply this widget's saved frame,
+    // push its manufacturer theme onto this document (which the token remap above reads), apply
+    // the per-widget text scale and send the first visibility. Without it the widget renders
+    // unthemed at the wrong size and never learns it was shown.
+    document.addEventListener("DOMContentLoaded", function () {
+      var wrap = document.querySelector(".wrap");
+      if (wrap) wrap.classList.add("wpanel"); // shared scanlines / Esperia mesh / Origin stitching
+      try { host() && host().ready && host().ready(); } catch (e) { /* not embedded */ }
+    });
+    // Reveals this widget's header even though the cursor is over an IFRAME, so the canvas
+    // wrapper never sees it. Same one line every embedded page carries.
+    document.addEventListener("pointerdown", function () {
+      try { host() && host().summonCog && host().summonCog(); } catch (e) { /* not embedded */ }
+    });
+
+    // Typing over a focused game needs the shell's shared keyboard grab: the overlay takes focus
+    // and SUSPENDS the interact key, then calls back here once it's released so no stray
+    // character lands in the field. The registry names that callback __configFocus.
+    // 🔑 Text-entry fields ONLY. A checkbox or a button taking the grab would suspend the
+    // interact key for a click that never needed it, and the user would be left unable to
+    // interact with the overlay until something released it.
+    var TEXTY = /^(text|url|number|search|password|email)$/;
+    var isTexty = function (t) {
+      return !!t && (t.tagName === "TEXTAREA" || (t.tagName === "INPUT" && TEXTY.test(t.type || "text")));
+    };
+    var pendingFocus = null;
+    document.addEventListener("focusin", function (e) {
+      if (!isTexty(e.target)) return;
+      pendingFocus = e.target;
+      try { host() && host().editStart && host().editStart(); } catch (e2) { /* not embedded */ }
+    });
+    document.addEventListener("focusout", function (e) {
+      if (!isTexty(e.target)) return;
+      if (pendingFocus === e.target) pendingFocus = null;
+      try { host() && host().editEnd && host().editEnd(); } catch (e2) { /* not embedded */ }
+    });
+    window.__configFocus = function () {
+      try { if (pendingFocus) pendingFocus.focus(); } catch (e) { /* element went away */ }
+    };
+
+    // Hotkey capture needs the same grab, but a hotkey button is NOT a text field so the
+    // focusin path above deliberately ignores it. Expose the grab so the capture flow can take
+    // it explicitly, focusing the button itself — keydown is bound to `window`, so the event
+    // only reaches it if something inside THIS document holds focus.
+    // Absent (standalone window) the capture flow just skips this: that window already has real
+    // keyboard focus, which is why hotkey capture worked there without any of this.
+    window.__cfgGrab = {
+      start: function (el) {
+        pendingFocus = el || null;
+        try { host() && host().editStart && host().editStart(); } catch (e) { /* not embedded */ }
+      },
+      end: function () {
+        pendingFocus = null;
+        try { host() && host().editEnd && host().editEnd(); } catch (e) { /* not embedded */ }
+      },
+    };
   })();
 </script>
 </head>
@@ -194,64 +356,28 @@
     </div>
   </div>
 
-<!-- ══════════ TIER 1 ══════════ -->
+<!-- ══════════ TIER 1 ══════════
+     Setup FIRST (Sub, 2026-08-11). The opt-ins used to open the page, which put the things you
+     must decide about in front of the things you just need to work — and it buried the sync token
+     that half the opt-ins below depend on. -->
   <div class="tier">
-    <div class="tier-h">Opt-in features <span class="tier-sub">all off until you turn them on</span></div>
+    <div class="tier-h">Setup &amp; defaults <span class="tier-sub">the essentials, sensible out of the box</span></div>
   </div>
 
+  <!-- 🔑 Sync is its own card, and it is FIRST. It used to be "Collection & privacy", sharing a
+       box with log sharing — which conflated two different bargains: one backs YOUR data up for
+       YOU, the other sends data to us. Log sharing now sits with the other contributions, and this
+       card is only about your account. Its position matters too: every opt-in further down that
+       says "needs a sync token" is pointing at this box. -->
   <div class="card">
-    <div class="label">Collection &amp; privacy</div>
+    <div class="label">Sync</div>
+    <div class="hint" style="margin-top:0">Backs your collection up to your subliminal.gg account — and it is the token the opt-in features further down ask for.</div>
     <div class="setrow">
       <label class="opt"><input type="checkbox" id="syncEnabled" /> Sync my collection to subliminal.gg</label>
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Backs up your blueprint collection + tracked mission to your subliminal.gg account and lets you browse it on the web. Needs a token — get one at <a href="https://subliminal.gg/blueprints" target="_blank">subliminal.gg/blueprints</a> → &ldquo;Connect the desktop tracker&rdquo; and paste it below.</span></span>
     </div>
     <input type="text" id="syncToken" placeholder="scbp_…  paste your token from subliminal.gg/blueprints" />
     <div class="hint" id="syncStatus"></div>
-    <div class="setrow">
-      <label class="opt"><input type="checkbox" id="shareLogs" /> Share anonymized logs to improve the tracker</label>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Sends your Star Citizen <code>Game.log</code> to SubliminalsTV so we can fix missions/drops the tracker gets wrong. Your handle, account ID, IP address and login session are stripped out and chat is removed before it leaves your PC — only mission and blueprint events remain. Needs a sync token. Off by default.</span></span>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="label">Screen reading (OCR)</div>
-    <div class="hint" style="margin-top:0">Uses Windows' built-in text recognition, only while Star Citizen is focused.</div>
-    <div class="setrow">
-      <label class="opt"><input type="checkbox" id="missionOcr" /> Detect the mission I'm tracking in-game</label>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Reads the tracked-mission panel so the overlay knows which mission you've actually selected — ground truth the game log can't give. No account needed.</span></span>
-    </div>
-    <div class="setrow">
-      <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's catalog — only items we don't have yet. You're credited on the contributor leaderboard. Needs a sync token.</span></span>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="label">Widgets &amp; interaction</div>
-    <div class="setrow">
-      <label class="opt"><input type="checkbox" id="miningAutoShow" /> Pop the Mining Scanner open when I'm scanning or refining</label>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Shows the Mining Scanner on its own when the scanner or Refinement Center is detected. Only a signature matching a known ore counts — debris and stray numbers won't pop it open. If you close it, it stays away for a bit before it can pop again.</span></span>
-    </div>
-    <div class="setrow">
-      <label class="opt"><input type="checkbox" id="holdToInteract" onchange="onHoldModeToggle()" /> Only let me click the overlay while I hold a key</label>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">With this on, the overlay is click-through during gameplay — hold the interact key (set it under Hotkeys) and hover a widget to click it. Prevents accidental clicks mid-game.</span></span>
-    </div>
-    <div class="setrow">
-      <div class="opt" style="flex-direction:column; align-items:stretch; gap:8px;">
-        <span>Infographic Viewer</span>
-        <div class="add" style="margin-top:0">
-          <input type="text" id="bindingPng" placeholder="no PNG chosen — pick one to fill the Infographic Viewer" readonly />
-          <button onclick="chooseBinding()">Choose PNG…</button>
-          <button class="danger" onclick="clearBinding()" title="Remove">✕</button>
-        </div>
-      </div>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Pick a PNG (transparency supported — e.g. a joystick binding chart) and it fills the Infographic Viewer, which you place and size like any other. Toggle it with the binding hotkey (set under Hotkeys) or from the tray.</span></span>
-    </div>
-  </div>
-
-  <!-- ══════════ TIER 2 ══════════ -->
-  <div class="tier">
-    <div class="tier-h">Setup &amp; defaults <span class="tier-sub">the essentials, sensible out of the box</span></div>
   </div>
 
   <div class="card">
@@ -266,7 +392,6 @@
     </div>
     <div id="logWarn" class="hint" style="display:none; color:#ffb4a8"></div>
     <div id="detected" class="hint"></div>
-    <label class="opt loadout-only"><input type="checkbox" id="autoSwitch" /> Auto-switch the overlay when I spawn a ship in-game</label>
   </div>
 
   <div class="card">
@@ -277,22 +402,22 @@
     <label class="opt" style="margin-top:2px;">Theme
       <select id="theme" onchange="onThemePicked()" style="margin-left:auto;">
         <option value="mobiglas">Mobiglas (default)</option>
-        <option value="drake">Drake Interplanetary</option>
-        <option value="anvil">Anvil Aerospace</option>
-        <option value="greys">Grey's</option>
-        <option value="esperia">Esperia</option>
-        <option value="misc">MISC</option>
-        <option value="banu">Banu</option>
-        <option value="gatac">Gatac</option>
-        <option value="mirai">Mirai</option>
-        <option value="origin">Origin</option>
-        <option value="aegis">Aegis Dynamics</option>
-        <option value="crusader">Crusader Industries</option>
-        <option value="rsi">RSI</option>
-        <option value="kruger">Kruger Intergalactic</option>
-        <option value="argo">Argo Astronautics</option>
-        <option value="cnou">Consolidated Outland</option>
         <option value="auto">Auto — match my ship</option>
+        <option value="aegis">Aegis Dynamics</option>
+        <option value="anvil">Anvil Aerospace</option>
+        <option value="argo">Argo Astronautics</option>
+        <option value="banu">Banu</option>
+        <option value="cnou">Consolidated Outland</option>
+        <option value="crusader">Crusader Industries</option>
+        <option value="drake">Drake Interplanetary</option>
+        <option value="esperia">Esperia</option>
+        <option value="gatac">Gatac</option>
+        <option value="greys">Grey's</option>
+        <option value="kruger">Kruger Intergalactic</option>
+        <option value="mirai">Mirai</option>
+        <option value="misc">MISC</option>
+        <option value="origin">Origin</option>
+        <option value="rsi">RSI</option>
       </select>
     </label>
     <div id="themeLock" style="display:none; margin-top:8px; padding:9px 11px; border-radius:8px;
@@ -308,17 +433,7 @@
     <div class="hint" style="margin-top:2px;">Applies to <strong>Auto</strong> theme and the stream ship-signal (<code>/api/ship</code>). Off = keep the last ship's manufacturer skin until you board another.</div>
   </div>
 
-  <div class="card">
-    <div class="cardhead">
-      <div class="label">Your files</div>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Saved party splits live in your Windows app-data folder (the app can't write next to its own program files — Windows makes that read-only). Each save also writes <code>index.html</code>: double-click it and every split opens in your browser with a proper table.</span></span>
-    </div>
-    <div class="hkrow">
-      <span class="hklabel">Saved party splits</span>
-      <button type="button" id="openPartyFolder" class="hkbtn">↗ Open folder</button>
-      <div class="hint">Holds a <code>.json</code>, a plain-text <code>.txt</code>, and an <code>index.html</code> you can open in any browser.</div>
-    </div>
-  </div>
+  
 
   <div class="card">
     <div class="cardhead">
@@ -338,6 +453,13 @@
       <button type="button" class="hkclear" id="webViewHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('webView')">✕</button>
       <input type="hidden" id="webViewHotkey" />
       <div class="hint" id="webViewHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Journal</span>
+      <button type="button" id="notepadHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('notepad')">Alt + F3</button>
+      <button type="button" class="hkclear" id="notepadHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('notepad')">✕</button>
+      <input type="hidden" id="notepadHotkey" />
+      <div class="hint" id="notepadHotkeyHint"></div>
     </div>
     <div class="hkrow">
       <span class="hklabel">Mining Scanner</span>
@@ -361,24 +483,79 @@
       <div class="hint" id="interactHotkeyHint"></div>
     </div>
     <div class="hkrow">
+      <span class="hklabel">Add missing blueprint</span>
+      <button type="button" id="fabClaimHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('fabClaim')">F4</button>
+      <button type="button" class="hkclear" id="fabClaimHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('fabClaim')">✕</button>
+      <input type="hidden" id="fabClaimHotkey" />
+      <div class="hint" id="fabClaimHotkeyHint"></div>
+    </div>
+    <div class="hkrow">
       <span class="hklabel">Move / arrange</span>
       <button type="button" id="moveHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('move')">Ctrl + Alt + M</button>
       <button type="button" class="hkclear" id="moveHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('move')">✕</button>
       <input type="hidden" id="moveHotkey" />
       <div class="hint" id="moveHotkeyHint"></div>
     </div>
+    <!-- Moved here from "Performance & fixes": this whole block exists to explain why the hotkeys
+         above don't reach the game, so it belongs beside them rather than in a card nobody with
+         that problem would think to open. -->
+    <div class="setrow">
+      <span class="hklabel" style="flex:1; color:var(--muted); font-size:13px;">Hotkeys work on the desktop but not in-game?</span>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Do your hotkeys work on the desktop but not while Star Citizen is focused? The game runs as admin (anti-cheat), so another app's hotkeys only reach it while focused if that app is ALSO admin.</span></span>
+    </div>
+    <div class="hint" id="adminOk" style="display:none; color:#63d6a0">✓ Running as administrator — hotkeys work while the game is focused.</div>
+    <button type="button" id="adminBtn" class="amber" style="display:none" onclick="restartAsAdmin()">Restart as administrator</button>
+    <div class="hint" id="adminHint" style="display:none">Relaunches elevated (a Windows UAC prompt — click Yes). Only affects hotkeys while the game is focused. Tip: shortcut → Properties → Compatibility → Run as administrator to skip this each launch.</div>
+  </div>
+
+  <!-- "Performance & fixes" had grown into a drawer of seven unrelated things: the overlay master
+       switch, a performance meter, two GPU workarounds, an explanation of why hotkeys don't reach
+       the game, the canvas calibration and a layout reset. Split by the question the user is
+       actually asking, and the calibration gets its own heading with its controls UNDERNEATH
+       rather than crammed to the right of a label (Sub, 2026-08-03). The admin/hotkey block moved
+       into the Hotkeys card, where someone with that problem is already looking. -->
+
+  <!-- Canvas calibration. The same two controls arrange mode offers, mirrored here because this is
+       a normal OS window that the calibration cannot move: if the canvas is far enough out of place,
+       or scaled far enough down, the on-canvas copy can itself be off-screen. Hidden unless the
+       shell exposes the bridge (an older app, or a browser source). -->
+  <div class="card" id="canvasCalRow" style="display:none">
+    <div class="label">Canvas alignment &amp; scale</div>
+    <div class="hint" style="margin-top:0">
+      For monitors running at <strong>different Windows scaling levels</strong>. If the overlay lands
+      in the wrong place, or at the wrong size, adjust it here. Turn on arrange mode over the game —
+      the dashed outline shows where the overlay thinks your main monitor is — then size and move it
+      until that outline matches your real monitor edges. Leave it at 0, 0 &middot; 100% if it
+      already lines up.
+    </div>
+    <div class="setrow">
+      <span class="hklabel" style="flex:1">Position</span>
+      <div class="calgrp">
+        <button type="button" data-cal-nx="-10" title="Move left">←</button>
+        <button type="button" data-cal-nx="10" title="Move right">→</button>
+        <button type="button" data-cal-ny="-10" title="Move up">↑</button>
+        <button type="button" data-cal-ny="10" title="Move down">↓</button>
+        <span class="calval" id="canvasCalOff">0, 0</span>
+      </div>
+    </div>
+    <div class="setrow">
+      <span class="hklabel" style="flex:1">Size</span>
+      <div class="calgrp">
+        <button type="button" data-cal-nz="-5" title="Shrink">−</button>
+        <button type="button" data-cal-nz="5" title="Grow">+</button>
+        <span class="calval" id="canvasCalScale">100%</span>
+      </div>
+    </div>
+    <div class="setrow">
+      <button type="button" id="canvasCalReset" style="width:100%">Reset to 0, 0 &middot; 100%</button>
+    </div>
+    <div class="hint">Hold <strong>Shift</strong> for finer steps. Applies immediately.</div>
   </div>
 
   <div class="card">
-    <div class="label">Performance &amp; fixes</div>
+    <div class="label">Graphics &amp; performance</div>
     <label class="opt" id="overlayShowRow" style="display:none"><input type="checkbox" id="overlayShow" /> Show the in-game overlay</label>
-    <div class="hint" id="overlayShowHint" style="display:none">Turn off if the overlay crashes your game — tracking + sync keep running without it.</div>
-    <div class="hkrow">
-      <span class="hklabel">Performance</span>
-      <button type="button" id="perfBtn" class="hkbtn">Measure now</button>
-      <div class="hint">What this app is costing your PC right now. Widgets that pull live content (Twitch chat, a web page) cost far more than the text-only ones.</div>
-      <div id="perfOut"></div>
-    </div>
+    <div class="hint" id="overlayShowHint" style="display:none">Hides the on-screen overlay while mission tracking and sync keep running &mdash; handy if you just want it out of the way. <strong>If you are turning this off because the overlay is crashing your game, please report it</strong> &mdash; that is a bug worth fixing, not something to work around.</div>
     <div class="setrow">
       <label class="opt"><input type="checkbox" id="amdCompat" /> AMD compatibility mode</label>
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">On an AMD GPU and the game crashes (Vulkan &ldquo;device lost&rdquo;) when the overlay is up? Turn this on — it forces the overlay off the GPU with a simpler no-blur panel. Requires restarting the app.</span></span>
@@ -387,55 +564,44 @@
       <label class="opt"><input type="checkbox" id="hwAccel" /> Use GPU hardware acceleration</label>
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Off by default — the overlay renders on the CPU, avoiding crashes some GPUs hit. Turn on only if you have GPU headroom and no crashes. Requires restarting the app.</span></span>
     </div>
-    <div class="setrow">
-      <span class="hklabel" style="flex:1; color:var(--muted); font-size:13px;">Hotkeys work on the desktop but not in-game?</span>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Do your hotkeys work on the desktop but not while Star Citizen is focused? The game runs as admin (anti-cheat), so another app's hotkeys only reach it while focused if that app is ALSO admin.</span></span>
+    <div class="hkrow">
+      <span class="hklabel">Fade while you play</span>
+      <input type="range" id="unfocusedOpacity" min="20" max="100" step="5" style="width:180px;vertical-align:middle" />
+      <b id="unfocusedOpacityV" style="margin-left:8px">Off</b>
+      <div class="hint">How visible the overlay is while you are <em>not</em> focused on it. It returns to
+        full the moment you click or Alt-Tab to it. <strong>100% turns the fade off.</strong></div>
     </div>
-    <div class="hint" id="adminOk" style="display:none; color:#63d6a0">✓ Running as administrator — hotkeys work while the game is focused.</div>
-    <button type="button" id="adminBtn" class="amber" style="display:none" onclick="restartAsAdmin()">Restart as administrator</button>
-    <div class="hint" id="adminHint" style="display:none">Relaunches elevated (a Windows UAC prompt — click Yes). Only affects hotkeys while the game is focused. Tip: shortcut → Properties → Compatibility → Run as administrator to skip this each launch.</div>
+    <div class="hkrow">
+      <span class="hklabel">Full opacity (hold-off) key</span>
+      <button type="button" id="opacityHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('opacity')">Set…</button>
+      <button type="button" class="hkclear" id="opacityHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('opacity')">✕</button>
+      <input type="hidden" id="opacityHotkey" />
+      <div class="hint" id="opacityHotkeyHint">Snaps the overlay back to full opacity without leaving the game &mdash; press again to let it fade.</div>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">What this is costing your PC</span>
+      <button type="button" id="perfBtn" class="hkbtn">Measure now</button>
+      <div class="hint">Widgets that pull live content (Twitch chat, a web page) cost far more than the text-only ones.</div>
+      <div id="perfOut"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Recover</div>
     <div class="setrow">
       <button type="button" class="danger" style="width:100%" onclick="onResetLayout()">Reset overlay layout (recover lost widgets)</button>
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">If a widget ends up off-screen (e.g. dragged onto another monitor), this returns every widget to its default on-screen spot.</span></span>
     </div>
   </div>
 
-  <!-- ══════════ TIER 3 ══════════ -->
-  <div class="tier">
-    <div class="tier-h">More</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Browser sources &amp; extra monitors</div>
-    <div class="hint">Want a widget on a <strong>second monitor</strong>, or as an <strong>OBS browser source</strong>? Open one of these URLs in any browser window — it renders that widget on its own, live and transparent. This is the way to put a widget off your main screen; the in-game overlay itself stays on your primary display.</div>
-    <label class="opt" style="margin-top:6px;">Mission &amp; BP Tracker
-      <input type="text" id="srcBlueprint" readonly onclick="this.select()" style="margin-left:auto; width:230px; font-family:monospace; font-size:12px;" />
-      <button type="button" class="hkbtn" style="margin-left:8px;" onclick="copySrc('srcBlueprint', this)">Copy</button>
-    </label>
-    <label class="opt">Mining Scanner
-      <input type="text" id="srcMining" readonly onclick="this.select()" style="margin-left:auto; width:230px; font-family:monospace; font-size:12px;" />
-      <button type="button" class="hkbtn" style="margin-left:8px;" onclick="copySrc('srcMining', this)">Copy</button>
-    </label>
-    <div class="hint">In OBS: add a <strong>Browser</strong> source and paste the URL — the background is transparent, so it composites straight over your scene.</div>
-    <div class="hint" id="lanHint" style="display:none">📱 <strong>On a phone or another device</strong> on the same Wi-Fi, <code>localhost</code> won't work — swap in this PC's address instead: e.g. <code id="lanExample"></code><span class="lnk" id="lanCopy" style="margin-left:8px; cursor:pointer; text-decoration:underline dotted;">copy</span></div>
-  </div>
-
-  <div class="card" id="partnersCard" style="display:none">
-    <div class="label">Partner promos</div>
-    <div class="hint" style="margin-top:0; margin-bottom:12px">Deals from SubliminalsTV's partners — support development at no extra cost to you.</div>
-    <div class="partner-grid" id="partnerGrid"></div>
-  </div>
-
-  <!-- Diagnostics. "It stopped working" is otherwise a guessing game across a dozen messages —
-       a dead sidecar, a moved game.log, an expired token and a read-only data folder all present
-       identically to the player. One button, one paste. Deliberately carries no secrets. -->
-  <div class="card">
+<div class="card">
     <div class="label">Diagnostics</div>
+    <!-- Shortened: the old copy listed everything the report contains, which the report itself
+         then shows you the moment you press the button. What is worth saying up front is only
+         what you cannot see by looking — that it carries no secrets. -->
     <div class="hint" style="margin-top:0">
-      Something not working? Copy a short report — app version, whether the background service is
-      answering, whether your <code>game.log</code> is being read, which dataset is loaded, and which
-      opt-ins are on — and paste it into your bug report or Discord. It contains no passwords or
-      tokens.
+      Something not working? Copy a short health report and paste it into your bug report or
+      Discord. No passwords or tokens.
     </div>
     <div class="hkrow">
       <span class="hklabel">Report</span>
@@ -446,8 +612,125 @@
       white-space:pre-wrap; font-size:11px; line-height:1.5; background:rgba(0,0,0,0.28);
       border:1px solid var(--line); border-radius:8px; padding:10px 12px; color:var(--muted)"></pre>
   </div>
+  <!-- How long the two pop-up widgets stay up. Argante asked for this: a notifier that fades on
+       a fixed timer is either too quick to read or too slow to get out of the way, and which one
+       depends entirely on whether you're in a fight. Lives in Settings rather than each widget's
+       cog because SC Feed's cog is already the alert-sound panel, and a notifier you're trying to
+       slow down is by definition one that keeps vanishing before you can open its cog. -->
+  <div class="card">
+    <div class="label">Pop-up duration</div>
+    <div class="setrow">
+      <label class="opt" for="scFeedShowSeconds">SC Feed story</label>
+      <input type="number" id="scFeedShowSeconds" min="3" max="60" step="1" />
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Seconds an SC Feed story stays on screen before it fades. 3–60.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt" for="unlockAlertShowSeconds">Unlock Alert card</label>
+      <input type="number" id="unlockAlertShowSeconds" min="3" max="60" step="1" />
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Seconds a blueprint-unlock card stays on screen before it fades. 3–60.</span></span>
+    </div>
+    <div class="hint">Takes effect the next time each widget loads.</div>
+  </div>
+
+  <!-- ══════════ TIER 2 ══════════
+       Sub's regrouping, 2026-08-11: the things that SEND US DATA belong together, in one place
+       someone can find, rather than scattered by which OCR engine happens to read them. The split
+       here is by who benefits, which is the distinction a person actually cares about when
+       deciding — not by implementation. Two settings left this tier entirely and now live in the
+       widgets they control (Mining Scanner's auto-show, the Infographic Viewer's PNG). -->
+  <div class="tier">
+    <div class="tier-h">Opt-in features <span class="tier-sub">all off until you turn them on</span></div>
+  </div>
 
   <div class="card">
+    <div class="label">Screen reading (OCR)</div>
+    <div class="hint" style="margin-top:0">Uses Windows' built-in text recognition, only while Star Citizen is focused. These two are for you — nothing leaves your PC.</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="missionOcr" /> Detect the mission I'm tracking in-game</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Reads the tracked-mission panel so the overlay knows which mission you've actually selected — ground truth the game log can't give. No account needed.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="fabClaim" /> Offer to add blueprints the fabricator shows that I'm missing</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">The game only writes a blueprint to your log the moment you receive it, and those logs get deleted over time — so anything you earned before installing the app can never be detected. The Fabrication Kiosk only lists blueprints you own, so when it shows one we have no record of, you get 30 seconds to add it. You confirm each one, so check the name matches what's on your screen.</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Help improve SC Overlay</div>
+    <div class="hint" style="margin-top:0">Everything here sends something to subliminal.gg so the app and the site get better for everyone. All of it needs a sync token, and all of it is off until you turn it on.</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="fabCapture" /> Help build the item image library</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">When you open a Fabrication Kiosk in-game, the app snaps the item's picture and contributes it to subliminal.gg's catalog — only items we don't have yet. You're credited on the contributor leaderboard. Needs a sync token.</span></span>
+    </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="shareLogs" /> Share anonymized logs to improve the tracker</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Sends your Star Citizen <code>Game.log</code> so mission and blueprint parsing can be fixed against real logs. Your handle, account ID, IP and session are stripped and chat is dropped before it leaves your PC. Needs a sync token.</span></span>
+    </div>
+
+    <!-- 🔑 A BUTTON, not a checkbox (Sub, 2026-08-11). Every other opt-in here is a standing
+         preference you tick once and forget; this one is a SESSION that force-disarms on every
+         launch. A checkbox promises to remember, so ticking it made a promise the feature does not
+         keep — and it read as something already running rather than something you go and do. It
+         also uses RapidOCR rather than Windows OCR, because Windows OCR could not read the board's
+         12px giver line at all, which is why it does not belong under the card above. -->
+    <div class="setrow" style="align-items:flex-start">
+      <div class="opt" style="flex-direction:column; align-items:stretch; gap:6px;">
+        <span>Contract payouts</span>
+        <div class="hint" style="margin:0">Around a thousand contracts are paid an amount the game works out when you accept them, and it exists nowhere in the game files — the board is the only place to read it. Runs until you stop it, and never starts on its own.</div>
+        <div class="add" style="margin-top:0">
+          <button type="button" id="payoutScanBtn" onclick="onPayoutScanToggle()">Start reading the contracts</button>
+        </div>
+        <div class="hint" id="payoutScanStatus" style="margin:0"></div>
+      </div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Start this, then open mobiGlas &rarr; Contracts and expand a category. A panel appears on the overlay showing every row it reads, and what each contract pays is contributed to subliminal.gg so the mission pages can show a typical payout. It reads the board and nothing else. Needs a sync token.</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Interaction</div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="holdToInteract" onchange="onHoldModeToggle()" /> Only let me click the overlay while I hold a key</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">With this on, the overlay is click-through during gameplay — hold the interact key (set it under Hotkeys) and hover a widget to click it. Prevents accidental clicks mid-game.</span></span>
+    </div>
+  </div>
+
+  <!-- ══════════ TIER 3 ══════════
+       "More" used to be a junk drawer: browser sources, promos, diagnostics and About all in one
+       heap. Diagnostics moved up to Performance & fixes where it belongs, promos got their own
+       tier so they read as promos rather than a setting, and this one now names what it holds.
+       "Your files" sits here rather than up in Setup because almost nobody opens it. -->
+  <div class="tier">
+    <div class="tier-h">Browser sources &amp; your files</div>
+  </div>
+<div class="card">
+    <div class="label">Browser sources &amp; extra monitors</div>
+    <div class="hint">Want a widget on a <strong>second monitor</strong>, or as an <strong>OBS browser source</strong>? Open one of these URLs in any browser window — it renders that widget on its own, live and transparent. This is the way to put a widget off your main screen; the in-game overlay itself stays on your primary display.</div>
+    <div id="srcRows"></div>
+    <div class="hint">In OBS: add a <strong>Browser</strong> source and paste the URL — the background is transparent, so it composites straight over your scene.</div>
+    <div class="hint" id="lanHint" style="display:none">📱 <strong>On a phone or another device</strong> on the same Wi-Fi, <code>localhost</code> won't work — swap in this PC's address instead: e.g. <code id="lanExample"></code><span class="lnk" id="lanCopy" style="margin-left:8px; cursor:pointer; text-decoration:underline dotted;">copy</span></div>
+  </div>
+<div class="card">
+    <div class="cardhead">
+      <div class="label">Your files</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Saved party splits live in your Windows app-data folder (the app can't write next to its own program files — Windows makes that read-only). Each save also writes <code>index.html</code>: double-click it and every split opens in your browser with a proper table.</span></span>
+    </div>
+    <div class="hkrow">
+      <span class="hklabel">Saved party splits</span>
+      <button type="button" id="openPartyFolder" class="hkbtn">↗ Open folder</button>
+      <div class="hint">Holds a <code>.json</code>, a plain-text <code>.txt</code>, and an <code>index.html</code> you can open in any browser.</div>
+    </div>
+  </div>
+  <!-- ══════════ TIER 4 ══════════ -->
+  <div class="tier">
+    <div class="tier-h">Partners</div>
+  </div>
+  <div class="card" id="partnersCard" style="display:none">
+    <div class="label">Partner promos</div>
+    <div class="hint" style="margin-top:0; margin-bottom:12px">Deals from SubliminalsTV's partners — support development at no extra cost to you.</div>
+    <div class="partner-grid" id="partnerGrid"></div>
+  </div>
+
+<div class="card">
     <div class="label">About</div>
     <div class="hint" style="margin-top:0">
       <strong>SC Overlay</strong> is a lightweight, transparent in-game HUD for Star Citizen. It reads your
@@ -484,16 +767,16 @@
     </div>
     <div class="hint" style="text-align:center; margin-top:12px; opacity:0.75">Thank you — every bit helps. o7</div>
   </div>
+  
 
-  <div class="card loadout-only">
-    <div class="label">Erkul Loadout URLs</div>
-    <div id="list"></div>
-    <div class="add">
-      <input type="text" id="newUrl" placeholder="https://www.erkul.games/loadout/XXXXXXXX" />
-      <button onclick="addUrl()">Add</button>
-    </div>
-    <div class="hint">Paste an erkul share URL per ship. The overlay reads the ship from each build automatically — when that ship spawns in-game, it switches to it. Click a row to make it the active overlay now.</div>
-  </div>
+
+  <!-- Diagnostics. "It stopped working" is otherwise a guessing game across a dozen messages —
+       a dead sidecar, a moved game.log, an expired token and a read-only data folder all present
+       identically to the player. One button, one paste. Deliberately carries no secrets. -->
+  
+
+  
+
 
   <div style="margin-top:20px; display:flex; align-items:center;">
     <button class="amber" id="saveBtn" onclick="save()">Save</button>
@@ -516,7 +799,7 @@
 </div>
 
 <script>
-  let cfg = { urls: [], activeUrl: null, logPath: "", autoSwitch: true, resolved: [] };
+  let cfg = { logPath: "" };
 
   // FREE: Mobiglas + Auto (match my ship). SUBSCRIBER: pinning a specific manufacturer regardless of ship.
   const PREMIUM_THEMES = ["drake","anvil","greys","esperia","misc","banu","gatac","mirai","origin","aegis","crusader","rsi","kruger","argo"];
@@ -547,8 +830,37 @@
     cfg = await (await fetch("/api/config")).json();
     // Browser-source URLs (for a second monitor / OBS) — built from wherever this config page is
     // served, so the port is always right.
-    document.getElementById("srcBlueprint").value = location.origin + "/missions.html";
-    document.getElementById("srcMining").value = location.origin + "/mining.html";
+    // Every widget that renders standalone gets a source. Only two were listed before, which
+    // meant the rest silently looked like they could not be used this way — they always could.
+    // 🔑 Web Page and Settings are deliberately absent: the Web Page widget's content is a native
+    // view owned by the app (a browser tab would just show its URL form), and Settings is a
+    // control panel, not something to composite into a scene.
+    var SOURCES = [
+      ["Mission & BP Tracker", "missions.html"],
+      ["Mining Scanner", "mining.html"],
+      ["Event Tracker", "battaglia.html"],
+      ["Infographic Viewer", "bindingwidget.html"],
+      ["Journal", "notepad.html"],
+      ["Loot Split", "party.html"],
+      ["SC Feed", "scfeed.html"],
+      ["Twitch Chat", "twitchchat.html"],
+      ["Unlock Alerts", "unlockalert.html"],
+    ];
+    var srcRows = document.getElementById("srcRows");
+    srcRows.innerHTML = SOURCES.map(function (w, i) {
+      var id = "src" + i;
+      return '<label class="opt"' + (i === 0 ? ' style="margin-top:6px;"' : "") + ">" + w[0] +
+        '<input type="text" id="' + id + '" readonly onclick="this.select()" value="' +
+        location.origin + "/" + w[1] + '" style="margin-left:auto; width:230px; font-family:monospace; font-size:12px;" />' +
+        '<button type="button" class="hkbtn" data-src="' + id + '">Copy</button>' +
+        "</label>";
+    }).join("");
+    // Delegated rather than an inline onclick per row: the ids are generated, and building a
+    // handler string around a generated id is how you end up with quoting bugs in markup.
+    srcRows.addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest("[data-src]") : null;
+      if (btn) copySrc(btn.getAttribute("data-src"), btn);
+    });
     // Same widgets on a phone / second device: swap localhost for this PC's LAN address (the
     // server reports it — a browser can't see it). Hidden if there's no LAN address to offer.
     if (cfg.lanHost) {
@@ -561,10 +873,12 @@
     }
     document.getElementById("logPath").value = cfg.logPath || "";
     checkLogPath();
-    document.getElementById("autoSwitch").checked = !!cfg.autoSwitch;
     document.getElementById("hwAccel").checked = !!cfg.hwAccel;
     document.getElementById("amdCompat").checked = !!cfg.amdCompat;
-    document.getElementById("bindingPng").value = cfg.bindingPng || "";
+    // bindingPng and miningAutoShow are NOT read or written here any more — they moved into the
+    // Infographic Viewer and Mining Scanner widgets, which now own them outright. Keeping a copy
+    // in this form would make it a second writer: this page saves the WHOLE form, so a value
+    // changed in a widget while this window sat open would be silently written back stale.
     // `?? def`, NOT `|| def`: "" is a hotkey the user deliberately REMOVED and has to survive a
     // reload; only a missing field means "never set" and takes the default.
     for (const which of Object.keys(HOTKEYS)) {
@@ -572,13 +886,15 @@
       setHotkeyDisplay(which, typeof saved === "string" ? saved : HOTKEYS[which].def);
     }
     hotkeysLoaded = true;
+    setOpacitySlider(Number.isFinite(cfg.unfocusedOpacity) ? Math.round(cfg.unfocusedOpacity * 100) : 100);
     document.getElementById("holdToInteract").checked = !!cfg.holdToInteract;
     document.getElementById("revertThemeOnFoot").checked = !!cfg.revertThemeOnFoot;
-    document.body.classList.toggle("show-loadout", !!cfg.showLoadout);
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
+    document.getElementById("fabClaim").checked = !!cfg.fabClaim;
     document.getElementById("missionOcr").checked = !!cfg.missionOcr;
-    document.getElementById("miningAutoShow").checked = !!cfg.miningAutoShow;
+    document.getElementById("scFeedShowSeconds").value = String(cfg.scFeedShowSeconds ?? 12);
+    document.getElementById("unlockAlertShowSeconds").value = String(cfg.unlockAlertShowSeconds ?? 8);
     document.getElementById("shareLogs").checked = !!cfg.shareLogs;
     document.getElementById("theme").value = cfg.theme || "mobiglas";
     // Manufacturer skins are a Twitch-sub perk. Entitlement comes from the server (cfg.premium,
@@ -590,8 +906,10 @@
     const tokenEl = document.getElementById("syncToken");
     tokenEl.value = cfg.hasSyncToken ? cfg.syncTokenPreview : "";
     document.getElementById("syncStatus").textContent = cfg.hasSyncToken ? "" : "No token yet — paste one to connect.";
-    renderList();
     refreshAdmin();
+    // Read from /api/payout-scan, not from `cfg`: the mode is never written to config.json, so
+    // the config response can only ever say "off" whatever is actually running.
+    refreshPayoutScan();
   }
 
   // Elevation state: show "running as admin" or the opt-in "Restart as administrator" button.
@@ -605,41 +923,6 @@
   }
   function restartAsAdmin() {
     if (window.overlayConfig && window.overlayConfig.restartAsAdmin) window.overlayConfig.restartAsAdmin();
-  }
-
-  function renderList() {
-    const host = document.getElementById("list");
-    host.innerHTML = "";
-    if (!cfg.urls.length) { host.innerHTML = '<div class="hint">No loadouts yet — add one below.</div>'; return; }
-    cfg.urls.forEach((u, i) => {
-      const r = (cfg.resolved || []).find((x) => x.url === u) || { ship: "…", ok: true };
-      const isActive = u === cfg.activeUrl;
-      const row = document.createElement("div");
-      row.className = "row";
-      row.innerHTML =
-        '<span class="ship' + (r.ok ? "" : " bad") + '">' + r.ship + "</span>" +
-        '<span class="u">' + u + "</span>" +
-        (isActive ? '<span class="active-tag">ACTIVE</span>' : '<button onclick="setActive(\'' + u + "')\">Set Active</button>") +
-        '<button class="danger" onclick="removeUrl(' + i + ')">✕</button>';
-      host.appendChild(row);
-    });
-  }
-
-  function addUrl() {
-    const el = document.getElementById("newUrl");
-    const v = el.value.trim();
-    if (!v) return;
-    if (!/loadout\/[A-Za-z0-9_-]+/.test(v)) {
-      alert("That's not a shareable build link. In erkul, click Share to save your build, then paste the /loadout/<id> URL it gives you.\n\nThe /live/calculator URL only exists in your browser and can't be loaded.");
-      return;
-    }
-    cfg.urls.push(v); el.value = ""; renderList(); save();
-  }
-  function removeUrl(i) { cfg.urls.splice(i, 1); renderList(); save(); }
-  async function setActive(url) {
-    const r = await (await fetch("/api/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) })).json();
-    if (!r.ok) { alert("Couldn't load that build — make sure it's a saved erkul /loadout/ link, not the calculator."); return; }
-    cfg.activeUrl = url; renderList();
   }
 
 
@@ -657,22 +940,29 @@
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(done); else done();
   });
 
+  // A number input can be emptied or spun to 0, and either would make a notifier vanish on
+  // arrival with no obvious way back. Clamped here AND server-side — the server has to hold the
+  // line for a hand-edited config.json, this one keeps the UI from ever showing a bad value.
+  function showSecs(id, fallback) {
+    const v = Math.round(Number(document.getElementById(id).value));
+    return Number.isFinite(v) && v > 0 ? Math.max(3, Math.min(60, v)) : fallback;
+  }
+
   async function save() {
     cfg.logPath = document.getElementById("logPath").value.trim();
-    cfg.autoSwitch = document.getElementById("autoSwitch").checked;
     const body = {
-      urls: cfg.urls,
       logPath: cfg.logPath,
-      autoSwitch: cfg.autoSwitch,
       hwAccel: document.getElementById("hwAccel").checked,
       amdCompat: document.getElementById("amdCompat").checked,
-      bindingPng: document.getElementById("bindingPng").value,
+      unfocusedOpacity: Number(document.getElementById("unfocusedOpacity").value || 100) / 100,
       holdToInteract: document.getElementById("holdToInteract").checked,
       revertThemeOnFoot: document.getElementById("revertThemeOnFoot").checked,
       syncEnabled: document.getElementById("syncEnabled").checked,
       fabCapture: document.getElementById("fabCapture").checked,
+      fabClaim: document.getElementById("fabClaim").checked,
       missionOcr: document.getElementById("missionOcr").checked,
-      miningAutoShow: document.getElementById("miningAutoShow").checked,
+      scFeedShowSeconds: showSecs("scFeedShowSeconds", 12),
+      unlockAlertShowSeconds: showSecs("unlockAlertShowSeconds", 8),
       shareLogs: document.getElementById("shareLogs").checked,
       theme: document.getElementById("theme").value,
     };
@@ -716,12 +1006,7 @@
   }
   function pickLog(i) { document.getElementById("logPath").value = window.__detected[i].path; save(); }
 
-  async function chooseBinding() {
-    if (!window.overlayConfig) { alert("File picker unavailable — update the app."); return; }
-    const p = await window.overlayConfig.pickPng();
-    if (p) { document.getElementById("bindingPng").value = p; save(); }
-  }
-  function clearBinding() { document.getElementById("bindingPng").value = ""; save(); }
+  // chooseBinding/clearBinding moved to the Infographic Viewer widget, which owns the setting now.
 
   // Opt-in hold-to-interact: apply live via the shell, and persist via save().
   function onHoldModeToggle() {
@@ -732,6 +1017,100 @@
   async function onResetLayout() {
     if (window.overlayConfig && window.overlayConfig.resetLayout) await window.overlayConfig.resetLayout();
   }
+
+  // ── Contract payout scan session ─────────────────────────────────────────
+  // Deliberately NOT part of save(). Two reasons, and the second is the load-bearing one:
+  //  · The flag is never persisted (the sidecar strips it on save and forces it off on load),
+  //    so round-tripping it through the config form would write a value nothing reads back.
+  //  · /api/payout-scan is LOOPBACK-ONLY on purpose, while /api/config answers the LAN so OBS
+  //    on another PC can load widget pages. Arming a screen-reader has to stay a decision made
+  //    at this machine, so the toggle talks to the route that enforces that.
+  // The sidecar broadcasts the change on the missions SSE, which is what puts the dashboard on
+  // the overlay — this function never opens a window itself.
+  // The live state, mirrored from the sidecar. A button has no checked property to read back, and
+  // the truth is not local anyway — the overlay panel's own Stop button and ✕ both end the session.
+  let payoutScanOn = false;
+  async function onPayoutScanToggle() {
+    const on = !payoutScanOn;
+    try {
+      await fetch("/api/payout-scan", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ on }),
+      });
+    } catch { /* refreshPayoutScan() below re-reads the real state either way */ }
+    refreshPayoutScan();
+  }
+  // Reads the live mode, and says WHY a sweep would record nothing — the question anyone asks
+  // first, and the one a bare checkbox cannot answer. Same three preconditions the dashboard
+  // reports, so the two surfaces cannot disagree about whether the thing is ready.
+  async function refreshPayoutScan() {
+    const btn = document.getElementById("payoutScanBtn");
+    const status = document.getElementById("payoutScanStatus");
+    if (!btn || !status) return;
+    let d = null;
+    try { d = await (await fetch("/api/payout-scan", { cache: "no-store" })).json(); } catch { /* sidecar down */ }
+    if (!d) { status.textContent = ""; return; }
+    payoutScanOn = !!d.on;
+    btn.textContent = payoutScanOn ? "Stop reading the contracts" : "Start reading the contracts";
+    btn.classList.toggle("danger", payoutScanOn);
+    const missing = [];
+    if (!d.syncReady) missing.push("a sync token (set one at the top)");
+    if (!d.calibrated) missing.push("a calibrated board area");
+    // A button that cannot work should say so before you press it, not after.
+    btn.disabled = missing.length > 0 && !payoutScanOn;
+    status.textContent = missing.length
+      ? "Needs " + missing.join(" and ") + " before it can record anything."
+      : payoutScanOn
+        ? "Reading. The panel on the overlay shows every row it picks up."
+        : "";
+  }
+  // This is the one control here whose state can change while the window sits open — the overlay
+  // panel's own Stop button and ✕ both end the session. Re-read on focus so coming back to this
+  // window never offers to stop a sweep that has already finished.
+  window.addEventListener("focus", refreshPayoutScan);
+
+  // ── canvas calibration (mixed-DPI) ───────────────────────────────────────
+  // The shell owns this, not the form: it re-fits the overlay window and persists through the
+  // sidecar, so it must NOT go through save() — that would round-trip a stale copy of the value.
+  // Mirrors arrange mode's control exactly; whichever surface you use, the other reads the same
+  // numbers back the next time it opens.
+  (function () {
+    const row = document.getElementById("canvasCalRow");
+    const api = () => (window.overlayConfig && window.overlayConfig.canvasCalibration) || null;
+    if (!row || !api()) return; // older shell / browser source → leave the row hidden
+    let cal = { x: 0, y: 0, scale: 1 };
+    const show = () => {
+      document.getElementById("canvasCalOff").textContent = cal.x + ", " + cal.y;
+      document.getElementById("canvasCalScale").textContent = Math.round(cal.scale * 100) + "%";
+    };
+    const push = async () => {
+      try { cal = (await api()(cal)) || cal; } catch { /* shell gone */ }
+      show();
+    };
+    (async () => {
+      let cur = null;
+      try { cur = await api()(); } catch { /* shell gone */ }
+      if (!cur) return; // no answer → this build can't calibrate; don't offer a control that lies
+      cal = cur; row.style.display = ""; show();
+    })();
+    row.addEventListener("click", (e) => {
+      const b = e.target instanceof Element ? e.target.closest("button") : null;
+      if (!b || !row.contains(b)) return;
+      if (b.id === "canvasCalReset") { cal = { x: 0, y: 0, scale: 1 }; void push(); return; }
+      const nz = Number(b.dataset.calNz || 0);
+      if (nz) {
+        const pct = Math.round(cal.scale * 100) + Math.sign(nz) * (e.shiftKey ? 1 : 5);
+        cal = { x: cal.x, y: cal.y, scale: Math.max(0.5, Math.min(3, pct / 100)) };
+        void push();
+        return;
+      }
+      const step = e.shiftKey ? 1 : 10;
+      const nx = Number(b.dataset.calNx || 0), ny = Number(b.dataset.calNy || 0);
+      if (!nx && !ny) return;
+      cal = { x: cal.x + Math.sign(nx) * step, y: cal.y + Math.sign(ny) * step, scale: cal.scale };
+      void push();
+    });
+  })();
 
   // ── configurable hotkeys: click-to-capture, live-applied ─────────────────
   // Two hotkeys share one capture flow: the overlay show/hide toggle and the
@@ -745,11 +1124,31 @@
                apply: (a) => window.overlayConfig && window.overlayConfig.setMiningHotkey && window.overlayConfig.setMiningHotkey(a) },
     webView: { input: "webViewHotkey", btn: "webViewHotkeyBtn", hint: "webViewHotkeyHint", def: "Ctrl+Shift+F3",
                apply: (a) => window.overlayConfig && window.overlayConfig.setWebViewHotkey && window.overlayConfig.setWebViewHotkey(a) },
+    notepad: { input: "notepadHotkey", btn: "notepadHotkeyBtn", hint: "notepadHotkeyHint", def: "Alt+F3",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setNotepadHotkey && window.overlayConfig.setNotepadHotkey(a) },
     interact: { input: "interactHotkey", btn: "interactHotkeyBtn", hint: "interactHotkeyHint", def: "F", bare: true,
                apply: (a) => window.overlayConfig && window.overlayConfig.setInteractHotkey && window.overlayConfig.setInteractHotkey(a) },
     move: { input: "moveHotkey", btn: "moveHotkeyBtn", hint: "moveHotkeyHint", def: "Ctrl+Alt+M",
                apply: (a) => window.overlayConfig && window.overlayConfig.setMoveHotkey && window.overlayConfig.setMoveHotkey(a) },
+    fabClaim: { input: "fabClaimHotkey", btn: "fabClaimHotkeyBtn", hint: "fabClaimHotkeyHint", def: "F4",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setFabClaimHotkey && window.overlayConfig.setFabClaimHotkey(a) },
+    opacity: { input: "opacityHotkey", btn: "opacityHotkeyBtn", hint: "opacityHotkeyHint", def: "",
+               apply: (a) => window.overlayConfig && window.overlayConfig.setOpacityHotkey && window.overlayConfig.setOpacityHotkey(a) },
   };
+  // The fade slider applies LIVE (like the canvas controls) — you judge a transparency by
+  // looking at it, not by saving and alt-tabbing. 100 reads as "Off" because that is what it is.
+  function setOpacitySlider(pct) {
+    const el = document.getElementById("unfocusedOpacity");
+    const out = document.getElementById("unfocusedOpacityV");
+    const v = Math.max(20, Math.min(100, Math.round(Number(pct) || 100)));
+    el.value = String(v);
+    out.textContent = v >= 100 ? "Off" : v + "%";
+  }
+  document.getElementById("unfocusedOpacity")?.addEventListener("input", () => {
+    setOpacitySlider(document.getElementById("unfocusedOpacity").value);
+    window.overlayConfig?.setUnfocusedOpacity?.(Number(document.getElementById("unfocusedOpacity").value) / 100);
+  });
+
   let capturing = null; // which HOTKEYS key is mid-capture, or null
   // 🔑 Have the hotkey fields been filled from the config yet? Save is clickable the moment the page
   // renders, but loadCfg() is async — and now that "" is a REAL saved value meaning "removed", an
@@ -797,6 +1196,10 @@
     const btn = document.getElementById(HOTKEYS[which].btn);
     btn.textContent = "Press keys…  (Esc cancels)";
     btn.classList.add("capturing");
+    // Embedded on the canvas the overlay is click-through and the GAME holds the keyboard, so
+    // this window must take the shell's shared grab (which also suspends the interact key) or
+    // the keydown below never arrives. No-op in the standalone window, which already has focus.
+    window.__cfgGrab?.start(btn);
   }
   // KeyboardEvent.code → Electron accelerator key token (layout-independent for QWERTY).
   function hkKeyName(code) {
@@ -817,6 +1220,7 @@
     const hint = document.getElementById(h.hint);
     if (e.key === "Escape") {
       capturing = null; btn.classList.remove("capturing");
+      window.__cfgGrab?.end();
       setHotkeyDisplay(which, document.getElementById(h.input).value);
       return;
     }
@@ -831,6 +1235,9 @@
     // that's the whole point of a dedicated overlay key. Everything else needs a modifier.
     const bareOk = h.bare || /^F(3|1[3-9]|2[0-4])$/.test(key || "");
     capturing = null; btn.classList.remove("capturing");
+    // Release the grab on BOTH outcomes below (rejected key and accepted key) — a grab left
+    // held would keep the interact key suspended, i.e. the overlay stuck uninteractable.
+    window.__cfgGrab?.end();
     if (!key || (!mods.length && !bareOk)) {
       setHotkeyDisplay(which, document.getElementById(h.input).value);
       hint.innerHTML = "⚠ Use at least one modifier (Ctrl / Alt / Shift) plus a key — or a bare F3 / F13–F24. Try again.";
@@ -880,27 +1287,17 @@
     oc.onOverlayEnabledChanged && oc.onOverlayEnabledChanged((on) => { box.checked = !!on; });
   }
 
-  // Hidden unlock: tap the title 5× to reveal/hide the loadout-overlay settings.
-  // (They're Sub's erkul stream feature — off by default so normal users aren't confused.)
-  let titleTaps = 0, titleTapTimer = null;
-  document.getElementById("appTitle").addEventListener("click", async () => {
-    clearTimeout(titleTapTimer);
-    titleTapTimer = setTimeout(() => { titleTaps = 0; }, 1500);
-    if (++titleTaps < 5) return;
-    titleTaps = 0;
-    const next = !cfg.showLoadout;
-    await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ showLoadout: next }) });
-    await loadCfg();
-    const s = document.getElementById("saved");
-    s.textContent = next ? "Loadout settings shown" : "Loadout settings hidden";
-    s.classList.add("show"); setTimeout(() => { s.classList.remove("show"); s.textContent = "Saved ✓"; }, 1600);
-  });
-
   document.getElementById("logPath").addEventListener("input", checkLogPath);
+  // ...and PERSIST it. `input` only validates as you type. Everything else on this page either
+  // auto-saves or is deliberately manual (the sync token), which left a typed-by-hand game.log
+  // path as the one setting you could lose by closing the panel — and it is the setting the app
+  // cannot work without. `change` fires on blur/Enter, so this saves a finished path, not every
+  // keystroke.
+  document.getElementById("logPath").addEventListener("change", save);
   // Auto-save the plain checkboxes the instant they're toggled, so a change can never be lost by
   // closing/scrolling away without clicking Save. (Theme, hotkeys, hold-to-interact and the file
   // pickers already save on change; the sync token stays manual so a half-typed token isn't sent.)
-  ["syncEnabled", "shareLogs", "fabCapture", "missionOcr", "miningAutoShow", "autoSwitch", "hwAccel", "amdCompat", "revertThemeOnFoot"]
+  ["syncEnabled", "shareLogs", "fabCapture", "fabClaim", "missionOcr", "hwAccel", "amdCompat", "revertThemeOnFoot"]
     .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
   // The sync field shows the truncated saved key; clear it on focus so a new token pastes
   // cleanly, and restore the preview on blur if nothing was typed.
@@ -914,6 +1311,7 @@
       const c = await (await fetch("/api/config")).json();
       document.getElementById("missionOcr").checked = !!c.missionOcr;
       document.getElementById("fabCapture").checked = !!c.fabCapture;
+      document.getElementById("fabClaim").checked = !!c.fabClaim;
     } catch { /* ignore */ }
   });
   loadCfg();

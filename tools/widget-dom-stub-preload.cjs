@@ -33,6 +33,14 @@ const real = {
     mining: true, notepad: true, twitchChat: false, scFeed: false,
     party: true, battaglia: false, webView: false, bindingChart: false,
   }),
+  // The rects the page says are clickable. Captured rather than dropped, because "is this chrome
+  // in the region list" is otherwise UNTESTABLE from inside the page: the RSEL string is
+  // block-scoped inside `if (window.overlayApi)`, so a suite reaching for it gets `undefined`. A
+  // suite that guards with `typeof RSEL === "string" ? … : "RSEL unreachable"` then passes on the
+  // truthy fallback string and asserts nothing at all — verified by re-injecting the regression
+  // and watching it stay green. Assert against these rects instead; they are what the shell
+  // actually receives, and anything outside one is unclickable no matter how it renders.
+  reportRegions: (rects) => { window.__regions = rects; },
   // Same deal for "is the game in front" — only the shell can know, so a test drives it directly.
   // wantForeground resolves null (helper hasn't answered), which is what a real cold start does.
   onGameFocus: (cb) => { window.__fireGameFocus = cb; },

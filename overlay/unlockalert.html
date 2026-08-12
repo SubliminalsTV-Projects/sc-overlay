@@ -9,9 +9,6 @@
   /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
     const t = q.get("theme"); if (t) r.setAttribute("data-theme", t); }</script>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* "Blueprint Received" toast, as a PLACEABLE widget.
@@ -37,6 +34,21 @@
     transition: opacity 0.3s ease, transform 0.3s ease;
   }
   #card.show { opacity: 1; pointer-events: auto; transform: none; }
+  /* Claim prompt: the fabricator is showing a blueprint we have no record of. Visually
+     distinct from a receipt toast because it is a QUESTION, not an announcement — the
+     player has to act, and the accent border is what says so at a glance. */
+  #card.claiming { border-color: var(--warn, #e8b44a); }
+  .claim { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+  /* The author display:flex above beats the UA's [hidden]{display:none} — without this guard
+     the claim prompt rode along on every ordinary receipt toast (shipped 0.1.38–0.1.40). */
+  .claim[hidden] { display: none; }
+  .claim button {
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    padding: 4px 11px; border-radius: 7px; color: #1a1400;
+    background: var(--warn, #e8b44a); border: 1px solid var(--warn, #e8b44a);
+  }
+  .claim button:hover { filter: brightness(1.09); }
+  .claim .hint { font-size: 11px; opacity: 0.72; white-space: nowrap; }
   html.amd-lite #card { -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
     background: var(--panel-solid) !important; transition: none; }
 
@@ -74,9 +86,15 @@
   <div id="card">
     <span class="thumb" id="thumb"><img id="img" alt="" /></span>
     <div class="txt">
-      <div class="lbl"><span class="tick">✓</span> Blueprint Received</div>
+      <div class="lbl"><span class="tick">✓</span> <span id="lbltext">Blueprint Received</span></div>
       <div class="name" id="name"></div>
       <div class="more" id="more" hidden></div>
+      <!-- Claim prompt only. Lives INSIDE #card so it sits in the rect the shell hit-tests —
+           a control outside that rect is unclickable (the scan-box Reset button learned this). -->
+      <div class="claim" id="claimrow" hidden>
+        <button id="claimyes">Add to my collection</button>
+        <span class="hint" id="claimhint"></span>
+      </div>
     </div>
     <button id="close" title="Dismiss">✕</button>
   </div>
@@ -87,7 +105,13 @@
   // Same-origin bridge to the parent canvas (present only when embedded on the overlay).
   const host = () => (EMBEDDED && window.parent) ? window.parent.__unlockAlertHost : null;
 
-  const SHOW_MS = 8000;      // long enough to read mid-fight, short enough not to nag
+  // Long enough to read mid-fight, short enough not to nag. User-settable (Settings ->
+  // Notifications); the server clamps 3-60s.
+  let SHOW_MS = 8000;
+  fetch("/api/config", { cache: "no-store" }).then((r) => r.json()).then((c) => {
+    if (typeof c.unlockAlertShowSeconds === "number" && isFinite(c.unlockAlertShowSeconds))
+      SHOW_MS = Math.max(3, Math.min(60, c.unlockAlertShowSeconds)) * 1000;
+  }).catch(() => { /* default */ });
   const FRESH_MS = 120000;   // an SSE reconnect replays the last view — don't re-pop old receipts
 
   let queue = [];
@@ -150,7 +174,13 @@
     hide();
   }
 
-  $("close").addEventListener("click", (e) => { e.stopPropagation(); queue = []; hide(); });
+  // ✕ declines a live claim prompt (spending one of its two chances) rather than dismissing the
+  // whole widget — otherwise "no thanks" and "go away" would be the same button.
+  $("close").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (claimActive) { answerClaim(false); return; }
+    queue = []; hide();
+  });
 
   /** A receipt off the mission stream. Deduped by timestamp and dropped if stale, so neither an
    *  SSE reconnect nor a page reload re-announces something you already saw. */
@@ -170,13 +200,83 @@
     try { es?.close(); } catch { /* already gone */ }
     es = new EventSource("/missions/events");
     es.onmessage = (e) => {
-      try { offer(JSON.parse(e.data)?.justReceived); } catch { /* partial frame */ }
+      try {
+        const d = JSON.parse(e.data);
+        offerClaim(d?.fabClaim, d?.prefs?.fabClaimKey);
+        offer(d?.justReceived);
+      } catch { /* partial frame */ }
     };
     // EventSource retries on its own, but a sidecar restart can leave it wedged — reconnect
     // explicitly so a long session doesn't silently stop announcing.
     es.onerror = () => { try { es.close(); } catch { /* ignore */ } setTimeout(connect, 5000); };
   }
   connect();
+
+  // ── Fabricator claim prompt ──────────────────────────────────────────────────────────────
+  // The kiosk only lists blueprints you own, so one we have no record of is ownership the log
+  // never reported. We ask rather than auto-tick: a misread name would write a wrong blueprint
+  // into the permanent collection, whereas a declined prompt costs nothing. The card shows the
+  // RESOLVED catalog name — "check the OCR read it right" only means something if what's on
+  // screen is what would actually be saved.
+  let claimKeyName = "";
+  let claimActive = null;   // the prompt currently on screen, or null
+  let claimTimer = 0;
+
+  function claimHint() {
+    const left = claimActive ? Math.max(0, Math.round((claimActive.expiresAt - Date.now()) / 1000)) : 0;
+    $("claimhint").textContent = (claimKeyName ? "or press " + claimKeyName + " · " : "") + left + "s";
+    if (!claimActive) return;
+    // Expiry is authoritative on the SIDECAR; this is only the countdown. When it runs out the
+    // next SSE frame carries fabClaim:null and clears the card — but hide here too so a wedged
+    // stream can't leave a dead prompt sitting over the game.
+    if (left <= 0) hideClaim();
+  }
+
+  function offerClaim(p, keyName) {
+    claimKeyName = keyName || "";
+    if (!p) { if (claimActive) hideClaim(); return; }
+    // Same prompt still live — just keep the countdown ticking, don't restart the card.
+    if (claimActive && claimActive.item === p.item) { claimActive = p; claimHint(); return; }
+    claimActive = p;
+    $("lbltext").textContent = "Not in your collection";
+    $("name").textContent = p.name || "Blueprint";
+    $("claimrow").hidden = false;
+    $("card").classList.add("claiming", "show");
+    // A claim prompt outranks a receipt toast's auto-hide: it must survive its full window.
+    clearTimeout(hideTimer);
+    setActive(true);
+    paint({ name: p.name, image: "/api/fab-img/" + p.item, imageFallback: "/sc/items/" + p.item + ".webp" });
+    clearInterval(claimTimer);
+    claimTimer = setInterval(claimHint, 500);
+    claimHint();
+  }
+
+  function hideClaim() {
+    clearInterval(claimTimer);
+    claimActive = null;
+    $("claimrow").hidden = true;
+    $("card").classList.remove("claiming");
+    $("lbltext").textContent = "Blueprint Received";
+    if (!current) { $("card").classList.remove("show"); setActive(false); }
+  }
+
+  async function answerClaim(accept) {
+    clearInterval(claimTimer);
+    const was = claimActive;
+    hideClaim();
+    if (!was) return;
+    try {
+      await fetch("/api/fab/claim", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accept: !!accept }),
+      });
+    } catch { /* sidecar down — the prompt expires server-side anyway */ }
+  }
+
+  $("claimyes").addEventListener("click", (e) => { e.stopPropagation(); answerClaim(true); });
+  // The hotkey path: the shell forwards the configured key here, so confirming needs no mouse
+  // and no hold-to-interact — which is the only thing that works reliably mid-kiosk.
+  window.__fabClaimConfirm = () => { if (claimActive) answerClaim(true); };
 
   // Arrange mode: the parent holds up a sample card so the widget can be positioned even though
   // it's invisible the rest of the time by design.

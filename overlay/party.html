@@ -19,9 +19,6 @@
   /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
     const t = q.get("theme"); if (t) r.setAttribute("data-theme", t); }</script>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* Party roster + reward split. Theme tokens come from the shared /widget-theme.css.
@@ -36,12 +33,11 @@
     display: flex; flex-direction: column;
     width: 360px; height: 500px; margin: 20px auto;
     border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-    background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
-    -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
-    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(var(--accent-rgb), 0.05);
+    /* Fill, border tint, shadow and blur live in widget-theme.css (#panel.wpanel), which
+       multiplies each one's alpha by --wsurf so the panel fades independently of its text. */
     position: relative;
   }
-  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; background: var(--panel-solid) !important; }
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   /* Scanlines / Esperia mesh / Origin stitching come from the shared widget-theme.css
      via .wpanel, so every widget carries the theme's surface treatment. */
   body.embedded { overflow: visible; background: transparent; }
@@ -64,6 +60,38 @@
   .lhead { display: flex; align-items: center; gap: 6px; padding: 7px 12px 4px; }
   .lhead .lbl { flex: 1; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--faint); }
+  /* "Pull a finished refine into the split" picker. Rendered INSIDE the widget's own box on
+     purpose: #panel is overflow:hidden and the shell only hit-tests the rects the page reports,
+     so chrome hanging outside a widget is both clipped and unclickable. #loot and #list are
+     siblings at the same z-index, so #loot is lifted only while the menu is open — the same
+     trick the mission report uses, and it puts the stacking back the moment it closes. */
+  #loot.rfopen { z-index: 20; }
+  .rfmenu { position: absolute; left: 12px; right: 12px; top: 100%; margin-top: 2px; z-index: 20;
+    max-height: 168px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 7px; background: var(--panel-solid);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5); }
+  .rfmenu .rfitem { display: flex; align-items: baseline; gap: 6px; padding: 6px 9px; cursor: pointer;
+    font-size: 11px; color: var(--cyan-text); border-bottom: 1px solid var(--divider); }
+  .rfmenu .rfitem:last-child { border-bottom: 0; }
+  .rfmenu .rfitem:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--cyan-bright); }
+  .rfmenu .rfstation { font-size: 9.5px; color: var(--faint); }
+  .rfmenu .rfscu { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--gold); }
+  .rfmenu .rfnone { padding: 9px; font-size: 10.5px; line-height: 1.4; color: var(--cyan-dim); }
+
+  /* Ore-name autocomplete. A native <datalist> was the first attempt and was wrong three ways: it
+     cannot be styled, cannot show group headings, and Chromium caps how much of a long list it
+     will show — it dead-ended around "Bracer" with no way to scroll (Sub, 2026-08-11). This is the
+     same shape as the refinery picker above: inside the widget's own box, so the shell hit-tests
+     it and #panel's overflow:hidden cannot eat it. */
+  .acmenu { position: absolute; z-index: 21; max-height: 190px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 7px; background: var(--panel-solid);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5); }
+  .acmenu .acgroup { position: sticky; top: 0; padding: 5px 9px 3px; font-size: 8.5px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
+    background: var(--panel-solid); border-bottom: 1px solid var(--divider); }
+  .acmenu .acitem { padding: 5px 9px; font-size: 11.5px; color: var(--cyan-text); cursor: pointer; }
+  .acmenu .acitem:hover, .acmenu .acitem.on { background: rgba(var(--accent-rgb), 0.18); color: var(--cyan-bright); }
+  .acmenu .acnone { padding: 8px 9px; font-size: 10.5px; color: var(--cyan-dim); }
   .lrow { display: flex; align-items: center; gap: 5px; padding: 4px 12px 6px; }
   .lrow input { font-family: var(--sans); font-size: 11.5px; color: var(--cyan-bright);
     background: rgba(0, 0, 0, 0.25); border: 1px solid var(--divider); border-radius: 5px;
@@ -84,6 +112,14 @@
   .lprice .pc:hover { border-color: var(--cyan); color: var(--cyan-bright); }
   .lprice .pn { font-size: 9.5px; color: var(--faint); padding: 2px 0; }
   .sec2 { flex: none; border-top: 1px solid var(--divider); position: relative; z-index: 4; }
+  /* One line PER ITEM, not every item joined onto one. Two ores already wrapped into a wall of
+     text; a real haul is unreadable (Sub, 2026-08-11: "that's going to kind of get out of hand").
+     The whole breakdown collapses from the loot header for crews splitting a lot of things. */
+  .row .lootcut .lcline { display: flex; gap: 6px; padding: 1px 0; }
+  .row .lootcut .lcq { flex: none; font-weight: 600; color: var(--cyan-text); }
+  .row .lootcut .lcn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .lootcut .lcv { margin-left: auto; flex: none; color: var(--gold); }
+  body.nobreakdown .row .lootcut { display: none; }
   .row .lootcut { flex-basis: 100%; font-family: var(--mono); font-size: 10px; color: var(--cyan-dim);
     padding: 2px 0 0 2px; }
   .row .lootcut:empty { display: none; }
@@ -98,6 +134,25 @@
   .pot .sel { outline: 1px solid rgba(var(--accent-rgb), 0.5); outline-offset: -1px; }
   .pot > div { cursor: pointer; }
   .pot > div:hover { background: rgba(var(--accent-rgb), 0.07); }
+  /* 🔑 These two tiles read as "—" for most players and nothing on screen said why (Sub,
+     2026-08-11: "I have no idea what that's for"). They are the aUEC PAYOUT pot, and the game only
+     logs a payout for FIXED-reward contracts — a bounty or any calculated-reward mission logs
+     nothing at all, so the tiles are legitimately empty most of the time. Shown only while both
+     are empty, so it explains itself once and then gets out of the way. */
+  .pothint { flex: none; display: none; font-size: 10.5px; line-height: 1.5; color: var(--faint);
+    padding: 7px 12px; border-bottom: 1px solid var(--divider); position: relative; z-index: 4; }
+  .pothint.show { display: block; }
+
+  /* Name the run. A crew does several runs in a day, and "Split · Aug 11" three times over is not
+     a name (Sub, 2026-08-11). Free text, remembered locally, and it becomes the saved split's
+     label so the saved list is readable a week later. */
+  .namebar { flex: none; display: flex; align-items: center; gap: 7px; padding: 7px 12px;
+    border-bottom: 1px solid var(--divider); position: relative; z-index: 4; }
+  .namebar input { flex: 1; min-width: 0; font-family: var(--sans); font-size: 12px; font-weight: 600;
+    color: var(--cyan-bright); background: transparent; border: 0; border-bottom: 1px dashed var(--divider);
+    padding: 2px 0; }
+  .namebar input:focus { outline: none; border-bottom-color: var(--cyan); }
+  .namebar input::placeholder { color: var(--faint); font-weight: 500; }
 
   /* Detected-party nudge — the one thing the log genuinely knows. */
   .nudge { flex: none; font-size: 10.5px; line-height: 1.5; color: var(--cyan-dim);
@@ -176,10 +231,17 @@
       <div id="potMission" title="Split the last completed mission's payout"><div class="k">Last mission</div><div class="v" id="potMissionV">—</div></div>
       <div id="potSession" title="Split everything earned this session"><div class="k">Session</div><div class="v" id="potSessionV">—</div></div>
     </div>
+    <div class="pothint" id="potHint">These split a mission <b>payout</b> in aUEC. Star Citizen only logs one for fixed-reward contracts — bounties and most calculated-reward missions log nothing, so this usually stays empty. Split the goods below instead.</div>
+
+    <div class="namebar">
+      <input id="runName" type="text" maxlength="48" spellcheck="false" placeholder="Name this run — e.g. Aaron Halo, second trip" />
+    </div>
 
     <div id="loot">
       <div class="lhead">
         <span class="lbl">What you're splitting</span>
+        <button id="breakBtn" class="hbtn sm" type="button" title="Show or hide each person's share of every item">▾ Breakdown</button>
+        <button id="lootRefinery" class="hbtn sm" type="button" title="Add a finished refinery job as a line to divide">⛏ Refinery</button>
         <button id="lootAdd" class="hbtn sm" type="button" title="Add ore, salvage or cargo to divide">＋ Item</button>
       </div>
       <div id="lootRows"></div>
@@ -344,12 +406,28 @@
       const lc = document.querySelector('.lootcut[data-loot-for="' + m.id + '"]');
       if (!lc) continue;
       const share = (Number(m.share) || 0) / 100;
-      const parts = loot.filter((l) => l.name && l.qty > 0).map((l) => {
+      // 🔑 One ROW per item. This used to join every line with a separator, which wrapped into an
+      // unreadable block the moment a crew split more than a couple of things — and splitting
+      // several things is the normal case for the mining runs this widget exists for.
+      lc.textContent = "";
+      for (const l of loot.filter((x) => x.name && x.qty > 0)) {
         const q = Math.round(l.qty * share * 100) / 100;
-        const v = l.pricePerUnit != null ? "  (" + fmtAUEC(q * l.pricePerUnit) + ")" : "";
-        return q + " " + l.unit + " " + l.name + v;
-      });
-      lc.textContent = parts.join("   ·   ");
+        const line = document.createElement("div");
+        line.className = "lcline";
+        const qty = document.createElement("span");
+        qty.className = "lcq"; qty.textContent = q + " " + l.unit;
+        const nm2 = document.createElement("span");
+        nm2.className = "lcn"; nm2.textContent = l.name;
+        line.append(qty, nm2);
+        // Cash value only when a unit price is set — a blank price means "goods only, nobody has
+        // priced this yet", and inventing a number there is what the ¤ lookup is for.
+        if (l.pricePerUnit != null) {
+          const val = document.createElement("span");
+          val.className = "lcv"; val.textContent = fmtAUEC(q * l.pricePerUnit);
+          line.append(val);
+        }
+        lc.appendChild(line);
+      }
     }
   }
   function renderTotal() {
@@ -366,6 +444,9 @@
     $("potSessionV").classList.toggle("dim", pot.session == null);
     $("potMission").classList.toggle("sel", basis === "mission");
     $("potSession").classList.toggle("sel", basis === "session");
+    // Explain the empty tiles, and only while they ARE empty. Once a fixed-reward mission puts a
+    // number up there the tiles speak for themselves and the paragraph is just clutter.
+    $("potHint").classList.toggle("show", pot.mission == null && pot.session == null);
 
     // The detected-vs-named nudge — the log knows the COUNT, never the names.
     const n = $("nudge");
@@ -446,8 +527,14 @@
   }
   async function saveSession() {
     if (!members.length) return;
-    const label = (potValue() != null ? (basis === "session" ? "Session total" : "Last mission") : "Split") +
-      " \u00b7 " + new Date().toLocaleDateString([], { month: "short", day: "numeric" });
+    // \ud83d\udd11 The player's own name for the run wins outright. A crew does several runs in a day, and
+    // three saves all called "Split \u00b7 Aug 11" are indistinguishable a week later when they finally
+    // settle up \u2014 which is exactly the delay saved splits exist for (Sub, 2026-08-11). The old
+    // auto-label stays as the fallback for anyone who doesn't name it, date included, because an
+    // unnamed split still has to be findable.
+    const named = $("runName").value.trim();
+    const label = named || ((potValue() != null ? (basis === "session" ? "Session total" : "Last mission") : "Split") +
+      " \u00b7 " + new Date().toLocaleDateString([], { month: "short", day: "numeric" }));
     try {
       const r = await fetch("/api/party/sessions", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -491,8 +578,18 @@
         i.addEventListener("input", () => { on(i.value); renderCuts(); scheduleSave(); });
         return i;
       };
+      const nameInput = mk("ln", l.name, "Aluminum", (v) => { l.name = v; });
+      // 🔑 Suggestions come from the MINING TABLE (ship-mined rock + hand-mined gems), grouped raw
+      // vs refined, not from the whole commodity map — see /api/commodities?names=1. Sub,
+      // 2026-08-11: "it's pretty hard to spell some of these ore names... some of this shit's just
+      // made up". Hephaestanite and Aphorite are not words anybody types right after a long run.
+      nameInput.setAttribute("autocomplete", "off");
+      nameInput.addEventListener("focus", () => openAc(nameInput, l));
+      nameInput.addEventListener("input", () => openAc(nameInput, l));
+      nameInput.addEventListener("blur", () => setTimeout(closeAc, 120));
+      nameInput.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAc(); });
       row.append(
-        mk("ln", l.name, "Aluminum", (v) => { l.name = v; }),
+        nameInput,
         mk("lq", l.qty, "0", (v) => { l.qty = Math.max(0, Number(v) || 0); }, "number"),
         mk("lu", l.unit, "SCU", (v) => { l.unit = v; }),
         mk("lp", l.pricePerUnit, "aUEC/ea", (v) => { l.pricePerUnit = v === "" ? null : Math.max(0, Number(v) || 0); }, "number"),
@@ -551,6 +648,85 @@
     renderLoot(); renderRows();
   });
 
+  // ---- pull a finished refine straight into the split ----------------------
+  // A crew divides ore they will not SELL until a later session, so the split is written up long
+  // after the refine finishes — and the numbers being divided are sitting in the Mining Scanner's
+  // refinery timers already. Retyping the material and the SCU by hand is the only reason those
+  // two halves were separate.
+  //
+  // 🔑 A finished job is only kept for DONE_KEEP_MS (6h) before the tracker clears it, so this
+  // imports what is still on screen rather than pretending to be a history. That is the right way
+  // round: the SPLIT is the durable record (saved sessions survive restarts by design), the job
+  // list is not. Import when you collect, settle up whenever.
+  //
+  // Reads /api/mining directly rather than being handed data by the canvas, because a widget page
+  // must survive being opened on its own — standalone, in OBS, or from the phone URL.
+  {
+    const btn = $("lootRefinery");
+    const wrap = $("loot");
+    let menu = null;
+    const closeMenu = () => {
+      menu?.remove();
+      menu = null;
+      wrap.classList.remove("rfopen");   // hand the stacking order back to #list
+    };
+    const addJob = (job) => {
+      loot.push({
+        id: newId(),
+        // A multi-material work order can read with no material at all (the tracker keys jobs by
+        // SLOT for exactly that reason). Import it anyway under a name the user can edit — silently
+        // dropping a finished job would be worse than an imperfect label.
+        name: job.material || "Refined ore",
+        qty: job.yieldScu || 0,
+        unit: "SCU",
+        // Deliberately blank: refined ore is sold at a price that moves per terminal and per day,
+        // so guessing one here would put a number in front of a crew that nobody verified.
+        pricePerUnit: null,
+      });
+      closeMenu();
+      renderLoot(); renderRows(); scheduleSave();
+    };
+    btn.addEventListener("click", async () => {
+      if (menu) { closeMenu(); return; }
+      let jobs = [];
+      try {
+        const v = await (await fetch("/api/mining")).json();
+        jobs = (v?.jobs || []).filter((j) => j.done);
+      } catch { /* sidecar down — say so below rather than opening an empty menu */ }
+      menu = document.createElement("div");
+      menu.className = "rfmenu";
+      if (!jobs.length) {
+        // Naming the 6h window matters: "nothing here" otherwise reads as broken to someone who
+        // definitely refined something last night.
+        menu.innerHTML = '<div class="rfnone">No finished refinery jobs right now. Jobs show here once they complete, and clear about 6 hours later.</div>';
+      } else {
+        for (const j of jobs) {
+          const row = document.createElement("div");
+          row.className = "rfitem";
+          const name = document.createElement("span");
+          name.textContent = j.material || "Refined ore";
+          const station = document.createElement("span");
+          station.className = "rfstation";
+          station.textContent = j.station || "";
+          const scu = document.createElement("span");
+          scu.className = "rfscu";
+          scu.textContent = (j.yieldScu != null ? j.yieldScu : "?") + " SCU";
+          row.append(name, station, scu);
+          row.addEventListener("click", () => addJob(j));
+          menu.appendChild(row);
+        }
+      }
+      wrap.classList.add("rfopen");
+      wrap.appendChild(menu);
+    });
+    // Clicking anywhere else closes it. Guarded on the button so its own click doesn't immediately
+    // undo the open.
+    document.addEventListener("click", (e) => {
+      if (!menu || btn.contains(e.target) || menu.contains(e.target)) return;
+      closeMenu();
+    });
+  }
+
   $("saveBtn").addEventListener("click", saveSession);
   $("listBtn").addEventListener("click", () => { showSaved = !showSaved; renderSaved(); });
   $("folderBtn").addEventListener("click", () => { try { host()?.openFolder?.(); } catch { /* not embedded */ } });
@@ -558,6 +734,33 @@
   $("evenBtn").addEventListener("click", () => { evenSplit(); renderRows(); renderChrome(); save(); });
   $("potMission").addEventListener("click", () => { basis = "mission"; renderChrome(); });
   $("potSession").addEventListener("click", () => { basis = "session"; renderChrome(); });
+
+  // ---- naming the run, and folding the per-person breakdown away -------------
+  // Both are local-only preferences. They are deliberately NOT part of the server's Persisted
+  // shape (members + suggestions): that file is the roster, and a half-typed run name has no
+  // business in it. localStorage keeps them across a widget reload, which is all they need.
+  const RUN_KEY = "sco.party.runName";
+  const BREAK_KEY = "sco.party.breakdown";
+  function restoreRunName() {
+    try { $("runName").value = localStorage.getItem(RUN_KEY) || ""; } catch { /* private mode */ }
+  }
+  $("runName").addEventListener("input", () => {
+    try { localStorage.setItem(RUN_KEY, $("runName").value); } catch { /* not fatal */ }
+  });
+  function applyBreakdown(on) {
+    document.body.classList.toggle("nobreakdown", !on);
+    $("breakBtn").textContent = (on ? "▾" : "▸") + " Breakdown";
+  }
+  function restoreBreakdown() {
+    let on = true;   // default ON — it is the whole point of the widget, just foldable
+    try { on = localStorage.getItem(BREAK_KEY) !== "0"; } catch { /* default */ }
+    applyBreakdown(on);
+  }
+  $("breakBtn").addEventListener("click", () => {
+    const on = document.body.classList.contains("nobreakdown");   // currently hidden -> turn on
+    applyBreakdown(on);
+    try { localStorage.setItem(BREAK_KEY, on ? "1" : "0"); } catch { /* not fatal */ }
+  });
 
   // Typing mode — the shell grabs keyboard focus + suspends the interact key so the roster can be
   // edited over a focused game (shared with the Notepad widget; see main.cjs).
@@ -581,11 +784,78 @@
   // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
   document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
 
+  // Commodity names for the item autocomplete. Names ONLY (`?names=1`) — the full economy map is
+  // ~600KB of per-terminal prices and this widget wants none of it. Best-effort: a failed fetch
+  // just means typing without suggestions, which is exactly today's behaviour.
+  let oreGroups = [];   // [{ label, names }] — raw / refined, from the mining table
+  async function loadOreNames() {
+    try {
+      const d = await (await fetch("/api/commodities?names=1", { cache: "no-store" })).json();
+      oreGroups = d.groups || [];
+    } catch { /* no suggestions, still fully typeable */ }
+  }
+
+  // ---- ore-name autocomplete -------------------------------------------------
+  // 🔑 A SUGGESTION LIST, NEVER A WHITELIST. The field stays ordinary free text — salvage, boxes
+  // of cargo and anything else a crew divides still type in exactly as before. This only saves
+  // people spelling Hephaestanite and Aphorite correctly at 2am.
+  let acMenu = null;
+  function closeAc() {
+    acMenu?.remove();
+    acMenu = null;
+    $("loot").classList.remove("rfopen");
+  }
+  function openAc(input, item) {
+    closeAc();
+    const typed = (input.value || "").trim().toLowerCase();
+    // Filter within each group so the RAW/REFINED split survives typing — that grouping is the
+    // point (Sub asked for it explicitly), not decoration on the unfiltered list.
+    const groups = oreGroups
+      .map((g) => ({ label: g.label, names: (g.names || []).filter((n) => !typed || n.toLowerCase().includes(typed)) }))
+      .filter((g) => g.names.length);
+    if (!groups.length) return;                 // nothing matches: get out of the way entirely
+    const menu = document.createElement("div");
+    menu.className = "acmenu";
+    for (const g of groups) {
+      const h = document.createElement("div");
+      h.className = "acgroup";
+      h.textContent = g.label;
+      menu.appendChild(h);
+      for (const n of g.names) {
+        const el = document.createElement("div");
+        el.className = "acitem";
+        el.textContent = n;
+        // mousedown, not click: the input's blur would tear the menu down first.
+        el.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          input.value = n;
+          item.name = n;
+          closeAc();
+          renderCuts(); scheduleSave();
+        });
+        menu.appendChild(el);
+      }
+    }
+    const wrap = $("loot");
+    const row = input.closest(".lrow");
+    // Positioned against #loot, which is the offset parent — same containment as the refinery
+    // picker, so it can never hang outside the rect the shell hit-tests.
+    menu.style.top = (row.offsetTop + row.offsetHeight) + "px";
+    menu.style.left = "12px";
+    menu.style.right = "12px";
+    wrap.classList.add("rfopen");
+    wrap.appendChild(menu);
+    acMenu = menu;
+  }
+
   (async () => {
     await pollParty();
+    restoreRunName();
+    restoreBreakdown();
     renderLoot();
     renderRows();
     await pollPot();
+    void loadOreNames();
   })();
   setInterval(pollParty, POLL_MS);
   setInterval(pollPot, POLL_MS * 2);

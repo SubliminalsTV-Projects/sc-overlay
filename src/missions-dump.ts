@@ -35,6 +35,10 @@ const fmt = (e: MissionEvent): string => {
       return `TRACK    [${short(e.missionId)}] ${e.contractKey}  (${e.generator})`;
     case "activeObjective":
       return `ACTIVE   [${short(e.missionId)}] obj=${short(e.objectiveId)}`;
+    case "newObjective":
+      return `OBJTEXT  [${short(e.missionId)}] ${e.text}`;
+    case "routeRegion":
+      return `ROUTE    [--------] Region${e.region}  (from ${e.start ?? "?"})`;
     case "end":
       return `END      [${short(e.missionId)}] ${e.state}`;
     case "contractComplete":
@@ -51,6 +55,8 @@ const fmt = (e: MissionEvent): string => {
       return `PARTY    marker ${e.markerId} ${e.present ? "in" : "out"} (entity ${e.entityId})`;
     case "partyMemberName":
       return `PARTY    marker ${e.markerId} = «${e.name}»`;
+    case "shard":
+      return `SHARD    ${e.shard ?? "(left PU)"}`;
   }
 };
 

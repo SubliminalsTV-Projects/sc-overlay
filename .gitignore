@@ -15,3 +15,6 @@ overlay/config.json
 # python bytecode (tools/fab-bgremove)
 __pycache__/
 *.pyc
+
+# Throwaway profile used by 'npm run dev:fresh' to walk through first-run setup
+.dev-profile/

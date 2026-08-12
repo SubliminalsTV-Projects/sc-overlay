@@ -14,11 +14,17 @@
 const SYNC_PATH = "/api/sc/sync";
 const DEBOUNCE_MS = 1500;
 
+/** How the app says a blueprint was acquired, as sent to subliminal.gg.
+ *  ⚠️ `"fab"` is NEWER than the site — a deployed site that doesn't know it must not
+ *  reject the whole snapshot. Confirm `/api/sc/sync` tolerates unknown source values
+ *  before shipping an app build that emits it. */
+export type SyncSource = "in-game" | "manual" | "fab" | "default";
+
 export interface SyncSnapshot {
   /** Collected blueprints as { uuid, unlockedAt, source }. unlockedAt = ISO in-game
    *  unlock time, or null when unknown (server falls back to when it first saw it).
-   *  source = how it was acquired: "in-game" | "manual" | "default". */
-  got: { uuid: string; unlockedAt: string | null; source: "in-game" | "manual" | "default" }[];
+   *  source = how it was acquired — see SyncSource. */
+  got: { uuid: string; unlockedAt: string | null; source: SyncSource }[];
   mission: { debugName: string; patch: string } | null;
 }
 
@@ -39,7 +45,13 @@ export class SiteSync {
   /** Set/replace credentials. Returns whether sync is now active. */
   configure(token: string, enabled: boolean): boolean {
     this.token = (token ?? "").trim();
-    this.enabled = enabled;
+    // 🔑 SC_NO_SYNC is a HARD refusal, not a default — it exists for the throwaway-profile launch
+    // (npm run dev:fresh) used to walk through first-run setup. Every push is an authoritative
+    // full replace, so a fresh profile with a real token pasted into the wizard would upload an
+    // EMPTY collection and wipe the real one server-side. Enforced here, at the one place sync can
+    // be switched on, rather than at any of the call sites that reach it.
+    this.enabled = enabled && process.env.SC_NO_SYNC !== "1";
+    if (enabled && !this.enabled) console.log("[sync] refused: SC_NO_SYNC=1 (throwaway profile)");
     return this.active;
   }
 

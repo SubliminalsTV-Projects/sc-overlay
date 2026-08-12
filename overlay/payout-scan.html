@@ -1,0 +1,224 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Payout Scanner — live</title>
+<!--
+  A live readout of the contract-board payout scanner.
+
+  🔑 WHY THIS EXISTS. Sub, mid-session: "is there anywhere I can get a readout of exactly
+  what it's doing? ... I'm kind of going IN blind." He was, and that was the real bug —
+  the scanner had counters, and a counter cannot tell you whether the thing is WORKING or
+  merely RUNNING. Two people were debugging one feature through an HTTP endpoint only one
+  of them could reach.
+
+  Open it in any browser on this machine: http://localhost:8778/payout-scan.html
+  It polls once a second; leave it on a second monitor while you sweep the board.
+-->
+<style>
+  :root { color-scheme: dark; --bg:#0d0e0f; --panel:#1b1c1c; --line:#2a2b2b;
+          --dim:#9a9a96; --fg:#e3e2e2; --gold:#ffb231;
+          --ok:#6ee7a8; --warn:#ffd27a; --bad:#ff9a90; --idle:#7aa7ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif; padding:16px; }
+  h1 { font-size:15px; letter-spacing:.14em; text-transform:uppercase; margin:0 0 12px; color:var(--dim); }
+  .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+  .pill { border-radius:999px; padding:5px 12px; font-weight:700; font-size:12px;
+          letter-spacing:.08em; text-transform:uppercase; }
+  .on   { background:rgba(110,231,168,.15); color:var(--ok); }
+  .off  { background:rgba(255,154,144,.15); color:var(--bad); }
+  .live { background:rgba(255,178,49,.15); color:var(--gold); }
+  .wait { background:rgba(122,167,255,.15); color:var(--idle); }
+  .btn { font:inherit; font-weight:800; font-size:12px; letter-spacing:.1em; text-transform:uppercase;
+         border:1px solid var(--line); border-radius:999px; padding:7px 18px; cursor:pointer;
+         background:var(--panel); color:var(--fg); transition:background .12s,color .12s; }
+  .btn:hover { border-color:var(--gold); }
+  .btn[data-on="1"] { background:rgba(255,154,144,.14); color:var(--bad); border-color:rgba(255,154,144,.35); }
+  .btn[data-on="0"] { background:rgba(110,231,168,.14); color:var(--ok); border-color:rgba(110,231,168,.35); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(108px,1fr)); gap:8px; margin-bottom:16px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:9px 11px; }
+  .stat b { display:block; font-size:21px; font-weight:800; line-height:1.1; }
+  .stat span { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); }
+  .stat.good b { color:var(--ok); } .stat.warn b { color:var(--warn); } .stat.bad b { color:var(--bad); }
+  h2 { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim);
+       margin:18px 0 7px; }
+  /* The current screenful is boxed and tinted so it reads as "this, now" at a glance
+     rather than blurring into the history below it. */
+  #now { background:rgba(255,178,49,.05); border:1px solid rgba(255,178,49,.22); border-radius:10px; }
+  #now td { border-bottom-color:rgba(255,178,49,.12); }
+  #feed { opacity:.72; }
+  /* Sized for the Web Page widget over the game, not just a desktop browser tab. */
+  @media (max-width:560px) {
+    body { padding:10px; font-size:13px; }
+    .stat b { font-size:17px; }
+    .why { display:none; }
+    pre { max-height:120px; }
+  }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td { padding:5px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr td:first-child { white-space:nowrap; color:var(--dim); font-variant-numeric:tabular-nums; }
+  .tag { font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+         padding:2px 7px; border-radius:5px; white-space:nowrap; }
+  .t-recorded{background:rgba(110,231,168,.16);color:var(--ok)}
+  .t-duplicate{background:#262727;color:var(--dim)}
+  .t-ambiguous{background:rgba(255,210,122,.14);color:var(--warn)}
+  .t-unknown{background:rgba(255,154,144,.14);color:var(--bad)}
+  .t-fee{background:rgba(122,167,255,.14);color:var(--idle)}
+  .t-noprice{background:#262727;color:var(--dim)}
+  .money { font-variant-numeric:tabular-nums; font-weight:700; white-space:nowrap; }
+  .why { color:var(--dim); font-size:12px; }
+  pre { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+        padding:10px; overflow:auto; max-height:230px; font-size:11.5px; color:var(--dim);
+        margin:0; white-space:pre-wrap; }
+  .hint { color:var(--dim); font-size:12px; margin:6px 0 0; }
+  .empty { color:var(--dim); padding:14px 8px; }
+</style>
+
+<h1>Contract payout scanner</h1>
+<div class="bar">
+  <button id="toggle" class="btn">…</button>
+  <span id="bar" style="display:contents"></span>
+</div>
+<div class="grid" id="stats"></div>
+
+<h2>On screen right now <span id="nowcount" class="hint"></span></h2>
+<table id="now"><tbody></tbody></table>
+
+<h2>Earlier this session</h2>
+<table id="feed"><tbody></tbody></table>
+
+<h2>Raw OCR from the last capture</h2>
+<pre id="raw">waiting…</pre>
+<p class="hint" id="foot"></p>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const n = (v) => (v == null ? "—" : Number(v).toLocaleString("en-US"));
+  const ago = (ms) => {
+    if (!ms) return "never";
+    const s = Math.round((Date.now() - ms) / 1000);
+    return s < 2 ? "just now" : s < 90 ? s + "s ago" : Math.round(s / 60) + "m ago";
+  };
+  const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  // 🔑 Works whether this page is SERVED by the sidecar or opened straight off disk.
+  // The first thing that happened when Sub opened it was "sidecar unreachable" — because
+  // the file had been opened as file://, where a relative /api/ path resolves to nothing.
+  // A dashboard whose failure mode is indistinguishable from the failure it exists to
+  // diagnose is worse than no dashboard, so it falls back to the known port and, if that
+  // is blocked too, says exactly what to do instead of just going red.
+  const API = location.protocol.startsWith("http") ? "" : "http://localhost:8778";
+
+  async function tick() {
+    let d;
+    try {
+      d = await (await fetch(API + "/api/payout-scan", { cache: "no-store" })).json();
+    } catch {
+      $("bar").innerHTML =
+        '<span class="pill off">can&rsquo;t reach the app</span>' +
+        '<span class="pill wait">open <b>http://localhost:8778/payout-scan.html</b> in a browser</span>';
+      $("foot").textContent =
+        location.protocol.startsWith("http")
+          ? "The overlay app isn't running, or its sidecar isn't on port 8778."
+          : "This page was opened from disk (" + location.protocol + "), not from the app. Use the URL above.";
+      return;
+    }
+    const t = d.tally || {};
+    // Freshness is the question the counters cannot answer: a stalled scanner and an idle
+    // one look identical in a total. Anything inside ~12s means captures are arriving.
+    const fresh = d.lastCaptureAt && Date.now() - d.lastCaptureAt < 12000;
+
+    // The button carries the state, so no separate on/off pill — two things saying the
+    // same thing is how a dashboard starts lying when one of them lags.
+    const btn = $("toggle");
+    btn.dataset.on = d.on ? "1" : "0";
+    btn.textContent = d.on ? "Stop scanning" : "Start scanning";
+    btn.disabled = false;
+
+    const pills = [];
+    if (!d.calibrated) pills.push('<span class="pill off">not calibrated</span>');
+    if (!d.syncReady) pills.push('<span class="pill off">no sync token</span>');
+    pills.push(
+      fresh
+        ? '<span class="pill live">reading the board</span>'
+        : '<span class="pill wait">no board on screen</span>',
+    );
+    pills.push(`<span class="pill wait">${esc(d.patch || "no patch")}</span>`);
+    // The system is worth a lot — it's what separates same-titled variants — so the page
+    // says where it came from. "deduced" means it was read off the board itself because
+    // the log's terrain report (every ~10 min) hadn't spoken yet.
+    const sys = d.system || d.inferredSystem;
+    pills.push(
+      `<span class="pill wait">system: ${esc(sys || "unknown")}${
+        !d.system && d.inferredSystem ? " (deduced)" : ""
+      }</span>`,
+    );
+    $("bar").innerHTML = pills.join("");
+
+    const cell = (v, label, cls) => `<div class="stat ${cls || ""}"><b>${v}</b><span>${label}</span></div>`;
+    $("stats").innerHTML = [
+      cell(n(t.recorded), "recorded", t.recorded ? "good" : ""),
+      cell(n(t.queued), "queued"),
+      cell(n(t.flushed), "uploaded", t.flushed ? "good" : ""),
+      cell(n(t.seen), "rows seen"),
+      cell(n(t.duplicate), "repeats"),
+      cell(n(t.ambiguous), "ambiguous", t.ambiguous ? "warn" : ""),
+      cell(n(t.unknown), "unknown", t.unknown ? "bad" : ""),
+      cell(n(t.feeOnly), "fee rows"),
+      cell(n(t.noPrice), "no price"),
+    ].join("");
+
+    // 🔑 SPLIT BY CAPTURE, not one long list. Sub: "let's say I hover over five different
+    // missions — when it ticks again it should still show those five things and have them
+    // in a different group than the rest. That way it's easy to tell what it literally is
+    // looking at right in that moment." Every row from one capture shares an `at`, so the
+    // newest timestamp IS the current screenful; everything older is history.
+    const evs = d.events || [];
+    const newestAt = evs.length ? evs[0].at : 0;
+    const current = evs.filter((e) => e.at === newestAt);
+    const earlier = evs.filter((e) => e.at !== newestAt);
+
+    const rowHtml = (e) => `<tr>
+      <td>${new Date(e.at).toLocaleTimeString()}</td>
+      <td><span class="tag t-${e.outcome.replace("-", "")}">${esc(e.outcome)}</span></td>
+      <td class="money">${e.kind === "fee" ? "fee " : ""}${n(e.amount)}</td>
+      <td>${esc(e.title)}<div class="why">${esc(e.giver || "unknown giver")} · ${esc(e.detail)}</div></td>
+    </tr>`;
+
+    $("nowcount").textContent = current.length
+      ? `· ${current.length} row${current.length > 1 ? "s" : ""}, read ${ago(newestAt)}`
+      : "";
+    $("now").querySelector("tbody").innerHTML = current.length
+      ? current.map(rowHtml).join("")
+      : '<tr><td colspan="4" class="empty">Nothing on screen. Open mobiGlas → Contracts and expand a category.</td></tr>';
+    $("feed").querySelector("tbody").innerHTML = earlier.length
+      ? earlier.map(rowHtml).join("")
+      : '<tr><td colspan="4" class="empty">—</td></tr>';
+
+    $("raw").textContent = (d.panelLines || []).join("\n") || "nothing in the calibrated panel yet";
+    $("foot").textContent =
+      `last capture ${ago(d.lastCaptureAt)} · ${d.lastCaptureRows ?? 0} rows in it · frame ${d.frame || "—"}` +
+      (t.lastFlushError ? ` · UPLOAD ERROR: ${t.lastFlushError}` : "");
+  }
+  // Optimistic flip, then let the next poll confirm — the route persists the flag, so if
+  // the POST failed the button snaps back within a second rather than lying about it.
+  $("toggle").addEventListener("click", async () => {
+    const btn = $("toggle");
+    const want = btn.dataset.on !== "1";
+    btn.disabled = true;
+    btn.textContent = want ? "starting…" : "stopping…";
+    try {
+      await fetch(API + "/api/payout-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ on: want }),
+      });
+    } catch {
+      /* the poll will show the real state */
+    }
+    tick();
+  });
+
+  tick();
+  setInterval(tick, 1000);
+</script>

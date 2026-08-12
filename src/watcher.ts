@@ -16,6 +16,25 @@ export interface WatcherOptions {
    * start regardless of this setting, so a fresh session is captured in full.
    */
   readExisting?: boolean;
+  /**
+   * Byte offset to start tailing from on FIRST sight, instead of "wherever the file
+   * happens to end when the watcher first stats it".
+   *
+   * 🔴 This closes a real gap. The sidecar seeds the tracker by reading the whole current
+   * log, then does other startup work, then starts the watcher — and the watcher used to
+   * take its own fresh `size` as the starting point. Everything the game wrote between the
+   * seed's read and that stat was therefore processed by NEITHER: not by the seed (it had
+   * already read) and not by the watcher (it began after). A mission ACCEPT landing in that
+   * window is invisible, and the consequences are not subtle — the tracker never learns the
+   * mission, OCR later re-registers it from the title still on screen, and a title guess
+   * cannot be narrowed to one variant, so the panel shows the MERGED pool of every
+   * same-title variant and can never be marked complete. Sub hit exactly that on
+   * "Simple Hit" (2026-08-12): 23/25 across four merged pools for a contract that was one
+   * pool of 7, already finished.
+   *
+   * Pass the byte length the seed consumed and the two reads become contiguous.
+   */
+  startPosition?: number;
 }
 
 /**
@@ -41,6 +60,7 @@ export class LogWatcher extends EventEmitter {
   private readonly filePath: string;
   private readonly pollInterval: number;
   private readonly readExisting: boolean;
+  private readonly startPosition: number | null;
 
   private position = 0;
   private exists = false;
@@ -54,6 +74,7 @@ export class LogWatcher extends EventEmitter {
     this.filePath = filePath;
     this.pollInterval = options.pollInterval ?? 500;
     this.readExisting = options.readExisting ?? false;
+    this.startPosition = typeof options.startPosition === "number" ? options.startPosition : null;
   }
 
   start(): this {
@@ -93,8 +114,15 @@ export class LogWatcher extends EventEmitter {
 
     if (!this.exists) {
       this.exists = true;
-      // On first sight, honour readExisting; on reappearance, start from 0.
-      this.position = this.readExisting ? 0 : size;
+      // On first sight: an explicit startPosition wins (it hands over from the seed read with
+      // no gap), else honour readExisting. On reappearance, always start from 0.
+      // 🔑 An offset PAST the current end means the log rotated between the seed and now (the
+      // game truncates on every launch), so it points into a file that no longer exists. Start
+      // over at 0 — not at `size`, which would skip the whole of the new session. Clamping to
+      // EOF looks like the safe move and is exactly wrong here.
+      this.position = this.startPosition != null
+        ? (this.startPosition <= size ? this.startPosition : 0)
+        : this.readExisting ? 0 : size;
       this.emit("appear");
     }
 
