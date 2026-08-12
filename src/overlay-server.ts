@@ -827,7 +827,9 @@ tracker.on("change", broadcastMissions);
 
 // ── Mining / economy datasets (commodities prices + rock->ore composition) ───
 // Bundled, version-independent reference data for offline use (see MiningEconomyStore).
-// Served on demand via /api/commodities + /api/mining-composition; no UI consumes it yet.
+// Served on demand via /api/commodities + /api/mining-composition. /api/commodities is consumed
+// by the Mining widget's scan panel (overlay/mining.html) for the sell-price line; composition has
+// no consumer yet (its keys are internal engine names, not the rock names the scanner resolves to).
 const economy = new MiningEconomyStore(dataDir);
 {
   const c = economy.counts();

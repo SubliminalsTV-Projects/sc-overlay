@@ -94,6 +94,15 @@ export class MiningEconomyStore {
       for (const [uuid, c] of Object.entries(this.commoditiesFile.commodities)) {
         if (c.name) this.commodityByName.set(c.name.toLowerCase(), uuid);
       }
+      // The mining signature table (data/mineables.json) names ores after the ROCK; the commodity
+      // market names some of them after the REFINED/sold form instead. Checked all 26 rock names
+      // against this file directly (2026-08-08): 25 match verbatim, only Ice doesn't — it's sold as
+      // "Pressurized Ice". Extend the name index with aliases rather than touch either dataset.
+      const MINING_NAME_ALIASES: Record<string, string> = { ice: "pressurized ice" };
+      for (const [alias, marketName] of Object.entries(MINING_NAME_ALIASES)) {
+        const uuid = this.commodityByName.get(marketName);
+        if (uuid) this.commodityByName.set(alias, uuid);
+      }
     }
   }
 
