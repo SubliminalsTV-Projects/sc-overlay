@@ -1,0 +1,109 @@
+--- /mnt/data/upstream22-src/build/server/overlay/config.html	2026-08-13 01:45:37.000000000 +0000
++++ /mnt/data/alpha22-flatpak-work/ArchVerse-Overlay-0.1.42-r31-alpha.22/app/server/overlay/config.html	2026-08-12 20:30:00.000000000 +0000
+@@ -462,7 +462,7 @@
+       <div class="hint" id="notepadHotkeyHint"></div>
+     </div>
+     <div class="hkrow">
+-      <span class="hklabel">Mining Scanner</span>
++      <span class="hklabel">Resource Scanner</span>
+       <button type="button" id="miningHotkeyBtn" class="hkbtn" onclick="startCaptureHotkey('mining')">Shift + F3</button>
+       <button type="button" class="hkclear" id="miningHotkeyClear" title="Remove this hotkey" onclick="clearHotkey('mining')">✕</button>
+       <input type="hidden" id="miningHotkey" />
+@@ -799,6 +799,7 @@
+ </div>
+ 
+ <script>
++  const IS_LINUX_DESKTOP = /Linux/i.test(navigator.userAgent || "");
+   let cfg = { logPath: "" };
+ 
+   // FREE: Mobiglas + Auto (match my ship). SUBSCRIBER: pinning a specific manufacturer regardless of ship.
+@@ -837,7 +838,7 @@
+     // control panel, not something to composite into a scene.
+     var SOURCES = [
+       ["Mission & BP Tracker", "missions.html"],
+-      ["Mining Scanner", "mining.html"],
++      ["Resource Scanner", "mining.html"],
+       ["Event Tracker", "battaglia.html"],
+       ["Infographic Viewer", "bindingwidget.html"],
+       ["Journal", "notepad.html"],
+@@ -885,9 +886,27 @@
+       const saved = cfg[which + "Hotkey"];
+       setHotkeyDisplay(which, typeof saved === "string" ? saved : HOTKEYS[which].def);
+     }
++    // ArchVerse Linux owns these two interaction contracts in the shell. Letting Settings
++    // rebind either one creates two sources of truth (Electron's hard click-through layer vs
++    // the sidecar config) and can strand the desktop behind an interactive canvas.
++    if (IS_LINUX_DESKTOP) {
++      setHotkeyDisplay("interact", "F");
++      setHotkeyDisplay("move", "Shift+F6");
++      for (const which of ["interact", "move"]) {
++        const h = HOTKEYS[which];
++        const btn = document.getElementById(h.btn);
++        if (btn) { btn.disabled = true; btn.classList.add("linux-fixed"); }
++        document.getElementById(h.input + "Clear")?.classList.add("hidden");
++      }
++      const ih = document.getElementById(HOTKEYS.interact.hint);
++      const mh = document.getElementById(HOTKEYS.move.hint);
++      if (ih) ih.textContent = "Linux keeps F as the safe hold-to-interact key.";
++      if (mh) mh.textContent = "Linux keeps Shift+F6 for Arrange mode; normal desktop focus no longer requires it.";
++    }
+     hotkeysLoaded = true;
+     setOpacitySlider(Number.isFinite(cfg.unfocusedOpacity) ? Math.round(cfg.unfocusedOpacity * 100) : 100);
+-    document.getElementById("holdToInteract").checked = !!cfg.holdToInteract;
++    document.getElementById("holdToInteract").checked = IS_LINUX_DESKTOP ? true : !!cfg.holdToInteract;
++    document.getElementById("holdToInteract").disabled = IS_LINUX_DESKTOP;
+     document.getElementById("revertThemeOnFoot").checked = !!cfg.revertThemeOnFoot;
+     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
+     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
+@@ -955,7 +974,7 @@
+       hwAccel: document.getElementById("hwAccel").checked,
+       amdCompat: document.getElementById("amdCompat").checked,
+       unfocusedOpacity: Number(document.getElementById("unfocusedOpacity").value || 100) / 100,
+-      holdToInteract: document.getElementById("holdToInteract").checked,
++      holdToInteract: IS_LINUX_DESKTOP ? true : document.getElementById("holdToInteract").checked,
+       revertThemeOnFoot: document.getElementById("revertThemeOnFoot").checked,
+       syncEnabled: document.getElementById("syncEnabled").checked,
+       fabCapture: document.getElementById("fabCapture").checked,
+@@ -971,7 +990,9 @@
+     // submitting the empty inputs it happens to be looking at.
+     if (hotkeysLoaded) {
+       for (const which of Object.keys(HOTKEYS)) {
+-        body[which + "Hotkey"] = document.getElementById(HOTKEYS[which].input).value.trim();
++        body[which + "Hotkey"] = IS_LINUX_DESKTOP && which === "interact" ? "F"
++          : IS_LINUX_DESKTOP && which === "move" ? "Shift+F6"
++          : document.getElementById(HOTKEYS[which].input).value.trim();
+       }
+     }
+     const token = document.getElementById("syncToken").value.trim();
+@@ -1010,7 +1031,14 @@
+ 
+   // Opt-in hold-to-interact: apply live via the shell, and persist via save().
+   function onHoldModeToggle() {
+-    const on = document.getElementById("holdToInteract").checked;
++    const box = document.getElementById("holdToInteract");
++    if (IS_LINUX_DESKTOP) {
++      box.checked = true;
++      if (window.overlayConfig && window.overlayConfig.setHoldMode) window.overlayConfig.setHoldMode(true);
++      save();
++      return;
++    }
++    const on = box.checked;
+     if (window.overlayConfig && window.overlayConfig.setHoldMode) window.overlayConfig.setHoldMode(on);
+     save();
+   }
+@@ -1172,6 +1200,7 @@
+    *  the field being absent, which still means "never set, use the default". The shell treats an
+    *  empty accel as unregister, so applying it takes effect immediately. */
+   async function clearHotkey(which) {
++    if (IS_LINUX_DESKTOP && (which === "interact" || which === "move")) return;
+     const h = HOTKEYS[which];
+     if (capturing === which) { capturing = null; document.getElementById(h.btn).classList.remove("capturing"); }
+     setHotkeyDisplay(which, "");
+@@ -1192,6 +1221,7 @@
+     save();
+   }
+   function startCaptureHotkey(which) {
++    if (IS_LINUX_DESKTOP && (which === "interact" || which === "move")) return;
+     capturing = which;
+     const btn = document.getElementById(HOTKEYS[which].btn);
+     btn.textContent = "Press keys…  (Esc cancels)";
