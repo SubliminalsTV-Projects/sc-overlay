@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+: "${FLATPAK_ID:=io.github.gbmccray32_boop.ArchVerseOverlay}"
+TMPDIR="${XDG_RUNTIME_DIR:-/tmp}/app/${FLATPAK_ID}"
+mkdir -p "$TMPDIR"
+export TMPDIR
+exec zypak-wrapper /app/lib/archverse-electron/electron "$@"
