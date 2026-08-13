@@ -47,15 +47,21 @@ jobs:
       - name: Reconstruct the verified ArchVerse Alpha 22 Linux shell
         run: |
           set -euxo pipefail
-          rm -rf /tmp/archverse-a21 /tmp/archverse-stage
-          mkdir -p /tmp/archverse-a21 /tmp/archverse-stage/app /tmp/archverse-stage/bin /tmp/archverse-stage/flatpak /tmp/archverse-stage/tests
+          rm -rf /tmp/archverse-a20 /tmp/archverse-stage /tmp/archverse-alpha20.tar.gz
+          mkdir -p /tmp/archverse-a20 /tmp/archverse-stage/app /tmp/archverse-stage/bin /tmp/archverse-stage/flatpak /tmp/archverse-stage/tests
 
-          # Alpha 22 deliberately carried the proven Alpha 21 Electron/Linux shell forward and
-          # changed only a small audited surface. Reconstruct that shell rather than replacing it
-          # with upstream's Windows-oriented Electron implementation.
-          git fetch --no-tags --depth=1 origin rescue/archverse-alpha21
-          git archive --format=tar FETCH_HEAD electron | tar -C /tmp/archverse-a21 -xf -
-          cp -a /tmp/archverse-a21/electron /tmp/archverse-stage/app/
+          # Alpha 21's package test report records that all 19 Electron/Linux runtime files were
+          # byte-for-byte identical to Alpha 20. Use the actual published Alpha 20 release asset
+          # (with its release SHA-256) as the reproducible shell base instead of an approximate
+          # source/rescue branch.
+          curl --fail --location --retry 3 --retry-delay 2 \
+            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/releases/download/v0.1.42-r31-alpha.20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz \
+            --output /tmp/archverse-alpha20.tar.gz
+          echo 'f4256aeac8c13fb0a64fc6065a8869bf58015dbe694200a550aaf9e99e3dd0a6  /tmp/archverse-alpha20.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/archverse-alpha20.tar.gz -C /tmp/archverse-a20 \
+            --strip-components=2 --wildcards '*/app/electron/*'
+          test -f /tmp/archverse-a20/electron/capture.cjs
+          cp -a /tmp/archverse-a20/electron /tmp/archverse-stage/app/
 
           patch --batch /tmp/archverse-stage/app/electron/capture.cjs < archverse-flatpak/patches/electron/capture.patch
           patch --batch /tmp/archverse-stage/app/electron/linux/focus-controller.cjs < archverse-flatpak/patches/electron/focus-controller.patch
