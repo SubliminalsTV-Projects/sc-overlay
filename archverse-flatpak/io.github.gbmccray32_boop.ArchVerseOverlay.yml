@@ -80,6 +80,7 @@ modules:
       - mkdir -p /app/archverse/app /app/archverse/bin /app/bin
       - cp -a payload/app/. /app/archverse/app/
       - cp -a payload/bin/. /app/archverse/bin/
+      - chmod 0755 /app/archverse/bin/sc-blueprint-tracker
       - install -Dm644 payload/LICENSE.md /app/archverse/LICENSE.md
       - install -Dm755 packaging/archverse-overlay /app/bin/archverse-overlay
       - install -Dm755 packaging/archverse-electron /app/bin/archverse-electron
