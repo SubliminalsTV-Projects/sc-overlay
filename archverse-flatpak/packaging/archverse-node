@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+export ELECTRON_RUN_AS_NODE=1
+exec /app/lib/archverse-electron/electron "$@"
