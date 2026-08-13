@@ -4,7 +4,7 @@
   <name>ArchVerse Overlay</name>
   <summary>Community Linux companion overlay for Star Citizen</summary>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>FSL-1.1-MIT</project_license>
+  <project_license>LicenseRef-FSL-1.1-MIT</project_license>
   <developer id="io.github.gbmccray32_boop">
     <name>ArchVerse Linux Port Contributors</name>
   </developer>
