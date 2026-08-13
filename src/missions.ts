@@ -1158,6 +1158,16 @@ export class MissionTracker extends EventEmitter {
           // often the wrong one. The old display gate meant finishing an untracked mission
           // produced no report and no chance to answer the questions.
           this.beginCompletion(ev.missionId, this.missions.get(ev.missionId)?.title ?? null, ev.ts);
+          // 🔑 A separate event from "change", which fires on every log line. This one means
+          // exactly "a contract was finished", which is the only thing a completion counter
+          // may count — and it carries the contractKey the log's own notification line does
+          // NOT have, so a live completion can be attributed to a specific same-titled
+          // variant where a log backfill never can.
+          this.emit("completed", {
+            contractKey: this.missions.get(ev.missionId)?.contractKey ?? "",
+            title: this.missions.get(ev.missionId)?.title ?? "",
+            at: ev.ts,
+          });
         }
         // 🔑 An ABANDON shows NOTHING (Sub, 2026-07-30, after one popped at him). The report is a
         // reward summary that asks you to rate a mission you just played — none of which applies
