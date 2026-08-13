@@ -1,0 +1,22 @@
+--- /mnt/data/alpha21_work/ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/linux/star-citizen-session.cjs	2026-08-05 00:30:36.000000000 +0000
++++ /mnt/data/ArchVerse-Flatpak-Alpha22-Test1/app/electron/linux/star-citizen-session.cjs	2026-08-13 02:54:43.892041901 +0000
+@@ -2,6 +2,8 @@
+ 
+ const fs = require("node:fs");
+ const path = require("node:path");
++const { IS_FLATPAK } = require("./runtime-env.cjs");
++const { FlatpakStarCitizenSessionBinder } = require("./flatpak-star-citizen-session.cjs");
+ 
+ function numericPid(value) {
+   const n = Number(value);
+@@ -207,7 +209,9 @@
+ 
+ let shared = null;
+ function getStarCitizenSessionBinder(options = {}) {
+-  if (!shared) shared = new StarCitizenSessionBinder(options);
++  if (!shared) shared = IS_FLATPAK
++    ? new FlatpakStarCitizenSessionBinder(options)
++    : new StarCitizenSessionBinder(options);
+   return shared;
+ }
+ 
