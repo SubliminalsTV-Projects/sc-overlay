@@ -2729,6 +2729,47 @@ const CHATLINKS = `(async () => {
   ok("...but hides the invite box", !csShown("csInviteRow"));
   ok("...and hides Delete", !csShown("csDangerRow"));
 
+  // ── changing the activity / privacy after creation (Sub, 2026-08-13) ─────
+  view.categories = [{ slug: "org-ops", label: "Org Operations" }, { slug: "mining", label: "Mining" },
+                     { slug: "salvage", label: "Salvage" }, { slug: "social", label: "Social / Other" }];
+  view.channels[2].owner = "imc-subliminal";
+  view.channels[2].category = "mining";
+  activeCh = "custom:ops";
+  renderChanSettings();
+  ok("the owner can change what the room is for", csShown("csAboutRow"));
+  const csCatSel = document.getElementById("csCat");
+  ok("...from the SERVER's activity list, so a new one needs no app release",
+     csCatSel.options.length === 4, String(csCatSel.options.length));
+  ok("...showing the activity the room actually has", csCatSel.value === "mining", csCatSel.value);
+  ok("...and the privacy it actually has",
+     document.getElementById("csPriv").value === "private", document.getElementById("csPriv").value);
+
+  // The privacy of someone else's room is not yours to see the controls for, let alone change.
+  view.channels[2].owner = "someoneelse";
+  renderChanSettings();
+  ok("a member sees no activity/privacy controls at all", !csShown("csAboutRow"));
+  view.channels[2].owner = "imc-subliminal";
+
+  // 🔴 An apply listing has to stay findable, so the server refuses to hide it — the option is
+  // disabled here rather than offered and rejected.
+  view.channels[2].party = true;
+  view.channels[2].joinMode = "apply";
+  view.channels[2].privacy = "public";
+  renderChanSettings();
+  ok("a listing that approves people cannot be made private",
+     document.getElementById("csPriv").disabled === true);
+  ok("...and says why rather than just refusing",
+     /findable|found/.test(document.getElementById("csAboutNote").textContent),
+     document.getElementById("csAboutNote").textContent);
+  view.channels[2].party = false;
+  view.channels[2].joinMode = "open";
+  renderChanSettings();
+  ok("an ordinary room can still be closed", document.getElementById("csPriv").disabled === false);
+  ok("...and is told what closing it would do to the people already in it",
+     /here right now/.test(document.getElementById("csAboutNote").textContent),
+     document.getElementById("csAboutNote").textContent);
+  view.channels[2].privacy = "private";
+
   // 🔑 Delete must not sit exposed — reaching it is a deliberate act now (Sub's complaint).
   setChanSettings(false);
   ok("with the cog closed, Delete is not on screen at all",

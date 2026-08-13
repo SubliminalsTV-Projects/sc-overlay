@@ -2236,7 +2236,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
        || url === "/api/chat/pin" || url === "/api/chat/unpin" || url === "/api/chat/report"
        || url === "/api/chat/apply" || url === "/api/chat/application"
        || url === "/api/chat/color" || url === "/api/chat/hide-location"
-       || url === "/api/chat/delete-room") && req.method === "POST") {
+       || url === "/api/chat/delete-room" || url === "/api/chat/room-config") && req.method === "POST") {
     if (!fromThisMachine(req)) {
       res.writeHead(403, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: false, message: "Chat channels can only be changed from this machine." }));
@@ -2259,6 +2259,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         } : undefined)
       : url.endsWith("/invite") ? chat.invite(String(body.ch ?? ""), String(body.handle ?? ""))
       : url.endsWith("/delete-room") ? chat.deleteRoom(String(body.ch ?? ""))
+      // Re-answer what a room you own is for / who can find it. The server refuses anyone who
+      // does not own it; this only decides which fields were actually asked about.
+      : url.endsWith("/room-config") ? chat.setRoomConfig(
+        String(body.ch ?? ""),
+        body.category ? String(body.category) : undefined,
+        body.privacy === "private" || body.privacy === "public" ? body.privacy : undefined)
       : url.endsWith("/dmlist") ? chat.dmList()
       : url.endsWith("/dm") ? chat.dm(String(body.to ?? ""), String(body.text ?? ""))
       : url.endsWith("/pin") ? chat.pin(String(body.ch ?? ""), Number(body.id))

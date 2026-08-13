@@ -132,6 +132,27 @@
     color: var(--cyan-bright); background: rgba(0,0,0,.25); border: 1px solid var(--divider);
     border-radius: 6px; padding: 4px 6px; outline: none; }
   #chanSettings input:focus { border-color: var(--cyan); }
+  /* The owner's two dropdowns. Same appearance:none + masked chevron as the create dialog's —
+     a native <select> keeps the OS chrome (grey Windows arrow, system-blue highlight) whatever
+     colour is set on it, and this widget re-skins per manufacturer, so the arrow has to be a
+     MASK in the skin's own colour rather than a hard-coded data URI. */
+  #chanSettings select { flex: 0 1 auto; max-width: 60%; font-family: var(--sans); font-size: 11px;
+    color: var(--cyan-bright); background: rgba(0,0,0,.25); border: 1px solid var(--divider);
+    border-radius: 6px; padding: 3px 20px 3px 6px; outline: none;
+    cursor: pointer; appearance: none; -webkit-appearance: none; }
+  #chanSettings select:hover:not(:disabled) { border-color: var(--cyan); }
+  #chanSettings select:focus { border-color: var(--cyan); }
+  /* Disabled means the server would refuse it (an apply listing has to stay findable), so it has
+     to READ as unavailable rather than just quietly doing nothing. */
+  #chanSettings select:disabled { opacity: .5; cursor: default; }
+  #chanSettings .cs-row.sel { position: relative; }
+  #chanSettings .cs-row.sel::after {
+    content: ""; position: absolute; right: 7px; top: 50%; width: 9px; height: 6px;
+    transform: translateY(-50%); pointer-events: none; background-color: var(--cyan);
+    -webkit-mask: var(--chev) no-repeat center / 9px 6px;
+            mask: var(--chev) no-repeat center / 9px 6px;
+  }
+  #chanSettings select option { background: #0b1a22; color: #cfe9ef; }
   #csDelete { width: 100%; text-align: center; }
   #csApps { display: flex; flex-direction: column; gap: 5px; max-height: 132px; overflow-y: auto; }
   #csApps .ap { display: flex; align-items: center; gap: 5px; }
@@ -593,6 +614,24 @@
               </div>
               <div class="cs-pin" id="csPinText"></div>
               <div class="cs-note">Pin a different message by right-clicking it.</div>
+            </div>
+
+            <!-- Owner only: the two questions the room answered when it was made, asked again.
+                 They sit ABOVE the join code because changing privacy is what makes a code
+                 appear or disappear — the cause reads better above its effect. -->
+            <div class="cs-sec" id="csAboutRow" hidden>
+              <div class="cs-row sel">
+                <span class="cs-lbl">Activity</span>
+                <select id="csCat"></select>
+              </div>
+              <div class="cs-row sel">
+                <span class="cs-lbl">Who can find it</span>
+                <select id="csPriv">
+                  <option value="public">Public — listed</option>
+                  <option value="private">Private — code only</option>
+                </select>
+              </div>
+              <div class="cs-note" id="csAboutNote"></div>
             </div>
 
             <div class="cs-sec" id="csCodeRow" hidden>
@@ -1523,6 +1562,10 @@
       }
     }
 
+    // What the room is for and who can find it — the owner's to change, nobody else's to see.
+    $("csAboutRow").hidden = !mine;
+    if (mine) renderRoomAbout(c);
+
     $("csCodeRow").hidden = !secret;
     if (secret) $("csCode").textContent = c.code;
     // Inviting is meaningless for a public room — anyone can already walk in.
@@ -1536,6 +1579,44 @@
     // into has no server-side room, so chanOf() is null for it — and that is exactly the moment
     // the warning matters most, right before someone types their first message.
     $("dmWarn").classList.toggle("show", activeCh.startsWith("dm:"));
+  }
+
+  /* The owner's two dropdowns. Both read the SERVER's answer every pass — the change is applied
+     by the server and arrives back as a roominfo, so these never show a state the room is not
+     actually in. (That is also why nothing here updates optimistically: a privacy change can be
+     refused, and a switch that flips before the refusal lands is a lie for as long as it takes.) */
+  function renderRoomAbout(c) {
+    // Rebuilt from the server's list, same as the create dialog — a category added server-side
+    // has to appear here without an app release, or the two lists drift apart.
+    const sel = $("csCat");
+    sel.textContent = "";
+    for (const cat of (view?.categories ?? [])) {
+      const o = document.createElement("option");
+      o.value = cat.slug; o.textContent = cat.label;
+      sel.appendChild(o);
+    }
+    sel.value = c.category ?? "social";
+    if (!sel.value) sel.value = sel.options[0]?.value ?? "";
+
+    // 🔑 A listing that approves people has to STAY findable — the server refuses to make one
+    // private, so the option is disabled here rather than offered and rejected. Same rule the pin
+    // ✕ already follows: never show a control whose only outcome is an error.
+    const applyParty = c.party === true && c.joinMode === "apply";
+    const priv = $("csPriv");
+    priv.value = c.privacy === "private" ? "private" : "public";
+    priv.options[1].disabled = applyParty;
+    priv.disabled = applyParty;
+
+    $("csAboutNote").textContent = applyParty
+      ? "A group that approves people stays listed, so it can be found and applied to."
+      : c.privacy === "private"
+        ? "Not listed anywhere. Making it public drops the join code — anyone could then walk in by name."
+        : "Listed for everyone. Making it private keeps everyone who is here right now and gives you a new code to share.";
+  }
+  async function setRoomConfig(field, value) {
+    const c = chanOf(activeCh);
+    if (!c) return;
+    await post("/api/chat/room-config", { ch: c.ch, [field]: value });
   }
 
   function setChanSettings(open) {
@@ -2525,6 +2606,8 @@
   $("cpName").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); void createRoom(); } });
   $("csInviteGo").addEventListener("click", () => void inviteToRoom());
   $("csDelete").addEventListener("click", () => void deleteRoom());
+  $("csCat").addEventListener("change", () => void setRoomConfig("category", $("csCat").value));
+  $("csPriv").addEventListener("change", () => void setRoomConfig("privacy", $("csPriv").value));
   $("csInvite").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); void inviteToRoom(); } });
   $("csCopy").addEventListener("click", () => {
     const code = $("csCode").textContent;

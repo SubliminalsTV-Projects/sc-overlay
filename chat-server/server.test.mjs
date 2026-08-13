@@ -355,6 +355,124 @@ try {
   const junk = await owner.next((f) => f.t === "roominfo" && f.ch === "custom:junk-cat", "junk category");
   assert.equal(junk.category, "social", "an unknown category falls back rather than failing the create");
 
+  // ── changing a room's activity / privacy AFTER creation ───────────────────
+  // Sub, 2026-08-13. Its own connections: every roomconfig spends the same action budget as a
+  // join, and a block that exhausts a connection's quota silently starves every later block
+  // sharing it.
+  const cfgOwner = client();
+  await cfgOwner.open();
+  cfgOwner.send({ t: "hello", handle: "CfgOwner" });
+  await cfgOwner.next((f) => f.t === "welcome", "welcome CfgOwner");
+  cfgOwner.send({ t: "join", name: "Config Room", mode: "create", category: "mining", privacy: "public" });
+  await cfgOwner.next((f) => f.t === "roominfo" && f.ch === "custom:config-room", "created the room to reconfigure");
+
+  // Someone standing in the room while it is still public. They matter later: closing the door
+  // must not push them out of a room they are legitimately in.
+  const cfgMember = client();
+  await cfgMember.open();
+  cfgMember.send({ t: "hello", handle: "CfgMember" });
+  await cfgMember.next((f) => f.t === "welcome", "welcome CfgMember");
+  cfgMember.send({ t: "join", name: "Config Room", mode: "join" });
+  await cfgMember.next((f) => f.t === "joined" && f.ch === "custom:config-room", "a member joins while it is public");
+
+  // Only the owner may change it — the same authority that invites, pins and deletes.
+  cfgMember.send({ t: "roomconfig", ch: "custom:config-room", category: "salvage" });
+  const cfgNotOwner = await cfgMember.next((f) => f.t === "error", "a member cannot reconfigure the room");
+  assert.equal(cfgNotOwner.code, "not_owner", "changing a room is owner-only");
+
+  cfgOwner.send({ t: "roomconfig", ch: "custom:config-room", category: "salvage" });
+  const cfgCat = await cfgOwner.next(
+    (f) => f.t === "roominfo" && f.ch === "custom:config-room" && f.category === "salvage", "category changed");
+  assert.equal(cfgCat.privacy, "public", "changing the activity left the privacy alone");
+  const cfgDir = await cfgOwner.next(
+    (f) => f.t === "dir" && f.channels.find((c) => c.ch === "custom:config-room")?.category === "salvage",
+    "the directory moved it to the new activity group");
+  assert(cfgDir, "the rail groups by category, so the directory has to hear about it");
+
+  // 🔑 Unlike CREATE, a junk category is REFUSED here rather than falling back to Social. On
+  // create the fallback serves someone who just wants a room; here they asked for one specific
+  // change, and quietly making a different one is the wrong answer.
+  cfgOwner.send({ t: "roomconfig", ch: "custom:config-room", category: "not-a-real-category" });
+  const cfgBadCat = await cfgOwner.next((f) => f.t === "error", "a junk category is refused");
+  assert.equal(cfgBadCat.code, "bad_channel", "an unknown activity is an error, not a silent reset");
+
+  // Public → private.
+  cfgOwner.send({ t: "roomconfig", ch: "custom:config-room", privacy: "private" });
+  const cfgPriv = await cfgOwner.next(
+    (f) => f.t === "roominfo" && f.ch === "custom:config-room" && f.privacy === "private", "the room closed");
+  assert.match(cfgPriv.code, /^[A-HJ-NP-Z2-9]{6}$/, "closing the room mints a join code");
+  assert.equal(cfgPriv.category, "salvage", "the category survived the privacy change");
+  await wait(700);
+  const cfgDirGone = [...cfgOwner.frames].reverse().find((f) => f.t === "dir");
+  assert(!cfgDirGone.channels.some((c) => c.ch === "custom:config-room"),
+    "a room turned private leaves the directory entirely");
+
+  // 🔴 THE ONE THAT MATTERS: the member who was already here keeps their access. The client
+  // rejoins custom rooms BY NAME on every reconnect, and a name alone does not open a private
+  // room — so without an invite written for everyone standing in it, closing the door would
+  // silently evict them the next time their socket blipped.
+  await cfgMember.next((f) => f.t === "roominfo" && f.ch === "custom:config-room" && f.privacy === "private",
+    "the member is told the room changed under them");
+  cfgMember.send({ t: "leave", ch: "custom:config-room" });
+  const cfgLeft = await cfgMember.next((f) => f.t === "left" && f.ch === "custom:config-room", "member left");
+  // 🔑 Only a `joined` that arrives AFTER the leave counts. `next` scans frames already received,
+  // and this connection joined this very room earlier — so the obvious predicate matches that old
+  // frame and passes whether or not the rejoin works. Proven: with the invite-writing removed,
+  // the plain version still went green.
+  const cfgAfterLeave = cfgMember.frames.indexOf(cfgLeft);
+  cfgMember.send({ t: "join", name: "Config Room", mode: "join" });
+  await cfgMember.next(
+    (f) => f.t === "joined" && f.ch === "custom:config-room" && cfgMember.frames.indexOf(f) > cfgAfterLeave,
+    "🔴 someone already in the room when it closed can still get back in by name");
+
+  // An outsider who was never in it still cannot, and still is not told it exists.
+  const cfgOutsider = client();
+  await cfgOutsider.open();
+  cfgOutsider.send({ t: "hello", handle: "CfgOutsider" });
+  await cfgOutsider.next((f) => f.t === "welcome", "welcome CfgOutsider");
+  cfgOutsider.send({ t: "join", name: "Config Room", mode: "join" });
+  const cfgRefused = await cfgOutsider.next((f) => f.t === "error", "an outsider is still refused");
+  assert.equal(cfgRefused.code, "no_such_channel", "a newly-private room reads as non-existent to everyone else");
+
+  // Private → public: the code is DROPPED, not kept alongside. A code that has been out in the
+  // world must not survive the trip, or closing the room again later re-honours it.
+  // 🔑 Both fields in ONE frame — that is a supported call, and it is also what makes this
+  // assertion honest: `next` scans frames already received, so "the first roominfo that is
+  // public" would match the one from CREATE and pass without the room ever having reopened.
+  const oldCode = cfgPriv.code;
+  cfgOwner.send({ t: "roomconfig", ch: "custom:config-room", privacy: "public", category: "bounty" });
+  const cfgPub = await cfgOwner.next(
+    (f) => f.t === "roominfo" && f.ch === "custom:config-room" && f.privacy === "public" && f.category === "bounty",
+    "the room opened again, and both fields moved together");
+  assert.equal(cfgPub.code, undefined, "a public room has no code to leak");
+  cfgOutsider.send({ t: "join", name: oldCode, mode: "join" });
+  const cfgDeadCode = await cfgOutsider.next(
+    (f) => f.t === "error" && String(f.message ?? "").includes(oldCode), "the old code is dead");
+  assert.equal(cfgDeadCode.code, "no_such_channel", "the code it used to have no longer opens anything");
+
+  // 🔴 An APPLY listing is public by necessity — it has to be findable to be applied to. Refused
+  // outright rather than accepted into a state where nobody can reach it.
+  cfgOwner.send({
+    t: "join", name: "Cfg Party", mode: "create", category: "mining", privacy: "public",
+    party: true, joinMode: "apply", minutes: 60,
+  });
+  await cfgOwner.next((f) => f.t === "roominfo" && f.ch === "custom:cfg-party", "an apply listing to test against");
+  cfgOwner.send({ t: "roomconfig", ch: "custom:cfg-party", privacy: "private" });
+  // Matched on the MESSAGE, not just `t:"error"` — this connection has already had a refusal
+  // (the junk category) and `next` would hand that one back, passing without testing anything.
+  const cfgApplyErr = await cfgOwner.next(
+    (f) => f.t === "error" && /findable/.test(String(f.message ?? "")), "an apply listing cannot be hidden");
+  assert.equal(cfgApplyErr.code, "bad_channel", "a group that approves people has to stay findable");
+  // ...but its ACTIVITY is still free to change — the refusal is about privacy alone.
+  cfgOwner.send({ t: "roomconfig", ch: "custom:cfg-party", category: "salvage" });
+  await cfgOwner.next((f) => f.t === "roominfo" && f.ch === "custom:cfg-party" && f.category === "salvage",
+    "the activity of a listing is still changeable");
+
+  cfgOwner.send({ t: "deleteRoom", ch: "custom:cfg-party" });
+  cfgOwner.send({ t: "deleteRoom", ch: "custom:config-room" });
+  await wait(200);
+  cfgOwner.ws.close(); cfgMember.ws.close(); cfgOutsider.ws.close();
+
   // ── ORG ISOLATION ─────────────────────────────────────────────────────────
   // 🔴 Sub's stated top priority: "I don't want someone to be able to spy on a rival org."
   // Org membership comes ONLY from the verified RSI dossier at hello — there is no frame that

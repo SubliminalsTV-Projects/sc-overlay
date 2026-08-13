@@ -449,7 +449,11 @@ export class ChatClient extends EventEmitter {
         c.category = f.category;
         c.privacy = f.privacy;
         c.owner = f.owner ?? null;
-        if (typeof f.code === "string") c.code = f.code;
+        // 🔑 AUTHORITATIVE, not "keep what we had" — the server sends `code` on every roominfo
+        // for a private room you are inside, so an ABSENT one means there is no code any more.
+        // A room turned public would otherwise keep showing the code it used to have, which is a
+        // dead string presented as a live way in.
+        c.code = typeof f.code === "string" ? f.code : undefined;
         c.party = f.party === true;
         c.location = f.location ?? null;
         c.sizeMax = f.sizeMax ?? null;
@@ -617,6 +621,19 @@ export class ChatClient extends EventEmitter {
       // setting — and it sends a DURATION, never a wall-clock expiry off this machine's clock.
       ...(mode === "create" && party ? party : {}),
     });
+    return { ok: true };
+  }
+
+  /** Change what a room you own is FOR, or who can find it. Both are answered at creation and,
+   *  until now, could never be answered again.
+   *  🔑 The server does the work that makes closing a room safe — a fresh join code, and an
+   *  invite for everyone already standing in it — because only it knows who those people are. */
+  setRoomConfig(ch: string, category?: string, privacy?: "public" | "private"):
+    { ok: boolean; message?: string } {
+    if (this.status !== "connected") return { ok: false, message: "Chat is not connected." };
+    if (!ch.startsWith("custom:")) return { ok: false, message: "Only rooms you made can be changed." };
+    if (!category && !privacy) return { ok: false, message: "Nothing to change." };
+    this.wsSend({ t: "roomconfig", ch, ...(category ? { category } : {}), ...(privacy ? { privacy } : {}) });
     return { ok: true };
   }
 

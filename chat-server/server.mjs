@@ -33,6 +33,10 @@
 //               category?, privacy?}           "join" errors if absent, "create" errors if
 //                                              taken, default join-or-create. category/privacy
 //                                              apply only when CREATING.
+//        {t:"roomconfig", ch,                  owner only; re-answers the two questions a room
+//               category?, privacy?}           was asked at creation. Going private mints a NEW
+//                                              code and writes an invite for everyone standing
+//                                              in the room; going public drops the code.
 //        {t:"invite", ch, handle}              owner only; admits a handle to a private room
 //        {t:"dm", to, text}                    private message to one handle
 //        {t:"dmlist"}                          ask for this handle's conversations
@@ -915,7 +919,7 @@ wss.on("connection", (ws) => {
     // are here too: both reach a named stranger, so unlimited attempts are unlimited spam.
     // Separate budget from messages, because a burst of joins on connect is normal and must not
     // eat the allowance for actually speaking.
-    if (f.t === "join" || f.t === "dm" || f.t === "invite" || f.t === "deleteRoom") {
+    if (f.t === "join" || f.t === "dm" || f.t === "invite" || f.t === "deleteRoom" || f.t === "roomconfig") {
       const now = Date.now();
       conn.acts = (conn.acts ?? []).filter((s) => now - s < ACT_WINDOW_MS);
       if (conn.acts.length >= ACT_N) {
@@ -1113,6 +1117,87 @@ wss.on("connection", (ws) => {
       if (!meta) { conn.send({ t: "error", code: "no_such_channel", message: "No such channel." }); return; }
       if (meta.owner !== conn.handleLower) { conn.send({ t: "error", code: "not_owner", message: "Only the person who made the room can delete it." }); return; }
       destroyRoom(slug, meta.label);
+      return;
+    }
+
+    // ── change a room's activity or privacy AFTER it exists ──────────────
+    // Sub's ask, 2026-08-13. Until now the two questions a room answers at creation could only be
+    // answered once: a room made public could never be closed, and one filed under the wrong
+    // activity was wrong forever. Owner only — the same authority that invites, pins and deletes.
+    if (f.t === "roomconfig") {
+      const ch = String(f.ch ?? "");
+      const slug = ch.startsWith("custom:") ? ch.slice("custom:".length) : "";
+      const meta = customDir.get(slug);
+      if (!meta) { conn.send({ t: "error", code: "no_such_channel", message: "No such channel." }); return; }
+      if (meta.owner !== conn.handleLower) { conn.send({ t: "error", code: "not_owner", message: "Only the person who made the room can change it." }); return; }
+
+      const wantCat = f.category === undefined || f.category === null ? null : String(f.category);
+      if (wantCat !== null && !CATEGORY_SLUGS.has(wantCat)) {
+        conn.send({ t: "error", code: "bad_channel", message: "That isn't one of the activities." });
+        return;
+      }
+      const wantPriv = f.privacy === undefined || f.privacy === null ? null
+        : (f.privacy === "private" ? "private" : "public");
+      if (wantCat === null && wantPriv === null) return;   // nothing asked for is not an error
+
+      // 🔴 An APPLY listing is public BY NECESSITY — it has to be findable to be applied to, which
+      // is why the approval gate could never live in `privacy` in the first place. Hiding one from
+      // the directory would leave a room whose whole purpose is taking applications with no way to
+      // reach it, so this is refused rather than quietly accepted.
+      if (wantPriv === "private" && meta.isParty && meta.joinMode === "apply") {
+        conn.send({ t: "error", code: "bad_channel",
+          message: "A group that approves people has to stay findable — it can't be private." });
+        return;
+      }
+
+      const before = { category: meta.category ?? DEFAULT_CATEGORY, privacy: meta.privacy ?? "public" };
+      if (wantCat !== null) meta.category = wantCat;
+
+      let admitted = 0;
+      if (wantPriv !== null && wantPriv !== before.privacy) {
+        if (wantPriv === "private") {
+          // A fresh code every time, never the room's old one back. A code that has been out in
+          // the world is exactly what going private is meant to stop honouring — resurrecting it
+          // would make the whole trip a no-op for anyone who had ever held it.
+          const code = makeCode();
+          if (!code) { conn.send({ t: "error", code: "bad_channel", message: "Couldn't allocate a join code — try again." }); return; }
+          meta.privacy = "private";
+          meta.code = code;
+          // 🔴 EVERYONE STANDING IN THE ROOM MUST BE WRITTEN AN INVITE, or closing the door
+          // evicts them on their next reconnect. The client rejoins custom rooms BY NAME, and a
+          // name alone does not open a private room — so without this the people who were already
+          // here would silently vanish from a room they are legitimately in, the same trap
+          // redeeming a code already had to solve.
+          for (const c of (rooms.get(ch)?.members ?? [])) {
+            if (!c.handleLower || meta.invites.includes(c.handleLower)) continue;
+            meta.invites.push(c.handleLower);
+            store.addInvite(slug, c.handleLower, conn.handleLower);
+            admitted++;
+          }
+        } else {
+          // Public again: the code is DROPPED, not kept alongside. Anyone can walk in by name now,
+          // so a live code is a second door that nobody is watching and that survives the room
+          // being closed again later.
+          meta.privacy = "public";
+          meta.code = null;
+        }
+      }
+
+      store.saveRoom(meta);
+      // The directory is what changes for everyone else: a room going private leaves it entirely,
+      // one going public appears, and a category change moves it between the rail's groups.
+      broadcastDir();
+      // 🔑 Re-describe the room to everyone IN it, one frame each — `sendRoomInfo` is
+      // per-connection precisely because the answer differs: only the owner is told who has
+      // applied, and only a member of a private room is ever handed the code.
+      for (const c of (rooms.get(ch)?.members ?? [])) sendRoomInfo(c, slug, meta);
+      if (wantPriv !== null && wantPriv !== before.privacy) {
+        roomSend(ch, { t: "notice", level: "info", text: wantPriv === "private"
+          ? `${meta.label} is now private. Everyone here stays; new people need the code.`
+          : `${meta.label} is now public — anyone can join it by name, and the old code no longer works.` });
+      }
+      if (admitted) conn.send({ t: "notice", level: "info",
+        text: `${admitted} ${admitted === 1 ? "person" : "people"} already here kept their access.` });
       return;
     }
 
