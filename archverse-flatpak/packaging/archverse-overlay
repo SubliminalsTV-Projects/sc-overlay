@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+export SC_TRACKER_FLATPAK=1
+export SC_TRACKER_ELECTRON_BIN=/app/bin/archverse-electron
+export SC_TRACKER_NODE_BIN=/app/bin/archverse-node
+export SC_TRACKER_CONFIG_DIR="${XDG_CONFIG_HOME}/sc-blueprint-tracker"
+export GTK_USE_PORTAL=1
+# The native launcher still owns renderer/canvas/OCR tuning. These variables simply point it
+# at the runtime bundled inside this Flatpak instead of distro-specific packages.
+exec /app/archverse/bin/sc-blueprint-tracker "$@"
