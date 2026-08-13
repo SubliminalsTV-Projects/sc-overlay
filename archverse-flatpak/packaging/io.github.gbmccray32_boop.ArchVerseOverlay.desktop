@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=ArchVerse Overlay
+GenericName=Star Citizen Companion Overlay
+Comment=Linux-native Star Citizen overlay with mission, resource, chat, OCR, and companion tools
+Exec=archverse-overlay
+Icon=io.github.gbmccray32_boop.ArchVerseOverlay
+Terminal=false
+Type=Application
+Categories=Game;Utility;
+Keywords=Star Citizen;Overlay;LUG;Mining;Resource Scanner;Missions;OCR;
+StartupNotify=false
+X-Flatpak=io.github.gbmccray32_boop.ArchVerseOverlay
