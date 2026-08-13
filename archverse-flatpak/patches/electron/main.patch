@@ -1,0 +1,174 @@
+--- /mnt/data/alpha21_work/ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/main.cjs	2026-08-10 23:17:09.000000000 +0000
++++ /mnt/data/ArchVerse-Flatpak-Alpha22-Test1/app/electron/main.cjs	2026-08-12 20:30:00.000000000 +0000
+@@ -1062,7 +1062,12 @@
+ 
+ function scheduleForwardedMouseButton(phase, event) {
+   if (process.platform !== "linux") return;
+-  if (!overlayInteractionLatched && !(fHoverHeld && fHoverOverWidget)) return;
++  // The global mouse hook is also our desktop escape hatch. When SC is not running, an
++  // explicit overlay session (F latch / legacy interaction / arrange mode) must not turn the
++  // always-on-top transparent canvas into a desktop-wide glass pane. We inspect the same DOM
++  // region snapshot used by F and hand an empty-canvas press to the window underneath.
++  const desktopEscapeCandidate = overlayInteractionLatched || unifiedInteractionActive || moveMode;
++  if (!desktopEscapeCandidate && !(fHoverHeld && fHoverOverWidget)) return;
+   const button = INTERACTION_MOUSE_BUTTONS[Number(event?.button)];
+   if (!button) return;
+   const globalPoint = globalPointForMouseEvent(event);
+@@ -1071,11 +1076,22 @@
+   const region = overlayRegionAtPoint(globalPoint);
+   const existing = forwardedMouseButtons.get(button);
+   if (phase === "down" && !region) {
+-    if (overlayInteractionLatched && !fHoverHeld && !modalOpen && !moveMode && !notepadEditing && !dragging) {
++    const gameRunning = !!overlayWindows.starCitizenProcessRunning?.();
++    const canDesktopHandoff = !gameRunning && !fHoverHeld && !modalOpen && !notepadEditing && !dragging
++      && (overlayInteractionLatched || unifiedInteractionActive || moveMode);
++    if (canDesktopHandoff) {
++      console.log(`[desktop-focus] ${button} down on empty overlay canvas at ${Math.round(globalPoint.x)},${Math.round(globalPoint.y)} with Star Citizen closed; releasing overlay and handing the click to the desktop`);
++      releaseOverlayOwnershipToDesktop("empty canvas clicked while Star Citizen is closed");
++      // setIgnoreMouseEvents() is asynchronous with KWin/XWayland. Give it one compositor turn,
++      // then synthesize only the DOWN edge. The user's real UP edge completes the same click on
++      // the newly exposed desktop window. No replay is permitted while the game process exists.
++      setTimeout(() => {
++        if (!overlayWindows.starCitizenProcessRunning?.()) overlayWindows.replayHostMouseDown?.(button);
++      }, 18);
++    } else if (overlayInteractionLatched && !fHoverHeld && !modalOpen && !moveMode && !notepadEditing && !dragging) {
+       console.log(`[focus-latch] ${button} down on transparent canvas at ${Math.round(globalPoint.x)},${Math.round(globalPoint.y)}; releasing overlay interaction`);
+-      // Deliberately do NOT replay this click into the game. This preserves the proven r20 safety
+-      // contract: the first empty-canvas click returns focus/click-through; subsequent input belongs
+-      // to Star Citizen or whichever external application the user chooses.
++      // In-game keeps the established two-step safety rule: this press only restores
++      // click-through and is NEVER replayed into Star Citizen.
+       releaseFocusLatchToGame("transparent canvas clicked");
+     } else {
+       console.log(`[f-click] ${button} down ignored outside a classified widget at ${Math.round(globalPoint.x)},${Math.round(globalPoint.y)}`);
+@@ -1746,6 +1762,56 @@
+ let evdevInteractController = null;
+ let stopPointerWatch = null;
+ 
++function overlayExclusiveInteractionActive() {
++  return !!(overlayInteractionLatched || momentaryInteractionActive || unifiedInteractionActive
++    || interactiveTarget !== null || moveMode || miningMoveMode || miningOnlyInteraction
++    || notepadEditing || dragging);
++}
++
++// Return the Overlay Manager to its normal desktop-safe state WITHOUT restoring some previous
++// focus target. This is used after the user has explicitly chosen another desktop window, and
++// when Star Citizen exits while an interaction session is still armed. Game-specific PID/session
++// binding remains useful for OCR and Gamescope pointer mapping; it no longer owns desktop focus.
++function releaseOverlayOwnershipToDesktop(reason = "desktop focus") {
++  const had = overlayExclusiveInteractionActive();
++  overlayInteractionLatched = false;
++  overlayInteractionClaimSource = "";
++  momentaryInteractionActive = false;
++  unifiedInteractionActive = false;
++  fHoverOverWidget = false;
++  fHoverTarget = null;
++  fHoverPointerPhase = "game";
++  fHoverHostHookAuthoritative = false;
++  fHoverMissStartedAt = 0;
++  resetFHoverHostHandoff();
++  stopFHoverPolling();
++  releaseForwardedMouseButtons(reason);
++  browserController?.setInteractionKeyHeld(false);
++  if (fHoverHeld) fHoverSuppressedUntilRelease = true;
++  moveMode = false;
++  miningMoveMode = false;
++  miningOnlyInteraction = false;
++  notepadEditing = false;
++  notepadFocusPending = false;
++  interactiveTarget = null;
++  dragging = false;
++  locked = true;
++  clearTimeout(relockTimer);
++  relockTimer = null;
++  try { overlay?.webContents.send("overlay:move-mode", false); } catch {}
++  try { overlay?.webContents.send("overlay:mining-move-mode", false); } catch {}
++  try { overlay?.webContents.send("overlay:mining-only-interaction", false); } catch {}
++  try { overlay?.webContents.send("overlay:unified-interaction", false); } catch {}
++  try { overlay?.webContents.send("overlay:f-hover", { held: fHoverHeld, overWidget: false, latched: false }); } catch {}
++  try { overlay?.webContents.executeJavaScript('document.getElementById("notepadFrame")?.contentWindow?.__notepadExitTyping?.()'); } catch {}
++  applyMouse();
++  reapplyOverlayInputShape();
++  applyOverlayOpacity();
++  refreshTray();
++  if (had) console.log(`[desktop-focus] overlay input ownership released (${reason}); desktop keeps focus`);
++  return had;
++}
++
+ function endFocusLatchedInteraction(reason = "external focus", { suppressHeldKey = true } = {}) {
+   if (!overlayInteractionLatched && !momentaryInteractionActive) return;
+ 
+@@ -1818,23 +1884,49 @@
+ }
+ 
+ function handleOverlayFocusLost() {
+-  // F is a global physical-key gate on Linux. Do not let a compositor focus transition, an
+-  // embedded WebContentsView click, or another application's focus cancel it while F is down.
+-  if (fHoverHeld || momentaryInteractionActive || !overlayInteractionLatched || unifiedInteractionActive) return;
++  // F is a global physical-key gate on Linux. Do not let a compositor transition cancel it while
++  // the key is physically down. Modals are intentionally blocking surfaces and keep their own
++  // lifecycle. Everything else should relinquish the full-screen canvas when another native
++  // desktop window actually gains focus — including legacy interaction and Shift+F6 arrange.
++  if (fHoverHeld || momentaryInteractionActive || modalOpen || !overlayExclusiveInteractionActive()) return;
+   setTimeout(() => {
+-    if (fHoverHeld || momentaryInteractionActive || !overlayInteractionLatched || unifiedInteractionActive) return;
++    if (fHoverHeld || momentaryInteractionActive || modalOpen || !overlayExclusiveInteractionActive()) return;
+     if (overlay && !overlay.isDestroyed() && overlay.isFocused()) return;
+     const active = overlayWindows.activeWindowDetails?.();
+-    // Child WebContentsViews remain inside the same native Overlay Manager window. A native blur
+-    // therefore means the user clicked Star Citizen, another application, or the desktop.
+     if (active && overlayWindows.isOwnOverlayWindow?.(active)) return;
+     const reason = overlayWindows.isStarCitizenDirectlyActive?.()
+       ? "Star Citizen clicked"
+       : `external window clicked${active?.title ? `: ${active.title}` : ""}`;
+-    endFocusLatchedInteraction(reason, { suppressHeldKey: true });
++    releaseOverlayOwnershipToDesktop(reason);
+   }, 80);
+ }
+ 
++let linuxScLifecycleTimer = null;
++let linuxScWasRunning = null;
++function startLinuxDesktopFocusWatch() {
++  if (process.platform !== "linux" || linuxScLifecycleTimer) return;
++  const tick = () => {
++    const running = !!overlayWindows.starCitizenProcessRunning?.();
++    if (linuxScWasRunning === true && !running && overlayExclusiveInteractionActive() && !modalOpen) {
++      releaseOverlayOwnershipToDesktop("Star Citizen process exited");
++    }
++    linuxScWasRunning = running;
++    // Linux now publishes the same game-focus signal the Windows foreground helper publishes.
++    // This keeps cog/focus effects consistent, while desktop click ownership is decided by native
++    // window focus and explicit overlay interaction — not by pinning the overlay to the game PID.
++    try { overlay?.webContents.send("overlay:game-focus", !!overlayWindows.isStarCitizenDirectlyActive?.()); } catch {}
++  };
++  tick();
++  linuxScLifecycleTimer = setInterval(tick, 500);
++  linuxScLifecycleTimer.unref?.();
++}
++
++function stopLinuxDesktopFocusWatch() {
++  if (linuxScLifecycleTimer) clearInterval(linuxScLifecycleTimer);
++  linuxScLifecycleTimer = null;
++  linuxScWasRunning = null;
++}
++
+ function registerInteractHotkey(accel) {
+   if (interactAccel) hotkeys.unregister(interactAccel);
+   interactAccel = null;
+@@ -2714,6 +2806,8 @@
+           }
+         } catch { /* window gone */ }
+       });
++    } else if (process.platform === "linux") {
++      startLinuxDesktopFocusWatch();
+     }
+     await reclaimStalePort();
+     startServer();
+@@ -3244,6 +3338,7 @@
+     fHoverHeld = false;
+     hotkeys.unregisterAll();
+     if (process.platform === "win32") foreground.stop();
++    if (process.platform === "linux") stopLinuxDesktopFocusWatch();
+     if (serverRestartTimer) clearTimeout(serverRestartTimer);
+     if (evdevInteractController) { try { evdevInteractController.stop(); } catch {} evdevInteractController=null; }
+     if (server) { server.kill(); server=null; }
