@@ -7,6 +7,27 @@ export SC_TRACKER_NODE_BIN=/app/bin/archverse-node
 export SC_TRACKER_CONFIG_DIR="${XDG_CONFIG_HOME}/sc-blueprint-tracker"
 export GTK_USE_PORTAL=1
 
+# Flatpak gives applications a private HOME such as ~/.var/app/<id>, while explicit filesystem
+# grants like --filesystem=~/Games are mounted at the real host-home path. Recover that path
+# without requesting broad home access so the existing Star Citizen/LUG prefix logic keeps working.
+if [ -z "${SC_TRACKER_HOST_HOME:-}" ]; then
+  case "${HOME:-}" in
+    */.var/app/${FLATPAK_ID:-io.github.gbmccray32_boop.ArchVerseOverlay})
+      SC_TRACKER_HOST_HOME="${HOME%/.var/app/${FLATPAK_ID:-io.github.gbmccray32_boop.ArchVerseOverlay}}"
+      ;;
+    *)
+      SC_TRACKER_HOST_HOME="/home/${USER:-$(id -un)}"
+      ;;
+  esac
+  export SC_TRACKER_HOST_HOME
+fi
+
+# Preserve an explicit prefix if the user supplied one. Otherwise use the same LUG Helper default
+# as the native package, but rooted in the actual host home instead of Flatpak's private HOME.
+export SC_TRACKER_WINEPREFIX="${SC_TRACKER_WINEPREFIX:-${WINEPREFIX:-${SC_TRACKER_HOST_HOME}/Games/star-citizen}}"
+printf '[flatpak] host home: %s\n' "$SC_TRACKER_HOST_HOME" >&2
+printf '[flatpak] Star Citizen prefix: %s\n' "$SC_TRACKER_WINEPREFIX" >&2
+
 # Flatpak Test 2: detect the X11/XWayland root desktop dynamically instead of inheriting the
 # native CachyOS machine's 6360x2160 panorama defaults. Explicit user overrides still win.
 if [ -z "${SC_OVERLAY_CANVAS_WIDTH:-}" ] || [ -z "${SC_OVERLAY_CANVAS_HEIGHT:-}" ]; then
