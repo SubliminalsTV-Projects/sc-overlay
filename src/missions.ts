@@ -19,6 +19,7 @@ import { classifyMission, type CombatProfile, type MissionActivity } from "./mis
 import { categorize, type TabKey } from "./categories.js";
 import { parseLine } from "./parser.js";
 import { BlueprintDetailStore, type BlueprintDetail } from "./blueprint-detail.js";
+import { Phrasebook, type PhrasebookInfo } from "./localization.js";
 import type { SyncSource } from "./sync.js";
 
 // ---- dataset shape (matches tools/build-blueprint-data.sql output) ----
@@ -865,6 +866,13 @@ export class MissionTracker extends EventEmitter {
   private observed = new Set<string>();
   /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log). */
   private observedAt = new Map<string, string>();
+  /** Turns a name the game wrote into the English name the dataset knows — for players on a
+   *  non-English UI or running a language pack. See localization.ts. */
+  private phrasebook!: Phrasebook;
+  /** Names that survived the phrasebook and STILL match nothing in the dataset, newest first.
+   *  Surfaced rather than swallowed: an unmatched receipt is invisible otherwise, and this is
+   *  the difference between "the app is broken" and "your language file renamed this". */
+  private unrecognized = new Map<string, string>();
   /** The last blueprint received live this session (real-time only), for the global receipt
    *  pop card. Persists in the view (client dedupes by `at`); overwritten by the next receipt. */
   private justReceived: (BlueprintReward & { at: string }) | null = null;
@@ -919,6 +927,7 @@ export class MissionTracker extends EventEmitter {
     super();
     this.dataDir = opts.dataDir;
     this.detail = new BlueprintDetailStore(opts.dataDir);
+    this.phrasebook = new Phrasebook(opts.dataDir);
     this.remoteBaseUrl = opts.remoteBaseUrl;
     this.stateDir =
       opts.stateDir ??
@@ -965,6 +974,65 @@ export class MissionTracker extends EventEmitter {
     if (clChanged) this.detectedChangelist = cl;
     if (clChanged) void this.ensureDataset(cl!);
     else if (familyChanged) this.loadDataset(this.detectedChangelist ?? undefined);
+  }
+
+  /**
+   * (Re)build the phrasebook for this install. Called when the configured log path is first
+   * known and whenever it changes; `force` is what the Calibrate button passes, because a
+   * player who just updated their language pack needs the file re-read even though its path
+   * has not changed.
+   *
+   * 🔑 Takes the LOG path rather than a language file, because the log path is the one thing
+   * we already know: `<channel>/game.log` puts the language file at
+   * `<channel>/data/Localization/<g_language>/global.ini`.
+   */
+  setLogPath(logPath: string, force = false): PhrasebookInfo {
+    const info = this.phrasebook.load(logPath, this.detectedChangelist, force);
+    // Anything previously unresolvable deserves another go against the new table — otherwise
+    // Calibrate would appear to do nothing for exactly the names it was pressed for.
+    for (const [raw] of [...this.unrecognized]) {
+      const english = this.phrasebook.translate(raw);
+      if (english && this.itemUuidsForName(english).length) this.unrecognized.delete(raw);
+    }
+    this.emit("change");
+    return info;
+  }
+
+  /** Phrasebook state plus the names that still match nothing, for diagnostics and the UI. */
+  localizationStatus(): PhrasebookInfo & { unrecognized: { name: string; at: string }[] } {
+    return {
+      ...this.phrasebook.status(),
+      unrecognized: [...this.unrecognized].map(([name, at]) => ({ name, at })).sort((a, b) => b.at.localeCompare(a.at)),
+    };
+  }
+
+  /**
+   * The English name for something the log called `raw`, plus whether we actually know it.
+   *
+   * Order matters: the phrasebook is consulted FIRST, but a name the dataset already knows is
+   * never overridden — that keeps an English install byte-identical to its behaviour before
+   * any of this existed, which is the whole safety argument for shipping it.
+   */
+  /**
+   * The English mission title for a title as the log wrote it, or the title unchanged.
+   *
+   * ⚠️ Only STATIC titles can be recovered this way. A generated title is stored in the ini
+   * with placeholders ("DEAD SAINTS - Trial Haul | ~mission(Location|name) > …") and the game
+   * substitutes them before it writes the log, so the logged string never equals the ini
+   * value and no lookup can match it. Those keep today's behaviour — which is fine, because
+   * a generated title was never the identifier anyway (the contract marker is).
+   */
+  private englishTitle(title: string | null): string | null {
+    if (!title) return title;
+    if (this.titleIndex.has(normScreenTitle(title))) return title; // already ours
+    return this.phrasebook.translate(title) ?? title;
+  }
+
+  private toEnglish(raw: string): { name: string; known: boolean } {
+    if (this.itemUuidsForName(raw).length) return { name: raw, known: true };
+    const english = this.phrasebook.translate(raw);
+    if (english && this.itemUuidsForName(english).length) return { name: english, known: true };
+    return { name: english ?? raw, known: false };
   }
 
   /** Load the changelist's dataset, fetching it from the public endpoint first if we
@@ -1064,7 +1132,8 @@ export class MissionTracker extends EventEmitter {
     switch (ev.kind) {
       case "accept": {
         const info = this.missions.get(ev.missionId) ?? {};
-        if (ev.title) info.title = ev.title;
+        const acceptTitle = this.englishTitle(ev.title);
+        if (acceptTitle) info.title = acceptTitle;
         if (ev.ts && info.acceptedAt == null) {
           const t = Date.parse(ev.ts);
           if (Number.isFinite(t)) info.acceptedAt = t; // first accept = mission start
@@ -1222,9 +1291,10 @@ export class MissionTracker extends EventEmitter {
         // the two signals arrives first wins; beginCompletion is idempotent per missionId.
         if (ev.missionId) {
           const info = this.missions.get(ev.missionId) ?? {};
-          if (ev.title && !info.title) info.title = ev.title;
+          const doneTitle = this.englishTitle(ev.title);
+          if (doneTitle && !info.title) info.title = doneTitle;
           this.missions.set(ev.missionId, info);
-          this.beginCompletion(ev.missionId, ev.title, ev.ts);
+          this.beginCompletion(ev.missionId, doneTitle, ev.ts);
         }
         break;
       }
@@ -1245,9 +1315,20 @@ export class MissionTracker extends EventEmitter {
         // Dropped here rather than filtered later: `observed` is the authoritative set
         // SiteSync pushes with replace:true, so anything that reaches it is already live.
         if (!this.isLiveEnv) break;
-        const isNew = !this.observed.has(ev.name);
-        const dateChanged = this.noteReceiptTime(ev.name, ev.ts);
-        if (isNew) this.observed.add(ev.name);
+        // Translate at the EDGE. `observed` is the authoritative set SiteSync pushes with
+        // replace:true and the site renders from, so it must always speak English — a German
+        // player's collection has to be the same collection as everyone else's. Everything
+        // downstream (pools, images, /blueprints pages) is unchanged by this feature because
+        // nothing downstream ever sees a localized string.
+        const { name: bpName, known } = this.toEnglish(ev.name);
+        if (!known) {
+          // Record it and carry on. The receipt is still real — we simply cannot say what it
+          // was, and saying so is the entire difference between a bug report and an answer.
+          this.unrecognized.set(ev.name, ev.ts ?? new Date().toISOString());
+        }
+        const isNew = !this.observed.has(bpName);
+        const dateChanged = this.noteReceiptTime(bpName, ev.ts);
+        if (isNew) this.observed.add(bpName);
         // Global "Blueprint Received" pop card — REAL-TIME receipts only (not the historical
         // replay on startup), and independent of the displayed mission. Set before emitting so
         // the broadcast view carries the resolved image. Gated by COMPLETION_FRESH_MS like the
@@ -1255,12 +1336,12 @@ export class MissionTracker extends EventEmitter {
         if (isNew) {
           const t = ev.ts ? Date.parse(ev.ts) : Date.now();
           if (!Number.isFinite(t) || Date.now() - t < COMPLETION_FRESH_MS) {
-            this.justReceived = { ...this.blueprintReward(ev.name), at: ev.ts ?? new Date().toISOString() };
+            this.justReceived = { ...this.blueprintReward(bpName), at: ev.ts ?? new Date().toISOString() };
           }
         }
         if (isNew || dateChanged) {
           this.saveState();
-          if (isNew) this.emit("collected", ev.name);
+          if (isNew) this.emit("collected", bpName);
           this.emit("change");
         }
         break;
