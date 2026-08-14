@@ -2211,6 +2211,33 @@ const MISSIONINFO = `(async () => {
   const pay = (payout) => strip(payAll(payout));
   const facts = (f) => factChips({ community: { facts: f } }).map(strip).join(" ");
 
+  // ── the three payout tiers ───────────────────────────────────────────────
+  // 🔴 REGRESSION GUARD, 2026-08-14. The dataset gained a MODELLED payout for the ~2,045
+  // missions the datacore leaves at reward="0", shaped byte-identically to a real one, and
+  // every estimate rendered with the tooltip "A fixed reward, straight from the game files".
+  // Measured against real completions the model is wrong ONE TIME IN FOUR (-79% to +61%).
+  // 🔑 The existing helpers above only ever pass "community", never a dataset payout, which is
+  // exactly why nothing here caught it — a suite can only fail on an input it actually supplies.
+  const tier = (v) => payBlock(v);
+  const fixedV = { payout: { min: 60000, max: 60000, currency: "UEC" }, payoutEstimated: false, community: null };
+  const estV = { payout: { min: 39750, max: 39750, currency: "UEC" }, payoutEstimated: true, community: null };
+  const fixedH = tier(fixedV), estH = tier(estV);
+  ok("a FIXED payout still says it came from the game files",
+     fixedH.indexOf("straight from the game files") >= 0 && fixedH.indexOf("mi-pay est") < 0, strip(fixedH));
+  ok("an ESTIMATE is NOT described as a fixed reward from the game files",
+     estH.indexOf("straight from the game files") < 0, strip(estH));
+  ok("...it is marked est. in the number itself, not only in a tooltip",
+     estH.indexOf("est-k") >= 0 && strip(estH).indexOf("est.") >= 0, strip(estH));
+  ok("...and carries a class the skin can style differently", estH.indexOf("mi-pay est") >= 0);
+  ok("...and says out loud that it is calculated, not read from the game",
+     estH.indexOf("ESTIMATE") >= 0 && estH.indexOf("not in the game files") >= 0);
+  // The tier order: one real report outranks an estimate. That is the whole reason the board
+  // scanner keeps earning its place, so it is asserted rather than assumed.
+  const beatsEst = tier({ payout: { min: 39750, max: 39750, currency: "UEC" }, payoutEstimated: true,
+    community: { payout: { samples: 1, contributors: 1, min: 63000, max: 63000, median: 63000, currency: "UEC", singleContributor: true } } });
+  ok("a single real observation OUTRANKS the estimate", strip(beatsEst).indexOf("63,000") >= 0
+     && strip(beatsEst).indexOf("39,750") < 0 && beatsEst.indexOf("est-k") < 0, strip(beatsEst));
+
   // ── payouts ──────────────────────────────────────────────────────────────
   ok("no observations renders NOTHING, not a zero", pay(null) === "" && pay({ samples: 0 }) === "");
   const loneAll = payAll({ samples: 1, contributors: 1, min: 48000, max: 48000, median: 48000, currency: "UEC", singleContributor: true });

@@ -1628,6 +1628,17 @@
   .mi-pay .amt { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--gold);
     font-variant-numeric: tabular-nums; line-height: 1.15; }
   .mi-pay .cur { font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; color: var(--gold); opacity: 0.8; }
+  /* An ESTIMATE (the fitted payout model) must not wear the same clothes as a fixed reward from
+     the game files — it is wrong one time in four. Dashed border + a lead-in "est.", the same
+     grammar the player-sourced chips already use for "this rests on something softer". Deliberately
+     NOT a different hue: the colour is the skin's value accent and re-tints per manufacturer, so
+     hanging meaning on it would say different things in different skins. Weight and the dash carry
+     it instead, and both survive every skin. */
+  .mi-pay.est { background: rgba(var(--value-rgb), 0.07); border-style: dashed;
+    border-color: rgba(var(--value-rgb), 0.38); }
+  .mi-pay.est .amt { font-weight: 500; opacity: 0.78; }
+  .mi-pay.est .est-k { font-family: var(--sans); font-size: 8.5px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); opacity: 0.6; }
   /* A two-column grid, left-aligned. The old rows were a flex pair pushed to opposite edges,
      which on a 380px panel left a canyon between label and value. */
   /* (.mi-g — the two-column label/value grid — was replaced by chips on 2026-08-13 and removed
@@ -2678,13 +2689,40 @@
   }
   // The headline number, given size instead of a label. A fixed payout from the game files is
   // certain and needs no qualifier; a crowdsourced one always states what it rests on.
+  //
+  // 🔴 THREE TIERS, AND THEY MUST NOT LOOK ALIKE (2026-08-14). The dataset gained a MODELLED
+  // payout for the ~2,045 missions the datacore leaves at reward="0", shaped byte-identically
+  // to a real one, so until this branched every estimate rendered with the tooltip "A fixed
+  // reward, straight from the game files" — a flat untruth for half the catalogue. Measured
+  // against real completions the model is wrong ONE TIME IN FOUR, by −79% to +61%.
+  //   1. observed  — real players' median. Wins whenever it exists, including over an estimate.
+  //   2. fixed     — a real <contractReward> in the game files. Certain.
+  //   3. estimated — the model. Marked, dimmed, and never stated as fact.
+  // 🔑 The order is deliberate: an estimate is the ONLY tier a single real report outranks, and
+  // that is exactly the case the board scanner exists to produce. Never delete the scanner
+  // because the model usually agrees — the scanner is what measures whether it still does.
   function payBlock(v) {
     const p = v.community && v.community.payout;
     const fixed = payoutText(v.payout);
     if (!p || !p.samples) {
-      return fixed ? '<div class="mi-pay">'
+      if (!fixed) return "";
+      // Tier 3: say it is an estimate IN the number, not only in the tooltip. "est." is the
+      // shortest thing that cannot be mistaken for part of the figure, and the whole block is
+      // dimmed so it reads as weaker than a fixed reward sitting in the same chip row.
+      if (v.payoutEstimated) {
+        return '<div class="mi-pay est">'
+          + '<span class="est-k">est.</span>'
+          + '<span class="amt">' + escapeHtml(fixed) + "</span>"
+          + info("An ESTIMATE, not a number from the game. The game works this contract's"
+              + " reward out when you accept it, so it is not in the game files at all — this is"
+              + " calculated from a formula fitted to CIG's own data."
+              + "\n\nChecked against real completions it lands within rounding about three times"
+              + " in four, and the misses can be large in either direction. Treat it as a"
+              + " ballpark until somebody reports what it actually paid.") + "</div>";
+      }
+      return '<div class="mi-pay">'
         + '<span class="amt">' + escapeHtml(fixed) + "</span>"
-        + info("A fixed reward, straight from the game files.") + "</div>" : "";
+        + info("A fixed reward, straight from the game files.") + "</div>";
     }
     const cur = p.currency === "UEC" ? "aUEC" : (p.currency || "");
     const spread = p.samples > 1 && p.max > p.min ? money(p.min) + " – " + money(p.max) : null;

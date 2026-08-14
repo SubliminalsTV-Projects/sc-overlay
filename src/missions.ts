@@ -143,6 +143,15 @@ export interface DatasetMission {
   /** Static aUEC payout (schema/2). Most missions are runtime-calculated → null.
    *  min is often 0, meaning "up to max". Currency is UEC or MER (prison merits). */
   payout?: { min: number | null; max: number; currency: string | null } | null;
+  /** 🔴 TRUE = this payout was MODELLED, not read out of the game files. The dataset carries
+   *  a fitted curve (`payoutModel`) that fills the ~2,045 missions the datacore leaves at
+   *  `reward="0"`, and the two are byte-identical in shape — `{min:39750,max:39750}` either
+   *  way. Measured against real completions on 2026-08-14 it is wrong **one time in four**,
+   *  by −79% to +61%, because what it reproduces is the datacore's `CalculatedReward`: a BASE
+   *  the server modifies at accept time, not what lands in the wallet. So this flag is the
+   *  only thing standing between an estimate and a claim of fact, and anything rendering
+   *  `payout` MUST branch on it. See references/payout-scanner.md. */
+  payoutCalculated?: boolean;
   /** ITEM rewards the mission hands out (schema/2) — actual items (Wikelo ships,
    *  armor, scrip), NOT blueprints. No ownership tracking; display-only. */
   items?: { name: string; item: string | null; amount: number }[] | null;
@@ -280,6 +289,10 @@ export interface TrackedView {
   /** Static aUEC payout for the shown mission, or null (most payouts are
    *  runtime-calculated and unknown statically). min 0/null = "up to max". */
   payout: { min: number | null; max: number; currency: string | null } | null;
+  /** True when `payout` is MODELLED rather than read from the game files — see the note on
+   *  DatasetMission.payoutCalculated. The widget must render it as an estimate; it is wrong
+   *  one time in four and is shaped exactly like a real payout. */
+  payoutEstimated: boolean;
   /** ITEM rewards (not blueprints) the shown mission hands out. Display-only. */
   /** Guaranteed ITEM rewards (not blueprints). `owned` is a manual, local-only tick —
    *  item awards never appear in the log, so it's never auto-set and never synced. */
@@ -2938,6 +2951,7 @@ export class MissionTracker extends EventEmitter {
       hasPool: pools.length > 0,
       ambiguous,
       payout: mission?.payout ?? null,
+      payoutEstimated: mission?.payoutCalculated === true,
       itemRewards: (mission?.items ?? []).map((i) => ({
         name: i.name,
         amount: Number(i.amount) || 1,
