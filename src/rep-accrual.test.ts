@@ -167,5 +167,92 @@ const B = "bbbbbbbb-0000-0000-0000-000000000002";
   }
 }
 
+// 🔴 THE 2026-08-13 UNDER-REPORT. Rep used to resolve from the completion TITLE alone, which
+// fails two ways that between them cost Sub 3,250 Headhunters rep — his bar read 4,225/5,800
+// (Contractor) while the game had just handed him Sr. Contractor. A contract key has neither
+// problem, and the marker that carries one is on 449 of his 456 completions.
+{
+  // 1. A PLACEHOLDER title. 547 of 4,075 dataset missions carry one; the game substitutes at
+  //    runtime, so the logged title can never equal the dataset's and the credit was silently 0.
+  //    This one pays 300 — the single biggest earner in his Headhunters rotation.
+  const KEY = "HH_Pyro_RegionC_M_2AsteroidBase_Criminals_EliminateBoss";
+  const dir = mkdtempSync(join(tmpdir(), "repaccrue-"));
+  try {
+    const t = fresh(dir);
+    const m = (t as unknown as { dataset?: { missions: Record<string, { title?: string; giver?: string; reputationGained?: { scope: string; faction: string; amount: number }[] }> } }).dataset?.missions[KEY];
+    check("the fixture is still a templated Headhunters title", [m?.giver, /\[/.test(m?.title ?? "")], ["Headhunters", true]);
+    const want = m?.reputationGained?.find((r) => r.scope === "FactionReputation")?.amount ?? 0;
+    check("...paying the amount this case is about", want, 300);
+
+    const ts = () => new Date().toISOString();
+    t.apply({ kind: "marker", ts: ts(), missionId: A, contract: KEY + "_0", contractKey: KEY, generator: "", contractDefId: "" } as never);
+    // What the GAME logs — the substituted title, which is in no index anywhere.
+    t.apply({ kind: "contractComplete", ts: ts(), missionId: A, title: "Need a death at Asteroid Base" } as never);
+    const hh = (x: MissionTracker) => x.repDiagnostics().givers.find((g) => g.giver === "Headhunters")?.sum ?? 0;
+    check("a templated title still credits, via its contract key", hh(t), want);
+    check("...and counts as one completion", credited(t), 1);
+    // Idempotency is the invariant the rest of this file exists to protect — the key must not
+    // give a second door into it.
+    t.apply({ kind: "contractComplete", ts: ts(), missionId: A, title: "Need a death at Asteroid Base" } as never);
+    t.apply({ kind: "end", ts: ts(), missionId: A, state: "COMPLETED" } as never);
+    check("...and cannot credit twice through the key path", hh(t), want);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  // 2. SAME TITLE, DIFFERENT AWARD. buildRepTitleIndex collapses variants to the MIN, so
+  //    "Reputation Management" credited 25 when the rank-3 variant pays 300. The key says which
+  //    one you actually ran.
+  const TITLE_MULTI = "Reputation Management";
+  const CHEAP = "HH_Pyro_RegionC_DerelictOutpost_EliminateAll";   // 25
+  const RICH = "HH_Pyro_RegionD_XTOutpost_EliminateAll";          // 300
+  const dir = mkdtempSync(join(tmpdir(), "repaccrue-"));
+  try {
+    const t = fresh(dir);
+    const hh = () => t.repDiagnostics().givers.find((g) => g.giver === "Headhunters")?.sum ?? 0;
+    const ts = () => new Date().toISOString();
+    t.apply({ kind: "marker", ts: ts(), missionId: A, contract: RICH + "_0", contractKey: RICH, generator: "", contractDefId: "" } as never);
+    t.apply({ kind: "contractComplete", ts: ts(), missionId: A, title: TITLE_MULTI } as never);
+    check("the expensive variant credits its OWN award, not the cheapest", hh(), 300);
+    t.apply({ kind: "marker", ts: ts(), missionId: B, contract: CHEAP + "_0", contractKey: CHEAP, generator: "", contractDefId: "" } as never);
+    t.apply({ kind: "contractComplete", ts: ts(), missionId: B, title: TITLE_MULTI } as never);
+    check("...and the cheap one credits its own", hh(), 325);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  // The fallback has to keep working, or fixing the common case breaks the 7-in-456 that have no
+  // marker at all. No key -> the title index, exactly as before.
+  const dir = mkdtempSync(join(tmpdir(), "repaccrue-"));
+  try {
+    const t = fresh(dir);
+    completeOnce(t, A); // accept-by-title only; no marker event
+    check("a completion with no contract key still credits by title", sum(t), 300);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  // A key the dataset does not contain must fall THROUGH to the title, not swallow the credit.
+  // 143 of Sub's completions are like this (Hockrow FacilityDelve, RoX_*, Gilly's) — content the
+  // dataset has no record of.
+  const dir = mkdtempSync(join(tmpdir(), "repaccrue-"));
+  try {
+    const t = fresh(dir);
+    const ts = () => new Date().toISOString();
+    t.apply({ kind: "marker", ts: ts(), missionId: A, contract: "RoX_SWA_0", contractKey: "RoX_SWA", generator: "", contractDefId: "" } as never);
+    t.apply({ kind: "accept", ts: ts(), missionId: A, title: TITLE } as never);
+    t.apply({ kind: "contractComplete", ts: ts(), missionId: A, title: TITLE } as never);
+    check("an unknown contract key falls back to the title", sum(t), 300);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${failed === 0 ? "ALL PASS" : failed + " FAILED"}`);
 process.exit(failed === 0 ? 0 : 1);

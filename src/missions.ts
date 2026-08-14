@@ -1322,7 +1322,17 @@ export class MissionTracker extends EventEmitter {
     // (Prestige 1) off the same logs.
     // Rep is the one thing here that must be exactly-once, so it gets its own idempotency —
     // the same shape as completedMissionIds, which already existed for precisely this reason.
-    this.accrueForCompletion(missionId, title ?? info?.title ?? null);
+    //
+    // 🔑 The key is passed ONLY when the mission is unambiguous. An ambiguous accept sets
+    // contractKey to `res.keys[0]` as a REPRESENTATIVE for pool/content lookups (see the accept
+    // handler) — good enough to draw a merged pool, but for rep it would silently pick one
+    // variant's award out of several that differ. The title index is the right answer there:
+    // it collapses same-title variants to the MIN, which under-claims instead of guessing.
+    this.accrueForCompletion(
+      missionId,
+      title ?? info?.title ?? null,
+      info?.ambiguous ? null : info?.contractKey ?? null,
+    );
     this.forcedBlueprints = null; // a new completion never inherits the last one's dev override
     this.completion = {
       missionId,
@@ -1478,6 +1488,9 @@ export class MissionTracker extends EventEmitter {
     // MissionId is all-zeros, same as the live path).
     const completions: { missionId: string | null; title: string | null; ts: string; tsMs: number; inWindow: boolean }[] = [];
     const rewards: { tsMs: number; amount: number }[] = [];
+    /** missionId -> contract key, harvested from every CreateMarker in the scan so the rep
+     *  rebuild can resolve each completion to its exact dataset variant. */
+    const missionKeys = new Map<string, string>();
     let files = 0;
     let receipts = 0;
     let skipped = 0;
@@ -1517,6 +1530,13 @@ export class MissionTracker extends EventEmitter {
         // into the picker or the tracked-mission state.
         if (ev.kind === "marker") {
           this.noteRankForKey(ev.contractKey);
+          // 🔑 The marker is the ONLY line that names which dataset variant a mission actually
+          // is, and it carries the same missionId the completion does — so remembering it here
+          // is what lets the rep rebuild below credit the exact award instead of guessing from
+          // the title. Measured on Sub's 312 PUB logs: 449 of 456 completions have one. Held for
+          // the whole scan (not per file) because a mission can be accepted in one session's log
+          // and completed in the next; a UUID collision across sessions is not a real risk.
+          missionKeys.set(ev.missionId, ev.contractKey);
           continue;
         }
         if (ev.kind === "accept") {
@@ -1570,8 +1590,9 @@ export class MissionTracker extends EventEmitter {
     }
     // Rebuild the witnessed-rep totals authoritatively from every in-window completion.
     // Rebuilt (not incremented) so a re-verify can't double-count; only 4.8+ completions
-    // count (the wipe reset earlier rep). Resolves each completion by title via the
-    // comprehensive rep-title index (covers non-pool missions too).
+    // count (the wipe reset earlier rep). Each completion resolves through its own
+    // CreateMarker contract key — the exact variant, so the award is the one that variant
+    // pays — falling back to the rep-title index for the few that have no marker.
     // 🔑 Deduped by missionId as well as cleared. The log holds THREE completion signals per
     // mission (two COMPLETED end events plus a contractComplete — measured, see
     // beginCompletion), and only `contractComplete` carries a title, so a title-keyed loop
@@ -1582,7 +1603,9 @@ export class MissionTracker extends EventEmitter {
     this.repWitnessed.clear();
     this.repAccruedMissionIds.clear();
     for (const c of completions) {
-      if (c.inWindow) this.accrueForCompletion(c.missionId, c.title);
+      if (c.inWindow) {
+        this.accrueForCompletion(c.missionId, c.title, c.missionId ? missionKeys.get(c.missionId) : null);
+      }
     }
     this.saveState();
     this.emit("change");
@@ -1844,6 +1867,36 @@ export class MissionTracker extends EventEmitter {
     return true;
   }
 
+  /** Credit a completed mission's rep from its CONTRACT KEY — the exact dataset variant, so the
+   *  award is the one that variant actually pays. Returns whether anything was credited.
+   *
+   *  🔑 This is the accurate path and the title index is only the fallback, because a title
+   *  cannot identify a mission. Two ways it fails, both measured on Sub's real logs 2026-08-13
+   *  while his Headhunters bar read 4,225 against a true 7,475 (Contractor, when the game had
+   *  just given him Sr. Contractor at 5,800):
+   *    1. **547 of 4,075 dataset missions carry a PLACEHOLDER title** — "Need a death at
+   *       [Location]", "Wanted: [TargetName]". The game substitutes at runtime ("Need a death at
+   *       Asteroid Base"), so the lookup can never match and those completions credited ZERO,
+   *       forever. 23 of his Headhunters completions, +3,150 rep, and it hits the biggest earner
+   *       he runs (that one pays 300).
+   *    2. **Same-title variants collapse to the MIN award** (buildRepTitleIndex, deliberately
+   *       conservative). "Reputation Management" credited 25 where the rank-3 variant pays 300.
+   *  A contract key has neither problem. `CreateMarker` carries one against the completing
+   *  mission's own id on 449 of his 456 completions, so the fallback is genuinely the rare case.
+   *
+   *  Keyed by GIVER, matching accrueFromTitle and how computeRepBar looks it up. */
+  private accrueFromContractKey(contractKey: string | null | undefined): boolean {
+    if (!contractKey) return false;
+    const m = this.dataset?.missions[contractKey];
+    if (!m?.giver) return false;
+    const pr = this.primaryRep(m);
+    if (!pr) return false;
+    const cur = this.repWitnessed.get(m.giver);
+    if (cur && cur.scope === pr.scope) cur.sum += pr.amount;
+    else this.repWitnessed.set(m.giver, { scope: pr.scope, sum: (cur?.sum ?? 0) + pr.amount });
+    return true;
+  }
+
   /** Exactly-once rep accrual for one completed mission.
    *
    *  🔑 One MISSION can raise three completion signals (see beginCompletion), so "has this
@@ -1851,8 +1904,15 @@ export class MissionTracker extends EventEmitter {
    *  not by whatever card happens to be on screen. Without that, every leaked repeat is a
    *  permanent over-count that survives every restart, and standing drifts upward forever.
    *  The set rides along with repWitnessed in both directions (persist, clear-on-verify) so the
-   *  two can never disagree about what has been counted. */
-  private accrueForCompletion(missionId: string | null, title: string | null | undefined): void {
+   *  two can never disagree about what has been counted.
+   *
+   *  `contractKey` resolves the exact variant and is preferred; the title index is the fallback
+   *  for the few completions with no marker (see accrueFromContractKey). */
+  private accrueForCompletion(
+    missionId: string | null,
+    title: string | null | undefined,
+    contractKey?: string | null,
+  ): void {
     // No missionId means this credit could never be recognised as already-counted, and an
     // uncountable credit is how the over-count happened in the first place. Skipping it costs
     // effectively nothing — measured over Sub's 291 PUB logs, requiring an id changes no giver's
@@ -1865,7 +1925,9 @@ export class MissionTracker extends EventEmitter {
     // Caught by running the real verifyFromLogs into a throwaway profile with no dataset: 388
     // completions "spent", every giver total zero, which is indistinguishable from the recovery
     // simply not working — i.e. exactly the symptom this fix exists to remove.
-    if (this.accrueFromTitle(title)) this.repAccruedMissionIds.add(missionId);
+    if (this.accrueFromContractKey(contractKey) || this.accrueFromTitle(title)) {
+      this.repAccruedMissionIds.add(missionId);
+    }
   }
 
   /** Per-hour aUEC + rep for the idle screen, computed from the PERSISTED completion history
@@ -1877,8 +1939,17 @@ export class MissionTracker extends EventEmitter {
   private earningRates(): EarningRates {
     const now = Date.now();
     const HOUR = 3_600_000;
+    // 🔑 Same key-before-title order as accrueForCompletion, or this readout disagrees with the
+    // bar it sits next to — a templated title ("Need a death at [Location]") reads 0 rep/hr while
+    // the ladder correctly moves. History entries carry no key, so it comes from the still-known
+    // mission; both windows here are recent by construction, which is exactly when that holds.
+    const repOf = (m: MissionHistoryEntry): number => {
+      const ck = m.missionId ? this.missions.get(m.missionId)?.contractKey : undefined;
+      const byKey = ck ? this.primaryRep(this.dataset?.missions[ck])?.amount : undefined;
+      return byKey ?? (m.title ? this.repTitleIndex.get(normScreenTitle(m.title))?.amount : 0) ?? 0;
+    };
     const rows = this.missionHistory
-      .map((m) => ({ atMs: Date.parse(m.at), aUEC: m.aUEC, rep: (m.title ? this.repTitleIndex.get(normScreenTitle(m.title))?.amount : 0) ?? 0 }))
+      .map((m) => ({ atMs: Date.parse(m.at), aUEC: m.aUEC, rep: repOf(m) }))
       .filter((r) => Number.isFinite(r.atMs))
       .sort((a, b) => b.atMs - a.atMs); // newest first
     // Actual last rolling 60 minutes.
