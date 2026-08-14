@@ -368,8 +368,13 @@ export interface TrackedView {
     /** aUEC awarded (live "Awarded N aUEC"), or null if none correlated. */
     aUEC: number | null;
     /** The mission's static dataset payout (FixedReward) — shown on the card when no live
-     *  award was logged (current patches stopped emitting "Awarded N aUEC"). null if none. */
+     *  award was logged (current patches stopped emitting "Awarded N aUEC"). null if none.
+     *  ⚠️ May be MODELLED — always read `payoutEstimated` beside it. */
     payout: { min: number | null; max: number; currency: string | null } | null;
+    /** True when `payout` came from the fitted curve rather than the game files. The report
+     *  card MUST mark it: the model is wrong about one time in four, and a completion card
+     *  saying a flat number is read as "this is what you were just paid". */
+    payoutEstimated: boolean;
     /** Accept→complete duration in ms, or null if the accept wasn't seen. */
     durationMs: number | null;
     /** Blueprints received during the mission (name + item image for the card). */
@@ -1317,8 +1322,16 @@ export class MissionTracker extends EventEmitter {
     // (min===max) resolved NOW while the mission is still accepted — so the idle aUEC/hr can
     // count fixed-payout missions. Calculated-reward missions stay null (→ "—").
     {
-      const p = this.datasetMission(missionId)?.payout ?? null;
-      const fixed = p && p.min != null && p.min === p.max && p.max > 0 ? p.max : null;
+      // 🔴 A MODELLED PAYOUT IS NOT AN EARNING. The fitted curve emits `min === max`, which is
+      // byte-identical to the shape this test uses to recognise a real fixed reward — so every
+      // one of the 2,045 estimates passed it and got recorded as money the player earned. That
+      // history feeds the idle panel's "session earned" and aUEC/hr, so a scoreboard could
+      // report a total that was substantially invented. Estimates are DISPLAYED (the report
+      // card marks them) but never counted.
+      const dm = this.datasetMission(missionId);
+      const p = dm?.payout ?? null;
+      const known = dm?.payoutCalculated !== true;
+      const fixed = known && p && p.min != null && p.min === p.max && p.max > 0 ? p.max : null;
       this.recordMissionComplete(missionId, title ?? info?.title ?? null, ts, aUEC ?? fixed);
     }
     // 🔑 Logged from the SIDECAR, so it lands in sidecar.log and can actually be read — the shell
@@ -1389,13 +1402,17 @@ export class MissionTracker extends EventEmitter {
   /** aUEC/hour for the just-completed run. Uses the live award if one was logged, else the
    *  mission's FIXED dataset payout — a calculated-reward mission has no honest number here
    *  and returns null rather than a made-up one. Sub-minute runs are excluded: dividing a
-   *  payout by 20 seconds produces a rate nobody can actually sustain. */
+   *  payout by 20 seconds produces a rate nobody can actually sustain.
+   *  🔴 A MODELLED payout is excluded for the same reason it is excluded from the history: it
+   *  matches the `min === max` shape exactly, so without the flag every estimate became a
+   *  derived "rate" one step further from anything anyone measured. */
   private completionRate(): number | null {
     const c = this.completion;
     if (!c || c.acceptedAtMs == null) return null;
     const ms = c.completedAtMs - c.acceptedAtMs;
     if (!(ms >= 60_000)) return null;
-    const p = c.payout;
+    const estimated = this.datasetMission(c.missionId)?.payoutCalculated === true;
+    const p = estimated ? null : c.payout;
     const amount = c.aUEC ?? (p && p.min != null && p.min === p.max && p.max > 0 ? p.max : null);
     if (amount == null) return null;
     return Math.round(amount / (ms / 3_600_000));
@@ -2993,6 +3010,9 @@ export class MissionTracker extends EventEmitter {
             title: this.completion!.title ?? mission?.title ?? tracked?.title ?? null,
             aUEC: this.completion!.aUEC,
             payout: this.completion!.payout,
+            // `mission` in this scope IS the completed contract during the hold (see the note
+            // below on effectiveId), so the flag comes from the same record the payout did.
+            payoutEstimated: mission?.payoutCalculated === true,
             durationMs: this.completion!.acceptedAtMs != null ? this.completion!.completedAtMs - this.completion!.acceptedAtMs : null,
             blueprints: this.forcedBlueprints ?? this.completionBlueprints(),
             // During the hold, `effectiveId` IS the completed mission (see holdActive above),

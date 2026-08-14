@@ -3118,8 +3118,26 @@
     if (meta.length) h += '<div class="mr-meta">' + meta.join(" · ") + "</div>";
 
     const stats = [];
-    if (c.aUEC != null) stats.push(mrStat("+" + c.aUEC.toLocaleString(), "aUEC"));
-    else { const pt = payoutText(c.payout); if (pt) stats.push(mrStat(pt, "payout")); }
+    // 🔑 THE SAME RANKING AS THE WEBSITE, and the LABEL is what carries the provenance. The
+    // number is the same size in every tier, so a player is never asked to read a caveat before
+    // trusting a figure — the word under it says where it came from:
+    //   1. what the game logged you were paid  → "aUEC"        (certain, this run)
+    //   2. what players have reported          → "reported"    (the only truth for a
+    //                                                           calculated-reward contract)
+    //   3. a fixed reward in the game files    → "payout"      (certain, authored by CIG)
+    //   4. the fitted model                    → "estimated"   (~, wrong ~1 in 4)
+    // 🔴 Tier 4 must never wear tier 3's label. Every modelled payout is shaped `min === max`,
+    // so before this branched it rendered identically to a real fixed reward on a card that
+    // reads as "here is what you just earned".
+    if (c.aUEC != null) {
+      stats.push(mrStat("+" + c.aUEC.toLocaleString(), "aUEC"));
+    } else if (mrCommunityPay && mrCommunityPay.samples) {
+      const cur = mrCommunityPay.currency === "MER" ? "merits" : "aUEC";
+      stats.push(mrStat("~" + Number(mrCommunityPay.median).toLocaleString() + " " + cur, "reported"));
+    } else {
+      const pt = payoutText(c.payout);
+      if (pt) stats.push(mrStat(c.payoutEstimated ? "~" + pt : pt, c.payoutEstimated ? "estimated" : "payout"));
+    }
     const dur = fmtDur(c.durationMs);
     if (dur) stats.push(mrStat(dur, "time"));
     // Only meaningful next to a payout, and deliberately absent on calculated-reward missions
@@ -3254,11 +3272,20 @@
   // unlocked never appeared. So the body re-renders while the SAME completion is showing
   // whenever its contents change — without touching the countdown, and without disturbing
   // answers, which are re-derived from mrAnswers rather than read out of the DOM.
-  function reportSig(c) {
+  // 🔑 The community payout is IN the signature. `communityFor()` is a cached async fetch, so on
+  // a first-seen contract it resolves AFTER the card is already up — without this the card would
+  // keep showing the estimate for its whole life even though the real reported figure had
+  // arrived, which is the one case the tiering exists for.
+  function reportSig(c, cpay) {
     return [c.at, (c.blueprints || []).map((b) => b.name).join("|"), c.aUEC,
-            c.poolProgress ? c.poolProgress.owned + "/" + c.poolProgress.total : "", c.timesCompleted].join("~");
+            c.poolProgress ? c.poolProgress.owned + "/" + c.poolProgress.total : "", c.timesCompleted,
+            cpay ? cpay.median + "/" + cpay.samples : ""].join("~");
   }
   let mrSig = "";
+  // The resolved community payout for the card currently up. Held rather than re-read for the
+  // same reason `mrCard` is: the card outlives `v.completion`, so anything re-derived from the
+  // live view at render time goes null out from under it.
+  let mrCommunityPay = null;
   // 🔑 Wrapped, and it REPORTS to the sidecar. This window is a detached GUI process: a throw in
   // here shows nothing, logs nothing, and leaves a missing card indistinguishable from a card the
   // tracker never sent — which is exactly the hole a real missed report (2026-07-31T01:33:50Z)
@@ -3271,15 +3298,19 @@
     const c = v.completion;
     if (!c) return;
     try {
+      // During the hold `v.contractKey` IS the completed mission, so the view's community block
+      // already describes this contract — no second lookup needed.
+      const cpay = (v.community && v.community.payout) || null;
       if (c.at !== mrAt) {
-        mrAt = c.at; mrSig = reportSig(c);
+        mrAt = c.at; mrCommunityPay = cpay; mrSig = reportSig(c, cpay);
         showReport(c);
         mrNote('report shown for "' + (c.title || "?") + '"');
         return;
       }
-      const sig = reportSig(c);
+      const sig = reportSig(c, cpay);
       if (sig === mrSig) return;
       mrSig = sig;
+      mrCommunityPay = cpay;
       if ($("mreport").classList.contains("show")) { mrCard = c; $("mrBody").innerHTML = reportBody(c); $("mrAsk").innerHTML = reportAsk(c); }
     } catch (err) {
       mrNote("report FAILED to render: " + (err && err.message ? err.message : err));
