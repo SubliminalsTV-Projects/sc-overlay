@@ -97,6 +97,7 @@ jobs:
           cp -a build/server /tmp/archverse-stage/app/server
           cp -a node_modules /tmp/archverse-stage/app/node_modules
           cp archverse-flatpak/files/app-package.json /tmp/archverse-stage/app/package.json
+          cp archverse-flatpak/tests/rapidocr-flatpak-selftest.mjs /tmp/archverse-stage/app/
           cp archverse-flatpak/files/bin/sc-blueprint-tracker /tmp/archverse-stage/bin/
           chmod 0755 /tmp/archverse-stage/bin/sc-blueprint-tracker
           cp LICENSE.md /tmp/archverse-stage/LICENSE.md
@@ -115,6 +116,7 @@ jobs:
           node --check app/electron/linux/star-citizen-session.cjs
           node --check app/electron/linux/runtime-env.cjs
           node --check app/electron/linux/flatpak-star-citizen-session.cjs
+          node --check app/rapidocr-flatpak-selftest.mjs
           node tests/flatpak-session-binder.test.cjs
 
           grep -Fq 'ARCHVERSE_043_MINING_GATE' app/electron/capture.cjs
@@ -126,20 +128,17 @@ jobs:
           grep -Fq 'Math.round(lastTickMs * 1.5)' app/electron/capture.cjs
           grep -Fq 'reportLinuxRapidFailure' app/electron/capture.cjs
           grep -Fq 'drag lock held 30s' app/electron/main.cjs
-
-          # Radar remains diagnostic only; it cannot gate RapidOCR or signature lock.
           ! grep -E 'if \([^\n]*archScanModeRead\.active[^\n]*rapidOcr' app/electron/capture.cjs
           ! grep -E 'if \([^\n]*detectScanModeRadarIcon[^\n]*rapidOcr' app/electron/capture.cjs
 
-          # Preserve Linux semantic hit testing while retaining upstream 0.1.43 contract-board chrome.
           grep -Fq 'ARCHVERSE_043_REGION_CLASSIFIER' app/server/overlay/missions.html
           grep -Fq 'window.__overlayClassifyPoint = classifyOverlayPoint;' app/server/overlay/missions.html
           grep -Fq 'body.boardbox #boardBox' app/server/overlay/missions.html
           ! grep -Fq 'setInterval(reportRegions, 100);' app/server/overlay/missions.html
-
+          grep -Fq 'ARCHVERSE_043_LINUX_OCR_HEALTH' app/server/server.mjs
+          grep -q 'SC_TRACKER_CONFIG_DIR' app/server/server.mjs
           grep -q 'salvageConfirmed === true' app/server/overlay/mining.html
           grep -q 'salvageConfirmed === true' app/server/overlay/archverse-resource-scanner.js
-          grep -q 'SC_TRACKER_CONFIG_DIR' app/server/server.mjs
           grep -q 'strip-components: 0' io.github.gbmccray32_boop.ArchVerseOverlay.yml
           grep -q 'xrandr --current' flatpak/archverse-overlay
           grep -q 'SC_OVERLAY_DEFAULT_ZONE_WIDTH' flatpak/archverse-overlay
@@ -192,6 +191,7 @@ jobs:
             test -x /app/lib/archverse-electron/electron
             test -f /app/archverse/app/electron/capture.cjs
             test -f /app/archverse/app/electron/main.cjs
+            test -f /app/archverse/app/rapidocr-flatpak-selftest.mjs
             test -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node
             test -f /app/archverse/app/node_modules/@gutenye/ocr-models/assets/ch_PP-OCRv4_rec_infer.onnx
             test ! -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so
@@ -200,7 +200,7 @@ jobs:
             grep -Fq "drag lock held 30s" /app/archverse/app/electron/main.cjs
             grep -Fq ARCHVERSE_043_REGION_CLASSIFIER /app/archverse/app/server/overlay/missions.html
             cd /app/archverse/app
-            /app/bin/archverse-node -e "Promise.all([import('@gutenye/ocr-node'),import('@gutenye/ocr-models/node')]).then(async ([o,m])=>{const fs=require('fs'); const models=m.default; for (const p of [models.detectionPath,models.recognitionPath,models.dictionaryPath]) { if (!fs.existsSync(p)) throw new Error('missing OCR model '+p); } const engine=await o.default.create({models}); if (!engine) throw new Error('RapidOCR engine did not initialize'); console.log('RapidOCR Flatpak startup OK'); }).catch(e=>{console.error(e);process.exit(1)})"
+            /app/bin/archverse-node rapidocr-flatpak-selftest.mjs
           '
 
       - name: Launch real ArchVerse GUI under Xvfb, private runtime dir, and D-Bus
@@ -277,12 +277,12 @@ jobs:
           =================================================================
 
           This build converges the packaged Linux scanner on upstream 0.1.43 mining semantics.
-          RapidOCR is allowed to inspect the configured mining crop whenever mining is armed.
-          Radar/scan-mode detection remains diagnostic only and cannot gate the cropped OCR pass.
-          A parsed signature is sufficient to enter the fast polling window.
+          RapidOCR inspects the configured mining crop whenever mining is armed. Radar/scan-mode
+          detection remains diagnostic only and cannot gate the cropped OCR pass. A parsed mining
+          signature is sufficient to enter the fast polling window.
 
-          Target hosts: x86_64 Flatpak Linux under X11/XWayland, with field validation required on
-          both an Arch-family system (Arch/CachyOS) and a Fedora-family system (Fedora/Nobara).
+          Use this SAME x86_64 Flatpak artifact for field validation on an Arch-family host
+          (Arch/CachyOS) and a Fedora-family host (Fedora/Nobara).
 
           Install:
             flatpak install --user --reinstall ./ArchVerse-Overlay-0.1.43-r31-alpha.22-upstream043-test1-x86_64.flatpak
@@ -293,9 +293,9 @@ jobs:
           Diagnostic:
             ./flatpak-doctor.sh
 
-          Mining priorities: enter/leave scan mode repeatedly; scan known rocks; remain in normal
-          flight HUD for several minutes; verify no stuck scan state; verify valid signatures are
-          read without radar-icon dependence; collect diagnostics if a read is missed.
+          Mining priorities: enter and leave scan mode repeatedly; scan known rocks; remain in
+          normal flight HUD for several minutes; verify there is no stuck scan state; verify valid
+          signatures are read without radar-icon dependence; collect diagnostics for any missed read.
           EOF
 
       - name: Upload Alpha 22 upstream043 artifact
