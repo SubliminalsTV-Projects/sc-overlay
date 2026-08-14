@@ -1,0 +1,51 @@
+--- /mnt/data/alpha21_work/ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/linux/focus-controller.cjs	2026-08-05 00:30:36.000000000 +0000
++++ /mnt/data/ArchVerse-Flatpak-Alpha22-Test1/app/electron/linux/focus-controller.cjs	2026-08-13 02:55:03.183555422 +0000
+@@ -3,6 +3,7 @@
+ const { execFileSync, spawn } = require("node:child_process");
+ const fs = require("node:fs");
+ const { getStarCitizenSessionBinder } = require("./star-citizen-session.cjs");
++const { IS_FLATPAK } = require("./runtime-env.cjs");
+ 
+ function parseProcessEnvironment(raw) {
+   const values = {};
+@@ -71,6 +72,17 @@
+ 
+   resolveGamescopePointerContext(session) {
+     if (!session) return null;
++    if (IS_FLATPAK || session.flatpakWindowBound) {
++      // Flatpak has a private /proc, so the nested Gamescope DISPLAY cannot be recovered from
++      // Star Citizen's host process environment without a sandbox escape. The Flatpak build
++      // deliberately uses the host-X11 pointer path instead.
++      this.gamescopePointerContext = null;
++      if (this.gamescopePointerFailureSession !== session.id) {
++        this.gamescopePointerFailureSession = session.id;
++        this.logger?.log?.("[gamescope-pointer] Flatpak uses host X11 pointer mapping; nested /proc environment lookup disabled");
++      }
++      return null;
++    }
+     if (this.gamescopePointerContext?.sessionId === session.id) return this.gamescopePointerContext;
+     if (Date.now() < this.gamescopePointerRetryAt) return null;
+ 
+@@ -139,6 +151,22 @@
+       return true;
+     } catch { return false; }
+   }
++
++  // Replay ONLY the button-down edge after the transparent Overlay Manager has been put back
++  // into click-through mode. The real physical button-up then lands on the desktop window below,
++  // producing one normal click instead of requiring a second click after leaving an overlay
++  // interaction session. This is deliberately a host-X11 helper: it is never used while the
++  // Star Citizen process is alive, so no synthetic click is injected into the game.
++  replayHostMouseDown(button) {
++    if (this.platform !== "linux") return false;
++    const number = ({ left: "1", middle: "2", right: "3" })[String(button || "")];
++    if (!number) return false;
++    try {
++      const child = spawn("xdotool", ["mousedown", number], { detached: true, stdio: "ignore", env: process.env });
++      child.unref();
++      return true;
++    } catch { return false; }
++  }
+ 
+   activeWindowDetails() {
+     if (this.platform !== "linux") return null;

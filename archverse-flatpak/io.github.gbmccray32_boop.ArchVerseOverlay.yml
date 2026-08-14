@@ -1,0 +1,125 @@
+id: io.github.gbmccray32_boop.ArchVerseOverlay
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '25.08'
+command: archverse-overlay
+default-branch: alpha22
+separate-locales: false
+
+finish-args:
+  # Electron/Chromium and the overlay deliberately run through X11/XWayland. ArchVerse's
+  # Flatpak session binder uses the exact X11 window id instead of requesting host /proc access.
+  - --share=ipc
+  - --socket=x11
+  - --device=dri
+
+  # Voice callouts and network-backed chat/companion services.
+  - --socket=pulseaudio
+  - --share=network
+  - --filesystem=xdg-run/speech-dispatcher:ro
+
+  # Common Star Citizen/LUG install locations. Read-only is sufficient for game.log watching.
+  # The file chooser also uses the desktop portal for uncommon locations.
+  - --filesystem=~/Games:ro
+  - --filesystem=~/.local/share/lutris:ro
+  - --filesystem=/mnt:ro
+  - --filesystem=/media:ro
+  - --filesystem=/run/media:ro
+
+  # System tray / desktop integration. Portals remain available through Flatpak's filtered bus.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+
+  - --env=SC_TRACKER_FLATPAK=1
+  - --env=GTK_USE_PORTAL=1
+  - --env=XCURSOR_PATH=/run/host/user-share/icons:/run/host/share/icons
+
+modules:
+  # Bundle xdotool so global X11/XWayland window identity, focus and pointer handling never
+  # depend on an Arch/Fedora/Debian host package. A static libxdo link keeps only one helper.
+  - name: xdotool
+    buildsystem: simple
+    build-commands:
+      - make -j${FLATPAK_BUILDER_N_JOBS} WITHOUT_RPATH_FIX=1 xdotool.static
+      - install -Dm755 xdotool.static /app/bin/xdotool
+    sources:
+      - type: git
+        url: https://github.com/jordansissel/xdotool.git
+        commit: d37c16111dbe38ea29194f20ac9de03cff8dfc1c
+        tag: v4.20260303.1
+
+  # Bundle xrandr as the KDE/X11 monitor-layout fallback. Electron's screen API remains the
+  # final fallback, so the Flatpak does not depend on kscreen-doctor being installed on host.
+  - name: xrandr
+    buildsystem: autotools
+    sources:
+      - type: archive
+        url: https://www.x.org/releases/individual/app/xrandr-1.5.4.tar.xz
+        sha256: 2cafccb2aaf2491a4068676117a0d4f90ab307724b96fffc54cd1da953779400
+
+  # Pin the Electron runtime used by the verified Alpha 22 native launcher. The Electron BaseApp
+  # supplies zypak and its supporting libraries; Electron itself travels inside this app.
+  # IMPORTANT: Flatpak Builder archive sources default to stripping one path component. Electron's
+  # ZIP is already rooted correctly, so preserve it exactly or locales/resources disappear.
+  - name: electron
+    buildsystem: simple
+    only-arches:
+      - x86_64
+    build-commands:
+      - test -x electron
+      - test -d locales
+      - test -f locales/en-US.pak
+      - test -f icudtl.dat
+      - test -f resources.pak
+      - test -f v8_context_snapshot.bin
+      - mkdir -p /app/lib/archverse-electron
+      - cp -a . /app/lib/archverse-electron/
+      - chmod 0755 /app/lib/archverse-electron/electron /app/lib/archverse-electron/chrome-sandbox
+      - test -d /app/lib/archverse-electron/locales
+      - test -f /app/lib/archverse-electron/locales/en-US.pak
+      - test -f /app/lib/archverse-electron/icudtl.dat
+      - test -f /app/lib/archverse-electron/resources.pak
+      - test -f /app/lib/archverse-electron/v8_context_snapshot.bin
+    sources:
+      - type: archive
+        url: https://github.com/electron/electron/releases/download/v42.7.1/electron-v42.7.1-linux-x64.zip
+        sha256: e85b28245deaa75c3c4f2cf5da084f4c7fbedd5af1630c59a827c41ac1f5e1af
+        strip-components: 0
+
+  - name: archverse-overlay
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/archverse/app /app/archverse/bin /app/bin
+      - cp -a payload/app/. /app/archverse/app/
+      - cp -a payload/bin/. /app/archverse/bin/
+      - chmod 0755 /app/archverse/bin/sc-blueprint-tracker
+      - install -Dm644 payload/LICENSE.md /app/archverse/LICENSE.md
+      - install -Dm755 packaging/archverse-overlay /app/bin/archverse-overlay
+      - install -Dm755 packaging/archverse-electron /app/bin/archverse-electron
+      - install -Dm755 packaging/archverse-node /app/bin/archverse-node
+      - install -Dm644 packaging/io.github.gbmccray32_boop.ArchVerseOverlay.desktop /app/share/applications/io.github.gbmccray32_boop.ArchVerseOverlay.desktop
+      - install -Dm644 packaging/io.github.gbmccray32_boop.ArchVerseOverlay.metainfo.xml /app/share/metainfo/io.github.gbmccray32_boop.ArchVerseOverlay.metainfo.xml
+      - install -Dm644 packaging/io.github.gbmccray32_boop.ArchVerseOverlay.svg /app/share/icons/hicolor/scalable/apps/io.github.gbmccray32_boop.ArchVerseOverlay.svg
+      - install -Dm644 packaging/io.github.gbmccray32_boop.ArchVerseOverlay.png /app/share/icons/hicolor/512x512/apps/io.github.gbmccray32_boop.ArchVerseOverlay.png
+      # RapidOCR uses ONNX Runtime's CPU execution provider. Alpha 22 was explicitly tested with
+      # these optional GPU provider blobs absent; dropping them saves roughly 241 MiB installed.
+      - rm -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so
+      - rm -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_tensorrt.so
+      - rm -rf /app/archverse/app/node_modules/@koromix/koffi-linux-x64/musl_x64
+      # Native updater code is Windows-only in ArchVerse; Flatpak updates are handled by Flatpak.
+      - rm -rf /app/archverse/app/node_modules/electron-updater/node_modules/.cache 2>/dev/null || true
+    sources:
+      - type: dir
+        path: app
+        dest: payload/app
+      - type: dir
+        path: bin
+        dest: payload/bin
+      - type: file
+        path: LICENSE.md
+        dest: payload
+      - type: dir
+        path: flatpak
+        dest: packaging

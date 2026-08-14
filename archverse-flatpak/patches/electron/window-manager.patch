@@ -1,0 +1,18 @@
+--- /mnt/data/alpha21_work/ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/window-manager.cjs	2026-08-05 00:30:36.000000000 +0000
++++ /mnt/data/ArchVerse-Flatpak-Alpha22-Test1/app/electron/window-manager.cjs	2026-08-12 20:30:00.000000000 +0000
+@@ -119,6 +119,7 @@
+   captureActiveWindow() { this.focus.captureActiveWindow(); }
+   isStarCitizenActive() { return this.focus.isStarCitizenActive(); }
+   isStarCitizenDirectlyActive() { return this.focus.isStarCitizenDirectlyActive(); }
++  starCitizenProcessRunning() { return this.focus.starCitizenProcessRunning(); }
+   isOwnOverlayWindow(details) { return this.focus.isOwnOverlayWindow(details); }
+   activeWindowDetails() { return this.focus.activeWindowDetails(); }
+   pointerLocation() { return this.focus.pointerLocation(); }
+@@ -128,6 +129,7 @@
+     return point && nested ? { ...point, display: nested.display, sourceWidth: nested.width, sourceHeight: nested.height, gamePid: nested.gamePid } : null;
+   }
+   moveHostPointer(point) { return this.focus.moveHostPointer(point); }
++  replayHostMouseDown(button) { return this.focus.replayHostMouseDown(button); }
+   focusWindow(win) { this.focus.focus(win); }
+   restorePreviousWindow() { this.focus.restore(); }
+ 
