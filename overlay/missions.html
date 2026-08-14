@@ -1683,13 +1683,45 @@
      Deliberately a LETTER in a CSS circle, not an icon font or an emoji: "i" is plain ASCII, and
      this page bundles no emoji face, so anything fancier would be at the mercy of the OS font —
      the same thing that rendered o7 as a box. Sized in em so it rides the text it annotates. */
+  /* 🔑 A real <button>, not a <span tabindex="0"> (Sub, 2026-08-14: "I tried to click it, nothing
+     happened... it took me a second to realize I had to just hover"). It IS interactive now, so
+     the correct element is a button — which also brings Enter/Space activation for free and lets
+     `popovertarget` do the toggling with no event handler of ours to get stuck. `appearance:none`
+     + explicit background/padding because a button carries UA chrome a span never did. */
   .mi-info { display: inline-flex; align-items: center; justify-content: center; flex: none;
-    width: 1.15em; height: 1.15em; margin-left: 3px; border-radius: 50%;
+    width: 1.15em; height: 1.15em; margin-left: 3px; border-radius: 50%; padding: 0;
+    appearance: none; -webkit-appearance: none; background: transparent;
     border: 1px solid rgba(var(--accent-rgb), 0.45); color: var(--cyan-dim);
     font-family: var(--sans); font-size: 0.82em; font-weight: 700; font-style: italic;
     line-height: 1; cursor: help; vertical-align: 1px; user-select: none; }
   .mi-info:hover, .mi-info:focus { color: var(--cyan-bright); border-color: var(--cyan-bright);
     background: rgba(var(--accent-rgb), 0.16); outline: none; }
+  /* The click-opened copy of the same text.
+     🔴 THE NATIVE `title` TOOLTIP CANNOT BE OPENED BY SCRIPT — no browser exposes an API for it,
+     which is why clicking did nothing and only hover worked. So `title` STAYS (hover is unchanged
+     and this cannot regress it) and a popover carries the click case.
+     🔑 A POPOVER, not an absolutely-positioned div, for the one reason that matters here: it
+     renders in the TOP LAYER, so it is immune to every ancestor's overflow and it takes no space
+     in the layout — it cannot resize the panel or push a chip row around, which is exactly the
+     failure Sub predicted. Measured 2026-08-14: nothing between .mi-info and the root clips
+     today, but this stops that from ever becoming a constraint.
+     🔑 Anchored in pure CSS (`position-anchor` + `position-area`), so nothing is measured in JS.
+     rAF and ResizeObserver do not fire in a window the compositor considers hidden, and this
+     overlay is hidden constantly — two earlier measured popovers in this app failed on exactly
+     that. `position-try-fallbacks` flips it above near the bottom edge, again with no script.
+     🔑 `pointer-events:none` — display-only, the same contract as the scan-read box, so it never
+     needs to appear in the shell's RSEL hit-test list despite hanging outside the panel's rect.
+     Light-dismiss still works: with no pointer events of its own every click counts as "outside",
+     so any click anywhere closes it. */
+  .mi-tip { position: absolute; margin: 0; inset: auto; padding: 7px 9px; width: max-content;
+    max-width: 260px; border-radius: 8px; pointer-events: none;
+    position-area: bottom span-left; position-try-fallbacks: flip-block, flip-inline;
+    background: var(--panel-solid, #14181a); border: 1px solid rgba(var(--accent-rgb), 0.45);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    font-family: var(--sans); font-size: 11px; font-weight: 500; font-style: normal;
+    line-height: 1.45; letter-spacing: 0; text-transform: none; text-align: left;
+    color: var(--cyan-text, #cfe6ee); white-space: pre-line; overflow-wrap: anywhere; }
+  .mi-tip::backdrop { background: transparent; }
   /* Through to the mission's page on the site, where the full write-up lives. */
   /* A CHIP that happens to be a link (Sub, 2026-08-13) — it sits in the same row as everything
      else instead of hanging underneath as loose underlined text. It carries .mi-chip too, so it
@@ -2771,9 +2803,57 @@
   }
   // The conventional circled "i". A plain ASCII letter styled by CSS — this page bundles no emoji
   // face, so a ⓘ character would render at the mercy of the OS font, the same trap that turned o7
-  // into a box. `title` carries the explanation; it is what the rest of this page already uses.
-  const info = (title) => '<span class="mi-info" tabindex="0" role="img" aria-label="'
-    + escapeAttr(title) + '" title="' + escapeAttr(title) + '">i</span>';
+  // into a box.
+  //
+  // 🔑 IT ANSWERS A CLICK AS WELL AS A HOVER (Sub, 2026-08-14). `title` alone is hover-only and
+  // there is NO browser API to open one from script, so clicking genuinely did nothing and the
+  // affordance had to be discovered. Both now work and neither is a reimplementation of the
+  // other: `title` is untouched (so the hover path cannot regress) and a top-layer popover
+  // carries the click. Nothing is measured — `popovertarget` does the toggle, light-dismiss and
+  // Escape; CSS anchoring does the placement. See the .mi-tip rule for why both of those matter.
+  //
+  // ⚠️ The two must never be on screen together, so the title is pulled while the popover is open
+  // and put back on close — handled by the delegated `beforetoggle` listener below, once for the
+  // whole page rather than per element, since these are rebuilt by innerHTML on every render.
+  let infoSeq = 0;
+  const info = (title) => {
+    const id = "mi-tip-" + ++infoSeq, anchor = "--mi-a-" + infoSeq;
+    const t = escapeAttr(title);
+    return '<button type="button" class="mi-info" popovertarget="' + id + '"'
+      + ' style="anchor-name: ' + anchor + '" aria-label="Explain this" title="' + t + '"'
+      + ' data-tip="' + t + '">i</button>'
+      + '<span class="mi-tip" popover id="' + id + '" style="position-anchor: ' + anchor + '"></span>';
+  };
+  // Fill the popover on OPEN and empty it on close, and suppress the native tooltip while it is
+  // up so a hover-then-click never stacks the two. Title restored from `data-tip`, so nothing
+  // depends on the handler having seen the open — an element rebuilt by a re-render simply
+  // arrives with its title intact.
+  //
+  // 🔑 THE TEXT LIVES IN ONE PLACE (`data-tip`) AND IS COPIED IN ONLY WHILE SHOWN. Rendering it
+  // into the popover up front put the whole explanation inside the pill's `textContent` — and
+  // `npm run test:widgets` caught it immediately: `...and NOT on the face of the pill` reads
+  // textContent, which does not care that a closed popover is display:none. The assertion was
+  // RIGHT and the honest fix was to stop duplicating the string, not to teach the test to ignore
+  // hidden nodes — an assertion narrowed to accommodate a change stops guarding what it was
+  // written for. It also keeps ~200 characters per icon out of the DOM on every render.
+  // 🔑 CAPTURE phase: `beforetoggle` does NOT bubble, so a normal delegated listener would never
+  // fire. Capture still reaches a non-bubbling event on its way down to the target, which is what
+  // makes ONE listener enough for icons that innerHTML replaces on every render — per-element
+  // handlers would have to be re-attached each time, and the ones that were missed would silently
+  // keep both tooltips.
+  document.addEventListener("beforetoggle", (e) => {
+    const tip = e.target;
+    if (!tip?.classList?.contains?.("mi-tip")) return;
+    const btn = document.querySelector('[popovertarget="' + CSS.escape(tip.id) + '"]');
+    if (!btn) return;
+    if (e.newState === "open") {
+      tip.textContent = btn.dataset.tip || "";
+      btn.removeAttribute("title");
+    } else {
+      tip.textContent = "";
+      if (btn.dataset.tip) btn.setAttribute("title", btn.dataset.tip);
+    }
+  }, true);
   // A 1–5 meter matching the site's mission pages. The rating is a MEAN, so the bar rounds while
   // the number beside it keeps the precision — a bar alone would turn 2.4 and 2.6 into the same
   // picture, and the whole point of the number is telling those apart.
