@@ -551,12 +551,33 @@ const SWEEPS = `(async () => {
   ok("every skin's trinket art resolves", missingArt.length === 0, [...new Set(missingArt)].slice(0, 6).join(" | "));
 
   // ── size sweep: both ends of every widget's clamp range ─────────────────────
+  // Resolves once the frame's own document reports it is embedded. Falls through after ~1.5s and
+  // measures anyway — a widget that NEVER embeds is a real failure worth surfacing, not a wait.
+  const embeddedReady = async (w) => {
+    if (w.local) return true;
+    for (let i = 0; i < 60; i++) {
+      try {
+        const fr = frameEl(w);
+        const d = fr && fr.contentDocument;
+        if (d && d.body && d.body.classList.contains("embedded")) return true;
+      } catch { /* cross-document timing */ }
+      await sleep(25);
+    }
+    return false;
+  };
   const sizeBad = [];
   for (const w of WIDGETS) {
     for (const [lbl, ww, hh] of [["min", w.size.minW, w.size.minH], ["max", w.size.maxW, w.size.maxH]]) {
       if (ww == null) continue;
       w.s.w = Math.min(ww, 1600); w.s.h = Math.min(hh, 1200); // keep it inside the test viewport
-      applyFrame(w); await sleep(20);
+      // 🔴 WAIT FOR THE PAGE TO BE EMBEDDED — a fixed sleep is a flake generator here. An embedded
+      // widget page only fills its frame once it has read ?embedded=1 and set body.embedded; until
+      // then webview and bindingwidget render at their STANDALONE fixed size (420x520 / 620x340),
+      // overflowing a min-size frame by exactly that difference. Measured mid-load, the check
+      // reports a failure that says nothing about the widget. It showed up as the LAST widgets in
+      // the registry failing together the moment missions.html grew — the tail of the sweep is
+      // where a fixed budget runs out first.
+      applyFrame(w); await embeddedReady(w); await sleep(20);
       if (!fits(w)) sizeBad.push(w.key + "@" + lbl + " " + JSON.stringify(innerFit(w)));
       const b = frameBox(w);
       if (b.width < 40 || b.height < 30) sizeBad.push(w.key + "@" + lbl + " collapsed to " + Math.round(b.width) + "x" + Math.round(b.height));
@@ -1168,11 +1189,20 @@ const MIDRAWERS = `(async () => {
   // The fixture paints during canvas init, which can land after this suite starts. Wait for the
   // drawers rather than assuming they are there — the alternative is a suite that fails as a
   // harness ERROR (reading .querySelectorAll of undefined) and says nothing about the feature.
-  for (let i = 0; i < 40 && pool.querySelectorAll(".mi").length < 2; i++) await sleep(50);
-  ok("both drawers rendered", pool.querySelectorAll(".mi").length === 2,
-     String(pool.querySelectorAll(".mi").length));
-  const chipsOf = (i) => [...pool.querySelectorAll(".mi")[i].querySelectorAll(".mi-chip")];
-  const label = (c) => (c.querySelector(".ck") ? c.querySelector(".ck").textContent : "");
+  // 🔑 ONE group is now the correct answer for a fixture with no standing bar. Rank and
+  // Reputation moved into the MAIN row (Sub's PILL_ORDER, 2026-08-14), so the faction group has
+  // nothing left to draw unless there is a standing bar — and it self-hides rather than render an
+  // empty heading. This used to wait for two and then index [1] blindly, which turned the change
+  // into a bare "reading .querySelectorAll of undefined" harness error naming no feature: exactly
+  // the failure mode the comment below was written to prevent, reintroduced by indexing.
+  for (let i = 0; i < 20 && pool.querySelectorAll(".mi").length < 1; i++) await sleep(50);
+  const groups = pool.querySelectorAll(".mi").length;
+  ok("the mission group rendered", groups >= 1, String(groups));
+  const chipsOf = (i) => {
+    const g = pool.querySelectorAll(".mi")[i];
+    return g ? [...g.querySelectorAll(".mi-chip")] : [];
+  };
+  const label = (c) => (c && c.querySelector(".ck") ? c.querySelector(".ck").textContent : "");
   const value = (c) => (c.querySelector(".cv") ? c.querySelector(".cv").textContent.replace(/\\s+/g, " ").trim() : c.textContent.trim());
 
   const mi = chipsOf(0);
@@ -1187,14 +1217,17 @@ const MIDRAWERS = `(async () => {
   const other = mi.find((c) => label(c) === "Other pools");
   ok("'Other pools' says what the number COUNTS", /only there/.test(value(other)), value(other));
 
-  const fac = chipsOf(1);
-  ok("the faction is a heading, not a chip repeating the drawer's own title",
-     document.querySelector(".mi-faction").textContent === "Headhunters" &&
-     !fac.some((c) => label(c) === "Faction"),
+  // 🔑 RE-POINTED: Rank and Reputation are MAIN-ROW pills now (PILL_ORDER, 2026-08-14), so they
+  // are found in group 0, not in a faction group. The faction still leads its own group when
+  // there is a standing bar to show, and is never repeated as a chip.
+  const fac = chipsOf(0);
+  const facHead = document.querySelector(".mi-faction");
+  ok("the faction is a heading, not a chip repeating the group's own title",
+     (!facHead || facHead.textContent === "Headhunters") && !fac.some((c) => label(c) === "Faction"),
      fac.map(label).join(","));
   // 🔑 The rank the giver wants, by NAME. The ladders are bundled; 93% of ranked missions resolve.
   const rank = fac.find((c) => label(c) === "Rank needed");
-  ok("the required rank is NAMED, not a bare index", value(rank) === "Contractor", value(rank));
+  ok("the required rank is NAMED, not a bare index", !!rank && value(rank) === "Contractor", rank && value(rank));
   // 🔴 The whole point. Two awards, same faction, DIFFERENT scopes — separate tracks, which is
   // why they do not add to 250. Rendered as bare numbers this read as a bug.
   const rep = fac.find((c) => label(c) === "Reputation");
@@ -2391,11 +2424,20 @@ const MISSIONINFO = `(async () => {
   ok("mission and faction details are still two groups",
      (full.match(/class="mi"/g) || []).length === 2, (full.match(/class="mi"/g) || []).length);
   ok("...with no collapsible header chrome left", full.indexOf("mi-head") < 0);
-  // Sub's order: reputation belongs under the faction it is with, not beside the contract.
+  // 🔑 RE-POINTED 2026-08-14, not deleted. These used to assert that Rank and Reputation lived in
+  // the FACTION group — true until Sub reordered the row and put both in the main row at
+  // positions 7 and 8. An assertion that outlives the design it describes has to be aimed at the
+  // new truth or dropped; leaving it red teaches people to ignore the suite, and deleting it
+  // leaves the move unguarded. So it now pins where they actually belong.
   const facHalf = full.slice(full.indexOf("mi-faction"));
-  ok("faction, rank and reputation are all in the FACTION group",
-     facHalf.indexOf("Headhunters") >= 0 && facHalf.indexOf("Rank needed") >= 0 && facHalf.indexOf("Reputation") >= 0);
-  ok("...and reputation comes after the faction's name", facHalf.indexOf("Reputation") > facHalf.indexOf("Headhunters"));
+  const missionHalfEarly = full.slice(0, full.indexOf("mi-faction"));
+  ok("rank and reputation ride the MAIN row, not the faction group",
+     missionHalfEarly.indexOf("Rank needed") >= 0 && missionHalfEarly.indexOf("Reputation") >= 0
+     && facHalf.indexOf("Rank needed") < 0,
+     "main=" + (missionHalfEarly.indexOf("Reputation") >= 0));
+  ok("...and reputation comes before the rank gate, per PILL_ORDER",
+     missionHalfEarly.indexOf("Reputation") < missionHalfEarly.indexOf("Rank needed"));
+  ok("...leaving the faction group its name and your standing", facHalf.indexOf("Headhunters") >= 0);
   const missionHalf = full.slice(0, full.indexOf("mi-faction"));
   ok("the contract's own details stay in the MISSION group",
      missionHalf.indexOf("Pick up") >= 0 && missionHalf.indexOf("Illegal") >= 0);

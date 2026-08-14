@@ -2867,6 +2867,15 @@
       + '<span class="amt">' + money(p.median) + '</span><span class="cur">' + escapeHtml(cur) + "</span>"
       + info(why) + "</div>";
   }
+  // 🔑 ARRAY-SHAPED WRAPPERS, KEPT ON PURPOSE. The pills became a keyed object so PILL_ORDER
+  // could address each one by name — but `factChips()` is a PUBLIC SHAPE the widget suite calls
+  // directly, and quietly turning an array into an object broke it with
+  // "factChips(...).map is not a function". A renderer's internal restructure must not change a
+  // contract something else depends on: the keyed builders got new names and these two keep the
+  // old ones, so the suite and any other caller see exactly what they always did.
+  const gameFactChips = (v) => Object.values(gameFactPills(v));
+  const factChips = (v) => Object.values(communityPills(v));
+
   // The conventional circled "i". A plain ASCII letter styled by CSS — this page bundles no emoji
   // face, so a ⓘ character would render at the mercy of the OS font, the same trap that turned o7
   // into a box.
@@ -3080,7 +3089,7 @@
   // offer time out and then waits for it to come back.
   // 🔑 Every chip self-hides. Coverage runs 46–77%, so a fixed set would print blanks on half the
   // catalogue — the same reason the payout row has always been conditional.
-  function gameFactChips(v) {
+  function gameFactPills(v) {
     const f = v && v.facts;
     const out = {};
     if (!f) return out;
@@ -3106,7 +3115,7 @@
     return out;
   }
 
-  function factChips(v) {
+  function communityPills(v) {
     const f = v.community && v.community.facts;
     const out = {};
     if (!f || !f.samples) return out;
@@ -3161,7 +3170,7 @@
       // They used to be pushed in construction order across four different places, so "move the
       // difficulty pill up" meant finding which block built it and re-threading the pushes. Now
       // the build order is irrelevant and the order is data.
-      const K = Object.assign({}, gameFactChips(v), factChips(v));
+      const K = Object.assign({}, gameFactPills(v), communityPills(v));
       if (v.illegal) K.illegal = chip("Illegal", "crime", "Criminal work — expect a CrimeStat for taking this.");
       if (type) K.type = chip(type);
 
