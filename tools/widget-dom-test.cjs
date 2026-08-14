@@ -1192,16 +1192,26 @@ const MIDRAWERS = `(async () => {
      document.querySelector(".mi-faction").textContent === "Headhunters" &&
      !fac.some((c) => label(c) === "Faction"),
      fac.map(label).join(","));
+  // ⚠️ MOVED 2026-08-14 (e300664). Rank, Reputation and Affinity used to live in the FACTION
+  // group; Sub's new row order puts every pill in the main row, leaving the faction group as a
+  // name plus a standing bar and NO chips at all. These three still looked in the faction group,
+  // where find() returned undefined and value() then threw on it — a HARNESS error, which aborts
+  // the whole run rather than failing one assertion, so every suite after this one silently
+  // stopped executing. Read from the mission row now, and read defensively so a chip that goes
+  // missing again FAILS here instead of taking the run down with it.
+  const val = (c) => (c ? value(c) : "(chip missing)");
   // 🔑 The rank the giver wants, by NAME. The ladders are bundled; 93% of ranked missions resolve.
-  const rank = fac.find((c) => label(c) === "Rank needed");
-  ok("the required rank is NAMED, not a bare index", value(rank) === "Contractor", value(rank));
+  const rank = mi.find((c) => label(c) === "Rank needed");
+  ok("the required rank is NAMED, not a bare index", val(rank) === "Contractor", val(rank));
   // 🔴 The whole point. Two awards, same faction, DIFFERENT scopes — separate tracks, which is
   // why they do not add to 250. Rendered as bare numbers this read as a bug.
-  const rep = fac.find((c) => label(c) === "Reputation");
-  const aff = fac.find((c) => label(c) === "Affinity");
-  ok("faction reputation is labelled as such", rep && /\\+200/.test(value(rep)), rep && value(rep));
+  const rep = mi.find((c) => label(c) === "Reputation");
+  const aff = mi.find((c) => label(c) === "Affinity");
+  ok("faction reputation is labelled as such", /\\+200/.test(val(rep)), val(rep));
   ok("...and AFFINITY is named rather than shown as a second mystery number",
-     aff && /\\+50/.test(value(aff)), aff && value(aff));
+     /\\+50/.test(val(aff)), val(aff));
+  ok("the faction group itself now carries no chips — just the name and your standing",
+     fac.length === 0, String(fac.length));
   return out;
 })()`;
 
@@ -2275,7 +2285,13 @@ const MISSIONINFO = `(async () => {
   // (No backticks in a suite body — this whole block is a template literal.)
   const payAll = (payout) => payBlock({ community: { payout } });
   const pay = (payout) => strip(payAll(payout));
-  const facts = (f) => factChips({ community: { facts: f } }).map(strip).join(" ");
+  // 🔑 factChips returns a KEYED OBJECT ({solo, combat}), not an array — changed in 967dd11 so the
+  // panel can order its rows from data rather than from chip-construction order. This helper was
+  // left calling .map() on it, which threw "factChips(...).map is not a function" and took the
+  // WHOLE RUN down: a harness error is not a failed assertion, so test:widgets reported one
+  // failure and never executed the suites after it. Object.values keeps what these assertions
+  // actually want — every chip, joined — and is insensitive to further key changes.
+  const facts = (f) => Object.values(factChips({ community: { facts: f } })).map(strip).join(" ");
 
   // ── the three payout tiers ───────────────────────────────────────────────
   // 🔴 REGRESSION GUARD, 2026-08-14. The dataset gained a MODELLED payout for the ~2,045
@@ -2432,11 +2448,20 @@ const MISSIONINFO = `(async () => {
   ok("mission and faction details are still two groups",
      (full.match(/class="mi"/g) || []).length === 2, (full.match(/class="mi"/g) || []).length);
   ok("...with no collapsible header chrome left", full.indexOf("mi-head") < 0);
-  // Sub's order: reputation belongs under the faction it is with, not beside the contract.
+  // ⚠️ REVERSED 2026-08-14 (e300664), and deliberately so. The 2026-08-12 ruling put rank and
+  // reputation UNDER the faction; Sub then picked a new row order off a drag-list and applied it
+  // verbatim, which moves Reputation and Rank OUT of the faction group and into the main pill row.
+  // The faction group now carries the faction NAME and your STANDING BAR only. These two
+  // assertions still encoded the old ruling, so they failed against correct code — pinning the
+  // new structure instead, since "which group owns reputation" is exactly the kind of thing that
+  // should not be able to drift back silently.
   const facHalf = full.slice(full.indexOf("mi-faction"));
-  ok("faction, rank and reputation are all in the FACTION group",
-     facHalf.indexOf("Headhunters") >= 0 && facHalf.indexOf("Rank needed") >= 0 && facHalf.indexOf("Reputation") >= 0);
-  ok("...and reputation comes after the faction's name", facHalf.indexOf("Reputation") > facHalf.indexOf("Headhunters"));
+  ok("the faction group is now the faction's NAME and STANDING only",
+     facHalf.indexOf("Headhunters") >= 0 && facHalf.indexOf("Standing") >= 0
+     && facHalf.indexOf("Rank needed") < 0 && facHalf.indexOf("Reputation") < 0, facHalf.length);
+  ok("...and rank + reputation moved into the main pill row",
+     full.indexOf("Reputation") >= 0 && full.indexOf("Rank needed") >= 0
+     && full.indexOf("Reputation") < full.indexOf("mi-faction"));
   const missionHalf = full.slice(0, full.indexOf("mi-faction"));
   ok("the contract's own details stay in the MISSION group",
      missionHalf.indexOf("Pick up") >= 0 && missionHalf.indexOf("Illegal") >= 0);
