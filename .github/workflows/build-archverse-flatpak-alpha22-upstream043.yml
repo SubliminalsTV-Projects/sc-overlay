@@ -65,7 +65,6 @@ jobs:
             --strip-components=2 --wildcards '*/app/electron/*'
           test -f /tmp/archverse-a20/electron/capture.cjs
           cp -a /tmp/archverse-a20/electron /tmp/archverse-stage/app/
-
           patch --batch /tmp/archverse-stage/app/electron/capture.cjs < archverse-flatpak/patches/electron/capture.patch
           patch --batch /tmp/archverse-stage/app/electron/linux/focus-controller.cjs < archverse-flatpak/patches/electron/focus-controller.patch
           patch --batch /tmp/archverse-stage/app/electron/main.cjs < archverse-flatpak/patches/electron/main.patch
@@ -81,12 +80,12 @@ jobs:
             /tmp/archverse-stage/app/electron/capture.cjs \
             /tmp/archverse-stage/app/electron/main.cjs
 
-      - name: Apply Alpha 22 sidecar safety deltas
+      - name: Apply and converge Alpha 22 sidecar safety deltas
         run: |
           set -euxo pipefail
           patch --batch build/server/overlay/config.html < archverse-flatpak/patches/server/config.html.patch
           patch --batch build/server/overlay/mining.html < archverse-flatpak/patches/server/mining.html.patch
-          patch --batch build/server/overlay/missions.html < archverse-flatpak/patches/server/missions.html.patch
+          node archverse-flatpak/tools/converge-missions-043.cjs build/server/overlay/missions.html
           patch --batch build/server/server.mjs < archverse-flatpak/patches/server/server.mjs.patch
           cp archverse-flatpak/files/overlay/archverse-resource-scanner.js build/server/overlay/
           cp archverse-flatpak/files/overlay/archverse-widget-appearance.js build/server/overlay/
@@ -128,9 +127,15 @@ jobs:
           grep -Fq 'reportLinuxRapidFailure' app/electron/capture.cjs
           grep -Fq 'drag lock held 30s' app/electron/main.cjs
 
-          # The radar detector may still exist for A/B telemetry, but it must not be a mining gate.
+          # Radar remains diagnostic only; it cannot gate RapidOCR or signature lock.
           ! grep -E 'if \([^\n]*archScanModeRead\.active[^\n]*rapidOcr' app/electron/capture.cjs
           ! grep -E 'if \([^\n]*detectScanModeRadarIcon[^\n]*rapidOcr' app/electron/capture.cjs
+
+          # Preserve Linux semantic hit testing while retaining upstream 0.1.43 contract-board chrome.
+          grep -Fq 'ARCHVERSE_043_REGION_CLASSIFIER' app/server/overlay/missions.html
+          grep -Fq 'window.__overlayClassifyPoint = classifyOverlayPoint;' app/server/overlay/missions.html
+          grep -Fq 'body.boardbox #boardBox' app/server/overlay/missions.html
+          ! grep -Fq 'setInterval(reportRegions, 100);' app/server/overlay/missions.html
 
           grep -q 'salvageConfirmed === true' app/server/overlay/mining.html
           grep -q 'salvageConfirmed === true' app/server/overlay/archverse-resource-scanner.js
@@ -193,6 +198,7 @@ jobs:
             test ! -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_tensorrt.so
             grep -Fq ARCHVERSE_043_MINING_GATE /app/archverse/app/electron/capture.cjs
             grep -Fq "drag lock held 30s" /app/archverse/app/electron/main.cjs
+            grep -Fq ARCHVERSE_043_REGION_CLASSIFIER /app/archverse/app/server/overlay/missions.html
             cd /app/archverse/app
             /app/bin/archverse-node -e "Promise.all([import('@gutenye/ocr-node'),import('@gutenye/ocr-models/node')]).then(async ([o,m])=>{const fs=require('fs'); const models=m.default; for (const p of [models.detectionPath,models.recognitionPath,models.dictionaryPath]) { if (!fs.existsSync(p)) throw new Error('missing OCR model '+p); } const engine=await o.default.create({models}); if (!engine) throw new Error('RapidOCR engine did not initialize'); console.log('RapidOCR Flatpak startup OK'); }).catch(e=>{console.error(e);process.exit(1)})"
           '
