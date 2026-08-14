@@ -356,7 +356,9 @@
   #panel > .brandtab, #panel > .corner, #panel > .stitch,
   #panel > .tape, #panel > .bolt { opacity: var(--wsurf, 1); }
   #panel > .whood, #panel > #moveBanner, #panel > #resizeHandle { opacity: 1; }
-  #panel.empty .pool, #panel.empty .catbar, #panel.empty .head .progress { display: none; }
+  /* `.progress` is no longer inside .head — the selector moved with it, or the empty state would
+     show "0/0 owned" under "No mission tracked". */
+  #panel.empty .pool, #panel.empty .catbar, #panel.empty .progress { display: none; }
 
   /* AMD compatibility "lite" skin (added on <html> via ?lite): strip everything that forces
      continuous GPU recompositing over the game's Vulkan surface — backdrop blur, the blend-mode
@@ -393,6 +395,23 @@
   html.amd-lite #panel.canvas { transform: none !important; }
   /* The pool is what grows and scrolls; header and footer stay put. */
   #panel.canvas .pool { flex: 1 1 auto; min-height: 0; overflow: auto; } /* keep scale, drop tilt/blur */
+  /* 🔑 THE FOOTER IS PINNED TO THE BOTTOM, and not by relying on the pool to push it there.
+     `.pool` growing was the only thing holding it down — so in every state that HIDES the pool
+     (`#panel.empty .pool { display: none }`: no mission tracked, a mission with nothing to show)
+     nothing grew, and the footer rode up under the message with the rest of the widget empty
+     beneath it. Measured on a 900px panel: 708px of dead space below "Total collected".
+     `margin-top: auto` on the last flex child pins it whatever is or isn't above — which also
+     covers the grouped/stacked case, where the box is sized by its tallest member rather than by
+     this widget's own content (Sub, 2026-08-13). */
+  #panel.canvas .foot { margin-top: auto; }
+  /* The "waiting for Star Citizen" bar belongs to that bottom group too (Sub, 2026-08-13). It sits
+     ABOVE the footer, so with the slack taken by `.foot` it floated up on its own and left a gap
+     between the two. Whichever of the pair is topmost has to be the one that claims the space:
+     when the bar is up it takes it, and the footer stands down so they cannot split it between
+     them and re-open the gap. `:has()` is supported here — verified in this Electron (Chrome 148)
+     rather than assumed. */
+  #panel.canvas #ocrBar.show { margin-top: auto; }
+  #panel.canvas:has(#ocrBar.show) .foot { margin-top: 0; }
   /* In canvas mode the window is fixed full-screen, so OS window-drag regions do nothing —
      dragging is done in JS during arrange mode. Neutralize the app-region drag handles. */
   #panel.canvas .head { -webkit-app-region: no-drag; cursor: default; }
@@ -678,16 +697,21 @@
      swallow clicks meant for the game. */
   /* It is also a CONTROL: drag it, or its corner, and that becomes the region the app reads.
      Interactive only while it's shown — this is a calibration mode, not permanent furniture. */
-  #scanBox { display: none; position: fixed; z-index: 12; pointer-events: none;
+  /* 🔑 Shared with #boardBox, the contract scanner's calibration box. Both are the same object —
+     a dashed rectangle you drag to tell the app where to read — so they are one set of rules with
+     one set of part classes, and a fix to the drag affordance lands on both. What differs is only
+     WHICH rule decides they are on screen. */
+  #scanBox, #boardBox { display: none; position: fixed; z-index: 12; pointer-events: none;
     border: 1px dashed rgba(var(--accent-rgb), 0.55); border-radius: 4px;
     background: rgba(var(--accent-rgb), 0.05); }
   body.scanbox #scanBox { display: block; pointer-events: auto; cursor: move; }
+  body.boardbox #boardBox { display: block; pointer-events: auto; cursor: move; }
   /* Also inside: a label above the edge is fine (it can't be clicked), but it gets clipped off
      screen when the box is dragged to the top, and it looked detached from what it names. */
-  #scanBox .sb-tag { position: absolute; left: 5px; top: 5px; font-family: var(--sans);
+  #scanBox .sb-tag, #boardBox .sb-tag { position: absolute; left: 5px; top: 5px; font-family: var(--sans);
     font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     color: var(--cyan-dim); white-space: nowrap; pointer-events: none; }
-  #scanBox .sb-grip { position: absolute; right: -1px; bottom: -1px; width: 16px; height: 16px;
+  #scanBox .sb-grip, #boardBox .sb-grip { position: absolute; right: -1px; bottom: -1px; width: 16px; height: 16px;
     cursor: nwse-resize; border-right: 2px solid rgba(var(--accent-rgb), 0.8);
     border-bottom: 2px solid rgba(var(--accent-rgb), 0.8); border-bottom-right-radius: 4px; }
   /* INSIDE the box on purpose. It used to sit above the top edge, outside the box's own rect —
@@ -695,20 +719,20 @@
      nothing the shell knew about: the window flipped back to click-through and the click went to
      the game. It read as the button "flashing" and being impossible to hit. Same trap as widget
      chrome that hangs outside its widget. */
-  #scanBox .sb-reset { position: absolute; right: 4px; top: 4px; font-family: var(--sans);
+  #scanBox .sb-reset, #boardBox .sb-reset { position: absolute; right: 4px; top: 4px; font-family: var(--sans);
     font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--cyan-dim);
     cursor: pointer; padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px;
     background: rgba(8, 17, 26, 0.85); }
-  #scanBox .sb-reset:hover { color: var(--cyan-bright); }
+  #scanBox .sb-reset:hover, #boardBox .sb-reset:hover { color: var(--cyan-bright); }
   /* Hide sits beside Reset, INSIDE the box — the shell hit-tests #scanBox's own rect, so a
      control outside it is visible and permanently unclickable (exactly what stranded Reset when
      it sat 19px above the top edge). `right` is offset past Reset's width rather than using a
      flex row, so neither control moves if the other's label changes. */
-  #scanBox .sb-hide { position: absolute; right: 52px; top: 4px; font-family: var(--sans);
+  #scanBox .sb-hide, #boardBox .sb-hide { position: absolute; right: 52px; top: 4px; font-family: var(--sans);
     font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--cyan-dim);
     cursor: pointer; padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px;
     background: rgba(8, 17, 26, 0.85); }
-  #scanBox .sb-hide:hover { color: var(--cyan-bright); }
+  #scanBox .sb-hide:hover, #boardBox .sb-hide:hover { color: var(--cyan-bright); }
   /* User-set visibility for the whole box (Mining Scanner cog → Box opacity). 🔑 Hover always
      returns it to full: at a low setting the Hide/Reset controls and the drag grip would
      otherwise be as faint as the outline, i.e. a box you cannot see well enough to get rid of.
@@ -716,6 +740,31 @@
   #scanBox { opacity: var(--sb-op, 1); transition: opacity 0.12s ease; }
   body.scanbox.sb-dragging #scanBox, body.scanbox #scanBox:hover { opacity: 1; }
   body.scanbox.sb-dragging #scanBox { border-style: solid; background: rgba(var(--accent-rgb), 0.10); }
+  /* The board box gets its OWN dragging class rather than sharing `sb-dragging`: both boxes can be
+     on screen at once (someone scanning ore with the contract mode armed), and a body-level class
+     would light up the one nobody is touching. No opacity pref — the Mining Scanner's slider is
+     that widget's setting, and this box belongs to a mode with no widget to hang one off. */
+  body.boardbox.bb-dragging #boardBox { border-style: solid; background: rgba(var(--accent-rgb), 0.10); }
+  /* 🔴 THE BOX'S OWN WORDS WERE BEING SCANNED AS CONTRACTS. The overlay is always-on-top, so the
+     screen grab contains it composited over the game — and this box's label and buttons sit
+     INSIDE the very rectangle the scanner crops and OCRs. Sub's board came back carrying
+     "CONTRACT BOARD DRAG OVER THE OFFERS LIST Hide Reset" fused onto a real contract title, with
+     a payout attached (2026-08-13). The box was corrupting the data it exists to collect.
+     🔑 So the resting state carries NO TEXT — just the dashed rectangle, which OCR has nothing to
+     read. The label and controls appear on hover, which is exactly when you are calibrating and
+     not scanning, and the cursor is free then anyway because you are in mobiGlas. */
+  #boardBox .sb-tag, #boardBox .sb-hide, #boardBox .sb-reset { opacity: 0; transition: opacity .1s ease; }
+  #boardBox:hover .sb-tag, #boardBox:hover .sb-hide, #boardBox:hover .sb-reset,
+  body.bb-dragging #boardBox .sb-tag { opacity: 1; }
+  /* Shown only when the game is definitely on another monitor. The box is drawn over the primary
+     display — the canvas is told nothing about any other — so this is the difference between a
+     region that reads the board and one that reads whatever happens to be at those fractions of
+     the wrong screen. Sits BELOW the box: the board fills the box, and this must not cover it. */
+  #boardBox .bb-warn { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 6px);
+    font-family: var(--sans); font-size: 11px; line-height: 1.4; color: var(--gold, #ffd27a);
+    background: rgba(8, 17, 26, 0.9); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 8px; pointer-events: none; }
+  #boardBox.off-primary .bb-warn { display: block; }
   /* The last number the OCR read — just the number, centered, JUST BELOW the box (Sub, 2026-07-29:
      outside it, centered, and without the labels the first version carried). Below rather than
      inside because the middle of the box is where the real signature sits, and this is meant to be
@@ -786,6 +835,10 @@
     line-height: 1; color: var(--cyan-dim); cursor: pointer; padding: 3px 7px;
     border: 1px solid var(--border); border-radius: 5px; background: rgba(8, 17, 26, 0.85); }
   #payoutPanel .pp-x:hover { color: var(--cyan-bright); border-color: var(--cyan); }
+  /* Only appears when stopping the scan failed — a dead-looking ✕ is worse than an error. */
+  #payoutPanel .pp-hint { display: none; flex: none; margin: 0 8px 6px; padding: 5px 8px;
+    font-family: var(--sans); font-size: 11px; line-height: 1.4; color: var(--gold);
+    border: 1px solid var(--border); border-radius: 5px; background: rgba(8, 17, 26, 0.9); }
   #payoutPanel iframe { flex: 1; width: 100%; border: 0; display: block; background: #0d0e0f; }
   /* Same corner-grip idiom as the scan box, and INSIDE the panel's own rect for the same
      reason: the shell hit-tests the rects this page reports, so a control hanging outside one
@@ -864,10 +917,15 @@
   .movebox { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 4px;
     border: 1px solid var(--cyan); background: rgba(8, 17, 26, 0.92); color: var(--cyan-text);
     font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-  #moveDone { -webkit-app-region: no-drag; cursor: pointer; font-family: var(--sans); font-size: 11px; font-weight: 700;
+  /* 🔴 `.wdone` was NEVER STYLED. Only the #moveDone ID was, and that banner belongs to the
+     tracker panel — every OTHER widget's move banner uses the class, so its Done button fell back
+     to the browser default: a pale system button dropped onto a dark overlay, effectively
+     unreadable. Reported by Sub 2026-08-13 ("white text with white background"), and it had been
+     there as long as per-widget move mode has. The ID and the class now share one rule. */
+  #moveDone, .wdone { -webkit-app-region: no-drag; cursor: pointer; font-family: var(--sans); font-size: 11px; font-weight: 700;
     letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 12px; border-radius: 3px;
     border: 1px solid var(--cyan); background: rgba(var(--accent-rgb), 0.15); color: var(--cyan); }
-  #moveDone:hover { background: rgba(var(--accent-rgb), 0.3); }
+  #moveDone:hover, .wdone:hover { background: rgba(var(--accent-rgb), 0.3); }
 
   /* #grip / #cog / #bpClose used to be absolutely-positioned chrome in the panel's top-right.
      They're ordinary .wh-btn's in the bottom bar now (see "Widget chrome"), so they need no
@@ -935,7 +993,7 @@
     background: var(--strip); opacity: 0.7; }
   /* RSI strut = a real in-game canopy-strut image (their running "struts block the glass" gag) —
      pending Sub's screenshot; added as an image element then, not a CSS divider. */
-  #missionPick, .progress { -webkit-app-region: no-drag; }
+  #missionPick, .tstack { -webkit-app-region: no-drag; }
 
   .eyebrow { position: relative; display: flex; align-items: center; gap: 9px; font-size: 10px; font-weight: 600;
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--cyan); }
@@ -982,21 +1040,65 @@
 
   /* Title + owned count share one row so the count sits beside the mission name
      instead of pinned top-right under the cog/grip buttons. */
-  .titlerow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 9px; }
+  /* Now a direct child of #panel rather than of .head, so it carries its own gutter — 20px lines
+     it up with the chips and the blueprint rows below (.pool's 11px + their own 9px) instead of
+     with the header's 17px, which would have been a visible half-step. */
+  .titlerow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    padding: 0 20px; margin: 6px 0 2px; }
+  /* Still the hero (Sub: "the first thing that they see... in that hero-sized font"). It is inside
+     a button now, so it needs its own truncation — a long contract name would otherwise push the
+     caret off the row and take the affordance with it. */
+  /* WRAPS, it does not truncate (Sub, 2026-08-13 — he pulled up a bounty whose name runs three
+     lines in the contract manager). An ellipsis hides the one thing this row exists to say, and
+     the widget is resizable: someone who wants it on one line can widen it, which they cannot do
+     about a name the panel has already cut. `overflow-wrap` is what stops a single unbroken token
+     from pushing the row wider than the panel. */
   .title { flex: 1; min-width: 0; font-size: 19px; font-weight: 600; line-height: 1.12; letter-spacing: 0.02em;
-    text-transform: uppercase; color: var(--title); text-shadow: 0 0 14px rgba(var(--accent-rgb), 0.35); }
+    text-transform: uppercase; color: var(--title); text-shadow: 0 0 14px rgba(var(--accent-rgb), 0.35);
+    overflow-wrap: anywhere; transition: color .12s ease; }
+  /* With a wrapping multi-line title, baseline alignment would drop the caret and the count to the
+     LAST line. Align them to the top so they stay beside the name's first line. */
+  .titlerow { align-items: flex-start; }
+  #missionBtn { align-items: flex-start; }
   .sub { margin-top: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--cyan-dim); }
 
-  #missionPick { display: none; position: relative; margin-top: 11px; }
-  #missionBtn { width: 100%; display: flex; align-items: center; gap: 8px; cursor: pointer;
-    font-family: var(--sans); font-size: 12.5px; font-weight: 500; text-align: left;
-    background: rgba(var(--accent-rgb), 0.08); color: var(--cyan-text);
-    border: 1px solid var(--border); border-radius: 3px; padding: 7px 10px; }
-  #missionBtn:hover { background: rgba(var(--accent-rgb), 0.16); border-color: var(--cyan); }
-  #missionBtnLabel { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #missionBtn .caret { color: var(--cyan); font-size: 12px; }
-  #missionMenu { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
+  /* The picker is the title now. It has to look like a heading first and a control second: no
+     button chrome at rest, the caret and a hover tint doing the work of saying "click me". */
+  #missionPick { position: relative; flex: 1; min-width: 0; }
+  #missionBtn { display: flex; align-items: baseline; gap: 7px; width: 100%; cursor: pointer;
+    background: none; border: 0; padding: 2px 4px; margin: 0 0 0 -4px; border-radius: 4px;
+    text-align: left; color: inherit; font: inherit; }
+  #missionBtn:hover { background: rgba(var(--accent-rgb), 0.12); }
+  #missionBtn:hover .title, #missionBtn:focus-visible .title { color: var(--cyan-bright); }
+  #missionBtn:focus-visible { outline: 1px solid var(--cyan); }
+  /* The affordance. Sized to the heading and dimmed, so it reads as a control attached to the
+     title rather than punctuation inside it.
+     🔑 The glyph is U+25BC (BLACK DOWN-POINTING TRIANGLE), NOT U+25BE (the "small" one). This
+     was U+25BE at 12px and Sub couldn't see it — measured, its painted ink was **6x3 pixels**,
+     a three-pixel sliver beside a 19px title. Scaling U+25BE does not rescue it: the font draws
+     it minute whatever you ask for (20px -> 8x7 ink, still smaller than U+25BC at 10px). So the
+     fix is the CHARACTER, and the size then comes DOWN — 11px of U+25BC is ~9x8 of real ink,
+     three times the height of what it replaced. Measure the ink, not the font-size. */
+  #missionBtn .tcaret { flex: none; font-size: 11px; color: var(--cyan); opacity: 0.85; }
+  #missionBtn:hover .tcaret { opacity: 1; }
+  /* Nothing to choose from — the title stays, the affordance goes, so it can't invite a click
+     that opens an empty menu. */
+  #missionPick.nopick #missionBtn { cursor: default; background: none; }
+  #missionPick.nopick .tcaret { display: none; }
+  #missionPick.nopick #missionBtn:hover .title { color: var(--title); }
+  /* "auto" — a footnote, not a label. Never in front of the name (Sub was explicit), and since
+     2026-08-13 not beside it either: it sits UNDER the owned count, so the whole right-hand column
+     is "how this mission is being tracked and how far through it you are" and the name keeps the
+     full width it needs to wrap into. The count can be hidden (no pool) while tracking is still
+     automatic, which is why the tag hangs off .tstack rather than off .progress itself. */
+  .tstack { flex: none; align-self: flex-start; display: flex; flex-direction: column;
+    align-items: flex-end; gap: 4px; }
+  .autotag { flex: none; display: none; font-family: var(--sans); font-size: 8.5px;
+    font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cyan-dim);
+    border: 1px solid var(--divider); border-radius: 3px; padding: 1px 5px; }
+  .titlerow.is-auto .autotag { display: inline-block; }
+  #missionMenu { display: none; position: absolute; left: 0; min-width: 260px; max-width: 420px; top: calc(100% + 4px); z-index: 30;
     background: var(--menu-bg); border: 1px solid var(--border); border-radius: 3px;
     max-height: 240px; overflow-y: auto; box-shadow: 0 14px 36px rgba(0, 0, 0, 0.6); }
   #missionMenu.open { display: block; }
@@ -1006,7 +1108,9 @@
   #missionMenu .opt:hover { background: rgba(var(--accent-rgb), 0.14); }
   #missionMenu .opt.active { color: var(--cyan-bright); font-weight: 600; }
 
-  .progress { flex: none; text-align: right; align-self: center; }
+  /* flex-start, not center: the title wraps now, and centring against a three-line name floated
+     the count in the middle of it instead of beside the first line. */
+  .progress { flex: none; text-align: right; }
   .progress .frac { font-family: var(--mono); font-weight: 500; font-size: 18px; color: var(--gold);
     font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(var(--value-rgb), 0.35); }
   .progress .lbl { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
@@ -1016,6 +1120,10 @@
 
 
   .pool { padding: 9px 11px 11px; position: relative; z-index: 2; }
+  /* The idle panel is measured, not just stacked: the Latest list takes the height left over, so
+     the chain from the panel down to the list has to be flex the whole way. Scoped to `.idle` so
+     the tracked-mission pool — a plain scrolling list of rows — keeps its block layout. */
+  .pool.idle { display: flex; flex-direction: column; }
   .row { display: flex; align-items: center; gap: 10px; padding: 7px 9px; margin-top: 3px; border-radius: 3px;
     background: rgba(255, 255, 255, 0.02); cursor: pointer; user-select: none; transition: background .15s; }
   .row:hover { background: rgba(var(--accent-rgb), 0.07); }
@@ -1115,18 +1223,52 @@
     color: var(--gold); border: 1px solid rgba(var(--value-rgb), 0.35); background: rgba(var(--value-rgb), 0.08); }
   .rewnote { margin-top: 7px; padding: 0 3px; font-size: 10.5px; color: var(--faint); }
 
-  /* Idle per-hour rates (aUEC + rep): last rolling 60 min (actual) + extrapolated session pace. */
-  .rates { margin-bottom: 13px; }
-  .rt-sub { color: var(--faint); font-weight: 500; letter-spacing: 0.04em; text-transform: none; }
-  .rt-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 5px 14px; margin-top: 7px; align-items: baseline; }
-  .rt-col { font-family: var(--sans); font-size: 8px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); text-align: right; }
-  .rt-row { font-family: var(--sans); font-size: 11px; color: var(--cyan-text); }
-  .rt-v { font-family: var(--mono); font-size: 13px; color: var(--gold); text-align: right; white-space: nowrap; }
-  .rt-v.rt-pace { color: var(--cyan-text); font-size: 12px; opacity: 0.8; }
+  /* Idle per-hour rates. The .rates / .rt-grid table these used to live in was folded into the
+     session stat rows on 2026-08-13; only the "no data" mark survived it. */
   .rt-na { color: var(--faint); }
 
   /* Idle recent-activity: last completed missions + received blueprints (with times). */
-  .recent { display: flex; flex-direction: column; gap: 11px; padding: 2px 1px; position: relative; z-index: 2; }
+  .recent { display: flex; flex-direction: column; gap: 11px; padding: 2px 1px; position: relative; z-index: 2;
+    /* The idle panel fills the widget: the Latest list takes whatever height is left, and how
+       many rows that is decides what fitLatest() renders. min-height:0 is what lets a flex child
+       shrink below its content at all. */
+    flex: 1; min-height: 0; }
+  /* Closest to done — the "what should I go do" half. */
+  .cp { margin-bottom: 7px; }
+  .cp:last-child { margin-bottom: 0; }
+  .cp-r { display: flex; align-items: baseline; gap: 7px; }
+  .cp-n { flex: 1; font-size: 12px; color: var(--cyan-bright); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .cp-c { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+  .cp-l { font-family: var(--sans); font-size: 10.5px; font-weight: 700; color: var(--gold); }
+  .cp-bar { height: 4px; border-radius: 2px; background: rgba(var(--accent-rgb), 0.16);
+    overflow: hidden; margin-top: 3px; }
+  .cp-bar i { display: block; height: 100%; background: var(--cyan); }
+  .cp-w { font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+  /* The rule between the two halves — they answer different questions. */
+  .ra-rule { border-top: 1px solid var(--border); margin: 1px 0; }
+  /* Session totals. */
+  /* 🔑 A three-column GRID, not a flex row: the rates row underneath has only two entries, and
+     flex would stretch them to half-width each so the two rows' columns wouldn't line up. The
+     whole point of folding them together is that they read as one grid. */
+  .ss { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .ss > div { min-width: 0; }
+  /* The rates row, under the totals and in the same shape. Slightly quieter and slightly smaller:
+     it is the derived figure, and giving it equal weight to the totals made the block read as six
+     headline numbers with no hierarchy. Two items in a three-column flex would stretch, so the
+     last cell is left empty by the flex basis rather than by a spacer element. */
+  .ss.ss-rates { margin-top: 8px; }
+  .ss.ss-rates .ss-n { font-size: 14px; }
+  .ss-n { font-family: var(--mono); font-size: 17px; line-height: 1.15; color: var(--cyan-bright); }
+  .ss-n.gold { color: var(--gold); }
+  .ss-n.green { color: var(--green, #7fd6a8); }
+  .ss-l { font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--faint); margin-top: 1px; }
+  /* Latest fills the remainder and CLIPS — never renders empty, see fitLatest(). The min-height
+     is the floor made structural: one row survives even at the widget's smallest size. */
+  .ra-latest-sec { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .ra-latest { flex: 1; min-height: 22px; overflow: hidden; }
+  .ra-more { font-size: 10px; color: var(--faint); padding-top: 2px; }
   .ra-h { font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.18em;
     text-transform: uppercase; color: var(--cyan-dim); margin: 0 0 5px; padding-bottom: 3px;
     border-bottom: 1px solid var(--border); }
@@ -1433,42 +1575,70 @@
   /* Collapsible "Mission Info" drawer: faction/giver, mission type, reputation.
      Collapsed by default on a pooled mission (tap the header to expand); forced open
      when the mission has no blueprint pool so there's still something on screen. */
-  .mi { margin: 0 0 7px; }
-  .mi-head { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer;
-    font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan-dim);
-    border: 1px solid var(--divider); border-radius: 3px; background: rgba(var(--accent-rgb), 0.04);
-    user-select: none; transition: background .12s, border-color .12s; }
-  .mi-head:hover { background: rgba(var(--accent-rgb), 0.1); border-color: var(--cyan); color: var(--cyan-text); }
-  .mi-head.static { cursor: default; }
-  .mi-head.static:hover { background: rgba(var(--accent-rgb), 0.04); border-color: var(--divider); color: var(--cyan-dim); }
-  .mi-head .car { color: var(--cyan); font-size: 9px; }
-  .mi-body { padding: 8px 9px 4px; }
+  /* ⚠️ The seam between the two groups stacked FOUR paddings — this margin, the first group's
+     body padding-bottom, the second's padding-top, and the pay block's own margin — which is the
+     canyon above the faction name Sub was looking at (2026-08-13). These were sized when each
+     group wore a drawer header that visually justified the gap; without headers they just read as
+     a hole. Tightened at the seam only, so nothing inside a group moves. */
+  .mi { margin: 0 0 3px; }
+  .mi + .mi .mi-body { padding-top: 2px; }
+  /* (.mi-head — the collapsible drawer headers — removed 2026-08-13 with the drawers.) */
+  .mi-body { padding: 6px 9px 2px; }
   /* 🔑 CHIPS, NOT ROWS, for anything self-describing (Sub, 2026-08-12: "if the options are
      soloable and not soloable, just put soloable"). A label/value row spends a whole line and
      ~72px of gutter on a word that explains itself, and a stack of them was mostly empty space.
      Chips wrap, so six facts cost one or two lines instead of six. */
-  .mi-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; }
-  .mi-chip { font-family: var(--sans); font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em;
+  .mi-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 8px; }
+  /* 🔑 A SIZE UP from the old chip row, and no smaller than the label/value rows these replaced
+     (Sub, 2026-08-13: "I think you have enough room to actually make the chips a little bigger",
+     and explicitly not by shrinking any text). Sentence case, not the old uppercase tracking —
+     these now carry real values, and "Rank needed CONTRACTOR" reads as shouting. */
+  .mi-chip { font-family: var(--sans); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em;
     color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.10);
-    border: 1px solid var(--divider); border-radius: 3px; padding: 2px 6px; white-space: nowrap; }
+    border: 1px solid var(--divider); border-radius: 5px; padding: 3px 8px; white-space: nowrap;
+    display: inline-flex; align-items: baseline; gap: 5px; }
+  /* The label half of a labelled chip. Quieter than its value, so a row of chips still scans as
+     values with captions rather than as a wall of equal-weight text. */
+  .mi-chip .ck { font-size: 10.5px; font-weight: 600; color: var(--faint); }
+  .mi-chip .cv { color: var(--cyan-bright); }
+  .mi-chip .cv.pos { color: var(--green, #7fd6a8); }
+  .mi-chip .cv.neg { color: var(--gold); }
+  /* Chips wrap rather than truncate — the one thing the aligned grid could not do, and the reason
+     a narrow widget now keeps every fact instead of dropping some (Sub was explicit about that). */
+  /* The faction's name, promoted out of a chip: the drawer is already titled "Faction Info", so a
+     "Faction: X" row was spending a line on a word already on screen. */
+  .mi-faction { font-family: var(--sans); font-size: 13.5px; color: var(--cyan-bright);
+    margin: 0 0 7px; }
   .mi-chip.crime { color: #ffd7d7; background: rgba(255, 90, 90, 0.22); border-color: rgba(255, 120, 120, 0.5); }
   .mi-chip.said { background: transparent; border-style: dashed; color: var(--cyan-dim); }
   /* The headline number. It is what Sub asked for and the one figure worth reading at a glance,
      so it gets size rather than a row of its own competing with the labels below. */
-  .mi-pay { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; margin: 0 0 7px; }
-  .mi-pay .amt { font-family: var(--mono); font-size: 19px; font-weight: 500; color: var(--gold);
-    font-variant-numeric: tabular-nums; line-height: 1.05; }
-  .mi-pay .cur { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: var(--gold); opacity: 0.75; }
+  /* The payout is a PILL now (Sub, 2026-08-13), in the skin's value accent so it reads as the
+     headline figure without a 19px number and a caption claiming two lines of their own — that
+     stack was the "wasted space above Headhunters" he was looking at.
+     🔑 Tinted background, accent border, and the text stays var(--gold) rather than going
+     white-on-gold: every manufacturer skin re-tints --value-rgb, and only the token knows what
+     is readable on it. The sample count moved into the info affordance. */
+  /* Sits IN the chip row, so it takes the chips' corner radius rather than a full pill — a 999px
+     capsule beside 5px chips read as a different species (Sub, 2026-08-13: "the same round
+     corners that are not so harsh"). Margin is zero: the row's own gap spaces it now. */
+  .mi-pay { display: inline-flex; align-items: baseline; gap: 5px; margin: 0;
+    padding: 3px 9px; border-radius: 5px; background: rgba(var(--value-rgb), 0.16);
+    border: 1px solid rgba(var(--value-rgb), 0.45); }
+  .mi-pay .amt { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--gold);
+    font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .mi-pay .cur { font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; color: var(--gold); opacity: 0.8; }
   /* A two-column grid, left-aligned. The old rows were a flex pair pushed to opposite edges,
      which on a 380px panel left a canyon between label and value. */
-  .mi-g { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; align-items: baseline; }
-  .mi-g .k { font-size: 9px; font-weight: 700; letter-spacing: 0.13em; text-transform: uppercase; color: var(--cyan-dim); }
-  .mi-g .v { font-size: 12.5px; color: var(--cyan-text); min-width: 0; }
-  .mi-g .v.pos { color: var(--gold); }
-  .mi-g .v.neg { color: var(--red); }
+  /* (.mi-g — the two-column label/value grid — was replaced by chips on 2026-08-13 and removed
+     with its last user, rather than left behind for the next reader to wonder about.) */
   /* Standing is a DIFFERENT KIND of fact — it is about you, not the contract — so it reads as
      its own group behind a rule rather than as one more row in the list. */
-  .mi-standing { margin-top: 9px; padding-top: 7px; border-top: 1px solid var(--divider); }
+  /* No rule above this. It used to separate a DIFFERENT kind of fact — your standing, versus the
+     contract's details — back when both lived in one drawer. Now that the faction has its own
+     group led by its name, the rule sat between two things that are both about that faction, and
+     read as a split where there isn't one (Sub, 2026-08-13). Spacing alone carries it. */
+  .mi-standing { margin-top: 7px; }
   /* Difficulty meter: filled segments take the accent, the rest stay neutral. Deliberately the
      same shape as the site's mission pages (Sub: "these rectangles with rounded corners"), so a
      rating means the same thing in both places. Not stars — his call. */
@@ -1494,10 +1664,11 @@
   .mi-info:hover, .mi-info:focus { color: var(--cyan-bright); border-color: var(--cyan-bright);
     background: rgba(var(--accent-rgb), 0.16); outline: none; }
   /* Through to the mission's page on the site, where the full write-up lives. */
-  .mi-link { display: inline-block; margin-top: 8px; font-family: var(--sans); font-size: 10px;
-    font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cyan);
-    text-decoration: none; border-bottom: 1px solid rgba(var(--accent-rgb), 0.4); padding-bottom: 1px; }
-  .mi-link:hover { color: var(--cyan-bright); border-bottom-color: var(--cyan-bright); }
+  /* A CHIP that happens to be a link (Sub, 2026-08-13) — it sits in the same row as everything
+     else instead of hanging underneath as loose underlined text. It carries .mi-chip too, so it
+     inherits that shape; these rules only add what makes it read as clickable. */
+  .mi-link { text-decoration: none; cursor: pointer; }
+  .mi-link:hover { border-color: var(--cyan); color: var(--cyan-bright); }
   .mi-row { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
   .mi-row .mi-k { min-width: 72px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--cyan-dim); }
@@ -1509,13 +1680,8 @@
     color: var(--cyan-dim); }
   /* "+2" after a truncated "Pick up at" list — dimmed so the place names stay dominant. */
   .mi-row .mi-more { font-size: 9px; font-weight: 700; color: var(--cyan-dim); }
-  .mi-sec { margin: 8px 0 2px; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
-    text-transform: uppercase; color: var(--cyan-dim); }
-  .mi-rep { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; }
-  .mi-rep .mi-fac { flex: 1; font-size: 12.5px; color: var(--cyan-text); }
-  .mi-rep .mi-amt { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
-  .mi-rep .mi-amt.pos { color: var(--gold); }
-  .mi-rep .mi-amt.neg { color: var(--red); }
+  /* (.mi-sec / .mi-rep / .mi-fac / .mi-amt — the labelled reputation block — removed 2026-08-13
+     with repRows(); each award is a chip named after its own scope now.) */
 
   /* Reputation progress bar — "how close am I to ranking up" for the tracked giver.
      A lower-bound estimate (max of the inferred-rank floor + witnessed post-4.8 gains). */
@@ -1554,6 +1720,15 @@
   /* Confirm-before-removing (prevents an accidental click un-owning a blueprint). */
   .row.confirming { background: rgba(255, 132, 120, 0.1); }
   .row .confirm { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  /* 🔴 THE "REMOVE" BUTTON WAS BEING PUSHED OFF THE ROW. `.name` is `flex: 1` with no
+     `min-width: 0`, so a long blueprint name refuses to shrink below its content and shoves
+     whatever follows past the right edge — where the pool's overflow clips it. The prompt then
+     showed "Mark not owned?" and "Keep" with no way to say yes, which is exactly what Sub hit:
+     a confirmation you cannot confirm. While confirming, the name truncates and the odds column
+     stands down, so both answers are always reachable. */
+  .row .confirm button { flex: none; }
+  .row.confirming .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row.confirming .chance { display: none; }
   .confirm .cf-q { font-size: 10.5px; color: var(--amber); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.06em; }
   .confirm button { font-family: var(--sans); font-size: 10.5px; font-weight: 600; cursor: pointer;
     padding: 3px 10px; border-radius: 3px; border: 1px solid var(--border); background: rgba(var(--accent-rgb), 0.08); color: var(--cyan-text); }
@@ -1606,16 +1781,38 @@
 
     <div class="head">
       <div class="eyebrow"><span class="dot" id="liveDot"></span> Active Mission<span id="liveTip">SubliminalsTV is <b>live</b>. Click if you want to hang out ↗</span></div>
-      <div class="titlerow">
-        <div class="title" id="title">No mission tracked</div>
-        <div class="progress"><span class="frac" id="frac">0/0</span><div class="lbl">owned</div></div>
-      </div>
       <div class="sub" id="sub"></div>
+      <!-- (#missionPick moved into .titlerow on 2026-08-13 — the mission's own name is the
+           control now, so the full-width dropdown that used to live here is gone.) -->
+      <div id="completed"></div>
+    </div>
+    <!-- 🔑 The mission's NAME and how much of its pool you own, on their own row directly above
+         the chips (Sub, 2026-08-13). They used to sit at the top of the header, three elements
+         away from the facts that qualify them — the eyebrow, the sub-line and the mission picker
+         all came between. Down here the title, its count, and the chips describing it read as one
+         block. Kept OUTSIDE #pool because that element's innerHTML is replaced on every render,
+         and these are long-lived nodes the renderer writes into by id. -->
+    <div class="titlerow">
+      <!-- 🔑 The TITLE is the picker (Sub, 2026-08-13). The dropdown was a full-width button under
+           the header that he "seldom used", spending a permanent row on a control almost nobody
+           touches — while the mission's name, the thing everyone reads first, sat above it saying
+           the same words. So the name IS the control. The caret and the hover state are what say
+           so; without them this would be an invisible affordance, which is worse than a button. -->
       <div id="missionPick">
-        <button id="missionBtn" type="button"><span id="missionBtnLabel">No mission tracked</span><span class="caret">▾</span></button>
+        <button id="missionBtn" type="button" title="Click to choose which mission to track">
+          <span class="title" id="title">No mission tracked</span><span class="tcaret">▼</span>
+        </button>
         <div id="missionMenu"></div>
       </div>
-      <div id="completed"></div>
+      <!-- The right-hand column: the owned count, and under it the "auto" footnote. The tag is a
+           SIBLING of .progress, not a child — the renderer hides .progress outright on a mission
+           with no blueprint pool, and how the mission was picked is still true there. -->
+      <div class="tstack">
+        <div class="progress"><span class="frac" id="frac">0/0</span><div class="lbl">owned</div></div>
+        <!-- Shown only while tracking is automatic. Quiet and last: it is a footnote about how this
+             mission was chosen, not part of what it is called. -->
+        <span class="autotag" id="autoTag" title="Tracking the newest mission with blueprints. Click the title to pin a specific one.">auto</span>
+      </div>
     </div>
     <div class="catbar" id="catbar"></div>
     <div class="pool" id="pool"></div>
@@ -1664,6 +1861,18 @@
     <span class="sb-grip" title="Drag to resize"></span>
   </div>
 
+  <!-- Where the contract scanner reads the mobiGlas offers board. Up whenever the scan mode is
+       armed, for the same reason the dashboard is: a screen-reader you cannot see the extent of
+       is one you cannot correct. Drag it over the board's rows — excluding the "MARK ALL READ"
+       header and the bottom nav, both of which push the amount column out of place. -->
+  <div id="boardBox">
+    <span class="sb-tag">Contract board · drag over the offers list</span>
+    <span class="sb-hide" id="bbHide" title="Hide this outline for the rest of the session. It comes back next time you start a scan.">Hide</span>
+    <span class="sb-reset" id="bbReset" title="Put the board area back to its default position and size">Reset</span>
+    <span class="bb-warn" id="bbWarn"></span>
+    <span class="sb-grip" title="Drag to resize"></span>
+  </div>
+
   <!-- The contract-board scan session's live dashboard. Up only while the mode is armed; the
        mode is the single source of truth for both, so the panel and the screen-reading can
        never disagree about whether a sweep is running. The iframe's src is set on show and
@@ -1673,6 +1882,8 @@
       <span class="pp-title">Contract payout scan · drag to move</span>
       <span class="pp-x" id="ppClose" title="End the scan session. Screen reading stops too — the panel and the scanner are the same switch.">✕</span>
     </div>
+    <!-- Only ever shown when stopping the scan did not take — see ppEndSession. -->
+    <div id="ppHint" class="pp-hint"></div>
     <iframe id="ppFrame" title="Contract payout scanner"></iframe>
     <span class="pp-grip" id="ppGrip" title="Drag to resize"></span>
   </div>
@@ -1848,14 +2059,7 @@
   let poolShowCollected = false;
   let physOpen = false; // Physical Rewards: reveal the ticked-off (Received) items to un-tick a misclick
   let poolKey = "";
-  // Whether the "Mission Info" drawer (faction/type/rep) is expanded. Open by default
-  // (still collapsible via the header) so it's never hidden — most useful when the
-  // mission has no pool or you've already collected everything. Forced open (static)
-  // when there's no pool at all.
-  let infoOpen = true;
-  // Faction Info is its own drawer (Sub, 2026-08-12: "maybe somebody doesn't care about the
-  // Faction Info"). Separate state, so collapsing one never hides the other.
-  let facOpen = true;
+  // (infoOpen / facOpen — the two drawers' expand state — went with the drawers on 2026-08-13.)
   // Event-ladder tier expand/collapse overrides, keyed by tier pct. Default (no
   // entry): fully-collected tiers collapse, incomplete tiers stay open.
   const evOpen = {};
@@ -1956,24 +2160,21 @@
 
   // Idle per-hour rates: aUEC + rep, "last 60m" (actual) and extrapolated session "pace".
   // aUEC shows "—" when unknown (calculated-reward missions log no payout) — never a false 0.
-  function ratesHtml(v) {
-    const e = v.earnings;
-    if (!e || !e.missions) return ""; // nothing completed this grind session yet
-    const fmt = (n) => (n == null ? '<span class="rt-na">—</span>' : Number(n).toLocaleString());
-    return '<div class="rates"><div class="ra-h">Per hour <span class="rt-sub">· this grind</span></div>' +
-      '<div class="rt-grid">' +
-        '<div></div><div class="rt-col">last 60m</div><div class="rt-col">pace</div>' +
-        '<div class="rt-row">Reputation</div><div class="rt-v">' + fmt(e.repLastHr) + '</div><div class="rt-v rt-pace">' + fmt(e.repPace) + '</div>' +
-        '<div class="rt-row">aUEC</div><div class="rt-v">' + fmt(e.aUECLastHr) + '</div><div class="rt-v rt-pace">' + fmt(e.aUECPace) + '</div>' +
-      '</div></div>';
-  }
+  // (ratesHtml — a separate "Per hour · this grind" block with its own two-column table — was
+  // folded into the session section on 2026-08-13 and removed with its last caller. The rates now
+  // use the same stat treatment as the totals, one section, one shape.)
 
-  // Idle recent-activity block: per-hour rates + last few completed missions + received blueprints.
+  // The idle panel — what fills the tracker when NOTHING is tracked. Two halves, in this order
+  // (Sub, 2026-08-13): what you are closest to finishing, then what this session has been worth.
+  //
+  // 🔑 The order is the argument. "No mission tracked" is exactly the moment the useful question
+  // is what to go do next, so the answer leads and the scoreboard follows behind a rule.
   function recentActivityHtml(v) {
     const missions = v.recentMissions || [];
     const blueprints = v.recentBlueprints || [];
-    const rates = ratesHtml(v);
-    if (!missions.length && !blueprints.length && !rates) return "";
+    const closest = v.closestPools || [];
+    const hasSession = !!(v.earnings && v.earnings.missions);
+    if (!missions.length && !blueprints.length && !hasSession && !closest.length) return "";
     function whenCell(iso) {
       const w = fmtWhen(iso);
       if (!w) return '<span class="ra-when"></span>';
@@ -1981,23 +2182,147 @@
       const label = PREFS.timeRelative ? w.rel : w.date;
       return '<span class="ra-when"><span class="ra-date">' + label + "</span></span>";
     }
-    let html = '<div class="recent">' + rates;
-    if (missions.length) {
-      html += '<div class="ra-sec"><div class="ra-h">Recent Missions</div><ul class="ra-list">';
-      for (const m of missions) {
-        const val = m.aUEC != null ? '<span class="ra-val">' + m.aUEC.toLocaleString() + " aUEC</span>" : "";
-        html += '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(m.title || "Mission") + "</span>" + val + whenCell(m.at) + "</li>";
+    let html = '<div class="recent">';
+
+    // ── Closest to done ────────────────────────────────────────────────────────────────────
+    if (closest.length) {
+      html += '<div class="ra-sec"><div class="ra-h">Closest to done</div>';
+      for (const p of closest) {
+        const left = p.total - p.owned;
+        const pct = Math.round((p.owned / p.total) * 100);
+        html += '<div class="cp">'
+          + '<div class="cp-r"><span class="cp-n">' + escapeHtml(p.title) + "</span>"
+          + '<span class="cp-c">' + p.owned + " of " + p.total + "</span>"
+          + '<span class="cp-l">' + left + " to go</span></div>"
+          + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
+          + (p.places.length
+            ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>"
+            : "")
+          + "</div>";
       }
-      html += "</ul></div>";
+      html += "</div>";
     }
-    if (blueprints.length) {
-      html += '<div class="ra-sec"><div class="ra-h">Recent Blueprints</div><ul class="ra-list">';
-      for (const b of blueprints) {
-        html += '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(b.name) + "</span>" + whenCell(b.at) + "</li>";
+
+    // ── This session ───────────────────────────────────────────────────────────────────────
+    // Behind a rule, because it answers a different question from everything above it.
+    // 🔑 ONE section, not two (Sub, 2026-08-13). Totals and rates were separate blocks in
+    // different shapes — a stat row above a little two-column table — and they are the same
+    // subject: what this session has been worth. The rates now use the SAME stat treatment, so
+    // the whole thing reads as one grid instead of a panel change halfway down.
+    // The per-hour figures keep "/ hr" in their labels: a rate next to a total, in identical
+    // type, is exactly where the two could be confused.
+    const e = v.earnings;
+    if ((e && e.missions) || missions.length || blueprints.length) {
+      html += '<div class="ra-rule"></div>';
+      if (e && e.missions) {
+        const stat = (n, label, cls, title) =>
+          '<div' + (title ? ' title="' + escapeAttr(title) + '"' : "") + '>'
+          + '<div class="ss-n' + (cls ? " " + cls : "") + '">' + n + "</div>"
+          + '<div class="ss-l">' + escapeHtml(label) + "</div></div>";
+        const na = '<span class="rt-na">—</span>';
+        html += '<div class="ra-sec"><div class="ra-h">This session</div>'
+          + '<div class="ss">'
+          + stat(e.missions, "Contracts")
+          + stat(e.aUECTotal != null ? compactNum(e.aUECTotal) : na, "aUEC", "gold",
+              "Total from missions whose payout the game actually logged.")
+          + stat(blueprints.length, "Blueprints", "green")
+          + "</div>"
+          // Second row, same shape: what that works out to per hour.
+          + '<div class="ss ss-rates">'
+          + stat(e.repLastHr != null ? compactNum(e.repLastHr) : na, "Rep / hr", null,
+              "Reputation earned in the last 60 minutes."
+              + (e.repPace != null ? " Session pace: " + e.repPace.toLocaleString() + "/hr." : ""))
+          + stat(e.aUECLastHr != null ? compactNum(e.aUECLastHr) : na, "aUEC / hr", "gold",
+              "aUEC in the last 60 minutes, from missions with a known payout."
+              + (e.aUECPace != null ? " Session pace: " + e.aUECPace.toLocaleString() + "/hr." : ""))
+          + "</div></div>";
       }
-      html += "</ul></div>";
+    }
+
+    // ── Latest ─────────────────────────────────────────────────────────────────────────────
+    // 🔑 Rendered EMPTY here and filled by fitLatest() once the box has been measured — how many
+    // rows fit is a function of the widget's height, which this string knows nothing about.
+    if (blueprints.length) {
+      html += '<div class="ra-sec ra-latest-sec"><div class="ra-h">Latest</div>'
+        + '<ul class="ra-list ra-latest" id="raLatest"></ul></div>';
     }
     return html + "</div>";
+  }
+
+  /** Compact aUEC — a session total is a big number in a narrow column. */
+  function compactNum(n) {
+    const v = Number(n) || 0;
+    if (v >= 1000000) return (v / 1000000).toFixed(1).replace(/\.0$/, "") + "m";
+    // ⚠️ One decimal below 10k. Rounding to whole thousands turned 1,240 rep/hr into a flat "1k",
+    // which is a 20% lie on exactly the range these figures live in — a grind hour is thousands,
+    // not tens of thousands. Above 10k the decimal stops earning its width.
+    if (v >= 10000) return Math.round(v / 1000) + "k";
+    if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    return String(v);
+  }
+
+  // ── How many "Latest" rows fit ────────────────────────────────────────────────────────────
+  // The list takes whatever height is left after everything above it, so the count is a property
+  // of the WIDGET's size, not of the data.
+  //
+  // 🔴 ALWAYS AT LEAST ONE. Sub, 2026-08-13, collapsing the panel to its minimum: "it doesn't show
+  // anything under Latest. It's just nothing." A heading over a void is worse than a heading over
+  // one row — so the floor is one, enforced by the CSS min-height as well as here, and the section
+  // overflows rather than rendering empty. Nobody sizes the widget that small on purpose, but the
+  // state has to be coherent when they do.
+  const LATEST_MIN = 1, LATEST_MAX = 10, LATEST_ROW_PX = 22;
+  let latestShown = -1;
+  // One observer for the life of the page, re-pointed at whatever list is currently on screen.
+  // Watching the PANEL rather than the list itself: the list's own height is an output of this
+  // computation, so observing it is a feedback loop waiting to happen.
+  let latestRO = null;
+  function observeLatest() {
+    // 🔴 NOT requestAnimationFrame. It does not fire in a window the compositor considers hidden,
+    // and this overlay is hidden all the time — toggled off in the hub, behind the game, or a
+    // background page in a test harness. Hanging the initial fit on a frame that may never come is
+    // how the heading ended up over an empty list. `setTimeout` runs regardless.
+    // Two of them, because the first can still land before layout has settled; both are idempotent
+    // — fitLatest returns immediately unless the ANSWER changed — so the redundancy costs nothing.
+    setTimeout(fitLatest, 0);
+    setTimeout(fitLatest, 80);
+    if (!window.ResizeObserver) return;
+    // Measuring inside the observer callback is already post-layout, so there is nothing to defer
+    // to and nothing to wait for.
+    if (!latestRO) latestRO = new ResizeObserver(() => fitLatest());
+    latestRO.disconnect();
+    // Observe the SECTION, not the panel: in the canvas the panel is a widget whose box can be
+    // replaced, and an observer pointed at a detached node silently never fires again.
+    const sec = document.querySelector(".ra-latest-sec");
+    if (sec) latestRO.observe(sec);
+    const panel = document.getElementById("panel");
+    if (panel) latestRO.observe(panel);
+  }
+  function fitLatest() {
+    const ul = document.getElementById("raLatest");
+    if (!ul || !current) { latestShown = -1; return; }
+    const all = current.recentBlueprints || [];
+    if (!all.length) return;
+    // Measure the room LEFT for the list: from its own top to the bottom of the scroll area.
+    const box = ul.parentElement.parentElement;   // .recent
+    const avail = box.getBoundingClientRect().bottom - ul.getBoundingClientRect().top;
+    let n = Math.floor(avail / LATEST_ROW_PX);
+    if (!Number.isFinite(n) || n < LATEST_MIN) n = LATEST_MIN;
+    if (n > LATEST_MAX) n = LATEST_MAX;
+    if (n > all.length) n = all.length;
+    // Only touch the DOM when the ANSWER changes — this runs off a ResizeObserver, and rewriting
+    // the same list on every pixel of a drag is the idle-repaint mistake again.
+    if (n === latestShown) return;
+    latestShown = n;
+    let h = "";
+    for (const b of all.slice(0, n)) {
+      const w = fmtWhen(b.at);
+      const label = w ? (PREFS.timeRelative ? w.rel : w.date) : "";
+      h += '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(b.name) + "</span>"
+        + '<span class="ra-when"><span class="ra-date">' + escapeHtml(label) + "</span></span></li>";
+    }
+    const rest = all.length - n;
+    if (rest > 0) h += '<li class="ra-more">+' + rest + " more</li>";
+    ul.innerHTML = h;
   }
 
   // The "Blueprint Received" toast moved OUT of this panel into its own placeable notifier widget
@@ -2033,10 +2358,16 @@
       $("catbar").innerHTML = "";
       const recent = recentActivityHtml(v);
       if (recent) {
-        // Idle state: show your last few completed missions + received blueprints.
+        // Idle state: what you're closest to finishing, then what this session has been worth.
         panel.classList.remove("empty");
         $("msg").innerHTML = "";
         $("pool").innerHTML = recent;
+        $("pool").classList.add("idle");
+        // The list is written EMPTY above; how many rows it holds depends on the height it ends
+        // up with, which only exists after layout. Reset first so a re-render with different data
+        // recomputes instead of trusting the previous answer.
+        latestShown = -1;
+        observeLatest();
       } else {
         panel.classList.add("empty");
         $("pool").innerHTML = "";
@@ -2151,7 +2482,8 @@
     const ch = b.oddsP == null
       ? '<span class="chance">—</span>'
       : '<span class="chance">' + (b.oddsP * 100 >= 10 ? Math.round(b.oddsP * 100) : (b.oddsP * 100).toFixed(1)) + "%</span>";
-    return '<div class="row ' + (b.owned ? "owned" : "") + '" data-name="' + escapeAttr(b.name) + '" title="Click to toggle owned">' +
+    return '<div class="row ' + (b.owned ? "owned" : "") + '" data-name="' + escapeAttr(b.name) + '"'
+      + ' data-source="' + escapeAttr(b.source || "") + '" title="Click to toggle owned">' +
       '<span class="mark">' + (b.owned ? "✔" : "") + "</span>" +
       '<span class="name">' + escapeHtml(b.name) + ovr + "</span>" + ch +
     "</div>";
@@ -2254,13 +2586,8 @@
       'so only the largest is counted here.">' +
       escapeHtml(more) + " also listed</span>";
   }
-  function repRows(list, neg) {
-    return list.map((r) => {
-      const amt = (neg ? "−" : "+") + Number(r.amount || 0).toLocaleString();
-      return '<div class="mi-rep"><span class="mi-fac">' + escapeHtml(r.faction || "—") + "</span>" +
-        '<span class="mi-amt ' + (neg ? "neg" : "pos") + '">' + amt + " rep" + extraHint(r) + "</span></div>";
-    }).join("");
-  }
+  // (repRows — a labelled block listing each rep award as its own row — went with the 2026-08-13
+  // chip pass; every award is now a chip named after its own scope.)
   // Reputation progress bar for the tracked mission's giver: current standing NAME + a
   // fill toward the next rank. A LOWER-BOUND estimate (server-side rep is never logged),
   // so the readout is qualified "est." and the caption uses "~".
@@ -2355,16 +2682,24 @@
     const p = v.community && v.community.payout;
     const fixed = payoutText(v.payout);
     if (!p || !p.samples) {
-      return fixed ? '<div class="mi-pay" title="A fixed reward, straight from the game files."><span class="amt">'
-        + escapeHtml(fixed) + "</span></div>" : "";
+      return fixed ? '<div class="mi-pay">'
+        + '<span class="amt">' + escapeHtml(fixed) + "</span>"
+        + info("A fixed reward, straight from the game files.") + "</div>" : "";
     }
     const cur = p.currency === "UEC" ? "aUEC" : (p.currency || "");
     const spread = p.samples > 1 && p.max > p.min ? money(p.min) + " – " + money(p.max) : null;
     const note = p.singleContributor && p.samples === 1
       ? "1 report" : reports(p.samples) + (p.singleContributor ? ", one player" : "");
-    return '<div class="mi-pay" title="Read off the contract board by players running this. The game works most payouts out when you accept, so this is the only place the number exists.">'
+    // 🔑 The evidence moved INTO the affordance (Sub, 2026-08-13). "3 reports · one player" beside
+    // the number was a second line of caption competing with the figure it qualified — but it must
+    // not be dropped, because how thin the evidence is IS the caveat on the number. So it goes
+    // where the rest of this panel already puts its qualifications: the circled i.
+    const why = "Read off the contract board by players running this. The game works most payouts"
+      + " out when you accept, so this is the only place the number exists."
+      + "\n\nBased on " + note + (spread ? ". Seen between " + spread + "." : ".");
+    return '<div class="mi-pay">'
       + '<span class="amt">' + money(p.median) + '</span><span class="cur">' + escapeHtml(cur) + "</span>"
-      + '<span class="mi-hint">' + escapeHtml(note + (spread ? " · " + spread : "")) + "</span></div>";
+      + info(why) + "</div>";
   }
   // The conventional circled "i". A plain ASCII letter styled by CSS — this page bundles no emoji
   // face, so a ⓘ character would render at the mercy of the OS font, the same trap that turned o7
@@ -2389,6 +2724,30 @@
     return '<span class="mi-chip' + (cls ? " " + cls : "") + '"'
       + (title ? ' title="' + escapeAttr(title) + '"' : "") + ">" + escapeHtml(text) + "</span>";
   }
+  /** A chip carrying a LABEL and a VALUE — what replaced the two-column grid. `html` is already
+   *  escaped by the caller (several of these carry an info affordance or a count span). */
+  function kchip(label, html, cls, title) {
+    return '<span class="mi-chip' + (cls ? " " + cls : "") + '"'
+      + (title ? ' title="' + escapeAttr(title) + '"' : "") + ">"
+      + '<span class="ck">' + escapeHtml(label) + "</span>"
+      + '<span class="cv' + (cls === "pos" || cls === "neg" ? " " + cls : "") + '">' + html + "</span>"
+      + "</span>";
+  }
+  /** What each reputation SCOPE is called in plain words. The dataset carries 17 distinct scopes
+   *  and 998 missions award more than one, so a panel that prints only numbers is asking the
+   *  player to guess which track each belongs to — the thing that made "+200 / +50" unreadable.
+   *  Anything not listed falls back to "Reputation", which is what every scope is a kind of. */
+  const SCOPE_LABEL = {
+    FactionReputation: "Reputation",
+    Affinity: "Affinity",
+    // The rest are per-activity tracks; their own word is the useful label.
+    BountyHunter: "Bounty hunting", BountyHunter_BountyHuntersGuild: "Guild standing",
+    Hauling: "Hauling", Security: "Security", Courier: "Courier", Assassination: "Assassination",
+    HiredMuscle: "Hired muscle", Emergency: "Emergency", Technician: "Technician",
+    Salvaging: "Salvaging", Smuggling: "Smuggling", Theft: "Theft", Worker: "Worker",
+    Maintenance: "Maintenance", HandyMan: "Handyman", Wikelo: "Wikelo",
+    MissionProviderReputation_Battaglia: "Battaglia standing",
+  };
   // Worded so the chip needs no heading — "Soloable" says what it is, "Soloable: yes" does not
   // say any more (Sub, 2026-08-12).
   const COMBAT_CHIP = { none: "No combat", fps: "On-foot combat", ship: "Ship combat", both: "Ship + on-foot" };
@@ -2426,22 +2785,23 @@
     return s && s.ship ? s.ship : null;
   }
 
-  function missionInfoHtml(v, forceOpen) {
+  // `forceOpen` is vestigial — it used to force both drawers open on a pool-less mission so the
+  // panel wasn't bare. Nothing collapses any more, so it is accepted and ignored rather than
+  // chased through three call sites for no behaviour change.
+  function missionInfoHtml(v, _forceOpen) {
     const giver = v.giver, type = v.missionType;
     const rg = v.reputationGained || [], rl = v.reputationLost || [];
     const payTxt = payoutText(v.payout);
     const pickup = pickupOf(v);
     if (!giver && !type && !rg.length && !rl.length && !payTxt && !pickup && !(v.community && v.community.payout)) return "";
-    const open = !!forceOpen || infoOpen;
-    const facOpenNow = !!forceOpen || facOpen;
     let body = "", facBody = "";
-    // Both bodies are built whichever drawer is expanded: it is a few string joins, and the
-    // alternative is two near-identical branches that drift apart. `drawer()` decides what
-    // actually renders.
     {
       // ── 1. Chips: everything that explains itself in a word or two ──────────────────────
       // 🔑 Absence is not innocence — an unrecognised mission also reads illegal:false — so this
       // only ever asserts that something IS criminal, never that it is safe.
+      // 🔑 Illegal LEADS (Sub, 2026-08-13, swapping it ahead of the type). Whether a contract
+      // will earn you a CrimeStat outranks what kind of contract it is — it is the one fact here
+      // that changes whether you take the job at all.
       const chips = [];
       if (v.illegal) chips.push(chip("Illegal", "crime", "Criminal work — expect a CrimeStat for taking this."));
       if (type) chips.push(chip(type));
@@ -2451,9 +2811,13 @@
       // ── 3. Everything that genuinely needs a label, in a tight two-column grid ──────────
       // Two grids now: what the CONTRACT is, and who the FACTION is. Split because they answer
       // different questions and one of them is skippable (Sub, 2026-08-12).
+      // 🔴 CHIPS, not a two-column grid (Sub, 2026-08-13, picking option C for both drawers).
+      // Every row spent a whole line on a label with the right half of the panel empty; as chips
+      // they sit side by side and the same facts take roughly half the height. They also WRAP
+      // instead of truncating, so a narrow widget keeps every fact — Sub was explicit that
+      // nothing may be dropped for being narrow.
       const grid = [], fgrid = [];
-      const mk = (into) => (k, html, cls) => into.push('<span class="k">' + escapeHtml(k) + '</span><span class="v'
-        + (cls ? " " + cls : "") + '">' + html + "</span>");
+      const mk = (into) => (k, html, cls) => into.push(kchip(k, html, cls));
       const gRow = mk(grid), fRow = mk(fgrid);
       // 🔑 Only shown once the VARIANT is resolved. Same-title variants are offered in different
       // regions drawing from DIFFERENT pools, so before the tracker knows which one you took,
@@ -2488,8 +2852,11 @@
           .map((o) => (o.places.length ? listWords(o.places.slice(0, 4)) : "another region")
             + " — " + o.owned + " of " + o.total + " owned")
           .join("; ");
+        // ⚠️ "2 to go" was wrong, and Sub read it exactly as written: it sounds like two missions,
+        // or two of anything. It counts BLUEPRINTS that this contract can only give you somewhere
+        // else, so it says that.
         gRow("Other pools", escapeHtml(where.join(" · "))
-          + (left ? ' <span class="mi-more">' + left + " to go</span>" : "")
+          + (left ? ' <span class="mi-more">' + left + " only there</span>" : "")
           + info("This contract runs in other regions from a DIFFERENT blueprint pool, so finishing"
             + " the pool above does not finish the contract. Take it from " + detail + "."));
       }
@@ -2499,14 +2866,20 @@
       // ── Faction Info ────────────────────────────────────────────────────────────────────
       // Faction first, then what it costs you to be liked by them, then where you stand.
       // Reputation sits directly under Faction because it is the same subject (Sub's order).
-      if (giver) fRow("Faction", escapeHtml(giver));
+      // 🔑 The faction is a HEADING, not a chip. The drawer is already called "Faction Info", so a
+      // row reading "Faction: Headhunters" spent a line repeating a word you had just read.
+      const facName = giver ? '<div class="mi-faction">' + escapeHtml(giver) + "</div>" : "";
       // The rank the GIVER wants — a fact about your relationship with them, so it lives here
       // rather than beside the contract's own details.
       // 🔑 null means the dataset carries no gate, NOT rank 0: givers use 0 and null side by side.
-      if (v.rankRequired != null) fRow("Rank needed", String(v.rankRequired));
-      // Reputation. A single entry that just repeats the faction above becomes a plain amount;
-      // several — or rep with a DIFFERENT faction — keep a labelled section with the names.
-      const extra = [];
+      // 🔑 By NAME where the ladder has one ("Contractor", not "2") — Sub asked for this and the
+      // names were already bundled. 93% resolve; the rest fall back to the number rather than
+      // inventing a rung.
+      if (v.rankRequired != null) {
+        fRow("Rank needed", escapeHtml(v.rankRequiredName || String(v.rankRequired)),
+          null);
+      }
+      // Reputation. One chip per scope — see the note in repSection.
       const repSection = (list0, neg, label) => {
         // 🔑 A mission can list SEVERAL awards against the SAME standing — 12 of the 33 Battaglia
         // missions do (200+40, 200+60, 100+60). Rendered raw that's two identical faction names
@@ -2516,12 +2889,21 @@
         // the rest instead of hiding it. Sub's read was that they don't simply add to +360.
         const list = collapseSameStanding(list0);
         if (!list.length) return;
-        if (list.length === 1 && (!list[0].faction || list[0].faction === giver)) {
-          // No "rep" suffix — the label already said it.
-          const amt = (neg ? "−" : "+") + Number(list[0].amount || 0).toLocaleString();
-          fRow(label, amt + extraHint(list[0]), neg ? "neg" : "pos");
-        } else {
-          extra.push('<div class="mi-sec">' + label + "</div>" + repRows(list, neg));
+        // 🔴 NAME THE SCOPE. This used to render every award for the same faction as a bare
+        // number, so a Headhunters contract read "Headhunters +200 / Headhunters +50" — the same
+        // name twice with no explanation, which is exactly what Sub could not make sense of.
+        // The data DOES say what they are: the two entries carry different `scope` values,
+        // FactionReputation and Affinity. They are separate tracks, which is why they don't add
+        // to 250. Affinity appears 1,222 times across the dataset — it is not an anomaly.
+        // 🔑 One chip per scope, labelled with the scope's own word, and the faction named only
+        // when it ISN'T the giver (rep with someone else is the surprising case worth spelling
+        // out; rep with the contract's own faction is not).
+        for (const r of list) {
+          const amt = (neg ? "−" : "+") + Number(r.amount || 0).toLocaleString();
+          const own = !r.faction || r.faction === giver;
+          const scopeWord = SCOPE_LABEL[r.scope] || (neg ? "Rep lost" : "Reputation");
+          const label = own ? scopeWord : (r.faction + " " + scopeWord.toLowerCase());
+          fRow(label, amt + extraHint(r), neg ? "neg" : "pos");
         }
       };
       repSection(rg, false, "Reputation");
@@ -2543,34 +2925,46 @@
       // an ambiguous one would link to a page describing a different variant, and the site
       // 404s on a key it does not know.
       const link = v.contractKey && !v.ambiguous
-        ? '<a class="mi-link" href="https://subliminal.gg/missions/' + encodeURIComponent(v.contractKey)
+        ? '<a class="mi-chip mi-link" href="https://subliminal.gg/missions/' + encodeURIComponent(v.contractKey)
           + '" target="_blank" rel="noopener" title="Open this contract on subliminal.gg">More on the site →</a>'
         : "";
 
+      // 🔑 ONE chip row, not two (Sub, 2026-08-13: "why can't Pick up at Checkmate be on the same
+      // row as Illegal and Mercenary? I have my widget plenty wide enough"). They were two
+      // separate containers — self-describing chips, then the labelled ones — so the second set
+      // always started a new line no matter how much room was left on the first. They are the
+      // same kind of thing and now share a container, wrapping only when they genuinely run out
+      // of width. The link is the last chip in that row for the same reason.
+      // 🔑 The payout rides IN the chip row, straight after what KIND of contract it is (Sub,
+      // 2026-08-13). It had a line of its own directly under the chips, which on a wide widget
+      // was a nearly-empty row holding one number — the money belongs beside the facts that
+      // describe the job, not stacked beneath them.
+      const pay = payBlock(v);
+      const allChips = chips.slice();
+      if (pay) allChips.push(pay);
+      allChips.push(...grid);
+      if (link) allChips.push(link);
       body = '<div class="mi-body">'
-        + (chips.length ? '<div class="mi-chips">' + chips.join("") + "</div>" : "")
-        + payBlock(v)
+        + (allChips.length ? '<div class="mi-chips">' + allChips.join("") + "</div>" : "")
         + difficultyMeter(v.community && v.community.facts)
-        + (grid.length ? '<div class="mi-g">' + grid.join("") + "</div>" : "")
-        + link
         + "</div>";
       facBody = '<div class="mi-body">'
-        + (fgrid.length ? '<div class="mi-g">' + fgrid.join("") + "</div>" : "")
-        + extra.join("")
+        + facName
+        + (fgrid.length ? '<div class="mi-chips">' + fgrid.join("") + "</div>" : "")
         + (standing ? '<div class="mi-standing">' + standing + "</div>" : "")
         + "</div>";
       // A group with nothing in it is worse than no group — don't draw an empty drawer header.
-      if (!fgrid.length && !extra.length && !standing) facBody = null;
+      if (!fgrid.length && !standing) facBody = null;
     }
-    const drawer = (id, label, isOpen, html) => {
-      if (html === null) return "";
-      const car = forceOpen ? "" : '<span class="car">' + (isOpen ? "▾" : "▸") + "</span>";
-      const t = forceOpen ? "" : ' title="' + (isOpen ? "Hide " : "Show ") + escapeAttr(label) + '"';
-      return '<div class="mi"><div class="mi-head' + (forceOpen ? " static" : "") + '" id="' + id + '"' + t + ">"
-        + car + escapeHtml(label) + "</div>" + (isOpen ? html : "") + "</div>";
-    };
-    return drawer("miHead", "Mission Info", open, body)
-      + drawer("facHead", "Faction Info", facOpenNow, facBody);
+    // 🔑 NO DRAWERS. These were two collapsible sections with headers and carets, because the
+    // label/value rows they used to hold ran long enough that someone might want them out of the
+    // way (Sub, 2026-08-12: "maybe somebody doesn't care about the Faction Info"). As chips they
+    // take roughly half the height, so there is nothing left worth hiding — and a header plus a
+    // caret to collapse three chips costs more space than the chips do (Sub, 2026-08-13).
+    // The faction's own name still leads its group, so the two subjects stay legible without
+    // chrome announcing them.
+    const section = (html) => (html === null ? "" : '<div class="mi">' + html + "</div>");
+    return section(body) + section(facBody);
   }
 
   // Payout line + ITEM rewards (actual items — not blueprints; display-only).
@@ -2918,11 +3312,13 @@
   function renderPicker(v) {
     const pick = $("missionPick");
     const list = v.missions || [];
-    if (list.length < 1) { pick.style.display = "none"; return; }
-    pick.style.display = "block";
-    $("missionBtnLabel").textContent = v.selectedId
-      ? (list.find((m) => m.id === v.selectedId)?.title || v.title || "Mission")
-      : ("Auto: " + (v.title || "none"));
+    // 🔑 The title is ALWAYS on screen now — it is the heading, not the control's label — so an
+    // empty list drops the affordance instead of hiding the element. `render()` owns the text;
+    // this function owns only whether it can be clicked and how the choice was made.
+    pick.classList.toggle("nopick", list.length < 1);
+    // "auto" = no pinned mission, so the newest one with blueprints is being followed.
+    document.querySelector(".titlerow")?.classList.toggle("is-auto", !v.selectedId && !!v.title);
+    if (list.length < 1) { $("missionMenu").innerHTML = ""; return; }
     // Disambiguate duplicate mission titles with a (1)/(2) suffix.
     const counts = {}; list.forEach((m) => (counts[m.title] = (counts[m.title] || 0) + 1));
     const seen = {};
@@ -2936,6 +3332,7 @@
   }
   $("missionBtn").addEventListener("click", (e) => {
     e.stopPropagation();
+    if ($("missionPick").classList.contains("nopick")) return; // nothing to choose from
     $("missionMenu").classList.toggle("open");
   });
   $("missionMenu").addEventListener("click", (e) => {
@@ -2970,14 +3367,8 @@
   $("pool").addEventListener("click", (e) => {
     // The "Mission Info" drawer header toggles its details. Only collapsible on a
     // pooled mission — pool-less missions force it open, so a click there is a no-op.
-    if (e.target.closest("#miHead")) {
-      if (current && current.hasPool) { infoOpen = !infoOpen; render(current); }
-      return;
-    }
-    if (e.target.closest("#facHead")) {
-      if (current && current.hasPool) { facOpen = !facOpen; render(current); }
-      return;
-    }
+    // (#miHead / #facHead — the two drawer headers — were removed on 2026-08-13 along with their
+    // collapse state; the chip layout is short enough that there is nothing to fold away.)
     // Through to the mission's page on subliminal.gg. The shell opens it in the real browser —
     // a second always-on-top window over the game is the last thing anyone wants. Standalone
     // (OBS source, product page) there is no shell, so the plain href does the work.
@@ -3038,8 +3429,14 @@
     row.classList.add("confirming");
     const el = document.createElement("div");
     el.className = "confirm";
-    el.innerHTML = '<span class="cf-q">Mark not owned?</span>' +
-      '<button class="cf-no">Keep</button><button class="cf-yes">Remove</button>';
+    // 🔑 Say when the LOG disagrees with what you are about to do. Un-ticking something the game
+    // actually gave you is almost always a misclick — Sub's was — and the app knows the
+    // difference, so it should not ask the same neutral question for both cases.
+    const src = row.getAttribute("data-source");
+    const logged = src === "in-game" || src === "fab";
+    el.innerHTML = '<span class="cf-q">'
+      + (logged ? "Your logs say you got this — remove anyway?" : "Mark not owned?") + "</span>"
+      + '<button class="cf-no">Keep</button><button class="cf-yes">Remove</button>';
     row.appendChild(el);
   });
 
@@ -3105,9 +3502,14 @@
     // group will ever accept) advertises a drop that cannot happen.
     if (!resizing && !(opts && opts.bare)) document.body.classList.add("dragging"); // every bar comes out as a drop target
     const move = (ev) => onMove(ev);
+    let ended = false;
     const up = () => {
+      if (ended) return;
+      ended = true;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("blur", up);
       shield?.classList.remove("on", "resizing");
       document.body.classList.remove("dragging");
       window.overlayApi?.dragLock?.(false);
@@ -3115,6 +3517,11 @@
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    // ⚠️ pointerup ALONE is not enough to lower a drag lock. A cancelled pointer or a window that
+    // loses the device leaves it raised, and a raised lock makes the whole overlay swallow every
+    // click on every display. Cheap to listen for; catastrophic to miss.
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("blur", up);
   }
 
   // Primary-display offset/size within the full-desktop canvas (fetched at init). Falls back to
@@ -3955,18 +4362,23 @@
   // Drag the box to move it, its corner to resize. Fractions of the display it sits on, so the
   // setting survives a resolution change. Clamped into the frame and to a sane minimum — a region
   // dragged off-screen or squashed to nothing would silently stop all scanning.
-  (() => {
-    const el = document.getElementById("scanBox");
+  //
+  // 🔑 Shared by the Mining Scanner's scan box and the contract board's calibration box. The
+  // gesture is the fiddly part (pointer capture, the drag lock, one write per gesture rather than
+  // per frame), and a second hand-rolled copy of it is a second place for those to be got subtly
+  // wrong. `live` redraws on every frame; `commit` persists ONCE, on release.
+  function wireCalBox(el, { ignore = [], start: readStart, live, commit, dragClass = "sb-dragging",
+                            minW = 0.03, minH = 0.02 }) {
     if (!el) return;
     let mode = null, sx = 0, sy = 0, start = null;
     el.addEventListener("pointerdown", (e) => {
       // Both controls live INSIDE the box, so a pointerdown on either would otherwise start a
       // drag of the box under them.
-      if (e.target && (e.target.id === "sbReset" || e.target.id === "sbHide")) return; // handled below
+      if (e.target && ignore.includes(e.target.id)) return; // handled below
       mode = (e.target && e.target.classList.contains("sb-grip")) ? "resize" : "move";
       sx = e.clientX; sy = e.clientY;
-      start = { ...(scanRegion || SCAN_DEFAULT) };
-      document.body.classList.add("sb-dragging");
+      start = { ...readStart() };
+      document.body.classList.add(dragClass);
       window.overlayApi?.dragLock?.(true);   // keep the window interactive for the whole gesture
       // Capture keeps the drag alive if the cursor outruns the box. It throws when the pointer id
       // isn't active (a synthetic event, or one already released) — that must not abort the drag.
@@ -3980,24 +4392,50 @@
       const f = { ...start };
       if (mode === "move") { f.x = start.x + dx; f.y = start.y + dy; }
       else { f.w = start.w + dx; f.h = start.h + dy; }
-      f.w = Math.max(0.03, Math.min(1, f.w));
-      f.h = Math.max(0.02, Math.min(1, f.h));
+      f.w = Math.max(minW, Math.min(1, f.w));
+      f.h = Math.max(minH, Math.min(1, f.h));
       f.x = Math.max(0, Math.min(1 - f.w, f.x));
       f.y = Math.max(0, Math.min(1 - f.h, f.y));
-      scanRegion = f;
-      drawScanBox();
+      live(f);
       e.preventDefault();
     });
+    // 🔴 THE RELEASE LISTENS ON `window`, NOT ON THE BOX. This is the bug that made the overlay
+    // swallow clicks mid-firefight (Sub, 2026-08-13) and it was genuinely dangerous.
+    //
+    // `dragLock(true)` forces the ENTIRE overlay interactive across every display AND takes
+    // focus, deliberately never handing it back. Both are correct for the length of a gesture.
+    // But the release was bound to the BOX, guarded by a setPointerCapture whose failure is
+    // swallowed ("drag still works without capture" — true of the drag, false of the release).
+    // Without capture, a pointer that leaves the box before you let go means the box never sees
+    // pointerup, `end` never runs, and dragLock is never lowered. The overlay then eats every
+    // click on every monitor and the game stops receiving keystrokes too — which is why tapping
+    // F to leave interaction mode appeared to do nothing: Star Citizen was not getting the F.
+    // The scan box has sat centre-upper screen, interactive, since it shipped; one stray click
+    // with a missed release is all it took, which is exactly why this was rare and random.
+    //
+    // The widget drag (`dragPointer`) always did this correctly. This now matches it.
     const end = (e) => {
       if (!mode) return;
       mode = null;
-      document.body.classList.remove("sb-dragging");
+      document.body.classList.remove(dragClass);
       window.overlayApi?.dragLock?.(false);
-      try { el.releasePointerCapture?.(e.pointerId); } catch { /* already released */ }
-      saveScanRegion(scanRegion);   // one write per gesture, not per frame
+      try { el.releasePointerCapture?.(e && e.pointerId); } catch { /* already released */ }
+      commit();   // one write per gesture, not per frame
     };
-    el.addEventListener("pointerup", end);
-    el.addEventListener("pointercancel", end);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    // Belt and braces: a pointer that vanishes without either event (the window losing the device
+    // entirely) still ends the gesture rather than leaving the lock raised forever.
+    window.addEventListener("blur", () => { if (mode) end(); });
+  }
+
+  (() => {
+    wireCalBox(document.getElementById("scanBox"), {
+      ignore: ["sbReset", "sbHide"],
+      start: () => scanRegion || SCAN_DEFAULT,
+      live: (f) => { scanRegion = f; drawScanBox(); },
+      commit: () => saveScanRegion(scanRegion),
+    });
     // Hide is the opt-out for people who don't want the outline on screen. It only writes the
     // pref and re-runs the ONE rule — it never pokes the box directly, so this can't drift from
     // what syncScanBox() decides on the next widget show/hide or launch.
@@ -4021,6 +4459,80 @@
   fetch("/api/config", { cache: "no-store" }).then((r) => r.json()).then((c) => {
     if (c && c.scanRegion) { scanRegion = c.scanRegion; drawScanBox(); }
   }).catch(() => { /* default band it is */ });
+
+  // ── Where the contract scanner reads the offers board ──────────────────────────────────────
+  // The same object as the scan box above, for the other screen-reader. Two things make it
+  // simpler than its sibling: the region is never absent (the sidecar normalises it to the
+  // measured default on load, so calibration is a CORRECTION, never a precondition), and it
+  // arrives on the mission SSE — so the drawn rectangle is always the stored one, and a write the
+  // server rejects redraws to what is really being cropped instead of leaving a lie on screen.
+  let boardRegion = null;      // fractions, straight off `prefs.payoutRegion`
+  let boardHidden = false;     // session-only: dismissing the outline is not a lasting preference
+  let boardOnPrimary = null;   // null = no crop taken yet, so nothing is known either way
+
+  function drawBoardBox() {
+    const el = document.getElementById("boardBox");
+    if (!el || !boardRegion) return;
+    const ci = scanDisplay();
+    el.style.left = Math.round(ci.px + boardRegion.x * ci.pw) + "px";
+    el.style.top = Math.round(ci.py + boardRegion.y * ci.ph) + "px";
+    el.style.width = Math.round(boardRegion.w * ci.pw) + "px";
+    el.style.height = Math.round(boardRegion.h * ci.ph) + "px";
+  }
+  /** The one rule for whether the outline is up: the scan mode is armed and it hasn't been
+   *  dismissed this session. Same shape as syncScanBox — the mode owns it, nothing else, so it
+   *  cannot be left behind over the game with no control anywhere to remove it. */
+  let bbShown = false;
+  function syncBoardBox(on) {
+    const el = document.getElementById("boardBox");
+    if (!el) return;
+    if (!on) boardHidden = false;   // a fresh scan starts with the outline back
+    const show = !!on && !boardHidden && !!boardRegion;
+    if (show === bbShown) return;   // called on every mission tick; only act on a real change
+    bbShown = show;
+    document.body.classList.toggle("boardbox", show);
+    if (show) drawBoardBox();
+  }
+  /** Say so when the game is on another monitor — the box only covers the primary, so a region
+   *  set here describes pixels the capture never looks at. Only on a definite `false`: before the
+   *  first crop this is unknown, and warning on unknown would fire at everyone for the first few
+   *  seconds of every scan. */
+  function syncBoardWarn() {
+    const el = document.getElementById("boardBox"), w = document.getElementById("bbWarn");
+    if (!el || !w) return;
+    const off = boardOnPrimary === false;
+    el.classList.toggle("off-primary", off);
+    if (off) w.textContent = "Star Citizen is on another display. This outline only covers your "
+      + "primary one, so what you set here won't match what gets read.";
+  }
+  function saveBoardRegion(f) {
+    // `null` means reset — the server answers it with the default and broadcasts, so the redraw
+    // comes back the same way a drag does. One path, one source for what the box shows.
+    fetch("/api/payout-scan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ region: f }),
+    }).catch(() => { /* best-effort; the next broadcast still carries the truth */ });
+  }
+  wireCalBox(document.getElementById("boardBox"), {
+    ignore: ["bbReset", "bbHide"],
+    start: () => boardRegion,
+    live: (f) => { boardRegion = f; drawBoardBox(); },
+    commit: () => saveBoardRegion(boardRegion),
+    dragClass: "bb-dragging",
+    // Floors above the server's `> 0.02` validation, not equal to it: a box dragged to exactly the
+    // limit would be silently rejected, and a control that refuses a gesture without saying so is
+    // worse than one that stops you making it. A board this small reads nothing anyway.
+    minW: 0.05, minH: 0.05,
+  });
+  document.getElementById("bbHide")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    boardHidden = true;
+    syncBoardBox(true);   // still armed — only the outline goes away
+  });
+  document.getElementById("bbReset")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    saveBoardRegion(null);
+  });
 
   // ── The contract-board scan session's dashboard ────────────────────────────────────────────
   // Chrome tied to a MODE, in the same family as the scan box above: one rule decides whether it
@@ -4087,6 +4599,21 @@
   let ppShown = false;
   function syncPayoutPanel() {
     const on = !!PREFS.payoutScan;
+    // The calibration box rides the same broadcast, but tracks the REGION as well as the mode —
+    // and the region changes while the mode does not (every accepted drag echoes back). So it is
+    // updated BEFORE the mode's change guard, and guards on its own values instead. Compared
+    // field-by-field rather than redrawn every tick: this is the hottest broadcast in the app.
+    const pr = PREFS.payoutRegion;
+    if (pr && (!boardRegion || pr.x !== boardRegion.x || pr.y !== boardRegion.y
+               || pr.w !== boardRegion.w || pr.h !== boardRegion.h)) {
+      boardRegion = { x: pr.x, y: pr.y, w: pr.w, h: pr.h };
+      drawBoardBox();
+    }
+    if (PREFS.payoutOnPrimary !== boardOnPrimary) {
+      boardOnPrimary = PREFS.payoutOnPrimary ?? null;
+      syncBoardWarn();
+    }
+    syncBoardBox(on);
     if (on === ppShown) return;   // this runs on every mission tick; only act on a real change
     ppShown = on;
     document.body.classList.toggle("payoutscan", on);
@@ -4109,11 +4636,33 @@
    *  screen-reading stays armed leaves a mode running with nothing on screen to explain it, and
    *  puts the user back to reading a counter that cannot tell "working" from "merely running" —
    *  the exact problem this page exists to solve. Same switch, one meaning. */
+  // 🔑 The ✕ must NOT hide the panel itself. "The panel is up" and "your screen is being read" are
+  // deliberately the same fact, so only the mode going off may take it down — hiding optimistically
+  // would reintroduce the exact blindness this dashboard exists to end (an armed scanner with
+  // nothing on screen saying so).
+  // ⚠️ But a request that fails then looks EXACTLY like a dead button, which is what Sub hit
+  // (2026-08-13: "I click X, it just doesn't work"). So if the mode has not actually gone off
+  // shortly after asking, say so on the panel instead of leaving him clicking a ✕ that appears
+  // inert. The Stop button in the dashboard and the settings card both remain as ways out.
   function ppEndSession() {
+    const say = (msg) => {
+      const h = document.getElementById("ppHint");
+      if (!h) return;
+      h.textContent = msg || "";
+      h.style.display = msg ? "block" : "none";
+    };
+    say("");
     fetch("/api/payout-scan", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ on: false }),
-    }).catch(() => { /* the next prefs broadcast still carries the truth */ });
+    }).then((r) => {
+      if (!r.ok) say("Couldn't stop the scan (server said " + r.status + "). Try Stop in the panel.");
+    }).catch(() => {
+      say("Couldn't reach the background service to stop the scan — is it still running?");
+    });
+    // Whatever the request said, the mode is what decides. If it has not gone off by now the
+    // request was lost somewhere that did not throw, and silence is the unhelpful answer.
+    setTimeout(() => { if (PREFS.payoutScan) say("Still scanning — the stop request didn't take. Try again, or stop it from Settings."); }, 1500);
   }
 
   (() => {
@@ -4905,7 +5454,50 @@
       if (q.has("whatsnew")) { $("wnVer").textContent = "v0.1.31"; $("wnList").innerHTML = '<div class="wn-group"><div class="wn-gver">v0.1.31</div><div class="wn-kind">New</div><ul><li><div class="wn-note"><div class="wn-label">Newest note one</div><div class="wn-desc">What the first change actually does.</div></div></li></ul><div class="wn-kind">Fixed</div><ul><li><div class="wn-note"><div class="wn-label">Newest note two</div><div class="wn-desc">What the second change actually does.</div></div></li></ul></div><div class="wn-group"><div class="wn-gver">v0.1.30</div><ul><li><div class="wn-note nolabel"><div class="wn-desc">Older note</div></div></li></ul></div>'; $("whatsnew").classList.add("show"); }
       if (q.has("cog")) $("globalCog").classList.add("show"); // headless-test the summoned cog
       if (q.has("bppop")) maybeBpPop({ name: "MH1 Multi-Tool", image: null, at: new Date().toISOString() }); // headless-test the blueprint-received pop
-      if (q.has("rates")) { $("panel").classList.remove("empty"); document.body.classList.remove("empty"); const el = $("pool"); if (el) el.innerHTML = recentActivityHtml({ earnings: { repLastHr: 1240, repPace: 1480, aUECLastHr: null, aUECPace: null, missions: 6 }, recentMissions: [{ title: "Blackbox Retrieval Very Dangerous", aUEC: null, at: new Date().toISOString() }], recentBlueprints: [{ name: "MH1 Multi-Tool", at: new Date().toISOString() }] }); } // headless-test the idle per-hour rates
+      // Headless-test the Mission/Faction drawers with a TWO-SCOPE reputation award — the case
+      // that made "+200 / +50" unreadable, and the one a live tracked mission rarely happens to
+      // be. Real values: Headhunters' Turf War, rank 2, FactionReputation 200 + Affinity 50.
+      if (q.has("missioninfo")) {
+        $("panel").classList.remove("empty"); document.body.classList.remove("empty");
+        const el = $("pool");
+        if (el) el.innerHTML = missionInfoHtml({
+          giver: "Headhunters", missionType: "Mercenary", illegal: true,
+          rankRequired: 2, rankRequiredName: "Contractor",
+          reputationGained: [
+            { faction: "Headhunters", scope: "FactionReputation", amount: 200 },
+            { faction: "Headhunters", scope: "Affinity", amount: 50 },
+          ],
+          reputationLost: [], payout: null, whereToGet: ["Rat's Nest", "Starlight Service Station"],
+          otherPools: [{ places: ["Orbituary", "Bloom"], total: 7, owned: 5 }],
+          community: null, inferredRank: 2, contractKey: "demo", ambiguous: false,
+        }, true);
+      }
+      // Headless-test the whole idle panel: closest-to-done, the session totals, the per-hour
+      // rates and a Latest list long enough to prove the size-based truncation.
+      if (q.has("rates")) {
+        $("panel").classList.remove("empty"); document.body.classList.remove("empty");
+        const now = Date.now();
+        const bps = ["Atzkav Sniper Rifle", "Calico Arms Tactical", "Atzkav \"Igniter\" Sniper Rifle",
+          "Custodian SMG", "Karna Rifle", "Yubarev Pistol", "Salvo Frag Pistol", "Behring P8-AR",
+          "Lumin V SMG", "Arclight II", "Devastator-12", "Gallant Rifle"]
+          .map((name, i) => ({ name, at: new Date(now - (i + 1) * 18 * 60000).toISOString() }));
+        current = {
+          earnings: { repLastHr: 1240, repPace: 1480, aUECLastHr: null, aUECPace: null,
+            aUECTotal: 148250, repTotal: 2860, missions: 6 },
+          recentMissions: [{ title: "Blackbox Retrieval Very Dangerous", aUEC: null, at: new Date(now).toISOString() }],
+          recentBlueprints: bps,
+          closestPools: [
+            { key: "a", title: "Turf War", owned: 5, total: 7, places: ["Rat's Nest", "Starlight Service Station"] },
+            { key: "b", title: "Cargo Run: Bloom", owned: 8, total: 11, places: ["Orbituary"] },
+          ],
+        };
+        const el = $("pool");
+        if (el) { el.innerHTML = recentActivityHtml(current); el.classList.add("idle"); latestShown = -1; observeLatest(); }
+        // The suite drives the fit directly: how many rows fit is the behaviour under test, and
+        // waiting on a ResizeObserver to maybe fire is how a size test becomes flaky.
+        window.__fitLatest = fitLatest;
+        window.__latestCount = () => latestShown;
+      }
       if (q.has("phys")) { $("panel").classList.remove("empty"); document.body.classList.remove("empty"); const el = $("pool"); if (el) el.innerHTML = rewardsHtml({ itemRewards: [{ name: 'CF-227 Badger "Hazard-Zone" Repeater', amount: 2, owned: false }, { name: "Drake Golem Alliance", amount: 1, owned: false }, { name: "People's Alliance Hat", amount: 1, owned: true }] }); } // headless-test Physical Rewards
       if (q.has("hub")) { $("globalCog").classList.add("show", "open"); $("hub").classList.add("open"); } // headless-test the hub
     })();
@@ -5214,7 +5806,10 @@
       // It also has to be here at all: anything outside a widget's own rect is unclickable
       // unless the page reports it, so an unlisted panel would render perfectly and refuse
       // every click, including its own Stop button.
-    const RSEL = "body.scanbox #scanBox, body.payoutscan #payoutPanel, #panel, #globalCog, #hub, #cogMenu, #whatsnew, #setupNudge.show, #svcDown.show, #ocrWarn.show, #arrangeScrim .ab, #arrangeScrim .nudge, .widget:not(.notifier), .widget.notifier.live, .widget.notifier.moving, .widget.notifier.cfgopen, .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead, #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead";
+      // 🔑 `body.boardbox #boardBox` — the contract board's calibration box, same contract as the
+      // scan box: listed only while its mode has it on screen, because it is a large rectangle
+      // over the middle of the game and an unlisted one would render but refuse every drag.
+    const RSEL = "body.scanbox #scanBox, body.boardbox #boardBox, body.payoutscan #payoutPanel, #panel, #globalCog, #hub, #cogMenu, #whatsnew, #setupNudge.show, #svcDown.show, #ocrWarn.show, #arrangeScrim .ab, #arrangeScrim .nudge, .widget:not(.notifier), .widget.notifier.live, .widget.notifier.moving, .widget.notifier.cfgopen, .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead, #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead";
       // Only cross the process boundary when the answer actually changed. The rects are stable for
       // minutes at a time (they move on drag/resize/show/hide/hover), so this was ten identical
       // IPC messages a second, forever.
@@ -5549,9 +6144,19 @@
   applyPrefs();
 
   // Live updates.
-  const es = new EventSource("/missions/events");
-  es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
-  es.onerror = () => { /* auto-reconnects */ };
+  // ⚠️ `?rates` is a FIXTURE of the idle panel, and the live feed would paint over it the moment
+  // it arrives — which is exactly what happened the first time, leaving a harness URL that looked
+  // broken while working perfectly. A fixture that a real update can overwrite tests nothing, so
+  // this one route stays disconnected.
+  // Every FIXTURE flag has to be listed here, not just the first one: a fixture the live feed can
+  // paint over tests nothing, and it fails by silently showing real data that looks plausible.
+  const FIXTURES = ["rates", "missioninfo"];
+  const q0 = new URLSearchParams(location.search);
+  if (!FIXTURES.some((f) => q0.has(f))) {
+    const es = new EventSource("/missions/events");
+    es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
+    es.onerror = () => { /* auto-reconnects */ };
+  }
 </script>
 </body>
 </html>
