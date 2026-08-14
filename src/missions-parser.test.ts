@@ -39,6 +39,44 @@ for (const badge of ["[300 Rep]", "[Rep]", "[N Rep]", "[1,200 Rep]", "[BP]", "[B
   assert.equal(ev.title, "Ship In Distress", `badge ${badge} should be stripped`);
 }
 
+// ── Language packs rewrite the notification WRAPPER, not just the payload ───
+// Measured 2026-08-14 against the real global.ini of all three packs, diffed against the
+// vanilla 4.9.0 file extracted from Data.p4k. ExoAE and Remix2 redefine
+//   crafting_hud_notification_received_blueprint = <EM4>Received Blueprint: %s [BP]</EM4>
+// which puts markup IN FRONT of the words the old regex anchored on ('"Received Blueprint:'),
+// so it could never match and those users recorded ZERO blueprints — no error, no warning,
+// just an empty collection. This is the assertion that would have caught it.
+//
+// The engine renders "<localized string>: <body>" with an empty body, hence the trailing ": ".
+const bpFormats: [string, string][] = [
+  ["vanilla", "Received Blueprint: %s"],
+  ["ExoAE", "<EM4>Received Blueprint: %s [BP]</EM4>"],
+  ["Remix2", "<EM4>Received Blueprint: %s [BP]</EM4>"],
+  ["Remix", "Received Blueprint: %s"],
+];
+for (const [pack, fmt] of bpFormats) {
+  const line = `Added notification "${fmt.replace("%s", "Monde Arms")}: " [75] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: []`;
+  const ev = parseMissionEvent(event(line));
+  assert(ev?.kind === "blueprintReceived", `${pack}: a blueprint receipt must parse`);
+  assert.equal(ev.name, "Monde Arms", `${pack}: the pack's decorations must not ride into the name`);
+}
+
+// Titles legitimately contain quotes, so the notification cannot be captured with "([^"]*)".
+// Anchoring on the full `" [n] to queue.` terminator is what makes this safe — verified against
+// 18,006 real notification lines, where every one of the 3,389 mission-relevant ones carries it.
+const quoted = parseMissionEvent(event(
+  'Added notification "Contract Accepted:  Terrorist Shigemori "Jester" Amsden to be Neutralized: " [4] to queue. MissionId: [11111111-2222-3333-4444-555555555555]'));
+assert(quoted?.kind === "accept", "a title containing quotes must still parse");
+assert.equal(quoted.title, 'Terrorist Shigemori "Jester" Amsden to be Neutralized',
+  "inner quotes belong to the title and must survive intact");
+
+// A pack decorating the OTHER notifications must not break them either.
+const packObjective = parseMissionEvent(event(
+  'Added notification "<EM4>New Objective: Go to Pyro 5a Abandoned Outpost [BP]</EM4>: " [7] to queue. MissionId: [11111111-2222-3333-4444-555555555555]'));
+assert(packObjective?.kind === "newObjective", "a decorated objective must parse");
+assert.equal(packObjective.text, "Go to Pyro 5a Abandoned Outpost",
+  "the objective place name drives variant narrowing — decorations must not reach it");
+
 // ── Shard events (drive the chat channels) ──────────────────────────────────
 // Both lines are VERBATIM from Sub's live 4.9.0 Game.log (2026-08-08), through the real
 // parseLine so the tag extraction is covered too.
