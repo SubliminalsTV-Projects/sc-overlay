@@ -66,6 +66,17 @@ fi
 export SC_OVERLAY_CANVAS_X="${SC_OVERLAY_CANVAS_X:-auto}"
 export SC_OVERLAY_CANVAS_Y="${SC_OVERLAY_CANVAS_Y:-auto}"
 
+# Keep the native 1920x1080 first-run safe zone where it fits, but clamp it on smaller desktops
+# so first-run widgets can never be positioned outside the machine's available canvas.
+if [ -n "${SC_OVERLAY_CANVAS_WIDTH:-}" ] && [ -n "${SC_OVERLAY_CANVAS_HEIGHT:-}" ]; then
+  zone_w=1920
+  zone_h=1080
+  if [ "$SC_OVERLAY_CANVAS_WIDTH" -lt "$zone_w" ] 2>/dev/null; then zone_w="$SC_OVERLAY_CANVAS_WIDTH"; fi
+  if [ "$SC_OVERLAY_CANVAS_HEIGHT" -lt "$zone_h" ] 2>/dev/null; then zone_h="$SC_OVERLAY_CANVAS_HEIGHT"; fi
+  export SC_OVERLAY_DEFAULT_ZONE_WIDTH="${SC_OVERLAY_DEFAULT_ZONE_WIDTH:-$zone_w}"
+  export SC_OVERLAY_DEFAULT_ZONE_HEIGHT="${SC_OVERLAY_DEFAULT_ZONE_HEIGHT:-$zone_h}"
+fi
+
 # The native Alpha 22 OpenGL/ANGLE tuning was calibrated for the CachyOS host and fails before
 # the Electron app reaches steady state in the Nobara Flatpak. Test 2 prioritizes a reliable
 # launch with Chromium GPU compositing disabled. Users/developers can still override this with
