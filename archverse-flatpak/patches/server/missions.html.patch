@@ -1,0 +1,160 @@
+--- /mnt/data/upstream22-src/build/server/overlay/missions.html	2026-08-13 01:45:37.000000000 +0000
++++ /mnt/data/alpha22-flatpak-work/ArchVerse-Overlay-0.1.42-r31-alpha.22/app/server/overlay/missions.html	2026-08-12 20:30:00.000000000 +0000
+@@ -5199,39 +5199,125 @@
+       // for .widget — so it needs reporting in its own right, but ONLY while it's out. A parked
+       // bar must not leave a permanently-clickable strip over the game. (#panel's own bar is
+       // covered the same way; #panel itself is already listed.)
+-      // `body.scanbox #scanBox` only: the scan-read-area box is draggable, and a drag can't start
+-      // unless the shell makes the window interactive over it. Listed ONLY while it's shown —
+-      // it's a calibration mode you switch on, and a box that size must not sit in the cursor
+-      // hit-test the rest of the time.
+-      // #mreport is deliberately ABSENT: it lives inside #panel and covers it exactly, so the
+-      // panel's own rect already makes it clickable. Listing it would report the same rectangle
+-      // twice for no gain.
+-      // 🔑 `#setupNudge.show`, not `#setupNudge` — a hidden banner must never claim a region, or
+-    // it would swallow game clicks along a blank strip above the taskbar for the whole session.
+-      // 🔑 `body.payoutscan #payoutPanel`, for the same reason as the scan box above: it is a
+-      // MODE's chrome, and a panel this size must not sit in the cursor hit-test — swallowing
+-      // game clicks over a 460x620 rectangle — for the rest of the session once it is gone.
+-      // It also has to be here at all: anything outside a widget's own rect is unclickable
+-      // unless the page reports it, so an unlisted panel would render perfectly and refuse
+-      // every click, including its own Stop button.
+-    const RSEL = "body.scanbox #scanBox, body.payoutscan #payoutPanel, #panel, #globalCog, #hub, #cogMenu, #whatsnew, #setupNudge.show, #svcDown.show, #ocrWarn.show, #arrangeScrim .ab, #arrangeScrim .nudge, .widget:not(.notifier), .widget.notifier.live, .widget.notifier.moving, .widget.notifier.cfgopen, .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead, #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead";
+-      // Only cross the process boundary when the answer actually changed. The rects are stable for
+-      // minutes at a time (they move on drag/resize/show/hide/hover), so this was ten identical
+-      // IPC messages a second, forever.
+-      let lastRegions = "";
+-      const reportRegions = () => {
++      // Calibration overlays are reported only while active: the scan-read-area box and payout
++      // panel are draggable controls, and a drag cannot start unless the shell makes the window
++      // interactive over them. Their body classes gate them so they disappear from hit-testing at rest.
++      const RSEL = "body.scanbox #scanBox, body.payoutscan #payoutPanel, #panel, #globalCog, #hub, #cogMenu, #whatsnew, #setupNudge.show, #svcDown.show, #ocrWarn.show, #arrangeScrim .ab, #arrangeScrim .nudge, .widget:not(.notifier), .widget.notifier.live, .widget.notifier.moving, .widget.notifier.cfgopen, .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead, #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead";
++      const pointTargetVisible = (el) => {
++        if (!el || !el.isConnected) return false;
++        const style = getComputedStyle(el);
++        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
++        const r = el.getBoundingClientRect();
++        return r.width > 1 && r.height > 1;
++      };
++      const notifierCanTakeFocus = (el) => !el.classList.contains("notifier")
++        || el.classList.contains("live")
++        || el.classList.contains("moving")
++        || el.classList.contains("cfgopen");
++      const describeRegionElement = (el) => {
++        const widget = el.closest?.(".widget");
++        if (widget && pointTargetVisible(widget) && notifierCanTakeFocus(widget)) {
++          const key = widget.id.startsWith("w-") ? widget.id.slice(2) : (widget.dataset.widgetKey || "widget");
++          return {
++            key,
++            title: WBY[key]?.title || widget.querySelector(".wh-title")?.textContent?.trim() || key,
++            classification: widget.classList.contains("notifier") ? ".widget.notifier" : ".widget",
++            id: widget.id || null,
++            classes: [...widget.classList],
++            priority: widget.classList.contains("notifier") ? 35 : 30,
++          };
++        }
++        const panel = el.closest?.("#panel");
++        if (panel && pointTargetVisible(panel)) {
++          return {
++            key: "blueprint", title: WBY.blueprint?.title || "Mission & BP Tracker",
++            classification: "#panel", id: "panel", classes: [...panel.classList], priority: 25,
++          };
++        }
++        const chrome = el.closest?.("body.scanbox #scanBox, body.payoutscan #payoutPanel, #globalCog, #hub, #cogMenu, #whatsnew, #setupNudge.show, #svcDown.show, #ocrWarn.show, #arrangeScrim .ab, #arrangeScrim .nudge");
++        if (chrome && pointTargetVisible(chrome)) {
++          return {
++            key: chrome.id || "overlay-chrome",
++            title: chrome.getAttribute("aria-label") || chrome.getAttribute("title") || chrome.id || "Overlay controls",
++            classification: "overlay-chrome", id: chrome.id || null,
++            classes: [...chrome.classList], priority: 50,
++          };
++        }
++        return null;
++      };
++      const collectOverlayRegions = () => {
+         const rects = [];
+         document.querySelectorAll(RSEL).forEach((el) => {
++          const meta = describeRegionElement(el);
++          if (!meta) return;
+           const r = el.getBoundingClientRect();
+-          if (r.width > 1 && r.height > 1) rects.push({ x: r.left, y: r.top, w: r.width, h: r.height });
++          if (r.width > 1 && r.height > 1) {
++            rects.push({ x: r.left, y: r.top, w: r.width, h: r.height, ...meta });
++          }
+         });
++        return rects;
++      };
++      // Only cross the process boundary when the answer actually changed. The rects are stable for
++      // minutes at a time (they move on drag/resize/show/hide/hover), so this was ten identical
++      // IPC messages a second, forever.
++      let lastRegions = "";
++      const reportRegions = (force = false, _reason = "layout-change") => {
++        const rects = collectOverlayRegions();
+         const sig = JSON.stringify(rects);
+-        if (sig === lastRegions) return;
++        if (!force && sig === lastRegions) return rects.length;
+         lastRegions = sig;
+         window.overlayApi.reportRegions(rects);
++        return rects.length;
++      };
++      window.__overlayReportRegions = reportRegions;
++      let regionFrame = 0;
++      const scheduleRegionReport = (reason = "layout-change") => {
++        if (regionFrame) return;
++        regionFrame = requestAnimationFrame(() => {
++          regionFrame = 0;
++          reportRegions(false, reason);
++        });
++      };
++      const resized = new WeakSet();
++      const regionResizeObserver = new ResizeObserver(() => scheduleRegionReport("resize-observer"));
++      const observeRegionNodes = () => {
++        document.querySelectorAll(RSEL).forEach((el) => {
++          if (resized.has(el)) return;
++          resized.add(el);
++          regionResizeObserver.observe(el);
++        });
++      };
++      const regionMutationObserver = new MutationObserver(() => {
++        observeRegionNodes();
++        scheduleRegionReport("mutation-observer");
++      });
++      regionMutationObserver.observe(document.body, {
++        subtree: true, childList: true, attributes: true,
++        attributeFilter: ["class", "style", "hidden"],
++      });
++      window.addEventListener("resize", () => scheduleRegionReport("window-resize"));
++      document.addEventListener("transitionend", () => scheduleRegionReport("transition-end"), true);
++      document.addEventListener("animationend", () => scheduleRegionReport("animation-end"), true);
++      document.fonts?.ready?.then(() => scheduleRegionReport("fonts-ready"));
++      observeRegionNodes();
++      reportRegions(true, "startup");
++      const classifyOverlayPoint = (x, y) => {
++        if (!Number.isFinite(x) || !Number.isFinite(y)
++            || x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) {
++          return { hit: false, classification: "transparent-canvas" };
++        }
++        const matches = collectOverlayRegions().filter((r) =>
++          x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h);
++        if (!matches.length) return { hit: false, classification: "transparent-canvas" };
++        matches.sort((a, b) => (b.priority - a.priority) || ((a.w * a.h) - (b.w * b.h)));
++        return { hit: true, ...matches[0] };
+       };
+-      setInterval(reportRegions, 100);
+-      reportRegions();
++      window.__overlayClassifyPoint = classifyOverlayPoint;
++      window.overlayApi.onProbePoint?.((point) => {
++        const seq = Number(point?.seq);
++        const result = classifyOverlayPoint(Number(point?.x), Number(point?.y));
++        window.overlayApi.reportPointClassification?.({ seq, ...result });
++      });
+     }
+ 
+     // "What's new" card. Auto-shows once per new version on launch AND is re-openable any time
+@@ -5553,5 +5639,6 @@
+   es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
+   es.onerror = () => { /* auto-reconnects */ };
+ </script>
++  <script src="/archverse-widget-appearance.js"></script>
+ </body>
+ </html>

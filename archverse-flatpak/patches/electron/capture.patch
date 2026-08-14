@@ -1,0 +1,165 @@
+--- /mnt/data/alpha21_work/ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/capture.cjs	2026-08-09 03:21:42.000000000 +0000
++++ /mnt/data/ArchVerse-Flatpak-Alpha22-Test1/app/electron/capture.cjs	2026-08-13 02:55:21.945893327 +0000
+@@ -14,6 +14,7 @@
+ const path = require("node:path");
+ const os = require("node:os");
+ const { getStarCitizenSessionBinder } = require("./linux/star-citizen-session.cjs");
++const { IS_FLATPAK } = require("./linux/runtime-env.cjs");
+ const { createRapidOcrClient } = require("./rapidocr-client.cjs");
+ const { detectScanModeRadarIcon } = require("./scan-mode-gate.cjs");
+ 
+@@ -75,7 +76,11 @@
+   const className = cleanX11Field(values?.CLASS);
+   let resolvedProcess = String(processName || "");
+   if (!resolvedProcess && /^\d+$/.test(pid)) {
+-    try { resolvedProcess = fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim(); } catch {}
++    const info = scSession.readProcess(Number(pid));
++    if (info) resolvedProcess = String(info.comm || "").trim();
++    if (!resolvedProcess && !IS_FLATPAK) {
++      try { resolvedProcess = fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim(); } catch {}
++    }
+   }
+   const blob = `${title} ${className} ${resolvedProcess}`.trim();
+   const boundPid = !!session && /^\d+$/.test(pid) && belongsToSession(Number(pid));
+@@ -122,7 +127,7 @@
+     const script = [
+       'wid=$(xdotool getactivewindow 2>/dev/null || true)',
+       'pid=""; title=""; class=""',
+-      'if [ -n "$wid" ]; then pid=$(xdotool getwindowpid "$wid" 2>/dev/null || true); title=$(xdotool getwindowname "$wid" 2>/dev/null | tr "\\n" " " || true); class=$(xprop -id "$wid" WM_CLASS 2>/dev/null | tr "\\n" " " || true); fi',
++      'if [ -n "$wid" ]; then pid=$(xdotool getwindowpid "$wid" 2>/dev/null || true); title=$(xdotool getwindowname "$wid" 2>/dev/null | tr "\\n" " " || true); class=$(xdotool getwindowclassname "$wid" 2>/dev/null | tr "\\n" " " || true); fi',
+       'printf "PID=%s\\nTITLE=%s\\nCLASS=%s\\n" "$pid" "$title" "$class"',
+       'if [ -n "$wid" ]; then xdotool getwindowgeometry --shell "$wid" 2>/dev/null || true; fi',
+     ].join('; ');
+@@ -258,9 +263,17 @@
+     thumbnailSize: { width: canvasW, height: canvasH },
+     fetchWindowIcons: false,
+   });
++  const session = scSession.current();
++  const boundWindowId = session?.flatpakWindowBound ? String(session.windowId || "") : "";
+   const candidates = sources.filter((source) => {
++    if (source.thumbnail.isEmpty()) return false;
+     const name = String(source.name || "").trim();
+-    return !source.thumbnail.isEmpty() && (/gamescope/i.test(name) || /^Star\s*Citizen$/i.test(name));
++    const sourceWindowId = String(source.id || "").match(/^window:(\d+):/)?.[1] || "";
++    if (boundWindowId && sourceWindowId === boundWindowId) return true;
++    // The Flatpak build does not fall back to a generic Gamescope source: the exact X11 window
++    // session is its privacy boundary. Native Alpha 22 keeps the existing ranked fallback.
++    if (boundWindowId) return false;
++    return /gamescope/i.test(name) || /^Star\s*Citizen$/i.test(name);
+   });
+   if (!candidates.length) {
+     const names = sources.slice(0, 8).map((source) => source.name || "(unnamed)").join(", ");
+@@ -268,6 +281,8 @@
+   }
+   candidates.sort((a, b) => {
+     const rank = (source) => {
++      const sourceWindowId = String(source.id || "").match(/^window:(\d+):/)?.[1] || "";
++      if (boundWindowId && sourceWindowId === boundWindowId) return 10;
+       const name = String(source.name || "");
+       if (/gamescope/i.test(name) && /star\s*citizen/i.test(name)) return 3;
+       if (/^Star\s*Citizen$/i.test(name.trim())) return 2;
+@@ -338,9 +353,11 @@
+   // Probe capture backends once, then reuse the winner for the session. Alpha 12 repeated the
+   // same known-failing Gamescope/portal attempts before every Spectacle frame, which added process
+   // creation and several seconds of avoidable latency to every OCR cycle.
+-  const normalOrder = HOST_IS_WAYLAND
+-    ? ["gamescope", "spectacle", "electron"]
+-    : ["electron", ...(process.platform === "linux" ? ["spectacle"] : [])];
++  const normalOrder = IS_FLATPAK
++    ? ["gamescope", "electron"]
++    : (HOST_IS_WAYLAND
++      ? ["gamescope", "spectacle", "electron"]
++      : ["electron", ...(process.platform === "linux" ? ["spectacle"] : [])]);
+   const order = preferredCaptureBackend
+     ? [preferredCaptureBackend, ...normalOrder.filter((name) => name !== preferredCaptureBackend)]
+     : normalOrder;
+@@ -885,6 +902,7 @@
+   let tmpShotIdx = 0;
+   const tmpPanel = path.join(os.tmpdir(), "sc-fab-panel.png"); // upper-right crop fed to RapidOCR
+   const tmpMiningCrop = path.join(os.tmpdir(), "sc-mining-crop.png"); // scan-region crop fed to RapidOCR
++  const tmpContractCrop = path.join(os.tmpdir(), "sc-contract-crop.png"); // offers-panel crop fed to RapidOCR
+   let busy = false;
+   let busyAt = 0;             // when the current tick set busy (watchdog against a wedged loop)
+   const TICK_WATCHDOG_MS = 15000; // if a tick has "held" busy this long, it hung — force re-arm
+@@ -1000,10 +1018,13 @@
+     // auto-show armed the scanner is closed ON PURPOSE and needs the read to pop itself open.
+     const mining = cfg.miningAssistant === true
+       && (cfg.miningOpen === true || cfg.miningAutoShow === true);
+-    // The foreground watcher is only worth running while something here is armed — with all three
+-    // opt-ins off this loop does nothing but re-read a config file every 3s, and shouldn't be
+-    // keeping a helper process alive to do it.
+-    if (!fab && !miss && !mining && !claim) { emitContext("off"); return; }
++    // Upstream 2026-08-12: the contract-board payout scanner is a temporary, opt-in mode.
++    // It shares this ONE capture loop rather than starting a second desktop capture, and it only
++    // arms when a calibrated panel exists so OCR is never burned on an unusable frame.
++    const payout = cfg.payoutScan === true && !!cfg.contractRegion;
++    // The Linux port deliberately keeps its own foreground/session binding instead of upstream's
++    // Windows foreground helper. That binding is privacy/capture scope, NOT desktop click ownership.
++    if (!fab && !miss && !mining && !claim && !payout) { emitContext("off"); return; }
+     // Watchdog: a single hung await (e.g. a fetch to the sidecar while it's restarting during an
+     // auto-update) must never latch the loop forever. If a prior tick has held `busy` well past
+     // any real tick, treat it as wedged and re-arm — otherwise the overlay freezes on its last
+@@ -1077,7 +1098,7 @@
+       // a tick that finds nothing pays the full glance again and everything re-detects normally.
+       const locked = mining && archScanModeRead.active && sigBox && Date.now() - sigBoxAt < SIG_LOCK_MS;
+       let read = { kind: "none" };
+-      const needGeneric = fab || miss || claim || (mining && archScanModeRead.active);
++      const needGeneric = fab || miss || claim || payout || (mining && archScanModeRead.active);
+       if (!locked && needGeneric) {
+         // 🔑 Its OWN try. The two passes must not share fate: a throw here used to abort the whole
+         // tick before the mining crop ever ran, so acquiring a NEW rock needed a full glance that
+@@ -1111,6 +1132,54 @@
+       } else {
+         stage.skippedFullFrame = true;
+       }
++
++      // ── Contract board: RapidOCR the calibrated offers panel ─────────────
++      // Ported from upstream d7ece4f. Windows/full-frame OCR is not reliable enough for the
++      // small giver/amount text, so the same captured Star Citizen frame is cropped and read by
++      // PP-OCR. This is intentionally NOT a second screen capture. ArchVerse keeps the Linux
++      // game-session capture backend; only this post-capture analysis pass is upstream logic.
++      if (payout && cfg.contractRegion) {
++        try {
++          const cr = cfg.contractRegion;
++          const size = shot.getSize();
++          const region = {
++            x: Math.round(cr.x * size.width),
++            y: Math.round(cr.y * size.height),
++            width: Math.round(cr.w * size.width),
++            height: Math.round(cr.h * size.height),
++          };
++          if (region.width > 40 && region.height > 40) {
++            const CONTRACT_OCR_SCALE = 2;
++            const panelCrop = shot.crop(region);
++            const bigPanel = panelCrop.resize({
++              width: region.width * CONTRACT_OCR_SCALE,
++              height: region.height * CONTRACT_OCR_SCALE,
++              quality: "best",
++            });
++            fs.writeFileSync(tmpContractCrop, bigPanel.toPNG());
++            const t5 = Date.now();
++            // Return detections to the crop's ORIGINAL pixel space; the sidecar treats this
++            // crop as the complete panel and must not receive full-frame offsets here.
++            const lines = (await ocrRapidLines(tmpContractCrop)).map((l) => ({
++              text: l.text,
++              x: l.x / CONTRACT_OCR_SCALE, y: l.y / CONTRACT_OCR_SCALE,
++              w: l.w / CONTRACT_OCR_SCALE, h: l.h / CONTRACT_OCR_SCALE,
++            }));
++            stage.contractOcr = Date.now() - t5;
++            await fetch(`http://localhost:${port}/api/screen-read`, {
++              method: "POST",
++              headers: { "Content-Type": "application/json" },
++              body: JSON.stringify({ lines, w: region.width, h: region.height, contractCrop: true }),
++              signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
++            });
++          }
++        } catch (e) {
++          // Keep payout scanning isolated from mining/fabricator/mission OCR: one bad crop must
++          // never abort the other consumers sharing this frame.
++          stage.contractError = String((e && e.message) || e).slice(0, 200);
++        }
++      }
++
+       let renderSrc = shot; // where the item render is cropped FROM (full frame, or the panel below)
+       // Pass 2 — dual-engine: once pass 1 says we're at a kiosk, re-read the item NAME with RapidOCR
+       // on the upper-right crop. It's far better at the stylized name tokens Windows OCR mangles

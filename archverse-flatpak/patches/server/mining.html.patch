@@ -1,0 +1,71 @@
+--- /mnt/data/upstream22-src/build/server/overlay/mining.html	2026-08-13 01:45:37.000000000 +0000
++++ /mnt/data/alpha22-flatpak-work/ArchVerse-Overlay-0.1.42-r31-alpha.22/app/server/overlay/mining.html	2026-08-12 20:30:00.000000000 +0000
+@@ -686,11 +686,18 @@
+       // `view.wording` is the server's call on how to say that (it knows where you are);
+       // falling back to "Debris" only when it has nothing to offer.
+       const w = view.wording;
+-      el.innerHTML = '<div class="rock" style="color:var(--cyan-dim)">' +
+-          (unknown ? "Unknown" : escapeHtml(w ? w.lead : "Debris")) + '</div>' +
+-        '<div class="meta">' + (unknown ? "Not ore — and not a debris signature either"
+-                                       : escapeHtml(w ? w.detail : "Salvageable — not a mineable rock")) + '</div>' +
+-        sig + '</div>';
++      // ArchVerse safety invariant: a 2,000-step number/location hint can describe possibilities,
++      // but it never proves that an object is salvageable. Keep the stock renderer conservative
++      // even during the tiny startup window before archverse-resource-scanner.js replaces it.
++      const confirmedSalvage = sc.salvageConfirmed === true;
++      const lead = unknown ? "Unknown"
++        : confirmedSalvage ? "Salvageable debris"
++        : ((view.place || {}).kind === "planet" ? "Harvestable candidate" : "Resource contact");
++      const detail = unknown ? "Not a recognized resource signature"
++        : confirmedSalvage ? "Positive salvage confirmation"
++        : (w ? w.lead + (w.detail ? " · " + w.detail : "") : "Signature alone does not confirm salvage");
++      el.innerHTML = '<div class="rock" style="color:var(--cyan-dim)">' + escapeHtml(lead) + '</div>' +
++        '<div class="meta">' + escapeHtml(detail) + '</div>' + sig + '</div>';
+       return;
+     }
+     const isTarget = m.some(x => targetSet.has(x.name));
+@@ -698,7 +705,10 @@
+     // and naming the first one meant a targeted Aslarite was announced as Savrilium.
+     const main = m.find(x => targetSet.has(x.name)) || m[0];
+     const rest = m.filter(x => x !== main);
+-    const maybe = verdictOf(sc) === "ore-or-debris" ? '<span class="maybe">or debris</span>' : '';
++    // Do not label an ore collision as debris from arithmetic alone. The ArchVerse extension
++    // supplies the richer candidate UI; stock fallback only names salvage after positive evidence.
++    const maybe = verdictOf(sc) === "ore-or-debris" && sc.salvageConfirmed === true
++      ? '<span class="maybe">salvage confirmed</span>' : '';
+     // A SHARED signature names a family, not a rock — every hand-mined gem reads 3,000 and
+     // every C-type asteroid 4,700. `contains` is the only thing that makes those reads useful,
+     // so it goes on its own line rather than being squeezed into the cluster meta.
+@@ -980,8 +990,9 @@
+     // next time the piper box is up — the recipe is in the skill.
+     if (v === "debris") {
+       maybeAutoShow(); flash();
+-      if ((view.place || {}).kind === "planet") speakClips(["n_harvestables"], "Harvestables");
+-      else speakClips(["n_debris"], "Debris");
++      // ArchVerse: location + numeric step are hints, never salvage proof. The stock handler is
++      // defensive too so no pre-extension race can announce debris incorrectly.
++      if (sc.salvageConfirmed === true) speak("Salvageable debris");
+       return;
+     }
+     maybeAutoShow();                 // a REAL ore signature => the player is genuinely scanning
+@@ -1000,8 +1011,11 @@
+       // Savrilium must not have it buried under "debris" — it just stops sounding like a promise.
+       if (isTarget) speakClips(["c_mightbe", nameSlug(name), "c_notcertain"],
+                                "That might be " + name + ". I'm not certain. Worth flying over.");
+-      else { flash(); speakClips(["c_probablydebris", nameSlug(name), "c_yourcall"],
+-                                 "Probably debris. Could be " + name + ". Your call."); }
++      else {
++        flash();
++        if (sc.salvageConfirmed === true) speak("Salvageable debris");
++        // Unconfirmed ore/salvage collisions stay silent instead of guessing.
++      }
+       return;
+     }
+     const mode = localStorage.getItem("miningSpeakMode") || "target";
+@@ -1194,5 +1208,6 @@
+   // Do not auto-enable it from iframe load (the frame can be loaded while hidden).
+   connect();
+ </script>
++  <script src="/archverse-resource-scanner.js"></script>
+ </body>
+ </html>

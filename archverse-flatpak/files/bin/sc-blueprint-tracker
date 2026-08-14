@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF="$(readlink -f -- "${BASH_SOURCE[0]}")"
+APP_DIR="$(cd -- "$(dirname -- "$SELF")/../app" && pwd)"
+
+ELECTRON_BIN="${SC_TRACKER_ELECTRON_BIN:-/usr/bin/electron42}"
+if [[ ! -x "$ELECTRON_BIN" ]]; then
+  printf 'SC Blueprint Tracker requires Electron 42 at %s.\n' "$ELECTRON_BIN" >&2
+  printf 'Install it with: sudo pacman -S --needed electron42\n' >&2
+  exit 127
+fi
+
+NODE_BIN="${SC_TRACKER_NODE_BIN:-$(command -v node || true)}"
+if [[ -z "$NODE_BIN" || ! -x "$NODE_BIN" ]]; then
+  printf 'SC Blueprint Tracker requires Node.js for its local sidecar server.\n' >&2
+  printf 'Install it with: sudo pacman -S --needed nodejs\n' >&2
+  exit 127
+fi
+export SC_TRACKER_NODE_BIN="$NODE_BIN"
+
+export SC_TRACKER_WINEPREFIX="${SC_TRACKER_WINEPREFIX:-${WINEPREFIX:-$HOME/Games/star-citizen}}"
+export SC_TRACKER_CONFIG_DIR="${SC_TRACKER_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/sc-blueprint-tracker}"
+
+# Preserve the real KDE session before forcing Electron itself onto XWayland. The OCR capture
+# subprocess must be able to reconnect to native Wayland/DBus so Spectacle captures the actual
+# Gamescope desktop rather than Electron silently falling back to an arbitrary X11 screen source.
+export SC_TRACKER_HOST_XDG_SESSION_TYPE="${SC_TRACKER_HOST_XDG_SESSION_TYPE:-${XDG_SESSION_TYPE:-}}"
+export SC_TRACKER_HOST_WAYLAND_DISPLAY="${SC_TRACKER_HOST_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
+export SC_TRACKER_HOST_DISPLAY="${SC_TRACKER_HOST_DISPLAY:-${DISPLAY:-}}"
+export SC_TRACKER_HOST_XDG_RUNTIME_DIR="${SC_TRACKER_HOST_XDG_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}"
+export SC_TRACKER_HOST_DBUS_SESSION_BUS_ADDRESS="${SC_TRACKER_HOST_DBUS_SESSION_BUS_ADDRESS:-${DBUS_SESSION_BUS_ADDRESS:-}}"
+
+# Three-wide panorama profile. Monitor origin/primary geometry is intentionally NOT
+# calculated in this launcher anymore. electron/window-manager.cjs owns that logic and
+# prefers KDE's KScreen geometry, then XRandR, then Electron as a fallback.
+export SC_OVERLAY_CANVAS_WIDTH="${SC_OVERLAY_CANVAS_WIDTH:-6360}"
+export SC_OVERLAY_CANVAS_HEIGHT="${SC_OVERLAY_CANVAS_HEIGHT:-2160}"
+export SC_OVERLAY_CANVAS_X="${SC_OVERLAY_CANVAS_X:-auto}"
+export SC_OVERLAY_CANVAS_Y="${SC_OVERLAY_CANVAS_Y:-auto}"
+printf '[launcher] canvas profile: %sx%s origin=%s,%s (detected by window manager)\n'   "$SC_OVERLAY_CANVAS_WIDTH" "$SC_OVERLAY_CANVAS_HEIGHT"   "$SC_OVERLAY_CANVAS_X" "$SC_OVERLAY_CANVAS_Y" >&2
+# First-run/reset positions live in a centered 1920x1080 safe zone within that panorama.
+export SC_OVERLAY_DEFAULT_ZONE_WIDTH="${SC_OVERLAY_DEFAULT_ZONE_WIDTH:-1920}"
+export SC_OVERLAY_DEFAULT_ZONE_HEIGHT="${SC_OVERLAY_DEFAULT_ZONE_HEIGHT:-1080}"
+# Keep CSS pixels, BrowserWindow bounds, and the Gamescope surface in a 1:1 relationship.
+export SC_OVERLAY_DEVICE_SCALE_FACTOR="${SC_OVERLAY_DEVICE_SCALE_FACTOR:-1}"
+
+# KDE/XWayland safety: normal mode is a whole-window click-through overlay. Set to 0 only
+# for debugging the older hover-based input behavior.
+export SCBT_FORCE_CLICK_THROUGH="${SCBT_FORCE_CLICK_THROUGH:-1}"
+export ELECTRON_OZONE_PLATFORM_HINT="x11"
+# RapidOCR uses sharp/libvips internally. One native worker plus the application-level
+# FIFO in capture.cjs avoids Linux libvips object races during continuous OCR.
+export VIPS_CONCURRENCY="${VIPS_CONCURRENCY:-1}"
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+export SC_TRACKER_OCR_THREADS="${SC_TRACKER_OCR_THREADS:-2}"
+export SC_TRACKER_RAPIDOCR_MAX_QUEUE="${SC_TRACKER_RAPIDOCR_MAX_QUEUE:-2}"
+export OMP_THREAD_LIMIT="${OMP_THREAD_LIMIT:-1}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MAGICK_THREAD_LIMIT="${MAGICK_THREAD_LIMIT:-1}"
+export GDK_BACKEND="x11"
+# KDE itself may run on Wayland, but the tracker and Star Citizen are XWayland clients.
+# Hide WAYLAND_DISPLAY from Electron so desktopCapturer uses the X11 capture backend
+# instead of opening a PipeWire/xdg-desktop-portal ScreenCast session every OCR poll.
+unset WAYLAND_DISPLAY
+export XDG_SESSION_TYPE="x11"
+
+# Keep game overlays out of Electron.
+export MANGOHUD=0
+export MANGOHUD_DLSYM=0
+unset MANGOHUD_CONFIG MANGOHUD_CONFIGFILE MANGOHUD_PRESETSFILE MANGOHUD_OPENGL_LIBS
+
+strip_mangohud_entries() {
+  local input="${1:-}" output="" item
+  local -a entries=()
+  IFS=':' read -r -a entries <<< "$input"
+  for item in "${entries[@]}"; do
+    [[ -z "$item" ]] && continue
+    [[ "${item,,}" == *mangohud* ]] && continue
+    output+="${output:+:}$item"
+  done
+  printf '%s' "$output"
+}
+
+if [[ -n "${LD_PRELOAD:-}" ]]; then
+  LD_PRELOAD="$(strip_mangohud_entries "$LD_PRELOAD")"
+  if [[ -n "$LD_PRELOAD" ]]; then export LD_PRELOAD; else unset LD_PRELOAD; fi
+fi
+if [[ -n "${VK_INSTANCE_LAYERS:-}" ]]; then
+  VK_INSTANCE_LAYERS="$(strip_mangohud_entries "$VK_INSTANCE_LAYERS")"
+  if [[ -n "$VK_INSTANCE_LAYERS" ]]; then export VK_INSTANCE_LAYERS; else unset VK_INSTANCE_LAYERS; fi
+fi
+
+# RADV/Vulkan is crashing Electron's GPU subprocess with SIGSEGV (exit 139).
+# Prefer hardware OpenGL: Alpha 13 measurements reduced Electron rendering CPU by about
+# 60%. Set SC_TRACKER_RENDER_MODE=software for the retained llvmpipe Safe Mode.
+AUTO_RENDER_MODE=0
+if [[ -z "${SC_TRACKER_RENDER_MODE:-}" ]]; then AUTO_RENDER_MODE=1; fi
+RENDER_MODE="${SC_TRACKER_RENDER_MODE:-opengl}"
+export SC_TRACKER_RENDER_MODE="$RENDER_MODE"
+
+electron_flags=(
+  --ozone-platform=x11
+  "--force-device-scale-factor=${SC_OVERLAY_DEVICE_SCALE_FACTOR}"
+  --disable-accelerated-video-decode
+  --disable-accelerated-video-encode
+)
+
+case "$RENDER_MODE" in
+  software)
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+    export ANGLE_DEFAULT_PLATFORM=gl
+    unset VK_ICD_FILENAMES VK_DRIVER_FILES MESA_VK_DEVICE_SELECT DRI_PRIME
+    electron_flags+=(
+      --disable-vulkan
+      --use-gl=angle
+      --use-angle=gl
+      --disable-features=WebRTCPipeWireCapturer,Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,AcceleratedVideoDecoder,AcceleratedVideoEncoder
+    )
+    ;;
+  opengl)
+    unset LIBGL_ALWAYS_SOFTWARE MESA_LOADER_DRIVER_OVERRIDE
+    export ANGLE_DEFAULT_PLATFORM=gl
+    unset VK_ICD_FILENAMES VK_DRIVER_FILES MESA_VK_DEVICE_SELECT
+    electron_flags+=(
+      --disable-vulkan
+      --use-gl=angle
+      --use-angle=gl
+      --disable-features=WebRTCPipeWireCapturer,Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,AcceleratedVideoDecoder,AcceleratedVideoEncoder
+    )
+    ;;
+  swiftshader)
+    unset LIBGL_ALWAYS_SOFTWARE MESA_LOADER_DRIVER_OVERRIDE ANGLE_DEFAULT_PLATFORM
+    electron_flags+=(
+      --use-gl=angle
+      --use-angle=swiftshader
+      --enable-unsafe-swiftshader
+      --disable-features=WebRTCPipeWireCapturer
+    )
+    ;;
+  gpu-off)
+    unset LIBGL_ALWAYS_SOFTWARE MESA_LOADER_DRIVER_OVERRIDE ANGLE_DEFAULT_PLATFORM
+    electron_flags+=(--disable-gpu --disable-gpu-compositing --disable-features=WebRTCPipeWireCapturer)
+    ;;
+  *)
+    printf 'Unknown SC_TRACKER_RENDER_MODE=%s (use software, opengl, swiftshader, or gpu-off).\n' "$RENDER_MODE" >&2
+    exit 2
+    ;;
+esac
+
+# Remove optional explicit Vulkan layer paths that can be inherited globally.
+unset VK_LAYER_PATH VK_ADD_LAYER_PATH
+unset ELECTRON_RUN_AS_NODE
+
+printf '[launcher] renderer mode: %s\n' "$RENDER_MODE" >&2
+if [[ "$AUTO_RENDER_MODE" == "1" && "$RENDER_MODE" == "opengl" ]]; then
+  set +e
+  "$ELECTRON_BIN" "${electron_flags[@]}" "$APP_DIR" "$@"
+  renderer_status=$?
+  set -e
+  if (( renderer_status != 0 )); then
+    printf '[launcher] OpenGL exited with status %s; retrying once in software Safe Mode.\n' "$renderer_status" >&2
+    export SC_TRACKER_RENDER_MODE=software
+    exec "$SELF" "$@"
+  fi
+  exit 0
+fi
+exec "$ELECTRON_BIN" "${electron_flags[@]}" "$APP_DIR" "$@"

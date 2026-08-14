@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.gbmccray32_boop.ArchVerseOverlay</id>
+  <name>ArchVerse Overlay</name>
+  <summary>Community Linux companion overlay for Star Citizen</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-FSL-1.1-MIT</project_license>
+  <developer id="io.github.gbmccray32_boop">
+    <name>ArchVerse Linux Port Contributors</name>
+  </developer>
+  <description>
+    <p>ArchVerse Overlay is a community Linux port of SubliminalsTV's Star Citizen overlay. It provides mission and blueprint tracking, the Resource Scanner, chat and party tools, payout scanning, OCR-assisted widgets, and configurable transparent HUD panels.</p>
+    <p>This Flatpak build packages the Linux runtime and application dependencies so it does not depend on Arch, Fedora, Debian, or Ubuntu-specific Electron, Node.js, OCR, or X11 utility packages.</p>
+    <p>ArchVerse Overlay is a community port and is not an official Cloud Imperium Games product.</p>
+  </description>
+  <launchable type="desktop-id">io.github.gbmccray32_boop.ArchVerseOverlay.desktop</launchable>
+  <provides>
+    <binary>archverse-overlay</binary>
+  </provides>
+  <url type="homepage">https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux</url>
+  <url type="bugtracker">https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/issues</url>
+  <releases>
+    <release version="0.1.42-r31-alpha.22-flatpak-test2" date="2026-08-13">
+      <description>
+        <p>Second distribution-neutral Flatpak field-test with dynamic desktop canvas sizing, host-prefix discovery, and a conservative Flatpak renderer policy.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

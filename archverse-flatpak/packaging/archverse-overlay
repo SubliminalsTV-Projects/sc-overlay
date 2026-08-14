@@ -1,0 +1,87 @@
+#!/bin/sh
+set -eu
+
+export SC_TRACKER_FLATPAK=1
+export SC_TRACKER_ELECTRON_BIN=/app/bin/archverse-electron
+export SC_TRACKER_NODE_BIN=/app/bin/archverse-node
+export SC_TRACKER_CONFIG_DIR="${XDG_CONFIG_HOME}/sc-blueprint-tracker"
+export GTK_USE_PORTAL=1
+
+# Flatpak gives applications a private HOME such as ~/.var/app/<id>, while explicit filesystem
+# grants like --filesystem=~/Games are mounted at the real host-home path. Recover that path
+# without requesting broad home access so the existing Star Citizen/LUG prefix logic keeps working.
+if [ -z "${SC_TRACKER_HOST_HOME:-}" ]; then
+  case "${HOME:-}" in
+    */.var/app/${FLATPAK_ID:-io.github.gbmccray32_boop.ArchVerseOverlay})
+      SC_TRACKER_HOST_HOME="${HOME%/.var/app/${FLATPAK_ID:-io.github.gbmccray32_boop.ArchVerseOverlay}}"
+      ;;
+    *)
+      SC_TRACKER_HOST_HOME="/home/${USER:-$(id -un)}"
+      ;;
+  esac
+  export SC_TRACKER_HOST_HOME
+fi
+
+# Preserve an explicit prefix if the user supplied one. Otherwise use the same LUG Helper default
+# as the native package, but rooted in the actual host home instead of Flatpak's private HOME.
+export SC_TRACKER_WINEPREFIX="${SC_TRACKER_WINEPREFIX:-${WINEPREFIX:-${SC_TRACKER_HOST_HOME}/Games/star-citizen}}"
+printf '[flatpak] host home: %s\n' "$SC_TRACKER_HOST_HOME" >&2
+printf '[flatpak] Star Citizen prefix: %s\n' "$SC_TRACKER_WINEPREFIX" >&2
+
+# Flatpak Test 2: detect the X11/XWayland root desktop dynamically instead of inheriting the
+# native CachyOS machine's 6360x2160 panorama defaults. Explicit user overrides still win.
+if [ -z "${SC_OVERLAY_CANVAS_WIDTH:-}" ] || [ -z "${SC_OVERLAY_CANVAS_HEIGHT:-}" ]; then
+  canvas_dims=""
+
+  if command -v xrandr >/dev/null 2>&1; then
+    canvas_dims="$(xrandr --current 2>/dev/null \
+      | sed -n 's/^Screen [^:]*:.* current \([0-9][0-9]*\) x \([0-9][0-9]*\),.*/\1 \2/p' \
+      | head -n 1 || true)"
+  fi
+
+  if [ -z "$canvas_dims" ] && command -v xdotool >/dev/null 2>&1; then
+    canvas_dims="$(xdotool getdisplaygeometry 2>/dev/null || true)"
+  fi
+
+  case "$canvas_dims" in
+    *' '*)
+      detected_width="${canvas_dims%% *}"
+      detected_height="${canvas_dims#* }"
+      case "$detected_width:$detected_height" in
+        *[!0-9:]*|'':*|*:'') ;;
+        *)
+          : "${SC_OVERLAY_CANVAS_WIDTH:=$detected_width}"
+          : "${SC_OVERLAY_CANVAS_HEIGHT:=$detected_height}"
+          export SC_OVERLAY_CANVAS_WIDTH SC_OVERLAY_CANVAS_HEIGHT
+          printf '[flatpak] detected desktop canvas: %sx%s\n' \
+            "$SC_OVERLAY_CANVAS_WIDTH" "$SC_OVERLAY_CANVAS_HEIGHT" >&2
+          ;;
+      esac
+      ;;
+  esac
+fi
+
+# Origin remains owned by the Linux window manager so negative/offset multi-monitor layouts can
+# still use the existing KScreen/XRandR/Electron fallback chain.
+export SC_OVERLAY_CANVAS_X="${SC_OVERLAY_CANVAS_X:-auto}"
+export SC_OVERLAY_CANVAS_Y="${SC_OVERLAY_CANVAS_Y:-auto}"
+
+# Keep the native 1920x1080 first-run safe zone where it fits, but clamp it on smaller desktops
+# so first-run widgets can never be positioned outside the machine's available canvas.
+if [ -n "${SC_OVERLAY_CANVAS_WIDTH:-}" ] && [ -n "${SC_OVERLAY_CANVAS_HEIGHT:-}" ]; then
+  zone_w=1920
+  zone_h=1080
+  if [ "$SC_OVERLAY_CANVAS_WIDTH" -lt "$zone_w" ] 2>/dev/null; then zone_w="$SC_OVERLAY_CANVAS_WIDTH"; fi
+  if [ "$SC_OVERLAY_CANVAS_HEIGHT" -lt "$zone_h" ] 2>/dev/null; then zone_h="$SC_OVERLAY_CANVAS_HEIGHT"; fi
+  export SC_OVERLAY_DEFAULT_ZONE_WIDTH="${SC_OVERLAY_DEFAULT_ZONE_WIDTH:-$zone_w}"
+  export SC_OVERLAY_DEFAULT_ZONE_HEIGHT="${SC_OVERLAY_DEFAULT_ZONE_HEIGHT:-$zone_h}"
+fi
+
+# The native Alpha 22 OpenGL/ANGLE tuning was calibrated for the CachyOS host and fails before
+# the Electron app reaches steady state in the Nobara Flatpak. Test 2 prioritizes a reliable
+# launch with Chromium GPU compositing disabled. Users/developers can still override this with
+# flatpak run --env=SC_TRACKER_RENDER_MODE=opengl|software|swiftshader|gpu-off ...
+export SC_TRACKER_RENDER_MODE="${SC_TRACKER_RENDER_MODE:-gpu-off}"
+printf '[flatpak] renderer policy: %s\n' "$SC_TRACKER_RENDER_MODE" >&2
+
+exec /app/archverse/bin/sc-blueprint-tracker "$@"

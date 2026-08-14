@@ -1,0 +1,245 @@
+name: Build ArchVerse Alpha22 Flatpak Test1
+
+on:
+  push:
+    branches:
+      - integration/flatpak-alpha22-test1
+    paths:
+      - 'archverse-flatpak/**'
+      - '.github/workflows/build-archverse-flatpak-alpha22.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and smoke-test Flatpak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout Flatpak integration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Node dependencies and build current upstream sidecar
+        run: |
+          set -euxo pipefail
+          npm ci
+          npm run build:server
+
+      - name: Run Linux-safe upstream regression suites
+        run: |
+          set -euxo pipefail
+          npm run test:handover
+          npm run test:mining
+          npm run test:location
+          npm run test:contracts
+
+      - name: Reconstruct the verified ArchVerse Alpha 22 Linux shell
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/archverse-a20 /tmp/archverse-stage /tmp/archverse-alpha20.tar.gz
+          mkdir -p /tmp/archverse-a20 /tmp/archverse-stage/app /tmp/archverse-stage/bin /tmp/archverse-stage/flatpak /tmp/archverse-stage/tests
+
+          # Alpha 21's package test report records that all 19 Electron/Linux runtime files were
+          # byte-for-byte identical to Alpha 20. Use the actual published Alpha 20 release asset
+          # (with its release SHA-256) as the reproducible shell base instead of an approximate
+          # source/rescue branch.
+          curl --fail --location --retry 3 --retry-delay 2 \
+            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/releases/download/v0.1.42-r31-alpha.20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz \
+            --output /tmp/archverse-alpha20.tar.gz
+          echo 'f4256aeac8c13fb0a64fc6065a8869bf58015dbe694200a550aaf9e99e3dd0a6  /tmp/archverse-alpha20.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/archverse-alpha20.tar.gz -C /tmp/archverse-a20 \
+            --strip-components=2 --wildcards '*/app/electron/*'
+          test -f /tmp/archverse-a20/electron/capture.cjs
+          cp -a /tmp/archverse-a20/electron /tmp/archverse-stage/app/
+
+          patch --batch /tmp/archverse-stage/app/electron/capture.cjs < archverse-flatpak/patches/electron/capture.patch
+          patch --batch /tmp/archverse-stage/app/electron/linux/focus-controller.cjs < archverse-flatpak/patches/electron/focus-controller.patch
+          patch --batch /tmp/archverse-stage/app/electron/main.cjs < archverse-flatpak/patches/electron/main.patch
+          patch --batch /tmp/archverse-stage/app/electron/window-manager.cjs < archverse-flatpak/patches/electron/window-manager.patch
+          patch --batch /tmp/archverse-stage/app/electron/linux/star-citizen-session.cjs < archverse-flatpak/patches/electron/star-citizen-session.patch
+
+          cp archverse-flatpak/files/runtime-env.cjs /tmp/archverse-stage/app/electron/linux/
+          cp archverse-flatpak/files/flatpak-star-citizen-session.cjs /tmp/archverse-stage/app/electron/linux/
+
+      - name: Apply the Alpha 22 sidecar/Linux safety deltas
+        run: |
+          set -euxo pipefail
+          patch --batch build/server/overlay/config.html < archverse-flatpak/patches/server/config.html.patch
+          patch --batch build/server/overlay/mining.html < archverse-flatpak/patches/server/mining.html.patch
+          patch --batch build/server/overlay/missions.html < archverse-flatpak/patches/server/missions.html.patch
+          patch --batch build/server/server.mjs < archverse-flatpak/patches/server/server.mjs.patch
+          cp archverse-flatpak/files/overlay/archverse-resource-scanner.js build/server/overlay/
+          cp archverse-flatpak/files/overlay/archverse-widget-appearance.js build/server/overlay/
+
+      - name: Stage production runtime and payload
+        run: |
+          set -euxo pipefail
+          # Build/test tooling is no longer needed inside the application after the sidecar exists.
+          npm prune --omit=dev
+          cp -a build/server /tmp/archverse-stage/app/server
+          cp -a node_modules /tmp/archverse-stage/app/node_modules
+          cp archverse-flatpak/files/app-package.json /tmp/archverse-stage/app/package.json
+          cp archverse-flatpak/files/bin/sc-blueprint-tracker /tmp/archverse-stage/bin/
+          chmod 0755 /tmp/archverse-stage/bin/sc-blueprint-tracker
+          cp LICENSE.md /tmp/archverse-stage/LICENSE.md
+          cp -a archverse-flatpak/packaging/. /tmp/archverse-stage/flatpak/
+          cp archverse-flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.yml /tmp/archverse-stage/
+          cp archverse-flatpak/tests/flatpak-session-binder.test.cjs /tmp/archverse-stage/tests/
+
+      - name: Verify exact reconstructed Alpha 22 / Flatpak-sensitive files
+        working-directory: /tmp/archverse-stage
+        run: |
+          set -euxo pipefail
+          cat > /tmp/archverse-expected.sha256 <<'EOF'
+          f9c6b94acfc5bc9e8bc32c77dfb3b45b16bc6e007a98f82e0e004b94a989b446  app/electron/capture.cjs
+          b8bc6646b7794287e5956617f92e12bbe5debb7d21829027d9cdba2accd593cd  app/electron/linux/focus-controller.cjs
+          4001214d820487e79d6b0807c072d648c49b8649f00255bdd0b29802fb5de632  app/electron/main.cjs
+          15e617027065b38ce579c31b48ce274b489d7a97e3ed226ed8b5a315829263c4  app/electron/window-manager.cjs
+          271a6e1761552d3badf71028c23564147cd0d555c77e6584beaa33173e7e7c45  app/electron/linux/star-citizen-session.cjs
+          fe73014a1598961212a296ebbee3ae811ac9d8753d3555005e3bda61a05c8ced  app/electron/linux/runtime-env.cjs
+          318f0525387c45e91e92759cfa51be73522b5ddd5b9db561c473601f26db30fe  app/electron/linux/flatpak-star-citizen-session.cjs
+          fcc0e3706c83108d82a24802dc29b67c93735604c8aca3acc9010a5e8051d49f  app/server/overlay/config.html
+          d12a82ed44d4969b895f2b0d8207eb976ae2d1a436fa2698b54188d3fd24b742  app/server/overlay/mining.html
+          94aa2af1afeb4f73ded9f88face6345a199958e79d580eb69dd18ffbb737ff03  app/server/overlay/missions.html
+          d3894c6309785c69a59864ce021497ad4c60202188896d2478da0b09c2568e2a  app/server/server.mjs
+          c583fcaa92adcf0033d4e5b21f938ac0486a97962da020ae38456853d8701dc7  app/server/overlay/archverse-resource-scanner.js
+          9a751e5712b48b21a779974d8e3ae5bba65872f5bbce90500ce771bdf8569c76  app/server/overlay/archverse-widget-appearance.js
+          8cdd1cb1c3d533eabd027f490c7f1c92d8f883ec5465424b81058777007ef8a1  bin/sc-blueprint-tracker
+          EOF
+          sha256sum -c /tmp/archverse-expected.sha256
+
+          node --check app/electron/capture.cjs
+          node --check app/electron/main.cjs
+          node --check app/electron/window-manager.cjs
+          node --check app/electron/linux/focus-controller.cjs
+          node --check app/electron/linux/star-citizen-session.cjs
+          node --check app/electron/linux/runtime-env.cjs
+          node --check app/electron/linux/flatpak-star-citizen-session.cjs
+          node tests/flatpak-session-binder.test.cjs
+
+          grep -q 'salvageConfirmed === true' app/server/overlay/mining.html
+          grep -q 'salvageConfirmed === true' app/server/overlay/archverse-resource-scanner.js
+          grep -q 'SC_TRACKER_CONFIG_DIR' app/server/server.mjs
+          ! grep -R --line-number -E 'flatpak-spawn[[:space:]]+--host|org\.freedesktop\.Flatpak' .
+
+      - name: Install Flatpak build tools
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder librsvg2-bin appstream
+          flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Render independent ArchVerse icon and validate metadata
+        run: |
+          set -euxo pipefail
+          rsvg-convert -w 512 -h 512 \
+            /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.svg \
+            -o /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.png
+          mkdir -p /tmp/archverse-stage/app/build
+          cp /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.png /tmp/archverse-stage/app/build/icon.png
+          cp /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.png /tmp/archverse-stage/app/server/overlay/tray-icon.png
+          appstreamcli validate --no-net /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.metainfo.xml
+
+      - name: Build distribution-neutral Flatpak
+        working-directory: /tmp/archverse-stage
+        run: |
+          set -euxo pipefail
+          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=repo \
+            builddir io.github.gbmccray32_boop.ArchVerseOverlay.yml
+          mkdir -p dist
+          flatpak build-bundle repo \
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.22-flatpak-test1-x86_64.flatpak \
+            io.github.gbmccray32_boop.ArchVerseOverlay alpha22 \
+            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          sha256sum dist/ArchVerse-Overlay-0.1.42-r31-alpha.22-flatpak-test1-x86_64.flatpak \
+            > dist/ArchVerse-Overlay-0.1.42-r31-alpha.22-flatpak-test1-x86_64.flatpak.sha256
+
+      - name: Install the built bundle and smoke-test the sandbox
+        working-directory: /tmp/archverse-stage
+        run: |
+          set -euxo pipefail
+          flatpak install --user -y --reinstall dist/ArchVerse-Overlay-0.1.42-r31-alpha.22-flatpak-test1-x86_64.flatpak
+          flatpak run --command=sh io.github.gbmccray32_boop.ArchVerseOverlay -lc '
+            set -eux
+            test "${SC_TRACKER_FLATPAK:-}" = 1
+            command -v xdotool
+            command -v xrandr
+            test -x /app/archverse/bin/sc-blueprint-tracker
+            test -x /app/lib/archverse-electron/electron
+            test -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node
+            test -f /app/archverse/app/node_modules/uiohook-napi/prebuilds/linux-x64/uiohook-napi.node
+            test -f /app/archverse/app/node_modules/@gutenye/ocr-models/assets/ch_PP-OCRv4_rec_infer.onnx
+            test ! -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so
+            test ! -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_tensorrt.so
+            /app/bin/archverse-node -e "console.log(\"Electron-as-Node\", process.versions.electron, process.version)"
+          '
+
+      - name: Prepare field-test tools and instructions
+        if: success()
+        run: |
+          set -euxo pipefail
+          cp archverse-flatpak/tools/flatpak-doctor.sh /tmp/archverse-stage/dist/flatpak-doctor.sh
+          chmod 0755 /tmp/archverse-stage/dist/flatpak-doctor.sh
+          cat > /tmp/archverse-stage/dist/FLATPAK-TEST1-INSTRUCTIONS.txt <<'EOF'
+          ArchVerse Overlay 0.1.42-r31 Alpha 22 — Flatpak Test 1
+          ======================================================
+
+          Target:
+            x86_64 Linux with Flatpak and an X11/XWayland Star Citizen session.
+            The same bundle is intended for Fedora/Nobara, Debian/Ubuntu/Mint/Pop!_OS,
+            Arch/CachyOS and other Flatpak-capable distributions.
+
+          Install:
+            flatpak install --user ./ArchVerse-Overlay-0.1.42-r31-alpha.22-flatpak-test1-x86_64.flatpak
+
+          Run:
+            flatpak run io.github.gbmccray32_boop.ArchVerseOverlay
+
+          Diagnostic:
+            ./flatpak-doctor.sh
+
+          Common Star Citizen paths are granted read-only automatically:
+            ~/Games
+            ~/.local/share/lutris
+            /mnt
+            /media
+            /run/media
+
+          If your Wine prefix is somewhere else, grant ONLY that path read-only:
+            flatpak override --user --filesystem=/path/to/star-citizen:ro io.github.gbmccray32_boop.ArchVerseOverlay
+
+          Field-test priorities:
+            1. Overlay launch with Star Citizen closed; desktop clicks must remain accessible.
+            2. Launch Star Citizen and run flatpak-doctor.sh; an exact Star Citizen X11/XWayland
+               window should be visible. A bare generic Gamescope window is intentionally refused.
+            3. Held F interaction works on the first attempt.
+            4. Shift+F6 Arrange mode works and normal Alt-Tab releases overlay interaction.
+            5. Closing Star Citizen while interacting immediately returns desktop access.
+            6. game.log mission tracking works.
+            7. Resource Scanner OCR and Scan Mode gating work.
+            8. A 2,000-multiple signature NEVER produces a false "Salvageable debris" callout.
+            9. Chat/Friends/party controls and tray menu work.
+           10. Settings persist after restarting the Flatpak.
+
+          This is a field-test package, not the final public LUG release.
+          EOF
+
+      - name: Upload Flatpak Test 1 artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha22-Flatpak-Test1
+          path: /tmp/archverse-stage/dist/*
+          if-no-files-found: error
+          compression-level: 0

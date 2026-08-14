@@ -1,0 +1,26 @@
+--- /mnt/data/upstream22-src/build/server/server.mjs	2026-08-13 01:45:37.000000000 +0000
++++ /mnt/data/alpha22-flatpak-work/ArchVerse-Overlay-0.1.42-r31-alpha.22/app/server/server.mjs	2026-08-12 20:30:00.000000000 +0000
+@@ -5270,7 +5270,7 @@
+   return parsed;
+ }
+ var PORT = Number(process.env.PORT) || 8778;
+-var userDir = join11(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");
++var userDir = process.env.SC_TRACKER_CONFIG_DIR || join11(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");
+ var configPath = join11(userDir, "config.json");
+ var seedConfigPath = join11(overlayDir, "config.json");
+ var dataDir = join11(userDir, "data");
+@@ -6304,6 +6304,14 @@
+ }
+ async function getOcrHealth(maxAgeMs = 6e4) {
+   if (!screenReadingOn()) return null;
++  // Upstream's health probe tests Windows OCR through PowerShell. ArchVerse Linux does not use
++  // that engine: capture.cjs runs its isolated RapidOCR worker and posts pre-computed lines into
++  // this sidecar. Treating a missing powershell.exe as an OCR failure on Linux would show a
++  // permanent false warning even while Resource Scanner/Fabricator/payout OCR is healthy.
++  if (process.platform !== "win32") {
++    return { ok: true, matched: true, skipped: true, lines: 0, text: "", ranAt: new Date().toISOString(), ms: 0,
++      reason: null, engine: "ArchVerse Linux RapidOCR (Electron capture)" };
++  }
+   if (ocrHealth && Date.now() - ocrHealthAt < maxAgeMs) return ocrHealth;
+   ocrHealth = await ocrSelfTest();
+   ocrHealthAt = Date.now();
