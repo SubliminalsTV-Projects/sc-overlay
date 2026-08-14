@@ -276,6 +276,34 @@ export interface BlueprintReward {
   imageFallback: string | null;
 }
 
+/** The mission-search brief: a contract the player has NOT accepted, described with the same
+ *  fields `missionInfoHtml()` already reads off a live view. See `previewByTitle()` for why it is
+ *  keyed by title, why the scalars are agree-or-omit, and why the pool merge is not re-derived. */
+export interface MissionPreview {
+  contractKey: string | null;
+  title: string;
+  giver: string | null;
+  missionType: string | null;
+  illegal: boolean;
+  rankRequired: number | null;
+  rankRequiredName: string | null;
+  payout: { min: number | null; max: number; currency: string | null } | null;
+  payoutEstimated: boolean;
+  reputationGained: RepEntry[];
+  reputationLost: RepEntry[];
+  whereToGet: string[];
+  otherPools: { places: string[]; total: number; owned: number }[];
+  inferredRank: number | null;
+  repBar: RepBar | null;
+  ambiguous: boolean;
+  hasPool: boolean;
+  /** How many dataset contracts share this title — shown so "1 of 253" is never a surprise. */
+  variants: number;
+  pools: { poolUuid: string; blueprints: BlueprintStatus[] }[];
+  owned: number;
+  total: number;
+}
+
 export interface TrackedView {
   /** The loaded dataset's version (the pools being shown). */
   patch: string | null;
@@ -750,6 +778,33 @@ export interface MissionTrackerOptions {
 
 /** Normalize a mission title for screen-OCR matching: uppercase, strip everything but
  *  letters/digits/spaces (so quotes, colons, punctuation drop out), collapse spaces. */
+/** Does this dataset record award any blueprint at all? 762 of 4,075 do. */
+function hasAnyPool(m: DatasetMission): boolean {
+  for (const entries of Object.values(m.pools ?? {})) if ((entries?.length ?? 0) > 0) return true;
+  return false;
+}
+
+/** The INITIALS of each word: "Deep space hit" -> "dsh". The fuzzy band of mission search.
+ *
+ *  🔴 THIS REPLACED A PLAIN SUBSEQUENCE MATCH, WHICH MEASURED BADLY ENOUGH TO BE A MISFEATURE.
+ *  "Are the needle's letters present in order, anywhere" sounds like fuzzy search and behaves like
+ *  noise: searching `deep` returned "Deep space hit" and then filled six of eight slots with
+ *  things like "Alliance Aid: Interstellar Medium Cargo Haul", where d-e-e-p simply occurs
+ *  scattered across thirty characters. `dsh` returned nothing useful at all. A short query matches
+ *  almost every long title, so the band drowned the very results it sat below.
+ *  Initials are what people actually type for a remembered name, and they are precise: `dsh` finds
+ *  "Deep space hit" and cannot claim "Alliance Aid...". Placeholders are stripped first so
+ *  "Wanted: [TargetName]" contributes `w`, not `wt`. */
+function initialsOf(hay: string): string {
+  return hay
+    .replace(/\[[^\]]*\]/g, " ")
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join("")
+    .toLowerCase();
+}
+
 function normScreenTitle(s: string): string {
   return s.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -884,6 +939,10 @@ export class MissionTracker extends EventEmitter {
   /** normScreenTitle(title) -> debug_names of pooled missions with that title. Built
    *  from the dataset on load; lets a marker-less accept resolve its pool by title. */
   private titleIndex = new Map<string, string[]>();
+  /** normScreenTitle(title) -> debug_names of EVERY titled mission, pool-bearing or not. Read-only
+   *  and used solely by mission search / previewByTitle; kept separate from `titleIndex` so a
+   *  browsing feature can never influence which contract a live accept resolves to. */
+  private allTitleIndex = new Map<string, string[]>();
   /** Manual override from the overlay picker; null = auto-follow. */
   private selectedMissionId: string | null = null;
   /** The mission the screen OCR sees PINNED in-game (ground truth the log lacks).
@@ -2371,15 +2430,46 @@ export class MissionTracker extends EventEmitter {
    *  skipped (a title with no pool can't help, and would only add noise). */
   private buildTitleIndex(): void {
     this.titleIndex.clear();
+    this.allTitleIndex.clear();
     if (!this.dataset) return;
     for (const [debugName, m] of Object.entries(this.dataset.missions)) {
-      if (!m.title || Object.keys(m.pools ?? {}).length === 0) continue;
+      if (!m.title) continue;
       const k = normScreenTitle(m.title);
       if (!k) continue;
+      // Every titled contract, pool or not — the search index (read-only, see allTitleIndex).
+      const all = this.allTitleIndex.get(k);
+      if (all) all.push(debugName);
+      else this.allTitleIndex.set(k, [debugName]);
+      // The TRACKING index keeps its original, narrower contract: pool-bearing only.
+      if (Object.keys(m.pools ?? {}).length === 0) continue;
       const arr = this.titleIndex.get(k);
       if (arr) arr.push(debugName);
       else this.titleIndex.set(k, [debugName]);
     }
+  }
+
+  /** Do these same-titled contracts draw DIFFERENT blueprint pools? The one rule that decides
+   *  whether a title can be shown as a single contract or has to be merged and labelled — shared
+   *  by accept-resolution and by mission search so the two can never disagree about it. */
+  private poolsDiffer(keys: string[]): boolean {
+    const sig = (dn: string) => Object.keys(this.dataset?.missions[dn]?.pools ?? {}).sort().join(",");
+    return new Set(keys.map(sig)).size > 1;
+  }
+
+  /** Every contract sharing a title, for the read-only mission brief.
+   *  🔑 Deliberately NOT `resolveAcceptTitle`, which reads `titleIndex` — that index holds only
+   *  pool-bearing missions because its job is resolving an accept to a POOL, so reusing it capped
+   *  search at 762 of 4,075 contracts and 404'd on the biggest title in the game ("Trainee Rank -
+   *  Small Cargo Haul", 253 variants). Widening `titleIndex` itself would have been the smaller
+   *  diff and the wrong call: it feeds live accept resolution, and adding pool-less titles to it
+   *  could change which mission a real accept resolves to. A search feature must not be able to
+   *  move the tracker. The ambiguity RULE is shared via poolsDiffer(); only the index differs. */
+  private variantsForTitle(title: string): { keys: string[]; ambiguous: boolean } | null {
+    const k = normScreenTitle(title);
+    if (!k || !this.dataset) return null;
+    const keys = this.allTitleIndex.get(k);
+    if (!keys?.length) return null;
+    return { keys, ambiguous: this.poolsDiffer(keys) };
   }
 
   /** Resolve an accept-notification title to the dataset debug_name(s) that share it.
@@ -2391,9 +2481,7 @@ export class MissionTracker extends EventEmitter {
     if (!k || !this.dataset) return null;
     const keys = this.titleIndex.get(k);
     if (!keys || keys.length === 0) return null;
-    const poolSig = (dn: string) => Object.keys(this.dataset!.missions[dn]?.pools ?? {}).sort().join(",");
-    const distinct = new Set(keys.map(poolSig));
-    return { keys, ambiguous: distinct.size > 1 };
+    return { keys, ambiguous: this.poolsDiffer(keys) };
   }
 
   /** Resolve accepts that were registered before the dataset was ready (cold start
@@ -2772,23 +2860,153 @@ export class MissionTracker extends EventEmitter {
    *  to run this" with a link back to the site's mission page (/missions/<contract key>).
    *  🔑 Titles are not unique (the same title exists as a one-time intro and a repeatable rank
    *  contract), so the KEY is what the link carries and the title is only what it reads as. */
-  searchMissionTitles(q: string, limit = 8): { title: string; key: string }[] {
+  searchMissionTitles(q: string, limit = 8): { title: string; key: string; variants: number; giver: string | null; hasPool: boolean }[] {
     const needle = q.trim().toLowerCase();
     const missions = this.dataset?.missions;
     if (!needle || !missions) return [];
-    const seen = new Set<string>();
-    const starts: { title: string; key: string }[] = [];
-    const has: { title: string; key: string }[] = [];
+    type Row = { title: string; key: string; variants: number; giver: string | null; hasPool: boolean };
+    // Grouped by TITLE, because that is the unit a player searches for and the unit the brief is
+    // built for. `variants` rides along so the result can say when a name covers more than one
+    // contract rather than pretending it is one.
+    // 🔑 GROUPED BY normScreenTitle, THE SAME KEY THE BRIEF MERGES ON — not by lowercase text.
+    // The two normalisations disagree on punctuation, so grouping here by `toLowerCase()` while
+    // previewByTitle() looks up by normScreenTitle() would let a row advertise "3 variants" and
+    // then open a brief built from 4. A count on a control has to be the count the thing it opens
+    // will actually show.
+    const groups = new Map<string, Row>();
     for (const [key, m] of Object.entries(missions)) {
       const title = (m.title ?? "").trim();
       if (!title) continue;
-      const l = title.toLowerCase();
-      if (seen.has(l)) continue;
-      if (l.startsWith(needle)) { seen.add(l); starts.push({ title, key }); }
-      else if (l.includes(needle)) { seen.add(l); has.push({ title, key }); }
-      if (starts.length >= limit) break;
+      const norm = normScreenTitle(title);
+      if (!norm) continue;
+      const g = groups.get(norm);
+      if (g) {
+        g.variants++;
+        g.hasPool = g.hasPool || hasAnyPool(m);
+        continue;
+      }
+      groups.set(norm, { title, key, variants: 1, giver: m.giver ?? null, hasPool: hasAnyPool(m) });
     }
-    return [...starts, ...has].slice(0, limit);
+    const starts: Row[] = [], has: Row[] = [], fuzzy: Row[] = [];
+    // The map key is now the NORMALISED title (upper-cased, punctuation stripped), so match
+    // against the row's own display title instead — matching the normalised form would silently
+    // stop finding anything the player types with an apostrophe or a colon.
+    for (const row of groups.values()) {
+      const l = row.title.toLowerCase();
+      // 🔑 SEARCH THE PLACEHOLDER-STRIPPED TITLE TOO. 547 contracts are titled with a runtime
+      // slot the game fills in — the player sees "Wanted: Vince Kroger" and the dataset says
+      // "Wanted: [TargetName]" — so a raw substring match finds nothing for 13% of the catalogue,
+      // which reads as the search being broken rather than as the data being templated. Matching
+      // the stripped stem means typing the part that IS stable still finds it.
+      const bare = l.replace(/\[[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
+      if (l.startsWith(needle) || bare.startsWith(needle)) starts.push(row);
+      else if (l.includes(needle) || bare.includes(needle)) has.push(row);
+      // Initials only earn a place for a query of 2+; a single letter would match a third of the
+      // catalogue and say nothing about what the person meant.
+      else if (needle.length >= 2 && initialsOf(l).startsWith(needle)) fuzzy.push(row);
+    }
+    // Prefix, then substring, then initials — strongest evidence of intent first. Ties inside a
+    // band break on title so the list is stable between keystrokes instead of reshuffling.
+    const byTitle = (a: Row, b: Row) => a.title.localeCompare(b.title);
+    return [...starts.sort(byTitle), ...has.sort(byTitle), ...fuzzy.sort(byTitle)].slice(0, limit);
+  }
+
+  /** A read-only brief for a contract the player has NOT accepted — what the widget's mission
+   *  search shows. Shaped like the fields of `view()` that `missionInfoHtml()` reads, so the
+   *  search result renders through the SAME renderer as a live tracked mission and the two can
+   *  never drift into looking like different features.
+   *
+   *  🔴 IT IS KEYED BY TITLE, AND A TITLE IS NOT A CONTRACT. 540 of the 1,273 distinct titles
+   *  cover more than one variant — "Trainee Rank - Small Cargo Haul" is 253 separate contracts —
+   *  and variants can draw DIFFERENT blueprint pools. Picking one and rendering it confidently is
+   *  the bug that cost a player a week of grinding a pool that could never drop. So this reuses
+   *  the tracker's own machinery rather than inventing a second answer: `resolveAcceptTitle`
+   *  decides whether the variants genuinely differ (it compares pool signatures, not names), and
+   *  when they do the pools are MERGED and `ambiguous` is set, which is exactly what the live
+   *  panel already does and already labels.
+   *
+   *  🔑 Scalars are AGREE-OR-OMIT, which is the one place this deliberately does more than
+   *  `view()`. A live ambiguous mission has no contractKey, so view() reads giver/type/payout off
+   *  an undefined record and shows none of them — acceptable when you are mid-mission and the
+   *  panel has other things to say, useless for a search result that would render nearly empty
+   *  for 540 titles. Here each field is taken only when EVERY variant agrees on it, and dropped
+   *  when they disagree. That cannot assert anything false, and in practice the variants differ
+   *  in pool and location while agreeing on giver, type and price. */
+  previewByTitle(title: string): MissionPreview | null {
+    const res = this.variantsForTitle(title);
+    if (!res || !res.keys.length || !this.dataset) return null;
+    const { keys, ambiguous } = res;
+    const records = keys.map((k) => this.dataset!.missions[k]).filter(Boolean) as DatasetMission[];
+    if (!records.length) return null;
+
+    // A field is only stated when every variant states the same thing. `pick` compares by a
+    // stable serialisation so object-valued fields (payout, rep lists) collapse correctly.
+    const pick = <T>(get: (m: DatasetMission) => T): T | null => {
+      const first = get(records[0]);
+      const sig = JSON.stringify(first ?? null);
+      for (const m of records) if (JSON.stringify(get(m) ?? null) !== sig) return null;
+      return first ?? null;
+    };
+
+    // 🔑 A KEY ONLY WHEN THERE IS EXACTLY ONE VARIANT — not merely when the pools happen to agree.
+    // The key identifies a CONTRACT, and it is what the "More on the site" link and `otherPools`
+    // are built from, so emitting keys[0] for a title covering 253 contracts points at a page
+    // describing an arbitrary one of them. "Trainee Rank - Small Cargo Haul" is exactly that: all
+    // 253 share an empty pool, so `ambiguous` is false and gating on it alone let one variant
+    // speak for the rest.
+    const single = keys.length === 1;
+    const key = single ? keys[0] : null;
+    const mission = single ? records[0] : undefined;
+    const effectivePools = ambiguous ? this.mergePools(keys) : (records[0].pools ?? {});
+
+    const pools: { poolUuid: string; blueprints: BlueprintStatus[] }[] = [];
+    let owned = 0, total = 0;
+    for (const [poolUuid, entries] of Object.entries(effectivePools)) {
+      const blueprints: BlueprintStatus[] = entries.map((e) => {
+        const o = this.isOwned(e.blueprint);
+        if (o.owned) owned++;
+        total++;
+        const cat = categorize(e);
+        return {
+          name: e.blueprint, owned: o.owned, source: o.source, chance: e.chance,
+          tab: cat.tab, sub: cat.sub,
+          item: e.item ?? null, hasDetail: !!this.detail.get(e.item),
+        };
+      });
+      pools.push({ poolUuid, blueprints });
+    }
+
+    const giver = pick((m) => m.giver ?? null);
+    const payout = pick((m) => m.payout ?? null);
+    return {
+      contractKey: key,
+      title: pick((m) => m.title) ?? records[0].title ?? title,
+      giver,
+      missionType: pick((m) => m.missionType ?? null),
+      illegal: pick((m) => m.illegal === true) === true,
+      rankRequired: pick((m) => m.rank ?? null),
+      rankRequiredName: this.rankName(records[0]),
+      payout,
+      payoutEstimated: pick((m) => m.payoutCalculated === true) === true,
+      reputationGained: pick((m) => m.reputationGained ?? []) ?? [],
+      reputationLost: pick((m) => m.reputationLost ?? []) ?? [],
+      // Agree-or-omit, not just an `ambiguous` gate. The live panel drops places while ambiguous
+      // because the candidates draw different pools — but variants can share a pool and still be
+      // offered in completely different places, which is the 253-variant case, so "where do I pick
+      // this up" has to be answered only when every variant answers it the same way.
+      whereToGet: (ambiguous ? null : pick((m) => m.where ?? [])) ?? [],
+      otherPools: this.otherPoolsFor(key, mission, ambiguous),
+      inferredRank: giver ? this.inferredRank.get(giver) ?? null : null,
+      // Giver-scoped, so it is meaningful whenever the variants agree on the giver — which is the
+      // common case even when they differ in pool and place.
+      repBar: giver ? this.computeRepBar(records[0]) : null,
+      ambiguous,
+      hasPool: total > 0,
+      variants: keys.length,
+      pools,
+      owned,
+      total,
+    };
   }
 
   blueprintDetail(nameOrUuid: string): BlueprintDetail | null {
