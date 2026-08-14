@@ -29,6 +29,16 @@ command -v xrandr >/dev/null && echo "xrandr: bundled" || exit 22
 printf "Desktop geometry (xdotool): %s\\n" "$(xdotool getdisplaygeometry 2>/dev/null || echo unavailable)"
 printf "Desktop root (xrandr): %s\\n" "$(xrandr --current 2>/dev/null | sed -n "s/^Screen [^:]*:.* current \\([0-9][0-9]*\\) x \\([0-9][0-9]*\\),.*/\\1x\\2/p" | head -1 || true)"
 printf "DRI render nodes: %s\\n" "$(ls /dev/dri/renderD* 2>/dev/null | tr "\\n" " " || true)"
+
+printf "Electron resource payload:\\n"
+for p in \
+  /app/lib/archverse-electron/locales/en-US.pak \
+  /app/lib/archverse-electron/icudtl.dat \
+  /app/lib/archverse-electron/resources.pak \
+  /app/lib/archverse-electron/v8_context_snapshot.bin; do
+  if [ -f "$p" ]; then printf "  OK %s\\n" "$p"; else printf "  MISSING %s\\n" "$p"; exit 27; fi
+done
+
 ELECTRON_RUN_AS_NODE=1 /app/lib/archverse-electron/electron -e "console.log(\"Electron-as-Node:\",process.versions.electron,process.version)"
 zypak-wrapper /app/lib/archverse-electron/electron --version >/tmp/av-electron-version 2>&1 || { cat /tmp/av-electron-version; exit 26; }
 printf "zypak Electron wrapper: %s\\n" "$(cat /tmp/av-electron-version | tail -1)"
@@ -51,7 +61,7 @@ printf "Common game.log files:\\n"
 find "$host_home/Games" /mnt /media /run/media -type f -name game.log -path "*StarCitizen*" -print 2>/dev/null | head -20 || true'
 
 if flatpak run --command=sh "$APP_ID" -lc "$inside"; then
-  ok "Bundled runtime and host-path diagnostics passed inside the sandbox"
+  ok "Bundled runtime, Electron resources, and host-path diagnostics passed inside the sandbox"
 else
   bad "One or more sandbox diagnostics failed"
 fi
