@@ -101,6 +101,23 @@ pbA.load(ambLog);
 ok(pbA.translate("PLACEHOLDER") === null, "a string meaning two different items must be declined");
 ok(pbA.translate("B10 Colossus") === "Colossus", "...without taking its unambiguous neighbours down with it");
 
+// ── Format drift is DETECTED, not silently mis-parsed ──────────────────────
+// No pack or language does this today (all four packs only wrap the notification in markup,
+// which the parser strips), which is why the parser has no per-install patterns. This is the
+// tripwire for that decision — if it ever changes, diagnostics say so rather than the app
+// quietly going blind.
+ok(pbP.status().formatDrift.length === 0, "markup-only decoration is not drift — the parser handles it");
+const driftLog = install("DRIFT", {
+  "user.cfg": "g_language = english\n",
+  "data/Localization/english/global.ini":
+    "crafting_hud_notification_received_blueprint,P=BP Unlocked: %s\nitem_Name_COOL_AEGS_S01_Glacier=Glacier X",
+});
+const pbD = new Phrasebook(dataDir);
+pbD.load(driftLog);
+ok(pbD.status().formatDrift.includes("crafting_hud_notification_received_blueprint,P"),
+  "reworded notification text must be reported as drift");
+ok(pbD.translate("Glacier X") === "Glacier", "...while the names in the same file still resolve");
+
 // ── g_language picks between several installed folders ─────────────────────
 // The tiebreaker only matters when more than one exists, which is exactly what a player
 // accumulates by trying two packs.

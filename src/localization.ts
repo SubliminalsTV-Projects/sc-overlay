@@ -55,6 +55,40 @@ export interface PhrasebookInfo {
   entries: number;
   /** ISO time the phrasebook was last (re)built. */
   at: string;
+  /**
+   * Notification format keys whose WORDING differs from English once decorations are
+   * stripped — i.e. cases the parser's anchors would no longer find.
+   *
+   * Empty for every language and every pack measured on 2026-08-14: the 10 non-English
+   * global.ini files do not define these keys at all (they fall back to English), and all
+   * four packs only wrap them in markup, which stripDecorations already removes. So the
+   * parser needs no per-install patterns today, and building them would be speculative code
+   * with a real regression risk — a malformed derived pattern breaks a working user.
+   *
+   * 🔑 This is the tripwire for that decision rather than the fix for it. If a pack (or a
+   * future CIG translation) ever changes the words, this makes it show up in diagnostics
+   * instead of presenting as "the app stopped seeing my blueprints".
+   */
+  formatDrift: string[];
+}
+
+/** The notification formats the parser anchors on, with their English wording. */
+const FORMAT_KEYS: Record<string, string> = {
+  mobiGlas_ui_MissionEvent_Activated: "Contract Accepted:  %s",
+  mobiGlas_ui_MissionEvent_Complete: "Contract Complete: %s",
+  mobiGlas_ui_ObjectiveEvent_Activated: "New Objective: %s",
+  mobiGlas_ui_Mission_Shared: "Contract Shared: %s",
+  "crafting_hud_notification_received_blueprint,P": "Received Blueprint: %s",
+};
+
+/** Same rules as the parser's stripDecorations, so drift is judged the way the parser sees it. */
+function stripped(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, "")
+    .replace(/\[[^\]]*\b(?:Rep|BP)\b[^\]]*\]/gi, "")
+    .replace(/\s*\*\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Read `g_language` out of a user.cfg. The language packs ship one — it is what tells the
@@ -116,7 +150,7 @@ function parseIni(text: string): Map<string, string> {
 export class Phrasebook {
   /** localized name -> English name. Empty when nothing needs translating. */
   private table = new Map<string, string>();
-  private info: PhrasebookInfo = { source: "none", path: null, language: null, entries: 0, at: new Date().toISOString() };
+  private info: PhrasebookInfo = { source: "none", path: null, language: null, entries: 0, at: new Date().toISOString(), formatDrift: [] };
   /** Identity of the ini we built from, so a rebuild can be skipped when nothing changed. */
   private stamp: string | null = null;
 
@@ -148,14 +182,15 @@ export class Phrasebook {
       if (!force && stamp && stamp === this.stamp && this.info.source === "ini") return this.status();
       const built = lang ? this.fromIni(found.path, lang) : null;
       if (built) {
-        this.table = built;
+        this.table = built.table;
         this.stamp = stamp;
         this.info = {
           source: "ini",
           path: found.path,
           language: found.language,
-          entries: built.size,
+          entries: built.table.size,
           at: new Date().toISOString(),
+          formatDrift: built.formatDrift,
         };
         return this.status();
       }
@@ -173,6 +208,7 @@ export class Phrasebook {
       language: found?.language ?? null,
       entries: this.table.size,
       at: new Date().toISOString(),
+      formatDrift: [],
     };
     return this.status();
   }
@@ -208,7 +244,7 @@ export class Phrasebook {
    * sets a number of item names to the literal "PLACEHOLDER"), and crediting the wrong
    * blueprint is worse than crediting none — it syncs to the site under that wrong name.
    */
-  private fromIni(path: string, lang: LangFile): Map<string, string> | null {
+  private fromIni(path: string, lang: LangFile): { table: Map<string, string>; formatDrift: string[] } | null {
     let theirs: Map<string, string>;
     try {
       theirs = parseIni(readFileSync(path, "utf8"));
@@ -225,6 +261,12 @@ export class Phrasebook {
     }
     const out = new Map<string, string>();
     for (const [mine, set] of candidates) if (set.size === 1) out.set(mine, [...set][0]);
-    return out;
+
+    const formatDrift: string[] = [];
+    for (const [key, english] of Object.entries(FORMAT_KEYS)) {
+      const mine = theirs.get(key);
+      if (mine !== undefined && stripped(mine) !== stripped(english)) formatDrift.push(key);
+    }
+    return { table: out, formatDrift };
   }
 }
