@@ -134,7 +134,8 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder librsvg2-bin appstream xvfb curl
+          sudo apt-get install -y flatpak flatpak-builder librsvg2-bin appstream xvfb curl dbus-x11
+          command -v dbus-run-session
           flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Render icon and validate AppStream metadata
@@ -187,46 +188,56 @@ jobs:
             /app/bin/archverse-node -e "console.log(\"Electron-as-Node\", process.versions.electron, process.version)"
           '
 
-      - name: Launch real ArchVerse GUI under Xvfb and require liveness
+      - name: Launch real ArchVerse GUI under Xvfb + D-Bus and require liveness
         run: |
           set -euxo pipefail
-          Xvfb :99 -screen 0 1280x720x24 -ac +extension RANDR >/tmp/archverse-xvfb.log 2>&1 &
-          XVFB_PID=$!
-          cleanup() {
-            flatpak kill io.github.gbmccray32_boop.ArchVerseOverlay 2>/dev/null || true
-            kill "$XVFB_PID" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-          export DISPLAY=:99
-          sleep 1
-
-          flatpak run --env=SC_TRACKER_RENDER_MODE=gpu-off \
-            io.github.gbmccray32_boop.ArchVerseOverlay \
-            >/tmp/archverse-flatpak-gui.log 2>&1 &
-          GUI_PID=$!
-
-          for i in $(seq 1 15); do
-            if ! kill -0 "$GUI_PID" 2>/dev/null; then
-              echo 'ArchVerse exited before GUI liveness gate.' >&2
-              cat /tmp/archverse-flatpak-gui.log >&2 || true
-              exit 1
-            fi
-            if curl -fsS http://127.0.0.1:8778/api/config >/tmp/archverse-api-config.json 2>/dev/null; then
-              break
-            fi
+          dbus-run-session -- bash -ceu '
+            set -o pipefail
+            Xvfb :99 -screen 0 1280x720x24 -ac +extension RANDR >/tmp/archverse-xvfb.log 2>&1 &
+            XVFB_PID=$!
+            cleanup() {
+              flatpak kill io.github.gbmccray32_boop.ArchVerseOverlay 2>/dev/null || true
+              kill "$XVFB_PID" 2>/dev/null || true
+            }
+            trap cleanup EXIT
+            export DISPLAY=:99
             sleep 1
-          done
 
-          kill -0 "$GUI_PID"
-          curl -fsS http://127.0.0.1:8778/api/config >/tmp/archverse-api-config.json
-          flatpak ps | grep -F io.github.gbmccray32_boop.ArchVerseOverlay
-          grep -Fq '[flatpak] detected desktop canvas: 1280x720' /tmp/archverse-flatpak-gui.log
-          grep -Fq '[launcher] canvas profile: 1280x720' /tmp/archverse-flatpak-gui.log
-          ! grep -Fq 'locale_file_path.empty()' /tmp/archverse-flatpak-gui.log
-          sleep 4
-          kill -0 "$GUI_PID"
-          echo 'ArchVerse Flatpak GUI remained alive and sidecar responded.'
-          cat /tmp/archverse-flatpak-gui.log
+            echo "CI session bus: ${DBUS_SESSION_BUS_ADDRESS:-missing}"
+            test -n "${DBUS_SESSION_BUS_ADDRESS:-}"
+
+            flatpak run --env=SC_TRACKER_RENDER_MODE=gpu-off \
+              io.github.gbmccray32_boop.ArchVerseOverlay \
+              >/tmp/archverse-flatpak-gui.log 2>&1 &
+            GUI_PID=$!
+
+            ready=0
+            for i in $(seq 1 20); do
+              if ! kill -0 "$GUI_PID" 2>/dev/null; then
+                echo "ArchVerse exited before GUI liveness gate." >&2
+                cat /tmp/archverse-flatpak-gui.log >&2 || true
+                exit 1
+              fi
+              if curl -fsS http://127.0.0.1:8778/api/config >/tmp/archverse-api-config.json 2>/dev/null; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+
+            test "$ready" = 1
+            kill -0 "$GUI_PID"
+            flatpak ps | grep -F io.github.gbmccray32_boop.ArchVerseOverlay
+            grep -Fq "[flatpak] detected desktop canvas: 1280x720" /tmp/archverse-flatpak-gui.log
+            grep -Fq "[launcher] canvas profile: 1280x720" /tmp/archverse-flatpak-gui.log
+            ! grep -Fq "locale_file_path.empty()" /tmp/archverse-flatpak-gui.log
+            ! grep -Fq "Assertion failed: bus" /tmp/archverse-flatpak-gui.log
+            sleep 4
+            kill -0 "$GUI_PID"
+            curl -fsS http://127.0.0.1:8778/api/config >/tmp/archverse-api-config-final.json
+            echo "ArchVerse Flatpak GUI remained alive and sidecar responded under Xvfb + a real session bus."
+            cat /tmp/archverse-flatpak-gui.log
+          '
 
       - name: Prepare Test 2 field-test tools and instructions
         if: success()
