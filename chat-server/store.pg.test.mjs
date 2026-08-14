@@ -88,6 +88,26 @@ try {
   ok("a public room carries no code", boot.rooms.get("halo-mining").code === null);
   ok("RESTART: bans stick", boot.bans.has("griefer"));
 
+  // ── saveRoom as an UPDATE, not an insert (roomconfig, 2026-08-13) ───────
+  // 🔑 Until roomconfig existed, saveRoom was only ever called on a room being CREATED, so the
+  // ON CONFLICT DO UPDATE half was carrying the whole feature untested. This is the path that
+  // decides whether a privacy change survives the next redeploy — if `code` were missing from
+  // the update list, a reopened room would come back private with its old code still live.
+  store.saveRoom({ slug: "sunday-ops", label: "Sunday Ops", category: "salvage",
+                   privacy: "public", code: null, owner: "imc-subliminal",
+                   created: 1786000000000, lastActive: 1786000000000 });
+  await settle();
+  await store.close();
+  store = createStore({ databaseUrl: URL, schema: SCHEMA, dataDir: "/nonexistent" });
+  boot = await store.init();
+  const reopened = boot.rooms.get("sunday-ops");
+  ok("RECONFIG: a changed category persists", reopened.category === "salvage", reopened.category);
+  ok("RECONFIG: a changed privacy persists", reopened.privacy === "public", reopened.privacy);
+  ok("🔴 RECONFIG: reopening a room really drops its code", reopened.code === null, String(reopened.code));
+  ok("...and it is still one room, not a second one", boot.rooms.size === 2, boot.rooms.size);
+  ok("...keeping the invites written while it was closed",
+     JSON.stringify(reopened.invites) === '["rytharr"]', JSON.stringify(reopened.invites));
+
   store.deleteBan("griefer");
   store.touchRoom("halo-mining", 1786999999000);
   await settle();
