@@ -74,7 +74,11 @@ async function captureGame(winRect) {
   const height = Math.round(disp.size.height * disp.scaleFactor);
   const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width, height } });
   const src = sources.find((s) => s.display_id && String(s.display_id) === String(disp.id)) || sources[0];
-  return src ? { image: src.thumbnail, width, height } : null;
+  // `onPrimary` is reported because the calibration box is drawn over the PRIMARY display only —
+  // the canvas is told nothing about any other one — so a game running elsewhere is being
+  // calibrated against pixels nobody can see. Cheap here (we already resolved the display) and
+  // impossible to work out downstream.
+  return src ? { image: src.thumbnail, width, height, onPrimary: disp.id === screen.getPrimaryDisplay().id } : null;
 }
 
 // The kiosk's item render + name + category all live in the upper-right of the screen. Cropping to
@@ -122,9 +126,69 @@ function scanRegionPixels(saved, w, h) {
 
 // RapidOCR (PP-OCR) reader — main-process only, ESM loaded lazily (model loads once, ~2s). Returns
 // the same {text,x,y,w,h} line shape the sidecar classifier expects, from the PP-OCR {text,box}.
+// 🔑 The models must be loaded from the UNPACKED copy. electron-builder's asarUnpack writes
+// @gutenye to app.asar.unpacked, but it ALSO leaves a copy inside app.asar — and that is the one
+// the module loader resolves, so ocr-models derives its paths (from import.meta.url) under
+// `app.asar\`. Electron's patched fs would redirect those reads transparently, but onnxruntime-node
+// opens them from NATIVE code, which bypasses the patch: "File doesn't exist" and OCR silently
+// never starts. Unpackaged (dev) paths contain no app.asar, so this is a no-op there.
+const ASAR_SEG = `app.asar${path.sep}`;
+const unpackedModelPath = (p) => p.replace(ASAR_SEG, `app.asar.unpacked${path.sep}`);
+
+// Hand a RapidOCR startup failure to the sidecar, which already owns the "screen reading isn't
+// working" banner. Best-effort and fire-and-forget: this runs during a failure, and a second
+// failure reporting the first one is not worth taking the capture loop down over.
+// ⚠️ `port` is a parameter of startFabCapture, not a module value — reaching for it from here
+// would throw a ReferenceError at exactly the moment something has already gone wrong. Recorded
+// on the way in instead.
+let sidecarPort = null;
+let lastRapidReport = null;
+function reportRapidFailure(reason) {
+  if (reason === lastRapidReport) return;   // once per state, not once per tick
+  lastRapidReport = reason;
+  if (!sidecarPort) return;
+  fetch(`http://localhost:${sidecarPort}/api/ocr/rapid-failure`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => { /* sidecar not up yet; the next attempt reports it */ });
+}
+
 let _rapid = null;
 function getRapid() {
-  if (!_rapid) _rapid = import("@gutenye/ocr-node").then((m) => m.default.create());
+  if (!_rapid) {
+    _rapid = (async () => {
+      const [{ default: Ocr }, { default: defaultModels }] = await Promise.all([
+        import("@gutenye/ocr-node"),
+        import("@gutenye/ocr-models/node"),
+      ]);
+      const models = {
+        detectionPath: unpackedModelPath(defaultModels.detectionPath),
+        recognitionPath: unpackedModelPath(defaultModels.recognitionPath),
+        dictionaryPath: unpackedModelPath(defaultModels.dictionaryPath),
+      };
+      // Say WHICH file is missing — an unreadable model otherwise surfaces as "the widget just
+      // never calls anything out", which is a much longer trip to the cause.
+      const missing = Object.entries(models).filter(([, p]) => !fs.existsSync(p));
+      for (const [k, p] of missing) console.error(`[fab-capture] RapidOCR ${k} missing on disk: ${p}`);
+      try {
+        const ocr = await Ocr.create({ models });
+        reportRapidFailure("");   // clear a failure a previous launch reported
+        return ocr;
+      } catch (e) {
+        // 🔴 TELL THE USER. This is the 0.1.42 bug's whole shape: the engine refused to start, the
+        // scanner went quiet, and nothing anywhere said so — the app's OCR health check only ever
+        // tested the OTHER engine, so every diagnostic read healthy while the feature was dead.
+        const why = missing.length
+          ? `an OCR model file is missing from this install (${missing[0][0]})`
+          : String((e && e.message) || e).slice(0, 200);
+        reportRapidFailure(`Text recognition could not start — ${why}. Mining call-outs and the `
+          + `contract scanner will not work until this is fixed.`);
+        throw e;
+      }
+    })();
+  }
   return _rapid;
 }
 // ── Mining diagnostic frames (opt-in, config.miningDebug) ────────────────────────────────────
@@ -473,6 +537,7 @@ function readConfig(configDir) {
  *  it's clear the render won't load, e.g. quantum drives / ship components that show no lit model),
  *  or {state:"unresolved",nameRaw} (in the kiosk but the item couldn't be identified). */
 function startFabCapture({ port, configDir, onStatus, devTools = false }) {
+  sidecarPort = port;   // so an OCR failure reported from module scope knows where to send it
   const captureDir = path.join(configDir, "fab-captures");
   const shotsDir = path.join(configDir, "fab-shots"); // full uncropped frames (mineable)
   // 🔑 TWO alternating names, never one. Writing the full frame to a single fixed path collided
@@ -527,6 +592,12 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
   const HEARTBEAT_MS = 15000; // is still being tracked down — see the comment at the call site.
   //                             Safe to remove once that's understood; harmless (one small POST
   //                             every ~15s) to leave in until then.
+  // Unreadable kiosk panels already sent for diagnosis, keyed by the raw text OCR did manage —
+  // which is what distinguishes one failure from the same one seen again a second later. Session
+  // only, and capped: this is a diagnostic sample, not a feed.
+  const unreadSent = new Set();
+  let unreadDisabled = false;   // set when the site answers 404 — the route is not deployed
+  const UNREAD_MAX = 5;
   const uploaded = new Set(); // items pushed to the site this session
   const pendingUploads = new Map(); // item UUID -> display name|null: captured locally but NOT yet
   //                                   confirmed on the site; the drain loop retries until it lands
@@ -741,7 +812,8 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
             await fetch(`http://localhost:${port}/api/screen-read`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ lines, w: region.width, h: region.height, contractCrop: true }),
+              body: JSON.stringify({ lines, w: region.width, h: region.height, contractCrop: true,
+                onPrimary: cap.onPrimary !== false }),
               signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
             });
           }
@@ -1047,6 +1119,39 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
           lastUnresolved = raw;
           emitEvent({ state: "unresolved", nameRaw: raw });
           console.log(`[fab-capture] kiosk item not identified${raw ? `: "${raw}"` : ""}`);
+        }
+        // 🔑 A FAILED READ IS THE ONLY EVIDENCE OF WHY IT FAILED, and today it is thrown away —
+        // so every "it doesn't capture my items" report has to be re-lived over someone's stream
+        // instead of read off a frame. Send the panel we could not parse, so the failure can be
+        // diagnosed from the picture that caused it.
+        //
+        // Three deliberate limits, because this is the app uploading a picture of the screen:
+        //  · the RIGHT PANEL crop only, never the frame — that is the surface OCR read, and it
+        //    leaves the rest of the screen (chat, org names, whoever else is standing there) out
+        //    of it entirely.
+        //  · the SAME opt-ins as an ordinary capture — image capture ON plus a sync token. Nobody
+        //    who has not already agreed to contribute captures sends anything.
+        //  · rate-limited hard: one per distinct unreadable text, capped per session. A player
+        //    standing at a kiosk would otherwise post one every three seconds.
+        if (unresolvedTries >= 3 && cfg.syncToken && !blockedToken && !unreadDisabled
+            && unreadSent.size < UNREAD_MAX && !unreadSent.has(raw)) {
+          unreadSent.add(raw);
+          try {
+            const panel = rightPanelCrop(shot, cap.width, cap.height);
+            const jpeg = panel.img.toJPEG(72);
+            const r = await fetch(`${SITE}/api/sc/fab-unread?raw=${encodeURIComponent(raw.slice(0, 120))}`, {
+              method: "POST",
+              headers: { "Content-Type": "image/jpeg", Authorization: `Bearer ${cfg.syncToken}` },
+              body: jpeg,
+              signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            });
+            // 🔑 A 404 means the site route is not deployed yet — so STOP for the session rather
+            // than posting a screenshot per unreadable panel to an endpoint that cannot store it.
+            // Inert either way, but sending an image nobody receives is not free, and shipping the
+            // client ahead of its backend is exactly the state this release is in.
+            if (r.status === 404) { unreadSent.clear(); unreadDisabled = true; }
+            if (!r.ok) console.log(`[fab-capture] unread frame -> HTTP ${r.status} (not stored)`);
+          } catch (e) { console.warn("[fab-capture] unread frame upload failed:", e && e.message); }
         }
       } else if (read.kind === "mission" && miss && read.titleRaw && read.titleRaw !== lastMission) {
         // Tell the tracker which mission is pinned in-game (ground truth the log lacks).

@@ -22,6 +22,54 @@
 // spurious "deep space" reading at the boundary. Blocks are delimited by the run of
 // `planet cells:` lines ending, and nothing else.
 
+/** Which STAR SYSTEM the player is in, read off the quantum-navigation lines.
+ *
+ *  🔑 A different signal from the terrain report above, and a much better one for this question.
+ *  The log DOES say what system you are in — it just doesn't say it in the place you'd look
+ *  first. Every `[QuantumTravel]` line from `CSCItemNavigation` names it, either outright
+ *  ("Projected Start Location is Pyro System", "routing from Pyro System to Orbituary") or in
+ *  the route point it is talking about (`rs_ext_pyro6_leo`, `pyro3`, `..._pyro_final_...`).
+ *  Measured on a real 2-hour session: 23 such lines against 2 terrain dumps, unanimous, spanning
+ *  the whole session — so this answers within seconds of the player touching a quantum drive
+ *  instead of waiting up to ten minutes for a body to stream.
+ *
+ *  ⚠️ Restricted to QuantumTravel lines ON PURPOSE. "Pyro" also appears in NPC archetype names
+ *  (`PU_Human-Populace-Shopkeeper-Bartender-Male-Pyro_01_…`) hundreds of times, and matching
+ *  those would report a system from whoever happens to be standing nearby.
+ *
+ *  🔑 NOT expired, unlike a place reading. You cannot leave a system without a quantum jump, and
+ *  a jump writes more of these lines — so the last one seen is still true until another replaces
+ *  it. That is the same reasoning the payout scanner uses for its own cached system. */
+const QT_TAG = /\[QuantumTravel\]/;
+
+export class SystemWatcher {
+  private system: string | null = null;
+  private at = 0;
+  /** Known system names, lowercase — supplied from the dataset so a new system in a patch needs
+   *  no code change. Matching is restricted to these so a stray word can't become a "system". */
+  constructor(private known: Set<string> = new Set(["pyro", "stanton", "nyx"])) {}
+
+  /** Feed every log line. Returns true when the system CHANGED. */
+  push(line: string, now = Date.now()): boolean {
+    if (!QT_TAG.test(line)) return false;
+    for (const name of this.known) {
+      // Word-boundary forms: "Pyro System", a bare "pyro", "pyro3"/"stanton2a", "_pyro_".
+      const re = new RegExp(`(?:\\b|_)${name}(?:[0-9][a-z0-9]*)?(?:\\b|_)`, "i");
+      if (!re.test(line)) continue;
+      const changed = this.system !== name;
+      this.system = name;
+      this.at = now;
+      return changed;
+    }
+    return false;
+  }
+
+  /** The system, or null before any quantum activity this session. */
+  current(): string | null { return this.system; }
+  /** How long ago it was last confirmed — for saying how sure we are, never for expiry. */
+  ageMs(now = Date.now()): number { return this.at ? now - this.at : Infinity; }
+}
+
 /** Where the player is, as far as the log can tell. */
 export type Place =
   | { kind: "planet"; body: string; name: string; at: number }

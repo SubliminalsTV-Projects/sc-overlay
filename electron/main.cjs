@@ -111,6 +111,7 @@ let notepadFocusPending = false; // defer focusing the note field until a held i
 let moveMode = false; // arrange mode: show the drag banner/handles (VISUAL only — interactivity stays hover-based)
 let modalOpen = false; // a HUD modal (what's-new card / hub) is up — stay hover-interactive even if locked
 let dragging = false; // an active drag/resize gesture on THIS window — force it interactive so it can't drop
+let dragLockWatchdog = null; // see overlay:drag-lock — a lock that is never lowered is unrecoverable
 // Mining Assistant — now folded INTO the overlay canvas as an iframe widget (no separate
 // window). The shell owns its VISIBILITY (so the tray, hotkey, hub toggle, and auto-show stay
 // one source of truth) and drives it into the overlay renderer; the renderer owns the DOM +
@@ -1999,6 +2000,23 @@ if (!app.requestSingleInstanceLock()) {
   // otherwise click-through except over the widget, so the stacked mining canvas isn't blocked).
   ipcMain.on("overlay:drag-lock", (_e, on) => {
     dragging = !!on;
+    // 🔴 WATCHDOG. A raised drag lock makes the ENTIRE overlay interactive on every display and
+    // takes focus without giving it back — so if the page ever fails to lower it, the game stops
+    // receiving both clicks and keystrokes and the only way out is killing the app. That happened
+    // to Sub mid-firefight on 2026-08-13 (a missed pointerup on the scan box, since fixed at
+    // source), and the thing that made it dangerous was that NOTHING could recover it.
+    // A real drag is a few seconds. Thirty is not a drag, it is a stuck lock — and re-grabbing
+    // the widget costs the user nothing, while being stranded costs them the mission.
+    clearTimeout(dragLockWatchdog);
+    if (dragging) {
+      dragLockWatchdog = setTimeout(() => {
+        if (!dragging) return;
+        console.error("[overlay] drag lock held 30s — releasing it; the page never sent pointerup");
+        dragging = false;
+        applyMouse();
+      }, 30_000);
+      dragLockWatchdog.unref?.();
+    }
     // Star Citizen recentres the cursor while IT has focus, which yanks a drag out from under
     // you mid-gesture. We can't stop the game doing that — but it only does it while focused, so
     // taking focus for the duration of the gesture stops it. Entering arrange mode already does

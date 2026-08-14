@@ -39,6 +39,14 @@ export interface RepEntry {
   scope: string;
   amount: number;
 }
+/** A started-but-unfinished blueprint pool, for the idle panel's "closest to done" list. */
+export interface ClosestPool {
+  key: string;
+  title: string;
+  owned: number;
+  total: number;
+  places: string[];
+}
 /** One rank on a reputation scope's ladder: the rep floor to reach it + its name. */
 export interface RepLadderRank {
   minRep: number;
@@ -236,6 +244,11 @@ export interface EarningRates {
   aUECLastHr: number | null;
   /** Extrapolated aUEC/hr from known-payout missions this session (null if none known). */
   aUECPace: number | null;
+  /** Total aUEC earned this session from KNOWN-payout missions (null if none known). A total,
+   *  not a rate — the idle scoreboard shows what the session was worth. */
+  aUECTotal: number | null;
+  /** Total reputation earned this session. */
+  repTotal: number;
   /** Completions counted in the current grind session (0 = nothing to rate yet). */
   missions: number;
 }
@@ -307,6 +320,9 @@ export interface TrackedView {
   /** The reputation rank the GIVER requires before offering this (0,1,2…), or null when the
    *  dataset carries no gate. 🔑 Distinct from `inferredRank`, which is YOUR standing. */
   rankRequired: number | null;
+  /** That rank's NAME on the giver's own ladder ("Contractor"). Null when the ladder is shorter
+   *  than the index, in which case the panel shows the number. */
+  rankRequiredName: string | null;
   /** Reputation gained (+) / lost (−) on completion, biggest first (may be empty). */
   reputationGained: RepEntry[];
   reputationLost: RepEntry[];
@@ -320,6 +336,9 @@ export interface TrackedView {
    *  overlay's idle state when no mission is tracked. Backfilled from the logs. */
   recentMissions: RecentMission[];
   recentBlueprints: RecentBlueprint[];
+  /** Pools you have started and are nearest to finishing — the idle panel leads with these,
+   *  because "no mission tracked" is exactly when the useful question is what to go do next. */
+  closestPools: ClosestPool[];
   /** Per-hour aUEC + rep rates for the idle screen. */
   earnings: EarningRates;
   /** The most-recently received blueprint (real-time receipts only), for the global
@@ -1459,11 +1478,203 @@ export class MissionTracker extends EventEmitter {
     if (this.missionHistory.length > MISSION_HISTORY_MAX) this.missionHistory.length = MISSION_HISTORY_MAX;
   }
 
-  private recentMissions(n = 5): RecentMission[] {
+  private recentMissions(n = 10): RecentMission[] {
     return this.missionHistory.slice(0, n).map((m) => ({ title: m.title, aUEC: m.aUEC, at: m.at }));
   }
 
-  private recentBlueprints(n = 5): RecentBlueprint[] {
+  /** The pools you are NEAREST to finishing — the idle panel's "what should I go do" answer.
+   *
+   *  🔑 Started, not finished, and ranked by what is LEFT rather than by percentage. A pool with
+   *  one blueprint missing is a better suggestion than one at 90% of forty, because the whole
+   *  point is the trip you can actually close out. Ties break on the higher percentage, so two
+   *  pools needing one each put the nearly-done one first.
+   *
+   *  Untouched pools are excluded on purpose: with 4,075 contracts, "0 of 7" is not a suggestion,
+   *  it is the entire dataset sorted arbitrarily. Something you have already put work into is
+   *  evidence you meant to. */
+  /** Every system name the dataset knows, from its own place lists ("Pyro System" → "pyro").
+   *  Built from the data rather than hardcoded, so a new system arriving in a patch needs no
+   *  code change to be recognised. */
+  private systemNames(): Set<string> {
+    if (this.systemNamesCache) return this.systemNamesCache;
+    const found = new Set<string>();
+    for (const m of Object.values(this.dataset?.missions ?? {})) {
+      for (const p of m.places ?? []) {
+        const hit = /^(.+?)\s+System$/i.exec(p);
+        if (hit) found.add(hit[1].trim().toLowerCase());
+      }
+    }
+    this.systemNamesCache = found;
+    return found;
+  }
+  private systemNamesCache: Set<string> | null = null;
+
+  /** Every ordinary place name → the system it sits in, learned from the missions that DO name
+   *  their system.
+   *
+   *  🔑 Needed because most missions don't. Only some place lists carry "Pyro System" outright;
+   *  the rest just say "Checkmate", "Gaslight", "ArcCorp" — so a filter that only understood the
+   *  explicit form let almost everything through, which is how a Stanton contract stayed on
+   *  screen while Sub was in Pyro. Every mission that names a system teaches us its other places,
+   *  and the majority wins per place: a handful of cross-system contracts can't outvote the
+   *  hundreds that agree Gaslight is in Pyro. */
+  private placeSystemIndex(): Map<string, string> {
+    if (this.placeSystemCache) return this.placeSystemCache;
+    const votes = new Map<string, Map<string, number>>();
+    for (const m of Object.values(this.dataset?.missions ?? {})) {
+      const sys = this.explicitSystem(m.places);
+      if (!sys) continue;
+      for (const p of m.places ?? []) {
+        const k = p.trim().toLowerCase();
+        if (!k || this.systemNames().has(k) || /\s+system$/i.test(k)) continue;
+        let bag = votes.get(k);
+        if (!bag) { bag = new Map(); votes.set(k, bag); }
+        bag.set(sys, (bag.get(sys) ?? 0) + 1);
+      }
+    }
+    const index = new Map<string, string>();
+    for (const [place, bag] of votes) {
+      let best = "", bestN = 0;
+      for (const [sys, count] of bag) if (count > bestN) { best = sys; bestN = count; }
+      if (best) index.set(place, best);
+    }
+    this.placeSystemCache = index;
+    return index;
+  }
+  private placeSystemCache: Map<string, string> | null = null;
+
+  /** A system named outright in a place list ("Pyro System", or a bare "Pyro"). */
+  private explicitSystem(places: string[] | null | undefined): string | null {
+    for (const p of places ?? []) {
+      const hit = /^(.+?)\s+System$/i.exec(p);
+      if (hit) return hit[1].trim().toLowerCase();
+    }
+    // The bare name appears too, checked against the vocabulary above so an ordinary place that
+    // happens to share a word can't be mistaken for a system.
+    for (const p of places ?? []) {
+      const k = p.trim().toLowerCase();
+      if (this.systemNames().has(k)) return k;
+    }
+    return null;
+  }
+
+  /** Which system a mission is offered in: named outright if it says so, otherwise the system
+   *  most of its places belong to. Null only when nothing in the list is recognised. */
+  private systemOf(places: string[] | null | undefined): string | null {
+    const explicit = this.explicitSystem(places);
+    if (explicit) return explicit;
+    const index = this.placeSystemIndex();
+    const tally = new Map<string, number>();
+    for (const p of places ?? []) {
+      const sys = index.get(p.trim().toLowerCase());
+      if (sys) tally.set(sys, (tally.get(sys) ?? 0) + 1);
+    }
+    let best: string | null = null, bestN = 0;
+    for (const [sys, count] of tally) if (count > bestN) { best = sys; bestN = count; }
+    return best;
+  }
+
+  /** Where the player is ACTUALLY playing, from the system of their most recent completion.
+   *
+   *  🔑 Chosen over the log's terrain report on purpose. That report is explicitly "a hint, not a
+   *  gate" — it fires about every ten minutes and goes stale in twenty-one, so after any restart
+   *  it reads unknown until the next dump. A completion is evidence you were standing there, it
+   *  is backfilled from the logs so it survives a restart, and you cannot leave a system without
+   *  a quantum jump — the same reasoning the payout scanner uses to never expire its cache.
+   *
+   *  Returns null when nothing recent carries a system, and callers must treat that as "show
+   *  everything" rather than "show nothing" — a filter that silently empties a panel is worse
+   *  than one that doesn't fire. */
+  /** What the giver's required rank is CALLED — "Contractor", not "2".
+   *
+   *  🔑 The names are already bundled: rep-scopes.json carries all 35 ladders with their rungs,
+   *  and a mission's rank is an index into the ladder of its own primary rep scope. Measured over
+   *  the dataset: 2,549 of 2,738 ranked missions resolve to a name (93%). The rest sit above a
+   *  short ladder — Headhunters' own Mercenary track has three rungs — and keep the number,
+   *  because inventing a name for a rung that isn't there would be worse than a bare integer. */
+  private rankName(m: DatasetMission | undefined): string | null {
+    if (!m || typeof m.rank !== "number") return null;
+    const scope = this.primaryRep(m)?.scope;
+    const rung = scope ? this.repScopes[scope]?.ranks?.[m.rank] : null;
+    return rung?.name ?? null;
+  }
+
+  /** The system every place list agrees exists — handed to the log watcher as its vocabulary. */
+  knownSystems(): Set<string> { return new Set(this.systemNames()); }
+  /** The system the LOG says the player is in, pushed in from the quantum-navigation watcher. */
+  setSystem(sys: string | null): void { this.loggedSystem = sys; }
+  private loggedSystem: string | null = null;
+
+  private playingIn(): string | null {
+    // 🔑 THE LOG FIRST. It states the system outright on every quantum-navigation line, which is
+    // a fact rather than an inference — and it updates the moment the player jumps, where the
+    // fallback below cannot know until they finish something on the other side.
+    if (this.loggedSystem) return this.loggedSystem;
+    // Fallback (Sub's, and the right one): the system of the most recent completion. Evidence
+    // they were standing there, backfilled from the logs so it survives a restart, and available
+    // immediately at launch — before any quantum drive has been touched this session.
+    for (const h of this.missionHistory) {
+      if (!h.title) continue;
+      // Same-titled variants can sit in different systems, so every key under this title is
+      // consulted and the first that names one wins — they agree far more often than not, and
+      // a disagreement is exactly the ambiguity the tracker already refuses to resolve blind.
+      for (const key of this.titleIndex.get(normScreenTitle(h.title)) ?? []) {
+        const sys = this.systemOf(this.dataset?.missions?.[key]?.places);
+        if (sys) return sys;
+      }
+    }
+    return null;
+  }
+
+  private closestPools(n = 2): ClosestPool[] {
+    const out: ClosestPool[] = [];
+    if (!this.dataset) return out;   // no dataset loaded yet — the idle panel just shows less
+    // 🔴 Only what you can actually reach. Sub, 2026-08-13, in Pyro and being shown Nyx pools:
+    // "I don't want to see anything for Nyx." A suggestion in another system is not a suggestion,
+    // it is a chore you cannot start — and the panel exists to answer "what should I go do now".
+    const here = this.playingIn();
+    for (const [key, m] of Object.entries(this.dataset.missions)) {
+      if (here) {
+        const sys = this.systemOf(m.places);
+        // Unknown stays IN. 2,092 of 4,075 missions carry no place list at all, and dropping
+        // every one of them would quietly hide most of the dataset to enforce a guess.
+        if (sys && sys !== here) continue;
+      }
+      const entries = Object.values(m.pools ?? {}).flat();
+      if (entries.length < 2) continue;   // a one-item pool is not a collection to finish
+      let owned = 0;
+      for (const e of entries) if (this.isOwned(e.blueprint).owned) owned++;
+      if (owned === 0 || owned === entries.length) continue;   // untouched, or already done
+      out.push({
+        key,
+        title: m.title,
+        owned,
+        total: entries.length,
+        // Where to take it. `where` is the availability list the mission-info drawer uses; a
+        // suggestion you cannot act on is just a statistic.
+        places: (m.where ?? []).slice(0, 2),
+      });
+    }
+    out.sort((a, b) => (a.total - a.owned) - (b.total - b.owned)
+      || b.owned / b.total - a.owned / a.total
+      || a.title.localeCompare(b.title));
+    // 🔴 SAME-TITLED VARIANTS ARE SEPARATE DATASET KEYS, and 460 of the 540 multi-variant titles
+    // are the SAME pool offered in several places — so the raw list opens with the same contract
+    // twice, identical counts and all, which reads as a bug rather than a suggestion. Seen live
+    // on Sub's collection the moment this shipped: "CRITICAL FLEET REFUEL 5/8" listed twice.
+    // Collapsed on title + how far through it is, merging the places, because to someone deciding
+    // where to go those really are one errand.
+    const seen = new Map<string, ClosestPool>();
+    for (const p of out) {
+      const k = p.title + "|" + p.owned + "/" + p.total;
+      const had = seen.get(k);
+      if (!had) { seen.set(k, { ...p, places: [...p.places] }); continue; }
+      for (const place of p.places) if (!had.places.includes(place)) had.places.push(place);
+    }
+    return [...seen.values()].slice(0, n).map((p) => ({ ...p, places: p.places.slice(0, 3) }));
+  }
+
+  private recentBlueprints(n = 10): RecentBlueprint[] {
     return [...this.observedAt.entries()]
       .filter(([, ts]) => Number.isFinite(Date.parse(ts)))
       .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
@@ -1975,11 +2186,22 @@ export class MissionTracker extends EventEmitter {
     // Show the block while a grind is recent (last completion within SHOW_MS), even if the
     // rolling 60 min has since emptied — so you still see your last grind's pace.
     const SHOW_MS = 90 * 60_000;
+    // What the session has actually been WORTH, as opposed to what it is running at. The idle
+    // panel leads its scoreboard with this, and a rate is not a total: "148k an hour" answers a
+    // different question from "148k earned". Known payouts only, and null rather than 0 when the
+    // game logged none — the calculated-reward contracts genuinely do not report one.
+    const sessionKnown = session.filter((r) => r.aUEC != null);
+    const aUECTotal = sessionKnown.length
+      ? Math.round(sessionKnown.reduce((s, r) => s + (r.aUEC ?? 0), 0))
+      : null;
+    const repTotal = Math.round(session.reduce((s, r) => s + r.rep, 0));
     return {
       repLastHr: Math.round(repLastHr),
       repPace,
       aUECLastHr: aUECLastHr != null ? Math.round(aUECLastHr) : null,
       aUECPace,
+      aUECTotal,
+      repTotal,
       missions: rows.filter((r) => now - r.atMs <= SHOW_MS).length,
     };
   }
@@ -2221,9 +2443,17 @@ export class MissionTracker extends EventEmitter {
     if (this.trackedMissionId && active(this.trackedMissionId) && this.missionHasContent(this.trackedMissionId)) {
       return this.trackedMissionId;
     }
-    for (let i = this.markerSeq.length - 1; i >= 0; i--) {
-      if (active(this.markerSeq[i]) && this.missionHasPool(this.markerSeq[i])) return this.markerSeq[i];
-    }
+    // 🔑 THE NEWEST ACCEPTED MISSION WINS, pool or no pool (Sub, 2026-08-13). This used to skip
+    // straight past anything without a blueprint pool — a deliberate choice, so a cargo haul
+    // accepted after a blueprint mission couldn't hide it. In practice that meant accepting a
+    // bounty and watching the panel keep showing something else, with no hint why: *"we need to
+    // have it come up and say no blueprint reward, and give more information about missions that
+    // don't have blueprints."*
+    // The pool-less view already earns its place — faction, rank, reputation, payout, item
+    // rewards, and a plain line saying it drops no blueprints — so following the mission you
+    // actually accepted is now more useful than protecting the one you didn't.
+    // ⚠️ The cost, stated: a mission with no blueprints DOES now displace one with them. The
+    // title is the picker, so getting back is one click — and pinning it makes the choice stick.
     for (let i = this.markerSeq.length - 1; i >= 0; i--) {
       if (active(this.markerSeq[i])) return this.markerSeq[i];
     }
@@ -2286,9 +2516,20 @@ export class MissionTracker extends EventEmitter {
 
   private isOwned(poolName: string): { owned: boolean; source: BlueprintSource } {
     // Explicit manual override on the exact pool name wins (owned or not-owned).
+    // 🔑 …for the ANSWER, not for the PROVENANCE. An override's job is to change whether you own
+    // something, never to rewrite how it was found. Sub, 2026-08-13: he had a real log receipt for
+    // the Ripper Sunblock SMG, un-ticked it by accident, ticked it back, and the row then read
+    // "[manual]" — "now it's lying to me". The receipt never went anywhere; it was just shadowed
+    // by the override sitting in front of it. So a POSITIVE override defers to the log when the
+    // log has something to say, and only claims "manual" when it is genuinely the only evidence.
+    // A NEGATIVE override still wins outright — saying "I don't have this" is the whole point of
+    // un-ticking, and the receipt must not drag it back.
     if (this.overrides.has(poolName)) {
       const v = this.overrides.get(poolName)!;
-      return { owned: v, source: v ? "manual" : null };
+      if (!v) return { owned: false, source: null };
+      if (matchesPoolName(poolName, this.observed)) return { owned: true, source: "in-game" };
+      if (matchesPoolName(poolName, this.fabOwned)) return { owned: true, source: "fab" };
+      return { owned: true, source: "manual" };
     }
     // Earned in-game (an observed receipt, incl. a variant) — most specific.
     if (matchesPoolName(poolName, this.observed)) return { owned: true, source: "in-game" };
@@ -2712,6 +2953,7 @@ export class MissionTracker extends EventEmitter {
       whereToGet: ambiguous ? [] : mission?.where ?? [],
       illegal: mission?.illegal === true,
       rankRequired: mission?.rank ?? null,
+      rankRequiredName: this.rankName(mission),
       otherPools: this.otherPoolsFor(key, mission, ambiguous),
       reputationGained: mission?.reputationGained ?? [],
       reputationLost: mission?.reputationLost ?? [],
@@ -2729,6 +2971,7 @@ export class MissionTracker extends EventEmitter {
       collectedTotal: this.collectedItemsWithDates().length,
       recentMissions: this.recentMissions(),
       recentBlueprints: this.recentBlueprints(),
+      closestPools: this.closestPools(),
       earnings: this.earningRates(),
       justReceived: this.justReceived,
       completion: holdActive

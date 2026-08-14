@@ -22,7 +22,11 @@
   if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
   /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
-    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t); }</script>
+    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
+    /* ?bg=RRGGBB paints an opaque backdrop, for embedding in a THIRD-PARTY host (GameGlass
+       and friends). Hex digits only, and applied through CSSOM — a value that is not a colour
+       is rejected by the engine rather than landing anywhere it could be read as markup. */
+    const b = q.get("bg"); if (b && /^[0-9a-f]{3,8}$/i.test(b)) { r.style.setProperty("--wbg", "#" + b); r.dataset.bg = ""; } }</script>
 <link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* Grind tracker for a mission giver's reputation track — built for Recco Battaglia, whose

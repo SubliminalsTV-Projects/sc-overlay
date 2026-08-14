@@ -1,13 +1,13 @@
 import { createServer, type ServerResponse } from "node:http";
 import { networkInterfaces } from "node:os";
 import { writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync, rmSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFile, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, dirname, basename, resolve, sep } from "node:path";
 
 import { LogWatcher } from "./watcher.js";
 import { parseLine } from "./parser.js";
 import { parseMissionEvent } from "./missions-parser.js";
-import { PlaceWatcher, debrisStepWording, type Place } from "./location.js";
+import { PlaceWatcher, SystemWatcher, debrisStepWording, type Place } from "./location.js";
 import { PartyTracker, ownHandleFromLog } from "./party.js";
 import { MissionTracker } from "./missions.js";
 import { collectLogPaths } from "./log-paths.js";
@@ -19,7 +19,7 @@ import { FabClaims } from "./fab-claim.js";
 import { SCENARIOS, replayLines, replayMissionId } from "./dev-replay.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
-import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
+import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, contractRegionOrDefault, DEFAULT_CONTRACT_REGION, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
 import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
@@ -352,7 +352,12 @@ const DEFAULTS: Config = {
   miningDebug: false,
   scanRegion: null,
   payoutScan: false,
-  contractRegion: null,
+  // 🔑 A REGION, never null. `null` used to mean "not calibrated yet", and the settings card
+  // disabled the Start button until one existed — while the only surface that could set one was
+  // the box that appears once scanning is armed. Nobody but Sub (who had POSTed his own) could
+  // ever get past it. Everyone now starts from the measured default and DRAGS it if it's wrong,
+  // which turns calibration from a precondition into a correction.
+  contractRegion: DEFAULT_CONTRACT_REGION,
   miningAutoShow: false,
   miningOpen: false,
   notepadOpen: false,
@@ -445,7 +450,13 @@ function loadConfig(): Config {
       if (existsSync(p)) {
         const raw = JSON.parse(readFileSync(p, "utf8"));
         if (raw && raw.payoutScan === true) payoutScanWasArmedOnDisk = true;
-        return { ...DEFAULTS, ...raw, payoutScan: false };
+        // `contractRegion` is normalised rather than merged: every config written before the
+        // default existed carries an explicit `null`, which a spread preserves — so those users
+        // would keep the un-calibratable state this default was added to end. A region dragged
+        // off-frame or squashed to nothing is replaced for the same reason (it reads an empty
+        // rectangle and looks exactly like a scanner that has stopped working).
+        return { ...DEFAULTS, ...raw, payoutScan: false,
+          contractRegion: contractRegionOrDefault(raw?.contractRegion) };
       }
     } catch {
       /* corrupt — try the next source */
@@ -933,9 +944,21 @@ function missionsPayload(): string {
       // screen the moment the mode is armed from anywhere — the settings window, the panel's
       // own Stop button, or a restart forcing it off. It is the only signal the panel obeys,
       // which is what keeps "panel up" and "screen-reading armed" from ever disagreeing.
-      // 🔑 Read from `config` and never persisted (saveConfig strips it), so a broadcast on
-      // launch always carries `false` — the mode cannot come back without someone arming it.
+      // 🔑 Read from `config`, which `loadConfig` forces to false on every launch, so a broadcast
+      // on launch always carries `false` — the mode cannot come back without someone arming it.
+      // ⚠️ It is NOT stripped on save, and must not be: `capture.cjs` learns the mode by reading
+      // config.json off disk, so a field never written is a field it can never see. That is the
+      // bug that killed the scanner for a whole release.
       payoutScan: config.payoutScan,
+      // The calibrated board rectangle, so the canvas can draw its box over the real one. Rides
+      // prefs rather than being fetched, so every accepted write redraws it and the outline can
+      // never claim a region that isn't cropped.
+      payoutRegion: config.contractRegion,
+      // Whether the last contract crop came off the PRIMARY display. The box is drawn over the
+      // primary (the canvas reports only that display's rect), so a game on any other monitor is
+      // calibrating against pixels it cannot see. null = no crop has been taken yet, which is not
+      // the same as "it's fine" and must not be reported as such.
+      payoutOnPrimary: contractCropOnPrimary,
     },
   });
 }
@@ -975,6 +998,11 @@ const mining = new MiningTracker({ dataDir, stateDir: userDir });
 let payoutScanner: PayoutScanner | null = null;
 let lastPanelLines: string[] = [];
 let lastFrame = "";
+/** Was the last contract crop taken off the primary display? `null` until a crop has happened —
+ *  the calibration box only warns on a definite `false`, because "we don't know yet" and "the
+ *  game is on another monitor" are different answers and only one of them is worth interrupting
+ *  someone over. Deliberately NOT persisted: it describes this session's screen layout. */
+let contractCropOnPrimary: boolean | null = null;
 let payoutMatcher: ContractMatcher | null = null;
 let payoutMatcherFor = "";
 
@@ -1180,6 +1208,9 @@ const miningClients = new Set<ServerResponse>();
 // The body-name map rides in the dataset (`pyro2` -> "Monox"), so it refreshes per
 // patch with everything else rather than being a hard-coded list here.
 const place = new PlaceWatcher(mining.bodyNames());
+// Seeded from the DATASET's own system vocabulary, so a system added in a patch is recognised
+// without a code change — and so nothing outside that vocabulary can be mistaken for one.
+const sysWatch = new SystemWatcher(tracker.knownSystems());
 // User override. `auto` trusts the log; the other two are the player saying "I know
 // where I am, stop guessing" -- which matters because the log reading can be ten
 // minutes old and a forced value is never stale.
@@ -1438,6 +1469,10 @@ function startWatcher(): void {
     // it is printed about every 10 minutes, so it can be that stale. It orders the
     // wording of an ambiguous 2,000-step signature; it never suppresses anything.
     if (place.push(e.raw)) { miningSend({ kind: "state", view: miningViewWithPlace() }); }
+    // Which SYSTEM, off the quantum-navigation lines — explicit, and far more frequent than the
+    // terrain report above. A change re-broadcasts because the idle panel filters its suggestions
+    // by system, and a stale answer there sends someone to another star.
+    if (sysWatch.push(e.raw)) { tracker.setSystem(sysWatch.current()); broadcastMissions(); }
     const me = parseMissionEvent(e);
     if (me) { tracker.apply(me); party.apply(me); applyChatSignals(me); }
 
@@ -1731,11 +1766,30 @@ function screenReadingOn(): boolean {
  *  someone who allow-lists the app mid-session gets a fresh answer without restarting. */
 async function getOcrHealth(maxAgeMs = 60_000): Promise<OcrHealth | null> {
   if (!screenReadingOn()) return null;
+  // 🔴 RapidOCR failing to LOAD outranks the Windows-OCR self-test, and is reported first.
+  // Learned from 0.1.42, where the packaged app resolved its ONNX models to a path inside
+  // app.asar that native code cannot read: the engine never started, the Mining Scanner called
+  // out nothing, and every diagnostic in the app said OCR was fine — because the only thing being
+  // self-tested was the OTHER engine. A tester had to decompile the asar to find it.
+  // 🔑 Reported through the existing banner rather than a new surface: this is the same fact the
+  // banner already exists to tell people ("screen reading isn't working"), and one that names the
+  // failing file beats a second warning nobody has learned to read yet.
+  if (rapidOcrFailure) {
+    return { ok: false, matched: false, lines: 0, text: "", ranAt: rapidOcrFailure.at, ms: 0,
+      reason: rapidOcrFailure.reason,
+      // The Windows-OCR worker's signature, which is what `signal` describes, says nothing about
+      // why RapidOCR would not load — so it is reported clean rather than borrowed to look full.
+      signal: { spawnError: null, exitedBeforeReady: false, lastExitCode: null, everReady: false } };
+  }
   if (ocrHealth && Date.now() - ocrHealthAt < maxAgeMs) return ocrHealth;
   ocrHealth = await ocrSelfTest();
   ocrHealthAt = Date.now();
   return ocrHealth;
 }
+/** Set by the capture loop (the only process that runs RapidOCR) the first time its engine refuses
+ *  to start. Not persisted: it describes THIS launch's install, and a fixed install must clear it
+ *  by simply not reporting again. */
+let rapidOcrFailure: { reason: string; at: string } | null = null;
 
 const server = createServer((req, res) => {
   // One route throwing must not take the whole sidecar down with it. This handler is async, so
@@ -2099,6 +2153,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // RapidOCR re-read of the calibrated offers panel. The crop IS the panel, so every
       // line is in-region by construction and the parser gets the crop's own bounds.
       const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
+      // Which monitor the crop came off. Only broadcast on a CHANGE: this arrives every tick of
+      // an armed scan, and re-broadcasting the whole mission payload at that rate to say nothing
+      // has changed is the idle-repaint mistake in another costume.
+      if (typeof body.onPrimary === "boolean" && body.onPrimary !== contractCropOnPrimary) {
+        contractCropOnPrimary = body.onPrimary;
+        broadcastMissions();
+      }
       if (config.payoutScan) {
         try {
           const sc = ensurePayoutScanner();
@@ -2403,15 +2464,25 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         // Flush immediately on the way out so a sweep's tail isn't stranded for 30s.
         if (!body.on) void flushPayouts();
       }
-      if (body.region === null) { config.contractRegion = null; saveConfig(); }
+      // `null` is RESET-TO-DEFAULT, not un-calibrate — the box's Reset control and a fresh
+      // install must land on the same rectangle, and there is no longer a "no region" state to
+      // return to. Anything else is validated server-side and silently ignored when unusable,
+      // because a bad region kills every read without failing — the same trap the mining scan
+      // box already documents.
+      if (body.region === null) { config.contractRegion = { ...DEFAULT_CONTRACT_REGION }; saveConfig(); broadcastMissions(); }
       else if (body.region && typeof body.region === "object") {
         const r = body.region as Record<string, number>;
         const ok = ["x", "y", "w", "h"].every((k) => Number.isFinite(r[k]))
           && r.w > 0.02 && r.h > 0.02
           && r.x >= 0 && r.y >= 0 && r.x + r.w <= 1.001 && r.y + r.h <= 1.001;
-        // Validated server-side because a bad region silently kills every read — the
-        // same trap the mining scan box already documents.
-        if (ok) { config.contractRegion = { x: r.x, y: r.y, w: r.w, h: r.h }; saveConfig(); }
+        if (ok) {
+          config.contractRegion = { x: r.x, y: r.y, w: r.w, h: r.h };
+          saveConfig();
+          // The box that sent this is drawn from the broadcast, so an ignored region must not
+          // leave the outline sitting somewhere nothing is being read. Echoing every accepted
+          // write back means the drawn rectangle is always the stored one.
+          broadcastMissions();
+        }
       }
     }
     const sc = payoutScanner;
@@ -2789,18 +2860,50 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // Exact name first, then the refined/ore variants people actually type ("aluminum" should
     // find "Aluminum", not "Aluminum (Ore)" or a MineableRock_ entity).
     const norm = (n: string) => n.toLowerCase().replace(/\s*\(.*\)\s*/g, "").trim();
+    // 🔴 NORMALISE THE QUERY TOO. This stripped the suffix off the CANDIDATE only, so every
+    // fallback compared a bare "aslarite" against a typed "aslarite (raw)" and could never fire —
+    // leaving the exact match as the only route in. That is invisible until the autocomplete
+    // starts offering suffixed names, which is exactly what grouping raw vs refined did: half the
+    // list it hands you is a spelling only one of the three matchers can resolve, and
+    // "Hephaestanite (Raw)" resolved to nothing at all.
+    const bare = norm(want);
     const named = all.filter((c) => c.name && c.kind !== "mineable");
     const match =
       named.find((c) => c.name!.toLowerCase() === want) ??
-      named.find((c) => norm(c.name!) === want) ??
-      named.find((c) => norm(c.name!).startsWith(want) && want.length >= 3) ??
+      named.find((c) => norm(c.name!) === bare) ??
+      named.find((c) => norm(c.name!).startsWith(bare) && bare.length >= 3) ??
       null;
     if (!match) {
       res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify({ error: "unknown_commodity", name: want }));
       return;
     }
-    const sells = (match.prices ?? []).map((p) => Number(p.sell) || 0).filter((v) => v > 0);
+    // 🔑 A RAW ORE HAS NO SELL TERMINALS — you sell what it refines INTO. Matching the typed name
+    // exactly is therefore not enough: "Aslarite (Raw)" resolves perfectly and answers with zero
+    // quotes, which reads as "we have no idea" when the real answer is sitting one hop away
+    // through `refinesTo`. Follow it, and SAY that is what happened, because refining does not
+    // return one SCU for one SCU and a raw pile is not worth the refined price outright.
+    let priced = match;
+    let refinedFrom: string | null = null;
+    const quotesOf = (c: typeof match) => (c?.prices ?? []).filter((p) => (Number(p.sell) || 0) > 0).length;
+    if (!quotesOf(match)) {
+      const target = (match as { refinesTo?: { name?: string } }).refinesTo?.name;
+      const hop = target ? named.find((c) => c.name!.toLowerCase() === target.toLowerCase()) : null;
+      if (hop && quotesOf(hop)) { priced = hop; refinedFrom = match.name!; }
+      else {
+        // 🔑 LAST RESORT: a record this endpoint deliberately skipped. `kind !== "mineable"` is
+        // there to stop "aluminum" answering with a MineableRock_ entity — but it is too wide, and
+        // it silently hid every hand-mined GEM: Hadanite, Aphorite, Carinite, Dolivine each have
+        // one record, marked mineable, carrying 44-62 real terminal quotes (Hadanite sells at
+        // 600,000). The commodity entry sharing the name has none, so the lookup matched the empty
+        // one and answered "no sell price" for the most valuable things you can put in a split.
+        // Only accepted when it actually HAS quotes, and internal identifiers stay excluded.
+        const gem = all.find((c) => c.name && !c.name.includes("_")
+          && norm(c.name) === bare && quotesOf(c as typeof match));
+        if (gem) priced = gem as typeof match;
+      }
+    }
+    const sells = (priced.prices ?? []).map((p) => Number(p.sell) || 0).filter((v) => v > 0);
     const summary = sells.length
       ? {
           low: Math.min(...sells),
@@ -2810,7 +2913,9 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         }
       : { low: null, avg: null, high: null, quotes: 0 };
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ name: match.name, best: match.bestSell ?? null, ...summary }));
+    // `name` is what was PRICED, `refinedFrom` what was asked for — the widget needs both to say
+    // "priced as Aslarite" rather than quietly answering a different question than it was asked.
+    res.end(JSON.stringify({ name: priced.name, refinedFrom, best: priced.bestSell ?? null, ...summary }));
     return;
   }
 
@@ -2978,6 +3083,18 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // and the log PATH is included but never its contents.
   // What the canvas polls to decide whether to warn the user. Separate from /api/diagnostics so
   // asking "is OCR alive" doesn't drag the whole health report (and its live token check) with it.
+  // The capture loop reporting that its RapidOCR engine would not start. Loopback-only like
+  // everything else that describes this machine; it only ever sets a message the banner shows.
+  if (url === "/api/ocr/rapid-failure" && req.method === "POST") {
+    const body = await readBody(req);
+    const reason = typeof body?.reason === "string" ? body.reason.slice(0, 300) : "";
+    rapidOcrFailure = reason ? { reason, at: new Date().toISOString() } : null;
+    if (reason) console.error(`[ocr] RapidOCR unavailable: ${reason}`);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   if (url === "/api/ocr/health" && req.method === "GET") {
     const health = await getOcrHealth();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });

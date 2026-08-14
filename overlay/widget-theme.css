@@ -334,3 +334,13 @@ html.amd-lite .wpanel::before { display: none; }
   font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--cyan-dim); }
 .wsettings .ws-row { display: flex; align-items: center; gap: 6px; padding: 5px 12px; }
 .wsettings .ws-row .hbtn { flex: 1; }
+
+/* ── ?bg= : an opaque backdrop for a THIRD-PARTY embed ────────────────────────
+   Our widget pages are genuinely transparent — measured at the pixel level in a foreign iframe —
+   which is exactly right over the game and exactly wrong inside a host that paints its own
+   surface underneath. GameGlass renders white, so a widget embedded there sat on white with no
+   way to say otherwise; the host is the thing we cannot change, so the widget has to be able to
+   bring its own.
+   🔑 Higher specificity than the `html, body { background: transparent }` every widget page
+   declares inline, so no !important is needed — source order would otherwise lose to it. */
+html[data-bg], html[data-bg] body { background: var(--wbg); }

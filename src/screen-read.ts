@@ -108,6 +108,31 @@ export function scanRegion(saved: ScanRegion | null | undefined, w: number, h: n
   return { x: f.x * w, y: f.y * h, w: f.w * w, h: f.h * h };
 }
 
+/** Where the mobiGlas offers panel sits, as fractions of the frame.
+ *
+ *  Measured across four real 3440x1440 captures, not guessed: the left column starts as far left
+ *  as x=623 (a category whose icon OCR'd into the line) and the amount column ends by x=1221, so
+ *  0.175..0.365 covers both with room. Vertically it must EXCLUDE the "MARK ALL READ" header at
+ *  y≈146 and the nav bar at y≈1326 — both are ordinary text at ordinary heights, and letting
+ *  either in pushes the column boundary past the amounts.
+ *
+ *  🔑 One definition, three consumers: the config default, the canvas's calibration box (which
+ *  draws its RESET target from the value riding the SSE, never a copy) and `contract-scan-probe`.
+ *  A second copy would drift, and a drifted crop reads an empty rectangle rather than failing. */
+export const DEFAULT_CONTRACT_REGION: ScanRegion = { x: 0.175, y: 0.135, w: 0.19, h: 0.7 };
+
+/** Same rule as `scanRegion`, but the contract crop is taken in the MAIN process from the stored
+ *  fractions — so an unusable saved value has to be replaced on the way in rather than resolved at
+ *  read time. Nonsense in the file becomes the default, and the file is rewritten to say so. */
+export function contractRegionOrDefault(saved: ScanRegion | null | undefined): ScanRegion {
+  const ok = saved
+    && Number.isFinite(saved.x) && Number.isFinite(saved.y)
+    && Number.isFinite(saved.w) && Number.isFinite(saved.h)
+    && saved.w > 0.02 && saved.h > 0.02
+    && saved.x >= 0 && saved.y >= 0 && saved.x + saved.w <= 1.001 && saved.y + saved.h <= 1.001;
+  return ok ? { x: saved.x, y: saved.y, w: saved.w, h: saved.h } : { ...DEFAULT_CONTRACT_REGION };
+}
+
 /** The mining scan HUD's own words. Exported as a test because the CAPTURE LOOP needs to know
  *  the player is at the scanner even on frames where no signature parsed — that is what tells it
  *  to poll fast (a scan is a live feedback loop) instead of idling at the slow rate. */

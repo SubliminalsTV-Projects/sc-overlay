@@ -1,5 +1,5 @@
 // Place detection from the log's terrain-streaming report — `npm run test:location`.
-import { PlaceWatcher, debrisStepWording, PLACE_STALE_MS, type Place } from "./location.js";
+import { PlaceWatcher, SystemWatcher, debrisStepWording, PLACE_STALE_MS, type Place } from "./location.js";
 
 let pass = 0, fail = 0;
 const ok = (label: string, cond: boolean, got?: unknown) => {
@@ -89,6 +89,42 @@ console.log("\nwording a 2,000-step signature");
   ok("unknown commits to NEITHER — the count is the honest part", u.lead === "6 units", u);
   ok("...and offers both", u.detail === "debris panels or harvestables", u);
   ok("singular reads correctly", debrisStepWording(1, space).lead === "1 debris panel");
+}
+
+console.log("\nwhich SYSTEM, off the quantum-navigation lines");
+{
+  // Verbatim shapes from Sub's real 4.9 log, 2026-08-13.
+  const QT = "[Team_CGP4][QuantumTravel]";
+  const selected = (pt: string) =>
+    "<2026-08-13T19:33:38.851Z> [Notice] <Player Selected Quantum Target - Local> [ItemNavigation][CL][64400] | NOT AUTH |"
+    + "ANVL_Hornet_763823336677[763823336677]|CSCItemNavigation::OnPlayerSelectedQuantumTarget|Player has selected point "
+    + pt + " as their destination, routing locally " + QT;
+  const routing = (sys: string) =>
+    "<2026-08-13T19:24:26.512Z> [Notice] <Found Obstruction while Routing> [ItemNavigation][CL][64400] | NOT AUTH |"
+    + "MRAI_Guardian_763092149238[763092149238]|CSCItemNavigation::ProcessNextNodeForRouteRecursive|Found obsruction while"
+    + " routing from " + sys + " System to Orbituary Obstructing Entity pyro3 " + QT;
+  // 🔴 The trap this is restricted to QuantumTravel lines FOR: "Pyro" appears in NPC archetype
+  // names hundreds of times a session, on lines saying nothing about where the player is.
+  const npc = "<2026-08-13T18:48:20.706Z> [Notice] <CEntity::OnOwnerRemoved - entity attachment> Force detaching ENTITY"
+    + " ATTACHMENT id = 764081074439 name = PU_Human-Populace-Shopkeeper-Bartender-Male-Pyro_01_764081074439 to unblock"
+    + " removal of parent [Team_EntitySystemTech][Entity]";
+
+  const w = new SystemWatcher(new Set(["pyro", "stanton", "nyx"]));
+  ok("nothing is claimed before any quantum activity", w.current() === null, w.current());
+  ok("an NPC named Pyro_01 is NOT a location signal", !w.push(npc) && w.current() === null, w.current());
+  ok("a route point names the system", w.push(selected("rs_ext_pyro6_leo")) && w.current() === "pyro", w.current());
+  ok("...and re-stating it is not a CHANGE", !w.push(selected("pyro3")), w.current());
+  ok("an embedded form is read too",
+     !w.push(selected("RegionB_2base_ab_pyro_final_set_encounter-001")) && w.current() === "pyro", w.current());
+  ok("'routing from X System' is read", !w.push(routing("Pyro")) && w.current() === "pyro", w.current());
+  ok("a jump to another system IS a change",
+     w.push(selected("rs_ext_stanton2a_l1")) && w.current() === "stanton", w.current());
+  // 🔑 Not expired, unlike a place reading: you cannot leave a system without a jump, and a jump
+  // writes more of these lines.
+  ok("...and it does not go stale on its own", w.current() === "stanton", w.current());
+  const w2 = new SystemWatcher(new Set(["pyro"]));
+  ok("a system outside the known vocabulary is ignored",
+     !w2.push(selected("rs_ext_castra1_leo")) && w2.current() === null, w2.current());
 }
 
 console.log(`\n${pass}/${pass + fail} passed`);

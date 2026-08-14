@@ -136,7 +136,10 @@
     btn.disabled = false;
 
     const pills = [];
-    if (!d.calibrated) pills.push('<span class="pill off">not calibrated</span>');
+    // No "not calibrated" pill any more: there is always a region now (the sidecar normalises an
+    // absent one to the measured default), so the state it reported cannot happen. What replaces
+    // it is the dashed outline on the overlay — if the crop is wrong, "no board on screen" below
+    // is the symptom and dragging that box is the fix.
     if (!d.syncReady) pills.push('<span class="pill off">no sync token</span>');
     pills.push(
       fresh

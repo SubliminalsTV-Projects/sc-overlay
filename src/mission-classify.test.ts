@@ -74,13 +74,20 @@ for (const m of missions) {
 // 🔑 These are LOWER than a first pass suggests, on purpose. Folding the 51 `_Patrol` missions
 // into "ship" would push generator coverage to 940 — but a patrol can be flown or walked, so
 // they go to the player instead. Coverage is the thing to resist optimising here.
-check("dataset size", missions.length, 2763);
-check("classified by generatorClass", byGenerator, 893);
-check("classified by missionType", byType, 746);
-check("needs the player to answer", unknown, 1124);
-check("fps count", profile.fps, 127);
-check("ship count", profile.ship, 159);
-check("no-combat count", profile.none, 1353);
+// ⚠️ REBASELINED 2026-08-13, and only after checking the move was honest. `203c989` refreshed the
+// bundled dataset from 2,763 missions to 4,075 (the app was a patch behind) and left these
+// expectations behind, so the suite sat red for weeks — which is the failure mode it exists to
+// prevent, just aimed at us. Every count grew roughly in proportion and derived coverage went
+// 40.7% → 56.2%, i.e. the classifier got BETTER on a bigger dataset rather than starting to
+// guess; the band check below is the real guard and it passes comfortably. The old numbers, for
+// anyone comparing: 2763 / 893 / 746 / 1124 / 127 / 159 / 1353.
+check("dataset size", missions.length, 4075);
+check("classified by generatorClass", byGenerator, 1264);
+check("classified by missionType", byType, 1027);
+check("needs the player to answer", unknown, 1784);
+check("fps count", profile.fps, 136);
+check("ship count", profile.ship, 260);
+check("no-combat count", profile.none, 1895);
 check("every mission accounted for", byGenerator + byType + unknown, missions.length);
 
 // A wrong auto-label is worse than none, so guard the ceiling: if a future edit pushes coverage

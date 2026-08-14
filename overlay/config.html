@@ -682,7 +682,7 @@
         </div>
         <div class="hint" id="payoutScanStatus" style="margin:0"></div>
       </div>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Start this, then open mobiGlas &rarr; Contracts and expand a category. A panel appears on the overlay showing every row it reads, and what each contract pays is contributed to subliminal.gg so the mission pages can show a typical payout. It reads the board and nothing else. Needs a sync token.</span></span>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Start this, then open mobiGlas &rarr; Contracts and expand a category. A dashed outline shows where it reads &mdash; drag it over the offers list if it isn't already &mdash; and a panel appears showing every row it picks up. What each contract pays is contributed to subliminal.gg so the mission pages can show a typical payout. It reads the board and nothing else. Needs a sync token.</span></span>
     </div>
   </div>
 
@@ -1055,19 +1055,42 @@
     btn.classList.toggle("danger", payoutScanOn);
     const missing = [];
     if (!d.syncReady) missing.push("a sync token (set one at the top)");
-    if (!d.calibrated) missing.push("a calibrated board area");
+    // 🔑 No longer gated on `d.calibrated`. It used to be, and it was a deadlock: the only way to
+    // calibrate is the outline that appears once scanning is armed, and this button was what
+    // armed it. Everyone now starts from the measured default region and drags the outline if the
+    // board doesn't line up, so the precondition has become a correction.
     // A button that cannot work should say so before you press it, not after.
     btn.disabled = missing.length > 0 && !payoutScanOn;
     status.textContent = missing.length
       ? "Needs " + missing.join(" and ") + " before it can record anything."
       : payoutScanOn
-        ? "Reading. The panel on the overlay shows every row it picks up."
+        ? "Reading. Drag the dashed outline over the offers list if it isn't on the board."
         : "";
   }
   // This is the one control here whose state can change while the window sits open — the overlay
   // panel's own Stop button and ✕ both end the session. Re-read on focus so coming back to this
   // window never offers to stop a sweep that has already finished.
   window.addEventListener("focus", refreshPayoutScan);
+  // 🔴 A WINDOW FOCUS EVENT NEVER ARRIVES WHEN THIS PAGE IS THE EMBEDDED SETTINGS WIDGET — it is
+  // an iframe on the canvas, not a window. So the button kept whatever label it rendered at open:
+  // Sub had a scan running while it still read "Start reading the contracts", pressed it expecting
+  // to start, and stopped the scan instead (2026-08-13). A control that misreports the state it
+  // toggles is worse than one that does nothing.
+  // The mode rides the mission broadcast (prefs.payoutScan) — the same signal the canvas uses to
+  // show the panel — so subscribing here makes the label true wherever this page is shown, and
+  // keeps the settings card and the overlay from ever disagreeing about it.
+  try {
+    const es = new EventSource("/missions/events");
+    let lastSeen = null;
+    es.onmessage = (e) => {
+      try {
+        const on = !!JSON.parse(e.data)?.prefs?.payoutScan;
+        if (on === lastSeen) return;   // fires every tick; only act on a real change
+        lastSeen = on;
+        refreshPayoutScan();
+      } catch { /* a malformed frame must not take the settings page down */ }
+    };
+  } catch { /* no SSE: the focus handler above still covers the standalone window */ }
 
   // ── canvas calibration (mixed-DPI) ───────────────────────────────────────
   // The shell owns this, not the form: it re-fits the overlay window and persists through the

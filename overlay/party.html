@@ -18,7 +18,11 @@
   if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
   /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
   { const q = new URLSearchParams(location.search); const r = document.documentElement;
-    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t); }</script>
+    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
+    /* ?bg=RRGGBB paints an opaque backdrop, for embedding in a THIRD-PARTY host (GameGlass
+       and friends). Hex digits only, and applied through CSSOM — a value that is not a colour
+       is rejected by the engine rather than landing anywhere it could be read as markup. */
+    const b = q.get("bg"); if (b && /^[0-9a-f]{3,8}$/i.test(b)) { r.style.setProperty("--wbg", "#" + b); r.dataset.bg = ""; } }</script>
 <link rel="stylesheet" href="/widget-theme.css" />
 <style>
   /* Party roster + reward split. Theme tokens come from the shared /widget-theme.css.
@@ -93,6 +97,10 @@
   .acmenu .acitem:hover, .acmenu .acitem.on { background: rgba(var(--accent-rgb), 0.18); color: var(--cyan-bright); }
   .acmenu .acnone { padding: 8px 9px; font-size: 10.5px; color: var(--cyan-dim); }
   .lrow { display: flex; align-items: center; gap: 5px; padding: 4px 12px 6px; }
+  /* A refinery import that ADDED to this line rather than making a new one. Held for a beat so
+     the change is attributable — without it the menu just closes and nothing appears to happen.
+     Background only, so it cannot shift the row or fight the input borders. */
+  .lrow.merged { background: rgba(var(--accent-rgb), 0.16); border-radius: 6px; }
   .lrow input { font-family: var(--sans); font-size: 11.5px; color: var(--cyan-bright);
     background: rgba(0, 0, 0, 0.25); border: 1px solid var(--divider); border-radius: 5px;
     padding: 3px 6px; outline: none; min-width: 0; }
@@ -286,6 +294,10 @@
   let suggestions = [];
   let pot = { mission: null, session: null };
   let loot = [];           // [{ id, name, qty, unit, pricePerUnit }] — the goods being divided
+  // The line a refinery import just added ITSELF to, so the next render can flag it. An import
+  // that silently grows an existing row is indistinguishable from one that did nothing at all —
+  // the menu closes, no row appears, and the natural read is that the click missed.
+  let mergedId = null;
   let sessions = [];       // saved splits (newest first)
   let self = "";           // the player's own handle, read from the log
   let seededSelf = false;  // only ever pre-fill yourself once
@@ -569,7 +581,7 @@
     wrap.textContent = "";
     for (const l of loot) {
       const row = document.createElement("div");
-      row.className = "lrow";
+      row.className = "lrow" + (l.id === mergedId ? " merged" : "");
       const mk = (cls, val, ph, on, type) => {
         const i = document.createElement("input");
         i.className = cls; i.value = val == null ? "" : val; i.placeholder = ph;
@@ -615,7 +627,13 @@
             priceBar.append(n2); return;
           }
           const lbl = document.createElement("span"); lbl.className = "pn";
-          lbl.textContent = d.name + " · " + d.quotes + " terminals:";
+          // 🔑 Say when the answer is for the REFINED form. Raw ore has no sell terminals — you
+          // sell what it refines into — so the useful number comes from one hop away, and quoting
+          // it as if it were the raw price would overstate a pile that hasn't been through a
+          // refinery yet (refining does not return one SCU for one SCU).
+          lbl.textContent = d.refinedFrom
+            ? d.refinedFrom + " → priced as refined " + d.name + " · " + d.quotes + " terminals:"
+            : d.name + " · " + d.quotes + " terminals:";
           priceBar.append(lbl);
           for (const [k, v] of [["low", d.low], ["avg", d.avg], ["high", d.high]]) {
             const c = document.createElement("button");
@@ -671,20 +689,49 @@
       wrap.classList.remove("rfopen");   // hand the stacking order back to #list
     };
     const addJob = (job) => {
-      loot.push({
-        id: newId(),
-        // A multi-material work order can read with no material at all (the tracker keys jobs by
-        // SLOT for exactly that reason). Import it anyway under a name the user can edit — silently
-        // dropping a finished job would be worse than an imperfect label.
-        name: job.material || "Refined ore",
-        qty: job.yieldScu || 0,
-        unit: "SCU",
-        // Deliberately blank: refined ore is sold at a price that moves per terminal and per day,
-        // so guessing one here would put a number in front of a crew that nobody verified.
-        pricePerUnit: null,
-      });
+      // A multi-material work order can read with no material at all (the tracker keys jobs by
+      // SLOT for exactly that reason). Import it anyway under a name the user can edit — silently
+      // dropping a finished job would be worse than an imperfect label.
+      const name = job.material || "Refined ore";
+      const qty = job.yieldScu || 0;
+      // 🔑 SAME ORE ADDS UP. A session is several work orders of the same material — you fill every
+      // slot with Quantainium and collect four jobs — and importing those as four identical lines
+      // makes the crew do the addition the widget was built to do for them. Matched on the name
+      // the line CARRIES, not on where it came from, so a hand-typed "Quantainium" collects the
+      // import too: to the people splitting it, that is one pile of one ore.
+      // ⚠️ Deliberately NOT merged when a price has been set — someone who priced a line has
+      // already decided what that pile is worth, and quietly changing its size behind that
+      // decision would change everyone's cut without telling anyone.
+      const key = name.trim().toLowerCase();
+      const into = loot.find((l) => (l.name || "").trim().toLowerCase() === key
+        && (l.unit || "SCU") === "SCU" && l.pricePerUnit == null);
+      mergedId = null;
+      if (into) {
+        into.qty = (Number(into.qty) || 0) + qty;
+        mergedId = into.id;   // so the row can say it changed — see renderLoot
+      } else {
+        loot.push({
+          id: newId(),
+          name,
+          qty,
+          unit: "SCU",
+          // Deliberately blank: refined ore is sold at a price that moves per terminal and per day,
+          // so guessing one here would put a number in front of a crew that nobody verified.
+          pricePerUnit: null,
+        });
+      }
       closeMenu();
       renderLoot(); renderRows(); scheduleSave();
+      if (mergedId) {
+        const id = mergedId;
+        setTimeout(() => {
+          if (mergedId !== id) return;   // another import landed; that one owns the highlight now
+          mergedId = null;
+          // The class is stripped in place rather than by re-rendering: a re-render while someone
+          // is typing a name or a price resets the input and moves the caret.
+          for (const el of document.querySelectorAll(".lrow.merged")) el.classList.remove("merged");
+        }, 2500);
+      }
     };
     btn.addEventListener("click", async () => {
       if (menu) { closeMenu(); return; }

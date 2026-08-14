@@ -1133,6 +1133,218 @@ const PAYOUTPANEL = `(async () => {
   return out;
 })()`;
 
+// ── Suite: the Mission / Faction drawers ──────────────────────────────────────
+// Driven off the ?missioninfo fixture, which is a TWO-SCOPE reputation award — the case a live
+// tracked mission rarely happens to be, and the one that made "+200 / +50" unreadable.
+// (No backticks and no backslash escapes anywhere in a suite body — this is a template literal.)
+const MIDRAWERS = `(async () => {
+  ${PRELUDE}
+  const pool = document.getElementById("pool");
+  // The fixture paints during canvas init, which can land after this suite starts. Wait for the
+  // drawers rather than assuming they are there — the alternative is a suite that fails as a
+  // harness ERROR (reading .querySelectorAll of undefined) and says nothing about the feature.
+  for (let i = 0; i < 40 && pool.querySelectorAll(".mi").length < 2; i++) await sleep(50);
+  ok("both drawers rendered", pool.querySelectorAll(".mi").length === 2,
+     String(pool.querySelectorAll(".mi").length));
+  const chipsOf = (i) => [...pool.querySelectorAll(".mi")[i].querySelectorAll(".mi-chip")];
+  const label = (c) => (c.querySelector(".ck") ? c.querySelector(".ck").textContent : "");
+  const value = (c) => (c.querySelector(".cv") ? c.querySelector(".cv").textContent.replace(/\\s+/g, " ").trim() : c.textContent.trim());
+
+  const mi = chipsOf(0);
+  // 🔑 Sub's order: whether it earns you a CrimeStat outranks what kind of job it is.
+  ok("Illegal leads the Mission Info chips", value(mi[0]) === "Illegal", value(mi[0]));
+  ok("...then the mission type", value(mi[1]) === "Mercenary", value(mi[1]));
+  const labels = mi.map(label).filter(Boolean);
+  ok("the old label/value ROWS are chips now", labels.includes("Pick up") && labels.includes("Other pools"),
+     labels.join(","));
+  ok("...and nothing is left rendering the two-column grid", !pool.querySelector(".mi-g"));
+  // ⚠️ "2 to go" read as two missions. It counts blueprints only obtainable elsewhere.
+  const other = mi.find((c) => label(c) === "Other pools");
+  ok("'Other pools' says what the number COUNTS", /only there/.test(value(other)), value(other));
+
+  const fac = chipsOf(1);
+  ok("the faction is a heading, not a chip repeating the drawer's own title",
+     document.querySelector(".mi-faction").textContent === "Headhunters" &&
+     !fac.some((c) => label(c) === "Faction"),
+     fac.map(label).join(","));
+  // 🔑 The rank the giver wants, by NAME. The ladders are bundled; 93% of ranked missions resolve.
+  const rank = fac.find((c) => label(c) === "Rank needed");
+  ok("the required rank is NAMED, not a bare index", value(rank) === "Contractor", value(rank));
+  // 🔴 The whole point. Two awards, same faction, DIFFERENT scopes — separate tracks, which is
+  // why they do not add to 250. Rendered as bare numbers this read as a bug.
+  const rep = fac.find((c) => label(c) === "Reputation");
+  const aff = fac.find((c) => label(c) === "Affinity");
+  ok("faction reputation is labelled as such", rep && /\\+200/.test(value(rep)), rep && value(rep));
+  ok("...and AFFINITY is named rather than shown as a second mystery number",
+     aff && /\\+50/.test(value(aff)), aff && value(aff));
+  return out;
+})()`;
+
+// ── Suite: the idle panel (nothing tracked) ───────────────────────────────────
+// What fills the tracker when no mission is tracked: closest-to-done, then the session
+// scoreboard, then a Latest list sized to the widget. Driven off the ?rates fixture.
+//
+// 🔑 The row count is asserted by CALLING the fit directly at each height, not by resizing and
+// hoping a ResizeObserver fires. Layout callbacks don't run in a window the compositor considers
+// hidden — proven while building this — so a suite that waited on one would be measuring the
+// harness, not the feature.
+// (No backticks and no backslash escapes anywhere in a suite body — this is a template literal.)
+const IDLEPANEL = `(async () => {
+  ${PRELUDE}
+  const pool = document.getElementById("pool");
+  const heads = [...pool.querySelectorAll(".ra-h")].map((e) => e.textContent);
+  // Three sections, not four: the per-hour rates were folded INTO "This session" on 2026-08-13.
+  ok("the idle panel is in the documented order",
+     heads.join(" | ") === "Closest to done | This session | Latest",
+     heads.join(" | "));
+  ok("...with a rule between what to do next and what the session was worth",
+     !!pool.querySelector(".ra-rule"));
+
+  // Closest to done: the half that answers "what should I go do".
+  const cp = [...pool.querySelectorAll(".cp")];
+  ok("it lists what you are closest to finishing", cp.length === 2, String(cp.length));
+  ok("...naming the pool, the count and what is left",
+     cp[0].querySelector(".cp-n").textContent === "Turf War" &&
+     cp[0].querySelector(".cp-c").textContent === "5 of 7" &&
+     /2/.test(cp[0].querySelector(".cp-l").textContent),
+     cp[0].textContent.trim().slice(0, 60));
+  ok("...with a bar that matches the fraction, not a guess",
+     cp[0].querySelector(".cp-bar i").style.width === "71%",
+     cp[0].querySelector(".cp-bar i").style.width);
+  ok("...and where to pick it up, because a suggestion you cannot act on is a statistic",
+     /Rat's Nest/.test(cp[0].querySelector(".cp-w").textContent));
+
+  // The session half.
+  const ss = [...pool.querySelectorAll(".ss > div")].map((d) => d.querySelector(".ss-l").textContent);
+  ok("the session scoreboard counts contracts, aUEC and blueprints",
+     ss.slice(0, 3).join(",") === "Contracts,aUEC,Blueprints", ss.join(","));
+  // 🔑 Same shape as the totals above them, in the same section — Sub's ask. The "/ hr" in the
+  // label is what keeps a rate from reading as a total when both are set in identical type.
+  ok("...with the per-hour figures in the SAME stat shape underneath",
+     ss.slice(3).join(",") === "Rep / hr,aUEC / hr", ss.join(","));
+  const ssRows = pool.querySelectorAll(".ss");
+  ok("...as a second row of the same grid, so the columns line up",
+     ssRows.length === 2
+     && getComputedStyle(ssRows[0]).gridTemplateColumns === getComputedStyle(ssRows[1]).gridTemplateColumns,
+     ssRows.length + " rows");
+
+  // The size-driven list.
+  const panel = document.getElementById("panel");
+  const ul = document.getElementById("raLatest");
+  const rows = () => ul.querySelectorAll("li:not(.ra-more)").length;
+  const at = (h) => { panel.style.height = h + "px"; window.__fitLatest(); return rows(); };
+  const tall = at(900), mid = at(500), small = at(300), tiny = at(120);
+  ok("a tall widget shows more rows than a short one", tall > small, tall + " vs " + small);
+  ok("...capped at ten however tall it gets", tall <= 10, String(tall));
+  ok("...and shrinking really does drop rows", mid >= small, mid + " vs " + small);
+  // 🔴 The bug this suite exists for. Sub, collapsing the panel to its minimum: "it doesn't show
+  // anything under Latest. It's just nothing." A heading over a void is worse than one row.
+  ok("NEVER empty, however small the widget gets", tiny >= 1, String(tiny));
+  ok("...and it says how many it is not showing", !!ul.querySelector(".ra-more"),
+     ul.textContent.slice(0, 60));
+  at(560);
+  return out;
+})()`;
+
+// ── Suite: the contract board's calibration box ───────────────────────────────
+// The ONLY way anyone but Sub can tell the scanner where the offers board is. Everything it can
+// get wrong is invisible in a screenshot of a working app: it can draw a rectangle that isn't the
+// one being cropped (a diagnostic that lies), render perfectly and refuse every drag (not in
+// RSEL), outlive the mode that owns it, or warn about a second monitor when nothing is known yet.
+//
+// 🔑 Driven through PREFS + applyPrefs(), the real path — the region and the mode both arrive on
+// the sidecar's broadcast. Nothing here POSTs, so the user's calibrated region is never touched.
+// (No backticks and no backslash escapes anywhere in a suite body — this is a template literal.)
+const BOARDBOX = `(async () => {
+  ${PRELUDE}
+  const box = document.getElementById("boardBox");
+  ok("the calibration box exists", !!box);
+  const regionHas = (el) => {
+    const b = el.getBoundingClientRect();
+    return (window.__regions || []).some((r) =>
+      Math.abs(r.x - b.left) <= 1 && Math.abs(r.y - b.top) <= 1 &&
+      Math.abs(r.w - b.width) <= 1 && Math.abs(r.h - b.height) <= 1);
+  };
+
+  PREFS.payoutScan = false; applyPrefs();
+  await sleep(80);
+  ok("with the mode off the outline is not on screen", getComputedStyle(box).display === "none");
+  await sleep(180);
+  ok("...and it claims no clickable region", !regionHas(box),
+     JSON.stringify(window.__regions || []).slice(0, 120));
+
+  // A region the sidecar would really send: the measured default.
+  const F = { x: 0.175, y: 0.135, w: 0.19, h: 0.7 };
+  PREFS.payoutRegion = F;
+  PREFS.payoutScan = true; applyPrefs();
+  await sleep(120);
+  ok("arming the mode puts the outline on screen", getComputedStyle(box).display === "block");
+
+  // 🔑 The whole point: the drawn rectangle IS the cropped one. capture.cjs multiplies these same
+  // fractions by the captured display, so a box drawn from anything else would be a diagnostic
+  // that points at the wrong part of the screen — worse than showing nothing at all.
+  const ci = canvasInfo || { px: 0, py: 0, pw: innerWidth, ph: innerHeight };
+  const r = box.getBoundingClientRect();
+  const near = (a, b) => Math.abs(a - b) <= 1.5;
+  ok("...drawn at exactly the fractions being cropped",
+     near(r.left, ci.px + F.x * ci.pw) && near(r.top, ci.py + F.y * ci.ph) &&
+     near(r.width, F.w * ci.pw) && near(r.height, F.h * ci.ph),
+     Math.round(r.left) + "," + Math.round(r.top) + " " +
+     Math.round(r.width) + "x" + Math.round(r.height) + " want " +
+     Math.round(ci.px + F.x * ci.pw) + "," + Math.round(ci.py + F.y * ci.ph) + " " +
+     Math.round(F.w * ci.pw) + "x" + Math.round(F.h * ci.ph));
+  await sleep(180);
+  ok("...and the shell is told to make the window interactive over it, so it can be dragged",
+     regionHas(box), JSON.stringify(window.__regions || []).slice(0, 160));
+
+  // Both controls must sit INSIDE the box's own reported rect. Outside it the shell hit-tests
+  // nothing, the window flips back to click-through, and the click goes to the game — which is
+  // exactly how the scan box's Reset was stranded when it hung above the top edge.
+  const inside = (id) => {
+    const el = document.getElementById(id); if (!el) return false;
+    const c = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+    return c.left >= b.left - 1 && c.right <= b.right + 1 &&
+           c.top >= b.top - 1 && c.bottom <= b.bottom + 1;
+  };
+  ok("Hide sits inside the box, so it is actually clickable", inside("bbHide"));
+  ok("Reset sits inside the box too", inside("bbReset"));
+
+  // The second-monitor warning. Unknown is NOT the same as fine: before the first crop nothing is
+  // known, and warning then would fire at everyone for the first seconds of every scan.
+  const warn = document.getElementById("bbWarn");
+  ok("no warning while it is unknown which display the game is on",
+     getComputedStyle(warn).display === "none");
+  PREFS.payoutOnPrimary = true; applyPrefs(); await sleep(60);
+  ok("...none when the game IS on the primary", getComputedStyle(warn).display === "none");
+  PREFS.payoutOnPrimary = false; applyPrefs(); await sleep(60);
+  ok("...and it says so when the game is on another display",
+     getComputedStyle(warn).display === "block" && /another display/i.test(warn.textContent),
+     warn.textContent.slice(0, 60));
+
+  // Hide is an outline control, not a mode control. Confusing the two is the bug the dashboard's
+  // own X exists to avoid in the other direction: dismissing chrome must never quietly disarm a
+  // screen-reader, and must never leave one armed with no visible sign of it either.
+  document.getElementById("bbHide").click();
+  await sleep(80);
+  ok("Hide takes the outline away", getComputedStyle(box).display === "none");
+  ok("...without disarming the scan", PREFS.payoutScan === true);
+  ok("...and the panel is still up to say the screen is being read",
+     getComputedStyle(document.getElementById("payoutPanel")).display === "flex");
+  await sleep(180);
+  ok("...and it gives its clickable region back", !regionHas(box),
+     JSON.stringify(window.__regions || []).slice(0, 160));
+
+  // A dismissal lasts the session, not forever: the next scan is a new decision.
+  PREFS.payoutScan = false; applyPrefs(); await sleep(60);
+  PREFS.payoutScan = true; applyPrefs(); await sleep(120);
+  ok("starting a new scan brings the outline back", getComputedStyle(box).display === "block");
+
+  PREFS.payoutScan = false; applyPrefs();
+  await sleep(80);
+  ok("the mode going off takes the outline with it", getComputedStyle(box).display === "none");
+  return out;
+})()`;
+
 // ── Suite: the "scan read area" outline ───────────────────────────────────────
 // The Mining Scanner cog can draw a box showing where the app reads for a signature. A
 // diagnostic that lies is worse than none, so the drawn rect is asserted against the SAME
@@ -1185,8 +1397,22 @@ const SCANBOX = `(async () => {
   // pointer, and the shell has to be told to make the window interactive over it or the drag
   // could never start.
   ok("...and is draggable while shown", getComputedStyle(box).pointerEvents === "auto");
-  ok("...so the shell is told to make the window interactive over it",
-     typeof RSEL === "string" ? RSEL.includes("#scanBox") : "RSEL unreachable");
+  // 🔴 THIS ASSERTION USED TO BE A FALSE PASS, for months:
+  //     typeof RSEL === "string" ? RSEL.includes("#scanBox") : "RSEL unreachable"
+  // RSEL is block-scoped inside the page's own "if window.overlayApi" guard, so a suite reaching
+  // for it gets undefined every time — and the "cannot measure" branch returned a non-empty
+  // STRING, which ok() reads as true. Deleting #scanBox from RSEL left it green. Proven by doing
+  // exactly that. (No backticks in a suite body — this whole block is a template literal.)
+  // 🔑 The rule it taught: an assertion whose unmeasurable branch is truthy measures nothing.
+  // Assert the rects the page actually SENDS the shell instead — captured by the stub preload as
+  // window.__regions — which does go red when the selector is removed.
+  await sleep(180);   // the region report is on a 100ms interval and only fires on a real change
+  const b = box.getBoundingClientRect();
+  const reported = (window.__regions || []).some((rg) =>
+    Math.abs(rg.x - b.left) <= 1 && Math.abs(rg.y - b.top) <= 1 &&
+    Math.abs(rg.w - b.width) <= 1 && Math.abs(rg.h - b.height) <= 1);
+  ok("...so the shell is told to make the window interactive over it", reported,
+     JSON.stringify(window.__regions || []).slice(0, 160));
 
   // Dragging it moves the REGION, not just the drawing — otherwise the box would be a diagnostic
   // that lies about where the app reads.
@@ -1976,18 +2202,27 @@ const IDLEPAINT = `(async () => {
 const MISSIONINFO = `(async () => {
   ${PRELUDE}
   const strip = (h) => h.replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim();
-  const pay = (payout) => strip(payBlock({ community: { payout } }));
+  // 🔑 TWO views of the same block. "pay" is what the panel SHOWS; "payAll" is the raw markup,
+  // which is where the evidence lives now — the sample count and spread moved into the info
+  // affordance's title on 2026-08-13 so the figure could be a single pill instead of a number
+  // with two lines of caption. Disclosure is still mandatory, it just is not shouted.
+  // (No backticks in a suite body — this whole block is a template literal.)
+  const payAll = (payout) => payBlock({ community: { payout } });
+  const pay = (payout) => strip(payAll(payout));
   const facts = (f) => factChips({ community: { facts: f } }).map(strip).join(" ");
 
   // ── payouts ──────────────────────────────────────────────────────────────
   ok("no observations renders NOTHING, not a zero", pay(null) === "" && pay({ samples: 0 }) === "");
+  const loneAll = payAll({ samples: 1, contributors: 1, min: 48000, max: 48000, median: 48000, currency: "UEC", singleContributor: true });
   const lone = pay({ samples: 1, contributors: 1, min: 48000, max: 48000, median: 48000, currency: "UEC", singleContributor: true });
-  ok("a lone reading says so", lone.indexOf("1 report") >= 0, lone);
+  ok("a lone reading says so", loneAll.indexOf("1 report") >= 0, loneAll);
   ok("...and invents no range from one sample", lone.indexOf("Range") < 0, lone);
+  const oneGuyAll = payAll({ samples: 4, contributors: 1, min: 48000, max: 52000, median: 50000, currency: "UEC", singleContributor: true });
   const oneGuy = pay({ samples: 4, contributors: 1, min: 48000, max: 52000, median: 50000, currency: "UEC", singleContributor: true });
-  ok("several readings from ONE player disclose that", oneGuy.indexOf("one player") >= 0, oneGuy);
+  ok("several readings from ONE player disclose that", oneGuyAll.indexOf("one player") >= 0, oneGuyAll);
+  const manyAll = payAll({ samples: 12, contributors: 5, min: 31500, max: 64000, median: 47250, currency: "UEC", singleContributor: false });
   const many = pay({ samples: 12, contributors: 5, min: 31500, max: 64000, median: 47250, currency: "UEC", singleContributor: false });
-  ok("a real spread shows the range", many.indexOf("31,500") >= 0 && many.indexOf("64,000") >= 0, many);
+  ok("a real spread shows the range", manyAll.indexOf("31,500") >= 0 && manyAll.indexOf("64,000") >= 0, manyAll);
   ok("...and does not cry lone-source when it is not", many.indexOf("one player") < 0, many);
   const flat = pay({ samples: 6, contributors: 3, min: 20000, max: 20000, median: 20000, currency: "UEC", singleContributor: false });
   ok("identical readings show no pointless range", flat.indexOf("Range") < 0, flat);
@@ -2073,18 +2308,23 @@ const MISSIONINFO = `(async () => {
     reputationGained: [{ faction: "Headhunters", amount: 50 }], reputationLost: [], whereToGet: ["Checkmate", "Monox"],
     repBar: { noData: true, faction: "Headhunters", standing: "" } };
   const full = missionInfoHtml(V, true);
-  ok("Mission Info and Faction Info are SEPARATE drawers",
-     full.indexOf("miHead") >= 0 && full.indexOf("facHead") >= 0);
-  ok("...each with its own header", (full.match(/mi-head/g) || []).length === 2, (full.match(/mi-head/g) || []).length);
+  // The two groups are still SEPARATE, they just no longer wear collapsible drawer headers
+  // (removed 2026-08-13 — the chip layout is short enough that there is nothing to fold away).
+  // The split is now marked by the faction's own name leading its group.
+  ok("mission and faction details are still two groups",
+     (full.match(/class="mi"/g) || []).length === 2, (full.match(/class="mi"/g) || []).length);
+  ok("...with no collapsible header chrome left", full.indexOf("mi-head") < 0);
   // Sub's order: reputation belongs under the faction it is with, not beside the contract.
-  const facHalf = full.slice(full.indexOf("facHead"));
+  const facHalf = full.slice(full.indexOf("mi-faction"));
   ok("faction, rank and reputation are all in the FACTION group",
-     facHalf.indexOf("Faction") >= 0 && facHalf.indexOf("Rank needed") >= 0 && facHalf.indexOf("Reputation") >= 0);
-  ok("...and reputation comes after faction", facHalf.indexOf("Reputation") > facHalf.indexOf("Headhunters"));
-  const missionHalf = full.slice(0, full.indexOf("facHead"));
+     facHalf.indexOf("Headhunters") >= 0 && facHalf.indexOf("Rank needed") >= 0 && facHalf.indexOf("Reputation") >= 0);
+  ok("...and reputation comes after the faction's name", facHalf.indexOf("Reputation") > facHalf.indexOf("Headhunters"));
+  const missionHalf = full.slice(0, full.indexOf("mi-faction"));
   ok("the contract's own details stay in the MISSION group",
      missionHalf.indexOf("Pick up") >= 0 && missionHalf.indexOf("Illegal") >= 0);
-  ok("standing sits in its own group behind a rule", full.indexOf("mi-standing") >= 0);
+  // The rule above standing went on 2026-08-13: it separated two things that are both about the
+  // same faction, which read as a split where there isn't one. Spacing carries it now.
+  ok("standing is present in the faction group", full.indexOf("mi-standing") >= 0);
   ok("the facts that explain themselves are chips, not rows", full.indexOf("mi-chips") >= 0);
   ok("the reputation value does not repeat its own label", strip(full).indexOf("+50 rep") < 0, strip(full));
   ok("standing explains itself through the info icon, not the word est.", strip(full).indexOf("est.") < 0);
@@ -2116,7 +2356,9 @@ const MISSIONINFO = `(async () => {
   ok("other regions with a different pool are surfaced", withOthers.indexOf("Other pools") >= 0);
   ok("...named by a station you can actually fly to", withOthers.indexOf("Rat's Nest") >= 0 && withOthers.indexOf("Ruin Station") >= 0);
   // 5/5 + 3/8 = 5 still to win somewhere else. That number is the whole point of the row.
-  ok("...with how many are still missing across them", withOthers.indexOf("5 to go") >= 0, strip(withOthers));
+  // ⚠️ Wording changed 2026-08-13: "5 to go" read as five missions, or five of anything. It
+  // counts BLUEPRINTS obtainable only in the other regions, so the row says that.
+  ok("...with how many are still missing across them", withOthers.indexOf("5 only there") >= 0, strip(withOthers));
   ok("...and says finishing this pool is not finishing the contract",
      withOthers.indexOf("does not finish the contract") >= 0);
   ok("a contract with nothing elsewhere gets no such row",
@@ -2125,7 +2367,11 @@ const MISSIONINFO = `(async () => {
   // must not advertise a count of zero.
   const allOwned = missionInfoHtml(Object.assign({}, V, {
     otherPools: [{ places: ["Ruin Station"], total: 8, owned: 8 }] }), true);
-  ok("...and no '0 to go' when the other pool is complete", allOwned.indexOf("Other pools") >= 0 && allOwned.indexOf("0 to go") < 0);
+  // ⚠️ Checked against the CURRENT wording. This used to look for "0 to go", which after the
+  // 2026-08-13 reword could never appear — so it would have passed while a real "0 only there"
+  // was on screen. An assertion pinned to a string the code no longer emits tests nothing.
+  ok("...and no zero count when the other pool is complete",
+     allOwned.indexOf("Other pools") >= 0 && allOwned.indexOf("0 only there") < 0);
 
   // ── the link out to the site ─────────────────────────────────────────────
   ok("a resolved contract links to its page", full.indexOf("subliminal.gg/missions/HH_Test_Contract") >= 0);
@@ -3668,12 +3914,24 @@ app.whenReady().then(async () => {
     fails += await run("cog auto-hide on game focus", COGHIDE,
       path.join(__dirname, "widget-dom-stub-preload.cjs"), "coghide=250");
     fails += await run("unlock notifier", UNLOCK, null, null, "unlockalert.html");
-    fails += await run("scan read area", SCANBOX, null);
+    // Stub preload, now REQUIRED: the clickability assertion reads the rects the page reports to
+    // the shell, and with no shell there is nothing to report to. It used to run without one
+    // because that assertion never measured anything (see the false pass in the suite body).
+    fails += await run("scan read area", SCANBOX,
+      path.join(__dirname, "widget-dom-stub-preload.cjs"));
     // Stub preload, and not optional: the whole region-reporting block is behind
     // `if (window.overlayApi)`, so without a shell the panel renders and reports NOTHING — the
     // clickability assertions would be measuring an empty list against an empty list.
     fails += await run("payout scan session panel", PAYOUTPANEL,
       path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    // Same stub, same reason: the box's clickability is the assertion that matters most and it is
+    // measured off the rects the page reports, which only happen when a shell is there to report to.
+    fails += await run("contract board calibration box", BOARDBOX,
+      path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    // ?rates loads the idle-panel fixture AND leaves the live feed disconnected — a fixture a
+    // real broadcast can paint over tests nothing.
+    fails += await run("idle panel (nothing tracked)", IDLEPANEL, null, "rates");
+    fails += await run("mission + faction drawers", MIDRAWERS, null, "missioninfo");
     fails += await run("widget settings close when idle", WCFGIDLE, null, "wcfgidle=250");
     // ?arrange: the calibration panel lives INSIDE the arrange scrim, so a suite that doesn't open
     // arrange mode measures a display:none control — every size assertion then passes on 0 == 0.

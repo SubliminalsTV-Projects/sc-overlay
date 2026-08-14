@@ -7,18 +7,13 @@
 // With no region it uses DEFAULT_CONTRACT_REGION, which is what the app starts from.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ocrImage, stopOcrWorker } from "../src/screen-read.js";
+import { ocrImage, stopOcrWorker, DEFAULT_CONTRACT_REGION } from "../src/screen-read.js";
 import { parseContractList } from "../src/contract-list.js";
 import { ContractMatcher, type MatchCandidate } from "../src/contract-match.js";
 
-/** Where the mobiGlas offers panel sits, as fractions of the frame.
- *
- *  Measured across four real 3440x1440 captures, not guessed: the left column starts as
- *  far left as x=623 (a category whose icon OCR'd into the line) and the amount column
- *  ends by x=1221, so 0.175..0.365 covers both with room. Vertically it must EXCLUDE the
- *  "MARK ALL READ" header at y≈146 and the nav bar at y≈1326 — both are ordinary text at
- *  ordinary heights, and letting either in pushes the column boundary past the amounts. */
-export const DEFAULT_CONTRACT_REGION = { x: 0.175, y: 0.135, w: 0.19, h: 0.7 };
+// The default region now lives in src/screen-read.ts beside DEFAULT_SCAN_REGION — it is the
+// config default and the calibration box's reset target as well as this probe's fallback, and a
+// second copy here would drift silently (a wrong crop reads an empty rectangle, it doesn't fail).
 
 const img = process.argv[2];
 if (!img) {
