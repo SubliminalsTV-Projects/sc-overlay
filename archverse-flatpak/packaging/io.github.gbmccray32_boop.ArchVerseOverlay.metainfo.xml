@@ -20,9 +20,9 @@
   <url type="homepage">https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux</url>
   <url type="bugtracker">https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/issues</url>
   <releases>
-    <release version="0.1.42-r31-alpha.22-flatpak-test1" date="2026-08-12">
+    <release version="0.1.42-r31-alpha.22-flatpak-test2" date="2026-08-13">
       <description>
-        <p>First distribution-neutral Flatpak field-test based on the verified Alpha 22 Linux runtime.</p>
+        <p>Second distribution-neutral Flatpak field-test with dynamic desktop canvas sizing, host-prefix discovery, and a conservative Flatpak renderer policy.</p>
       </description>
     </release>
   </releases>
