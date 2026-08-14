@@ -1,4 +1,74 @@
 {
+  "0.1.43": {
+    "date": "2026-08-14T07:32:45Z",
+    "notes": [
+      {
+        "kind": "fixed",
+        "text": "If you installed the app rather than running it from source, the better of the two text-reading engines never started at all — so the Mining Scanner read nothing, and the contract scanners had no engine behind them. The engine's files were sealed inside the app package where it could not open them. Everyone who installed the app has had this since the feature shipped, which is why \"the scanner does nothing\" was never reproducible for us. It now loads from a place it can actually reach, and if it ever fails again the app says so out loud instead of going quiet. Found and traced by StrifeCo, who dug out the underlying error himself — thank you.",
+        "label": "The Mining Scanner and contract scanners actually work now"
+      },
+      {
+        "kind": "fixed",
+        "text": "If a drag ended anywhere outside the thing you were dragging — releasing the mouse off the edge of a calibration box, or alt-tabbing mid-drag — the overlay could get stuck holding the mouse. While stuck it swallowed every click AND every keypress on every monitor, so the game got nothing. That is why tapping your interact key to get out appeared to do nothing: Star Citizen never received the key. Releasing now registers wherever it happens, and there is a backstop that force-releases a stuck grab after 30 seconds, because previously nothing could recover it but restarting the app.",
+        "label": "The overlay can no longer get stuck eating your clicks and keys"
+      },
+      {
+        "kind": "new",
+        "text": "Missions now show what they pay. For the roughly half of contracts where the game works the reward out when you accept — the number genuinely is not in the game files — the app shows a calculated estimate marked with a tilde, like ~39,750. Hover the circled i beside any figure and it tells you exactly where that number came from: straight from the game files, reported by players who ran it, or estimated. An estimate is right about three in four times and can miss in either direction, so it is always marked as one and a single real report replaces it.",
+        "label": "What a contract pays — and how much to trust the number"
+      },
+      {
+        "kind": "new",
+        "text": "Point the app at your mobiGlas contract board and it reads the offers list — every contract, its payout and its fees — and contributes those numbers so everyone gets better payout data. Turn it on in Settings, then drag the box over the offers list to line it up. It runs only while you have it armed, and there is a live page showing what it read so you can see it working rather than trusting a counter.",
+        "label": "Contract board scanner"
+      },
+      {
+        "kind": "new",
+        "text": "The mission panel now leads with what the contract actually is: what it pays, the faction behind it, the rank it wants, whether it is illegal, how hard players found it and whether anyone soloed it. It reads as chips rather than a wall of label-and-value rows, difficulty is a meter you can read at a glance, and reputation is split so \"+200 / +50\" finally says Reputation +200 and Affinity +50. Anything sourced from players carries a dashed outline, so you can always tell what came from the game and what came from us.",
+        "label": "Mission info, rebuilt"
+      },
+      {
+        "kind": "fixed",
+        "text": "Two contracts with the same name can draw from completely different blueprint pools, and the tracker used to merge them — so it could show you a pool of 18 with 4 still to win when the one you were actually running was finished and could never drop again. It now separates them using where the contract sends you and which region it routes through, and when it genuinely cannot tell it says so instead of guessing. The panel also now names the pools you cannot get from where you are.",
+        "label": "Same-name contracts no longer show you a pool that does not exist"
+      },
+      {
+        "kind": "fixed",
+        "text": "If you launched the app while already playing, anything the game logged in the moment between the app's first read and the watcher starting was processed by neither — and a missed accept means the tracker never learns the contract properly, then guesses it from the title on screen and shows a merged, permanently incomplete pool. The handover is now exact to the byte. This one was invisible and got blamed on whatever had changed most recently.",
+        "label": "Missions accepted as the app starts are no longer missed"
+      },
+      {
+        "kind": "new",
+        "text": "Every contract you finish is now recorded, so your completion count is a real total rather than whatever could be scraped back out of your logs. Past completions still in your logs are folded in once, automatically.",
+        "label": "Your finished contracts are counted properly"
+      },
+      {
+        "kind": "improved",
+        "text": "Each widget now has separate sliders for how visible its panel is and how visible its text is, so you can fade a panel almost away and still read what is on it — which one slider could never do. There is a Full on hover switch per widget too. The sliders no longer lag behind your mouse or drag each other around.",
+        "label": "Fade the panel and the text separately"
+      },
+      {
+        "kind": "improved",
+        "text": "A single small animation was quietly redrawing the tracker sixty times a second even when nothing was happening, which on an always-on-top window means the desktop recomposites over your game every frame, forever. It now redraws about three times a second and only when there is something to say. If you turned GPU acceleration off because the overlay cost you frames, it is worth trying again.",
+        "label": "The overlay stops repainting when nothing is happening"
+      },
+      {
+        "kind": "improved",
+        "text": "The Mining Scanner's rock table is now generated from the game's own data rather than typed by hand, it knows whether you are planet-side or in space and stops calling harvestable plants debris, and it will not announce a number that cannot be a real contact. Loot Split now pulls a finished refinery job straight into a split, sums same-ore imports, and autocompletes ore names so nobody has to spell Hephaestanite.",
+        "label": "Mining Scanner and Loot Split"
+      },
+      {
+        "kind": "improved",
+        "text": "Chat gains reports and pins, a per-channel settings cog, a friends rail and party listings you can advertise and apply to. Moderation is now something you can actually read rather than a silent filter, and it will never trip over a mission word. You can also hide where you are — and hiding means the app does not send it, not that somebody else agrees not to show it.",
+        "label": "Chat: pins, reports, party listings and moderation"
+      },
+      {
+        "kind": "improved",
+        "text": "The mission's name is now the picker — click it to choose which contract to follow — with the owned count and tracking mode beside it. Fonts and colour emoji ship with the app instead of being fetched from Google every time a widget loads, which also fixes o7 showing as a box. Settings puts setup first and sends two options home to the widgets they belong to. The bundled game data is current with the live patch.",
+        "label": "Smaller things"
+      }
+    ]
+  },
   "0.1.42": {
     "date": "2026-08-10T02:38:21Z",
     "notes": [

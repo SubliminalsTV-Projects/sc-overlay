@@ -733,6 +733,31 @@ const PATCHNOTES = `(async () => {
   const entries = (Array.isArray(data.entries) ? data.entries : []).filter(e => Array.isArray(e.notes) && e.notes.length);
   ok("the sidecar serves real patch notes to size against", entries.length > 0, entries.length + " versions");
   ok("the card is built by the page, not by this test", typeof window.__wnListHtml === "function");
+  // ── notes collapse to their labels (Sub, 2026-08-14) ─────────────────────────────────────
+  // A feature release runs to a dozen notes; the card was a wall of prose you had to read to find
+  // out whether any of it mattered to you. The labels ARE the summary, so they must be readable
+  // as a list with the paragraphs behind a disclosure.
+  {
+    const one = window.__wnListHtml([{ version: "9.9.9", date: "2026-08-14T00:00:00Z",
+      notes: [{ kind: "new", label: "A labelled note", text: "The paragraph behind it." },
+              { kind: "new", text: "A legacy note with no label at all." }] }]);
+    const host = document.createElement("div");
+    host.innerHTML = one;
+    const det = host.querySelectorAll("details.wn-note");
+    ok("a labelled note is a collapsible details", det.length === 1);
+    ok("...closed by default, so the card reads as a list", det[0] && !det[0].open);
+    ok("...with the label as its summary", det[0] && det[0].querySelector("summary.wn-label")
+       && det[0].querySelector("summary.wn-label").textContent === "A labelled note");
+    ok("...and the paragraph inside it, not beside it",
+       det[0] && det[0].querySelector(".wn-desc")
+       && det[0].querySelector(".wn-desc").textContent === "The paragraph behind it.");
+    // A legacy note carries everything in the description — collapsing one hides the whole note
+    // behind an empty summary, so it must stay a plain row.
+    const legacy = host.querySelector("li:not(.collapsible) .wn-note.nolabel");
+    ok("a note with NO label is never collapsed", !!legacy, legacy ? "plain row" : "MISSING");
+    ok("...and keeps its bullet, while a collapsible row drops it for the caret",
+       host.querySelectorAll("li.collapsible").length === 1);
+  }
   document.getElementById("wnList").innerHTML = window.__wnListHtml(entries);
   document.getElementById("whatsnew").classList.add("show");
 

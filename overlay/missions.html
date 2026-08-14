@@ -1345,6 +1345,20 @@
   #whatsnew .wn-note { flex: 1; min-width: 0; }
   #whatsnew .wn-label { font-weight: 700; color: var(--cyan-bright); }
   #whatsnew .wn-desc { color: var(--cyan-text); opacity: 0.82; }
+  /* Each note collapses to its label. Same disclosure grammar as the version headers above — one
+     idiom for the whole card. The caret is dimmer than theirs because these nest INSIDE a version
+     group and should read as the second level, not compete with it. */
+  #whatsnew details.wn-note > summary { cursor: pointer; list-style: none; display: flex;
+    align-items: baseline; gap: 6px; }
+  #whatsnew details.wn-note > summary::-webkit-details-marker { display: none; }
+  #whatsnew li.collapsible::before { display: none; }
+  #whatsnew details.wn-note > summary::before { content: "▸"; font-size: 9px; color: var(--cyan);
+    opacity: 0.85; flex: none; transition: transform 0.15s; }
+  #whatsnew details.wn-note[open] > summary::before { transform: rotate(90deg); }
+  #whatsnew details.wn-note > summary:hover { color: var(--cyan); }
+  /* The paragraph lines up under the LABEL, not under the caret — the labels are what you scan,
+     so the caret column stays theirs alone. 14px = caret width + the summary's 6px gap. */
+  #whatsnew details.wn-note > .wn-desc { margin: 3px 0 5px 14px; }
   /* A legacy note (0.1.33 and older) has no label — its description carries the whole line, so it
      must not read as the dimmer half of a pair that isn't there. */
   #whatsnew .wn-note.nolabel .wn-desc { opacity: 1; }
@@ -5715,11 +5729,25 @@
   // being broken. Fixes last because they are the least interesting thing in a release to everyone
   // except the person who hit the bug.
   const WN_KINDS = [["new", "New"], ["improved", "Improved"], ["fixed", "Fixed"]];
+  // 🔑 EACH NOTE COLLAPSES TO ITS LABEL (Sub, 2026-08-14): "a person can just look and see a list,
+  // and then if they want more information they can get the paragraph." A feature release runs to
+  // a dozen notes and the card became a wall of prose you had to read to find out whether anything
+  // mattered to you — the labels ARE the release summary, so they should be readable as one.
+  // 🔑 Same <details> grammar the version headers already use (caret, no marker, rotate on open),
+  // so the card has ONE disclosure idiom rather than two that look different.
+  // ⚠️ A note with NO label is never wrapped — legacy notes (0.1.33 and older) carry everything in
+  // the description, so collapsing one would hide the entire note behind an empty summary.
   const wnNoteHtml = (n) => {
     const text = typeof n === "string" ? n : (n && n.text) || "";
-    const label = n && n.label ? '<div class="wn-label">' + escapeHtml(n.label) + "</div>" : "";
-    return '<li><div class="wn-note' + (label ? "" : " nolabel") + '">' + label +
-           '<div class="wn-desc">' + escapeHtml(text) + "</div></div></li>";
+    const label = n && n.label ? n.label : "";
+    if (!label) {
+      return '<li><div class="wn-note nolabel"><div class="wn-desc">' + escapeHtml(text) + "</div></div></li>";
+    }
+    // 🔑 `collapsible` drops the row's ◆ — the caret replaces it rather than sitting beside it.
+    // Two markers on one line read as noise, and of the two only the caret says "there is more
+    // here". A note with no label keeps its ◆, since it has no caret to stand in.
+    return '<li class="collapsible"><details class="wn-note"><summary class="wn-label">' + escapeHtml(label) + "</summary>" +
+           '<div class="wn-desc">' + escapeHtml(text) + "</div></details></li>";
   };
   // A version renders as New / Improved / Fixed sections. Notes with NO kind — everything written
   // before 0.1.34, which the sidecar normalises to text-only — fall through to a single unheaded
