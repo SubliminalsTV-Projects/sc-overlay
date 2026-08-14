@@ -934,6 +934,9 @@ export class MissionTracker extends EventEmitter {
   /** Turns a name the game wrote into the English name the dataset knows — for players on a
    *  non-English UI or running a language pack. See localization.ts. */
   private phrasebook!: Phrasebook;
+  /** The log path the phrasebook was last built for, so a patch change can rebuild it against
+   *  that patch's lang file without the server having to notice and re-push the path. */
+  private phrasebookLogPath: string | null = null;
   /** Names that survived the phrasebook and STILL match nothing in the dataset, newest first.
    *  Surfaced rather than swallowed: an unmatched receipt is invisible otherwise, and this is
    *  the difference between "the app is broken" and "your language file renamed this". */
@@ -1056,6 +1059,7 @@ export class MissionTracker extends EventEmitter {
    * `<channel>/data/Localization/<g_language>/global.ini`.
    */
   setLogPath(logPath: string, force = false): PhrasebookInfo {
+    this.phrasebookLogPath = logPath;
     const info = this.phrasebook.load(logPath, this.detectedChangelist, force);
     // Anything previously unresolvable deserves another go against the new table — otherwise
     // Calibrate would appear to do nothing for exactly the names it was pressed for.
@@ -1117,6 +1121,10 @@ export class MissionTracker extends EventEmitter {
       // recipes/stats — not just its pools. Independent + best-effort: missing detail only
       // costs the recipe panel, never the pools.
       await this.fetchIfMissing(`blueprint-detail.${changelist}.json`);
+      // The phrasebook for this patch. Same best-effort treatment: without it a player on a
+      // newly-fetched patch falls back to lang.latest.json, so anything the patch ADDED is
+      // unresolvable for them — invisible, since their receipts still parse.
+      await this.fetchIfMissing(`lang.${changelist}.json`);
     }
     this.loadDataset(changelist);
   }
@@ -1156,6 +1164,11 @@ export class MissionTracker extends EventEmitter {
         this.detail.loadForChangelist(this.dataset.changelist);
         this.buildTitleIndex();
         this.buildRepTitleIndex();
+        // Follow the patch with the phrasebook too. Detecting a new build mid-session swaps the
+        // dataset under us, and a phrasebook still keyed to the previous patch cannot name
+        // anything the new one added — for a non-English player that reads as the new items
+        // simply not existing.
+        if (this.phrasebookLogPath) this.phrasebook.load(this.phrasebookLogPath, this.dataset.changelist);
         this.rankRewards.clear();   // keyed off dataset missions — a new dataset invalidates it
         this.reresolveAccepts();
         this.emit("change");

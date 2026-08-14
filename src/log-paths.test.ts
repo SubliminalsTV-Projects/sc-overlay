@@ -85,7 +85,21 @@ function makeChannel(root: string, name: string, backups: number): string {
 
 // ── Degenerate inputs must not throw ────────────────────────────────────────────────────────
 check("an empty path yields nothing", collectLogPaths("").length, 0);
-check("a path that does not exist yields nothing", collectLogPaths(join(tmpdir(), "no-such-dir-xyz", "game.log")).length, 0);
+// 🔑 Point this at an EMPTY directory of our own, never at tmpdir() itself. collectLogPaths
+// deliberately scans the siblings of the channel folder (a player with separate LIVE and PTU
+// installs is pointed at whichever they launched last), so passing "<tmp>/no-such-dir/game.log"
+// makes every child of %TEMP% a candidate channel — and %TEMP% on a real machine is full of
+// other suites' leftovers. This read 21 instead of 0 purely because watcher-handover.test.ts
+// leaves a "handover-*/game.log" behind on every run: a green suite that goes red depending on
+// what ran before it, which is worse than no suite at all.
+{
+  const empty = mkdtempSync(join(tmpdir(), "logpaths-empty-"));
+  try {
+    check("a path that does not exist yields nothing", collectLogPaths(join(empty, "no-such-dir-xyz", "game.log")).length, 0);
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
+}
 
 console.log(`\n${failed === 0 ? "ALL PASS" : failed + " FAILED"}`);
 process.exit(failed === 0 ? 0 : 1);
