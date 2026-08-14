@@ -1978,6 +1978,23 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.end(JSON.stringify({ missions: tracker.searchMissionTitles(q) }));
     return;
   }
+  // The widget's mission search: a brief for a contract you have NOT accepted, so someone can
+  // check what a job pays and drops without alt-tabbing out of the game. Keyed by TITLE because
+  // that is what a player can actually type; previewByTitle() owns what happens when a title
+  // covers several variants. Community payout is folded in so the brief ranks its money the same
+  // way the live panel does (observed beats the model).
+  if (url?.startsWith("/api/mission-preview") && req.method === "GET") {
+    const title = (new URL(req.url ?? "", "http://x").searchParams.get("title") || "").trim();
+    const preview = title ? tracker.previewByTitle(title) : null;
+    if (!preview) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ...preview, community: communityFor(preview.contractKey) }));
+    return;
+  }
   if (url === "/api/blueprint-detail" && req.method === "GET") {
     const q = new URL(req.url ?? "", "http://x").searchParams;
     const key = (q.get("item") || q.get("name") || "").trim();

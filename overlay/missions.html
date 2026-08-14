@@ -1736,6 +1736,50 @@
     line-height: 1.45; letter-spacing: 0; text-transform: none; text-align: left;
     color: var(--cyan-text, #cfe6ee); white-space: pre-line; overflow-wrap: anywhere; }
   .mi-tip::backdrop { background: transparent; }
+
+  /* ── Mission lookup ──────────────────────────────────────────────────────────────────────
+     The magnifying glass rides the RIGHT end of the eyebrow, which is the top edge of the panel
+     a player actually sees — the panel's own chrome bar is at the BOTTOM (the manufacturer folder
+     tab owns the real top edge), so "upper right" had to mean the content's top row, not .whead. */
+  #msOpen { margin-left: auto; flex: none; width: 18px; height: 18px; padding: 0; display: inline-flex;
+    align-items: center; justify-content: center; appearance: none; -webkit-appearance: none;
+    background: transparent; border: 1px solid rgba(var(--accent-rgb), 0.35); border-radius: 5px;
+    color: var(--cyan-dim); font-size: 11px; line-height: 1; cursor: pointer; }
+  #msOpen:hover { color: var(--cyan-bright); border-color: var(--cyan-bright);
+    background: rgba(var(--accent-rgb), 0.16); }
+  /* Takes the panel over. Inset rather than a full cover so the panel's own border and folder tab
+     still read as the frame around it. */
+  #msearch { position: absolute; inset: 34px 10px 34px; z-index: 6; display: flex;
+    flex-direction: column; gap: 7px; border-radius: 9px; padding: 8px;
+    background: var(--panel-solid, #14181a); border: 1px solid rgba(var(--accent-rgb), 0.35);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+  #msearch[hidden] { display: none; }
+  .ms-bar { flex: none; display: flex; align-items: center; gap: 6px; }
+  #msInput { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 6px;
+    background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(var(--accent-rgb), 0.35);
+    color: var(--cyan-text, #cfe6ee); font-family: var(--sans); font-size: 12px; outline: none; }
+  #msInput:focus { border-color: var(--cyan-bright); }
+  #msClose, .ms-back { flex: none; appearance: none; -webkit-appearance: none; cursor: pointer;
+    background: transparent; border: 1px solid rgba(var(--accent-rgb), 0.35); border-radius: 6px;
+    color: var(--cyan-dim); font-family: var(--sans); font-size: 11px; line-height: 1; }
+  #msClose { width: 22px; height: 24px; }
+  .ms-back { align-self: flex-start; margin-bottom: 6px; padding: 3px 7px; }
+  #msClose:hover, .ms-back:hover { color: var(--cyan-bright); border-color: var(--cyan-bright); }
+  /* Both panes scroll INSIDE the box. A result list that grew the panel would resize a widget
+     sitting over the game on every keystroke. */
+  .ms-results, .ms-brief { flex: 1; min-height: 0; overflow: auto; }
+  .ms-brief[hidden] { display: none; }
+  .ms-row { display: block; width: 100%; text-align: left; appearance: none; -webkit-appearance: none;
+    cursor: pointer; background: transparent; border: 0; border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding: 6px 4px; color: var(--cyan-text, #cfe6ee); font-family: var(--sans); font-size: 12px; }
+  .ms-row:hover, .ms-row:focus { background: rgba(var(--accent-rgb), 0.12); outline: none; }
+  .ms-row .ms-t { display: block; font-weight: 600; }
+  .ms-row .ms-m { display: block; margin-top: 1px; font-size: 10px; color: var(--cyan-dim); }
+  .ms-note { padding: 8px 4px; font-family: var(--sans); font-size: 11px; color: var(--cyan-dim); }
+  /* The brief's own title — the panel's real title row is covered while search is up. */
+  .ms-title { margin-bottom: 6px; font-family: var(--sans); font-size: 13px; font-weight: 700;
+    color: var(--cyan-text, #cfe6ee); }
+  .ms-count { margin-left: 6px; font-size: 10px; font-weight: 600; color: var(--cyan-dim); }
   /* Through to the mission's page on the site, where the full write-up lives. */
   /* A CHIP that happens to be a link (Sub, 2026-08-13) — it sits in the same row as everything
      else instead of hanging underneath as loose underlined text. It carries .mi-chip too, so it
@@ -1852,8 +1896,25 @@
       <button type="button" id="openSettings" class="cog-btn" title="Open the full settings window">⚙ Open full settings…</button>
     </div>
 
+    <!-- Mission lookup. Covers the panel rather than sitting beside it: at 380px there is no room
+         for a second column, and Sub's ask was that the widget "gets taken over" by the search.
+         A child of #panel so it inherits the panel's clip, skin and fade, and so it cannot be one
+         of the elements that hangs outside the rect the shell hit-tests -- this one is FULL of
+         controls, so unlike a tooltip it must stay inside a reported region. -->
+    <div id="msearch" hidden>
+      <div class="ms-bar">
+        <input type="text" id="msInput" placeholder="Search missions…" autocomplete="off"
+               spellcheck="false" aria-label="Search missions by name" />
+        <button type="button" id="msClose" title="Close search (Esc)">&#10005;</button>
+      </div>
+      <div id="msResults" class="ms-results"></div>
+      <div id="msBrief" class="ms-brief" hidden>
+        <button type="button" id="msBack" class="ms-back">&#8592; Results</button>
+        <div id="msBriefBody"></div>
+      </div>
+    </div>
     <div class="head">
-      <div class="eyebrow"><span class="dot" id="liveDot"></span> Active Mission<span id="liveTip">SubliminalsTV is <b>live</b>. Click if you want to hang out ↗</span></div>
+      <div class="eyebrow"><span class="dot" id="liveDot"></span> Active Mission<span id="liveTip">SubliminalsTV is <b>live</b>. Click if you want to hang out ↗</span><button type="button" id="msOpen" title="Look up a mission">&#9906;</button></div>
       <div class="sub" id="sub"></div>
       <!-- (#missionPick moved into .titlerow on 2026-08-13 — the mission's own name is the
            control now, so the full-width dropdown that used to live here is gone.) -->
@@ -2869,6 +2930,111 @@
       if (btn.dataset.tip) btn.setAttribute("title", btn.dataset.tip);
     }
   }, true);
+
+  // ── Mission lookup ────────────────────────────────────────────────────────────────────────
+  // Look a contract up without leaving the game. The brief is rendered by missionInfoHtml(), the
+  // SAME function the live panel uses, so a searched mission and a tracked one cannot drift into
+  // looking like different features — the sidecar's /api/mission-preview returns a view-shaped
+  // payload for exactly that reason.
+  //
+  // 🔴 TYPING HERE TAKES THE KEYBOARD FOR THE WHOLE CANVAS. `notepadEditing` makes canHover true
+  // for every widget on every display, so while it is on, no click reaches the game. That is
+  // correct for a search box and catastrophic if it is ever left on — it is the same grab that
+  // shipped as "the chat app is forcing me to click it" when helpers switched it on and nothing
+  // switched it off. So: exactly ONE deliberate act turns it on (the magnifying glass), and
+  // closeSearch() is the ONLY way out and is called from every exit — ✕, Escape, picking a
+  // result's Back, the widget being hidden, and the panel losing the search entirely.
+  const msGrab = (on) => { try { window.overlayApi?.notepadEditing?.(!!on); } catch { /* standalone */ } };
+  let msTimer = null, msRows = [];
+
+  function closeSearch() {
+    const box = $("msearch");
+    if (!box || box.hidden) return;
+    box.hidden = true;
+    $("msBrief").hidden = true;
+    $("msResults").innerHTML = "";
+    $("msInput").value = "";
+    msRows = [];
+    if (msTimer) { clearTimeout(msTimer); msTimer = null; }
+    msGrab(false); // unconditional: the one line that must never be skipped
+  }
+  function openSearch() {
+    const box = $("msearch");
+    if (!box) return;
+    box.hidden = false;
+    $("msBrief").hidden = true;
+    $("msResults").innerHTML = '<div class="ms-note">Type a mission name.</div>';
+    msGrab(true);
+    // preventScroll: focusing an element inside a scrollable panel otherwise scrolls it, which
+    // has moved absolutely-positioned chrome out from under its own clamp before.
+    try { $("msInput").focus({ preventScroll: true }); } catch { $("msInput").focus(); }
+  }
+
+  function renderResults(rows) {
+    msRows = rows || [];
+    if (!msRows.length) {
+      $("msResults").innerHTML = '<div class="ms-note">Nothing matched.</div>';
+      return;
+    }
+    // 🔑 Every row says how many contracts share the name. 540 titles cover more than one, and
+    // "1 of 253" is the difference between a brief that looks incomplete and one that is honest
+    // about what it could not narrow down.
+    $("msResults").innerHTML = msRows.map((r, i) => {
+      const meta = [];
+      if (r.giver) meta.push(escapeHtml(r.giver));
+      if (r.variants > 1) meta.push(r.variants + " variants");
+      if (r.hasPool) meta.push("blueprints");
+      return '<button type="button" class="ms-row" data-i="' + i + '">'
+        + '<span class="ms-t">' + escapeHtml(r.title) + "</span>"
+        + (meta.length ? '<span class="ms-m">' + meta.join(" · ") + "</span>" : "")
+        + "</button>";
+    }).join("");
+  }
+
+  function runSearch(q) {
+    if (!q.trim()) { $("msResults").innerHTML = '<div class="ms-note">Type a mission name.</div>'; return; }
+    fetch("/api/mission-search?q=" + encodeURIComponent(q))
+      .then((r) => r.json())
+      .then((d) => renderResults(d && d.missions))
+      .catch(() => { $("msResults").innerHTML = '<div class="ms-note">Search unavailable.</div>'; });
+  }
+
+  function showBrief(title) {
+    $("msBrief").hidden = false;
+    $("msBriefBody").innerHTML = '<div class="ms-note">Loading…</div>';
+    fetch("/api/mission-preview?title=" + encodeURIComponent(title))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        if (!p) { $("msBriefBody").innerHTML = '<div class="ms-note">No details for that one.</div>'; return; }
+        // The preview is view-shaped on purpose, so the live renderer takes it as-is.
+        const info = missionInfoHtml(p, true) || '<div class="ms-note">No details for that one.</div>';
+        const count = p.variants > 1 ? '<span class="ms-count">1 of ' + p.variants + " variants</span>" : "";
+        const pool = p.total > 0
+          ? '<div class="ms-note">Blueprint pool — you own ' + p.owned + " of " + p.total
+            + (p.ambiguous ? ", merged across variants that drop different pools" : "") + ".</div>"
+          : "";
+        $("msBriefBody").innerHTML = '<div class="ms-title">' + escapeHtml(p.title) + count + "</div>" + pool + info;
+      })
+      .catch(() => { $("msBriefBody").innerHTML = '<div class="ms-note">Could not load that mission.</div>'; });
+  }
+
+  $("msOpen")?.addEventListener("click", openSearch);
+  $("msClose")?.addEventListener("click", closeSearch);
+  $("msBack")?.addEventListener("click", () => { $("msBrief").hidden = true; });
+  $("msInput")?.addEventListener("input", (e) => {
+    const q = e.target.value;
+    if (msTimer) clearTimeout(msTimer);
+    // Debounced: the dataset lookup is local and cheap, but a request per keystroke would still
+    // re-render the list under the caret on every letter.
+    msTimer = setTimeout(() => runSearch(q), 140);
+  });
+  $("msInput")?.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSearch(); });
+  $("msResults")?.addEventListener("click", (e) => {
+    const row = e.target.closest?.(".ms-row");
+    if (!row) return;
+    const r = msRows[Number(row.dataset.i)];
+    if (r) showBrief(r.title);
+  });
   // A 1–5 meter matching the site's mission pages. The rating is a MEAN, so the bar rounds while
   // the number beside it keeps the precision — a bar alone would turn 2.4 and 2.6 into the same
   // picture, and the whole point of the number is telling those apart.
@@ -3856,6 +4022,11 @@
         w.s.x = Math.max(8, Math.round(ci.pw - (w.s.w != null ? w.s.w : w.size.w) - 40));
         w.s.y = 40;
       },
+      // 🔴 Hiding the panel with the search box open would strand the canvas-wide keyboard grab:
+      // the panel goes away, `notepadEditing` stays true, and every click on every display stops
+      // reaching the game with nothing on screen to explain it or turn it off. The registry's
+      // other typing widgets all carry this exact hook for the same reason.
+      onHide: () => { try { closeSearch(); } catch { /* never block a hide */ } },
     },
     {
       key: "mining", page: "mining.html", title: "Mining Scanner",
