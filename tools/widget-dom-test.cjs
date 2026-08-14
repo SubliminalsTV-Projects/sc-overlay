@@ -2226,8 +2226,15 @@ const MISSIONINFO = `(async () => {
      fixedH.indexOf("straight from the game files") >= 0 && fixedH.indexOf("mi-pay est") < 0, strip(fixedH));
   ok("an ESTIMATE is NOT described as a fixed reward from the game files",
      estH.indexOf("straight from the game files") < 0, strip(estH));
-  ok("...it is marked est. in the number itself, not only in a tooltip",
-     estH.indexOf("est-k") >= 0 && strip(estH).indexOf("est.") >= 0, strip(estH));
+  // A TILDE, not the word "est." (Sub, 2026-08-14) — understood instantly, costs no width, and
+  // does not compete with the figure. It must be INSIDE .amt: as a sibling the pill's 5px gap
+  // detaches it and it stops reading as part of the number.
+  // ⚠️ Assert ADJACENCY on the raw markup, never on strip() — strip replaces every tag with a
+  // SPACE, so a correctly-rendered "~39,750" reads back as "~ 39,750" and a passing feature
+  // fails. The property that matters is that the tilde touches the number, which is exactly
+  // what the stripped text cannot tell you.
+  ok("...it is marked with a tilde touching the number, not only in a tooltip",
+     estH.indexOf('<i class="tld">~</i>39,750') >= 0, estH.slice(0, 90));
   ok("...and carries a class the skin can style differently", estH.indexOf("mi-pay est") >= 0);
   ok("...and says out loud that it is calculated, not read from the game",
      estH.indexOf("ESTIMATE") >= 0 && estH.indexOf("not in the game files") >= 0);
@@ -2236,7 +2243,11 @@ const MISSIONINFO = `(async () => {
   const beatsEst = tier({ payout: { min: 39750, max: 39750, currency: "UEC" }, payoutEstimated: true,
     community: { payout: { samples: 1, contributors: 1, min: 63000, max: 63000, median: 63000, currency: "UEC", singleContributor: true } } });
   ok("a single real observation OUTRANKS the estimate", strip(beatsEst).indexOf("63,000") >= 0
-     && strip(beatsEst).indexOf("39,750") < 0 && beatsEst.indexOf("est-k") < 0, strip(beatsEst));
+     && strip(beatsEst).indexOf("39,750") < 0 && beatsEst.indexOf("tld") < 0, strip(beatsEst));
+  // The circled i must survive on the estimate — it is where "where did this number come from"
+  // is answered, and the tilde alone does not say that.
+  ok("...and the estimate keeps its info affordance to explain itself",
+     estH.indexOf("mi-info") >= 0 && estH.indexOf(">i<") >= 0);
 
   // ── payouts ──────────────────────────────────────────────────────────────
   ok("no observations renders NOTHING, not a zero", pay(null) === "" && pay({ samples: 0 }) === "");

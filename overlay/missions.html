@@ -1637,8 +1637,10 @@
   .mi-pay.est { background: rgba(var(--value-rgb), 0.07); border-style: dashed;
     border-color: rgba(var(--value-rgb), 0.38); }
   .mi-pay.est .amt { font-weight: 500; opacity: 0.78; }
-  .mi-pay.est .est-k { font-family: var(--sans); font-size: 8.5px; font-weight: 700;
-    letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); opacity: 0.6; }
+  /* The "~" carries the whole caveat now, so it must not be so faint it reads as a smudge on a
+     transparent window over a moving game. Slightly dimmer than the digits, never more. `i` is
+     un-italicised — it is a mathematical mark, not emphasis. */
+  .mi-pay.est .tld { font-style: normal; opacity: 0.75; margin-right: 1px; }
   /* A two-column grid, left-aligned. The old rows were a flex pair pushed to opposite edges,
      which on a 380px panel left a canyon between label and value. */
   /* (.mi-g — the two-column label/value grid — was replaced by chips on 2026-08-13 and removed
@@ -2710,9 +2712,13 @@
       // shortest thing that cannot be mistaken for part of the figure, and the whole block is
       // dimmed so it reads as weaker than a fixed reward sitting in the same chip row.
       if (v.payoutEstimated) {
+        // 🔑 A TILDE, not the word "est." (Sub, 2026-08-14). "~39,750" is understood instantly
+        // and costs no width, where a lead-in word competed with the figure it qualified — the
+        // same reasoning that moved the sample count into the info affordance. It sits INSIDE
+        // .amt so it hugs the number; as a sibling the pill's 5px gap would detach it and it
+        // would read as a separate mark rather than as part of the value.
         return '<div class="mi-pay est">'
-          + '<span class="est-k">est.</span>'
-          + '<span class="amt">' + escapeHtml(fixed) + "</span>"
+          + '<span class="amt"><i class="tld">~</i>' + escapeHtml(fixed) + "</span>"
           + info("An ESTIMATE, not a number from the game. The game works this contract's"
               + " reward out when you accept it, so it is not in the game files at all — this is"
               + " calculated from a formula fitted to CIG's own data."
