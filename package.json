@@ -40,7 +40,8 @@
     "test:location": "tsx src/location.test.ts",
     "check:dataset": "node tools/check-dataset-fresh.mjs --strict",
     "audit:scmdb": "node tools/scmdb-audit.mjs",
-    "test:contracts": "tsx src/contract-list.test.ts && tsx src/contract-match.test.ts && tsx src/payout-scan.test.ts && tsx src/payout-mode.test.ts"
+    "test:contracts": "tsx src/contract-list.test.ts && tsx src/contract-match.test.ts && tsx src/payout-scan.test.ts && tsx src/payout-mode.test.ts",
+    "session": "node tools/new-session.mjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
