@@ -1903,6 +1903,33 @@ const LIFECYCLE = `(async () => {
   return out;
 })()`;
 
+// ── Suite: hiding a typing widget releases the keyboard grab ──────────────────
+// editStart() arms a canvas-WIDE grab (notepadEditing → canHover everywhere) and hiding a widget
+// UNLOADS its iframe — so a widget hidden mid-typing must release the grab on the way out, or it
+// leaks with no page left to lower it. notepad/party/chat always did this via onHide; twitchChat
+// and webView defined the release function and the canvas never called it. Negative-controlled:
+// removing twitchChat's onHide turns "hiding it releases the grab" red.
+const TYPINGGRAB = `(async () => {
+  ${PRELUDE}
+  window.__editing = false;
+  for (const key of ["twitchChat", "webView"]) {
+    const w = WBY[key];
+    setWidgetVisible(w, true);
+    await sleep(250);
+    let btn = null;
+    try { btn = document.getElementById("wf-" + key).contentWindow.document.getElementById("typeBtn"); } catch { /* frame never loaded */ }
+    ok(key + ": the page has a type-mode button", !!btn);
+    if (!btn) continue;
+    btn.click();
+    await sleep(60);
+    ok(key + ": typing arms the canvas grab", window.__editing === true);
+    setWidgetVisible(w, false);
+    await sleep(150);
+    ok(key + ": hiding it releases the grab", window.__editing === false);
+  }
+  return out;
+})()`;
+
 // ── Suite 11: per-widget angle ────────────────────────────────────────────────
 // Sub's report: "people can't change the angle of the widget, and the newer ones don't even have
 // the option." Both were real. The angle was written to --wangle inside the `scaled` branch of
@@ -3984,6 +4011,7 @@ app.whenReady().then(async () => {
     fails += await run("layout restore", RESTORE, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("chrome anchoring + latches", ANCHOR, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("lifecycle: closed = idle", LIFECYCLE, null);
+    fails += await run("typing grab: hiding releases it", TYPINGGRAB, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
     fails += await run("nothing animates at rest", IDLEPAINT, null);

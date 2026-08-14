@@ -3762,6 +3762,10 @@
       key: "twitchChat", page: "twitchchat.html", title: "Twitch Chat",
       def: { x: 860, y: 60 }, size: { w: 340, h: 460, minW: 260, maxW: 900, minH: 220, maxH: 1100 },
       focusFn: "__twitchChatFocus",
+      // Hiding mid-typing must release the keyboard grab, or the whole canvas stays interactive
+      // with nothing visible to explain it — and hide UNLOADS the iframe, so the page can never
+      // release it after the fact. Same rule as notepad/party/chat.
+      onHide: (w) => { try { frameWin(w)?.__twitchChatExitTyping?.(); } catch { /* iframe gone */ } },
       // Sign-in sends the user to twitch.tv/activate — that has to open in a real browser.
       host: () => ({ openUrl: (u) => window.overlayApi?.openUrl?.(u) }),
     },
@@ -3845,7 +3849,11 @@
       // Tabbed away, closed, or the whole overlay hidden: the view must go with it, or someone
       // else's website floats over the game with nothing behind it.
       onShow: (w) => scheduleWebViewSync(w),
-      onHide: () => window.overlayApi?.webViewShow?.(false),
+      // The typing grab must release BEFORE the iframe unloads (same rule as notepad/party/chat).
+      onHide: (w) => {
+        try { frameWin(w)?.__webViewExitTyping?.(); } catch { /* iframe gone */ }
+        window.overlayApi?.webViewShow?.(false);
+      },
     },
     {
       key: "bindingChart", page: "bindingwidget.html", title: "Infographic Viewer",
