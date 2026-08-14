@@ -183,7 +183,7 @@ function ensureWebView() {
   // Target=_blank and window.open must not spawn a second frameless always-on-top window over
   // the game — send those to the real browser instead.
   webView.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {});
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => { /* OS has no handler — nothing useful to do */ });
     return { action: "deny" };
   });
   // Keep the widget's chrome honest about what it's showing.
@@ -1586,6 +1586,8 @@ function setupUpdater() {
       buttons: ["OK"],
     });
   });
+  // A rejected check also fires the "error" handler above, which owns all reporting — these
+  // catches only silence the duplicate unhandled-rejection noise.
   autoUpdater.checkForUpdates().catch(() => {});
   setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 3 * 60 * 60 * 1000);
 }
@@ -1886,7 +1888,7 @@ if (!app.requestSingleInstanceLock()) {
   // Re-validated here, not just in the preload: a renderer is never the authority on what the
   // shell is allowed to launch. https only, same rule as overlay:open-url.
   ipcMain.on("setup:open-external", (_e, url) => {
-    if (typeof url === "string" && /^https:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+    if (typeof url === "string" && /^https:\/\//i.test(url)) shell.openExternal(url).catch(() => { /* OS has no handler — nothing useful to do */ });
   });
   ipcMain.on("setup:close", () => setupWin?.close());
   // The nudge banner's "set it up" button, and its dismiss. Both come from the canvas.

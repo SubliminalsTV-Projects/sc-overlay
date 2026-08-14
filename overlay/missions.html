@@ -3230,7 +3230,7 @@
           if (d.answer.solo != null) mrAnswers.solo = d.answer.solo;
           $("mrAsk").innerHTML = reportAsk(c);
         })
-        .catch(() => {});
+        .catch(() => { /* no prefill — the questions just start blank */ });
     }
     // No abandoned variant any more — an abandon never produces a completion at all.
     $("mrBody").innerHTML = reportBody(c);
@@ -3352,7 +3352,10 @@
         difficulty: mrAnswers.difficulty ?? null,
         solo: mrAnswers.solo ?? null,
       }),
-    }).then((r) => { if (r.ok) { mrAnswers.saved = true; } }).catch(() => {});
+    }).then((r) => { if (r.ok) { mrAnswers.saved = true; } })
+      // saved stays false, so the card never claims a save that didn't happen — and any later
+      // answer click re-posts all three fields, so a dropped request heals itself.
+      .catch(() => {});
   }
 
   $("mrX").addEventListener("click", hideReport);
@@ -6236,7 +6239,7 @@
   const q0 = new URLSearchParams(location.search);
   if (!FIXTURES.some((f) => q0.has(f))) {
     const es = new EventSource("/missions/events");
-    es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
+    es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch { /* malformed frame — skip it, the next one repaints */ } };
     es.onerror = () => { /* auto-reconnects */ };
   }
 </script>
