@@ -1168,23 +1168,88 @@ function registerOverlayHotkey(accel) {
 
 let bindingAccel = null;
 function registerBindingHotkey(accel) {
-  if (bindingAccel) hotkeys.unregister(bindingAccel);
-  bindingAccel = null;
-  if (!accel || typeof accel !== "string") return { ok: true };
-  const r = hotkeys.register(accel, toggleBindingChart);
-  if (r.ok) bindingAccel = accel;
-  return r;
+  // Delegates: one accelerator per widget, tracked in widgetAccels. Kept as a named
+  // function because the config IPC still calls it by name.
+  return registerWidgetHotkey("bindingChart", accel);
 }
 
 // Live-rebindable hotkey for showing/hiding the Web Page widget - same shape as the others.
 let webViewAccel = null;
-function registerWebViewHotkey(accel) {
-  if (webViewAccel) hotkeys.unregister(webViewAccel);
-  webViewAccel = null;
-  if (!accel || typeof accel !== "string") return { ok: true };
-  const r = hotkeys.register(accel, () => setWebView(!webViewVisible));
-  if (r.ok) webViewAccel = accel;
+// ── Per-widget hotkeys ───────────────────────────────────────────────────────────────────────
+// Every widget can have one, and none has a default (Sub, 2026-08-14). Eleven default chords
+// would collide with each other, with the game, and with whatever the player already binds.
+//
+// 🔑 ONE TABLE INSTEAD OF ELEVEN FUNCTIONS. Four widgets used to have a bespoke `*Accel` variable,
+// a bespoke register function, a bespoke config field and a bespoke settings row; the other seven
+// had nothing. Keying off the registry key means the boilerplate is written once and a new widget
+// inherits a hotkey for free.
+// ⚠️ `blueprint` is deliberately ABSENT: the tracker panel is the local widget and already has
+// `overlayHotkey`, which destroys and recreates the whole overlay window rather than toggling one
+// element. Giving it a second, different toggle would leave two controls disagreeing about what
+// "shown" means.
+// 🔑 The EXISTING toggle helpers, not a reimplemented `set(!get())`. They look interchangeable —
+// nine of them really are exactly that — but `toggleMining()` carries extra logic, so rebuilding
+// the pattern here would have quietly given the Mining Scanner different behaviour from its own
+// hotkey than from the hub. Call what already works.
+const WIDGET_TOGGLES = {
+  mining: () => toggleMining(),
+  notepad: () => toggleNotepad(),
+  twitchChat: () => toggleTwitchChat(),
+  scFeed: () => toggleScFeed(),
+  unlockAlert: () => toggleUnlockAlert(),
+  party: () => toggleParty(),
+  battaglia: () => toggleBattaglia(),
+  chat: () => toggleChat(),
+  webView: () => toggleWebView(),
+  bindingChart: () => toggleBindingChart(),
+  config: () => setConfigWidgetVisible(!configWidgetVisible),
+};
+const widgetAccels = new Map(); // registry key -> the accelerator currently registered for it
+
+/** Bind (or clear) one widget's toggle. An empty/absent accel unregisters and stays unbound —
+ *  registering "" was always a no-op, but leaving the OLD one registered was the bug. */
+function registerWidgetHotkey(key, accel) {
+  const prev = widgetAccels.get(key);
+  if (prev) hotkeys.unregister(prev);
+  widgetAccels.delete(key);
+  const toggle = WIDGET_TOGGLES[key];
+  if (!toggle || !accel || typeof accel !== "string") return { ok: true };
+  const r = hotkeys.register(accel, toggle);
+  if (r.ok) widgetAccels.set(key, accel);
   return r;
+}
+
+/** Apply the whole map, and fold the four legacy scalars in.
+ *  🔑 The legacy fields keep working forever rather than being migrated once and deleted: a user
+ *  on an older build writes them, and a one-shot migration would silently drop the binding of
+ *  anyone who rolled back. The MAP wins when it names a widget — so the moment someone sets a
+ *  hotkey in the new UI, the old field stops mattering for that widget without being touched.
+ *  ⚠️ `""` is a real value meaning "removed", so only an ABSENT map entry falls through to the
+ *  legacy field. Testing truthiness here would resurrect a hotkey the user deliberately cleared. */
+function applyWidgetHotkeys(cfg) {
+  const map = (cfg && typeof cfg.widgetHotkeys === "object" && cfg.widgetHotkeys) || {};
+  // ⚠️ The four legacy widgets keep their HISTORICAL shell defaults. Falling through to "" for an
+  // absent field would silently unbind Ctrl+F3 / Shift+F3 / Alt+F3 for every existing user who had
+  // simply never changed them — the defaults live in the shell, not only in the config file.
+  // `typeof === "string"` (not truthiness) so a deliberately CLEARED "" still reads as cleared.
+  const str = (v, dflt) => (typeof v === "string" ? v : dflt);
+  const legacy = {
+    bindingChart: str(cfg?.bindingHotkey, "Ctrl+F3"),
+    mining: str(cfg?.miningHotkey, "Shift+F3"),
+    notepad: str(cfg?.notepadHotkey, "Alt+F3"),
+    // No shell-side default historically — the sidecar supplies "Ctrl+Shift+F3" in config.
+    webView: str(cfg?.webViewHotkey, ""),
+  };
+  for (const key of Object.keys(WIDGET_TOGGLES)) {
+    const accel = Object.prototype.hasOwnProperty.call(map, key) ? map[key] : legacy[key];
+    registerWidgetHotkey(key, typeof accel === "string" ? accel : "");
+  }
+}
+
+function registerWebViewHotkey(accel) {
+  // Delegates: one accelerator per widget, tracked in widgetAccels. Kept as a named
+  // function because the config IPC still calls it by name.
+  return registerWidgetHotkey("webView", accel);
 }
 
 // Live-rebindable hotkey for the Journal widget. It was the one placeable widget with no way to
@@ -1192,24 +1257,18 @@ function registerWebViewHotkey(accel) {
 // alt-tab to open is a scratchpad you don't use mid-flight.
 let notepadAccel = null;
 function registerNotepadHotkey(accel) {
-  if (notepadAccel) hotkeys.unregister(notepadAccel);
-  notepadAccel = null;
-  if (!accel || typeof accel !== "string") return { ok: true };
-  const r = hotkeys.register(accel, toggleNotepad);
-  if (r.ok) notepadAccel = accel;
-  return r;
+  // Delegates: one accelerator per widget, tracked in widgetAccels. Kept as a named
+  // function because the config IPC still calls it by name.
+  return registerWidgetHotkey("notepad", accel);
 }
 
 // Live-rebindable hotkey for showing/hiding the Mining Assistant widget. Same shape as the
 // overlay/binding registrations so the config window can warn on an invalid / in-use combo.
 let miningAccel = null;
 function registerMiningHotkey(accel) {
-  if (miningAccel) hotkeys.unregister(miningAccel);
-  miningAccel = null;
-  if (!accel || typeof accel !== "string") return { ok: true };
-  const r = hotkeys.register(accel, toggleMining);
-  if (r.ok) miningAccel = accel;
-  return r;
+  // Delegates: one accelerator per widget, tracked in widgetAccels. Kept as a named
+  // function because the config IPC still calls it by name.
+  return registerWidgetHotkey("mining", accel);
 }
 
 // Interact-to-hold (default F): the overlay is passive until you HOLD this key — then it's
@@ -1747,9 +1806,9 @@ if (!app.requestSingleInstanceLock()) {
     // persisted config: overlay show/hide (F3), binding-chart PNG (Ctrl+F3), Mining (Shift+F3),
     // Interact-to-hold (F — hold to click the overlay), and Move/arrange (Ctrl+Alt+M).
     let overlayKey = "F3";
-    let bindKey = "Ctrl+F3";
-    let miningKey = "Shift+F3";
-    let notepadKey = "Alt+F3";
+    // (bindKey / miningKey / notepadKey are gone — applyWidgetHotkeys() owns every per-widget
+    // binding now, including those three defaults. See its `legacy` table.)
+    let loadedCfg = null;
     let interactKey = "F";
     let moveKey = "Ctrl+Alt+M";
     let fabClaimKey = "F4";
@@ -1761,9 +1820,7 @@ if (!app.requestSingleInstanceLock()) {
       // removed hotkey came back on the next launch. Absent (undefined) means never set, and only
       // that takes the default. Registering "" is already a no-op, so no other change is needed.
       if (typeof c.overlayHotkey === "string") overlayKey = c.overlayHotkey;
-      if (typeof c.bindingHotkey === "string") bindKey = c.bindingHotkey;
-      if (typeof c.webViewHotkey === "string") registerWebViewHotkey(c.webViewHotkey);
-      if (typeof c.notepadHotkey === "string") notepadKey = c.notepadHotkey;
+      loadedCfg = c; // handed to applyWidgetHotkeys() below — it owns every per-widget binding
       if (Number.isFinite(c.canvasOffsetX) || Number.isFinite(c.canvasOffsetY)) {
         canvasOffset = { x: Number(c.canvasOffsetX) || 0, y: Number(c.canvasOffsetY) || 0 };
       }
@@ -1778,9 +1835,7 @@ if (!app.requestSingleInstanceLock()) {
     } catch { /* defaults */ }
     foreground.want("hold", holdMode); // only track the foreground app if something asks
     registerOverlayHotkey(overlayKey);
-    registerBindingHotkey(bindKey);
-    registerMiningHotkey(miningKey);
-    registerNotepadHotkey(notepadKey);
+    applyWidgetHotkeys(loadedCfg); // all 11 widgets, map first then the legacy fields
     registerInteractHotkey(interactKey);
     registerMoveHotkey(moveKey);
     registerFabClaimHotkey(fabClaimKey);
@@ -1907,6 +1962,12 @@ if (!app.requestSingleInstanceLock()) {
 
   // Live-apply a captured hotkey (config window), no restart. Persistence is handled
   // separately by the config save; these just (re)register the global shortcut.
+  // Generic per-widget binding. One channel for every widget, present and future — the four
+  // named channels below stay only because shipped config pages call them by name.
+  // Returns the same {ok, error} shape, so the settings page can warn on an in-use combo.
+  ipcMain.handle("set-widget-hotkey", (_e, key, accel) =>
+    registerWidgetHotkey(String(key || ""), typeof accel === "string" ? accel : ""));
+  ipcMain.handle("list-widget-hotkeys", () => Object.keys(WIDGET_TOGGLES));
   ipcMain.handle("set-overlay-hotkey", (_e, accel) =>
     registerOverlayHotkey(typeof accel === "string" ? accel : ""));
   ipcMain.handle("set-binding-hotkey", (_e, accel) =>
