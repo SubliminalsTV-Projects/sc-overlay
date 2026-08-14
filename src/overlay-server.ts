@@ -605,6 +605,16 @@ let lastSaveOk: string | null = null;
 // See the /api/overlay-geometry routes; in memory only, because it describes a window that exists
 // right now and a stale copy would be worse than none.
 let overlayGeometry: Record<string, unknown> | null = null;
+// Errors forwarded by the canvas page (window.onerror / unhandledrejection). Same reasoning as
+// lastSaveError: a renderer's console does not exist in a packaged build, so these used to
+// vanish. Remembered here for /api/diagnostics AND echoed to the console (→ sidecar.log).
+// Capped both ways — a ring of the last few, and a per-minute intake ceiling, because the one
+// thing worse than losing an error is an error LOOP flooding the log that would explain it.
+const CLIENT_ERR_KEEP = 20;
+const CLIENT_ERR_PER_MIN = 10;
+const clientErrors: { at: string; from: string; msg: string }[] = [];
+let clientErrWindowStart = 0;
+let clientErrWindowCount = 0;
 const saveConfig = async (): Promise<void> => {
   try {
     mkdirSync(userDir, { recursive: true });
@@ -3232,6 +3242,31 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // Standing per giver plus the completion count behind it. A sum out of proportion to the
       // count is an accrual leak, and the count is the half that makes the sum interpretable.
       reputation: tracker.repDiagnostics(),
+      // The last few canvas/page errors (see /api/client-error) — the report used to carry only
+      // STATE, and "what recently went wrong" is the half a frozen-looking widget needs.
+      recentClientErrors: clientErrors.slice(),
+      // The tail of sidecar.log, so one Copy-diagnostics paste carries the history too — asking
+      // a user to dig %APPDATA% out of a Discord thread was the single biggest support friction.
+      // Secrets are redacted BY VALUE before anything leaves this process: the report's header
+      // promises "no passwords or tokens" and the tail must not be the exception. mtime rides
+      // along because a dev-run sidecar logs to a terminal, not this file — a stale tail must be
+      // recognisable as stale rather than read as "the app logged nothing".
+      logTail: (() => {
+        try {
+          const p = join(userDir, "sidecar.log");
+          if (!existsSync(p)) return { lines: [], note: "no sidecar.log — dev runs log to the terminal instead" };
+          const st = statSync(p);
+          let text = readFileSync(p, "utf8");
+          for (const secret of [config.syncToken, config.twitchUserToken, config.twitchRefreshToken]) {
+            if (secret && secret.length >= 8) text = text.split(secret).join("[redacted]");
+          }
+          const all = text.split(/\r?\n/).filter((l) => l.trim().length);
+          return {
+            modifiedMinutesAgo: Math.round((Date.now() - st.mtimeMs) / 60000),
+            lines: all.slice(-60),
+          };
+        } catch { return { lines: [], note: "sidecar.log unreadable" }; }
+      })(),
     }));
     return;
   }
@@ -3341,6 +3376,34 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     }
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  // The canvas forwards its window.onerror / unhandledrejection here — the only durable place.
+  // POST, so the standard mutating gate (loopback + Origin) already applies; nothing on the LAN
+  // can write to this machine's log through it.
+  if (url === "/api/client-error" && req.method === "POST") {
+    const now = Date.now();
+    if (now - clientErrWindowStart > 60_000) { clientErrWindowStart = now; clientErrWindowCount = 0; }
+    if (++clientErrWindowCount > CLIENT_ERR_PER_MIN) {
+      res.writeHead(429, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "too many error reports — the first ones are what matter" }));
+      return;
+    }
+    const body = await readBody(req);
+    const msg = String(body?.msg ?? "").slice(0, 300);
+    if (!msg) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "msg is required" }));
+      return;
+    }
+    const from = String(body?.source ?? "page").slice(0, 40);
+    const stack = String(body?.stack ?? "").slice(0, 1200);
+    clientErrors.push({ at: new Date().toISOString(), from, msg });
+    while (clientErrors.length > CLIENT_ERR_KEEP) clientErrors.shift();
+    console.error(`[client-error] [${from}] ${msg}${stack ? "\n" + stack : ""}`);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 

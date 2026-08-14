@@ -2046,6 +2046,33 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
+  // A JS error in this window used to vanish — its console does not exist in a packaged build,
+  // which is how "it just looks frozen" bugs (the mission-report repaint class) left nothing a
+  // user could send. Forward the first few to the sidecar, which is the durable half
+  // (sidecar.log + /api/diagnostics). Registered FIRST so an error during init is still caught.
+  // Budgeted and deduped here as well as server-side: an error loop must not spend its whole
+  // budget saying the same thing, and the sidecar being down is its own, already-visible failure.
+  (() => {
+    let budget = 10, last = "";
+    const send = (msg, stack) => {
+      const line = String(msg || "").slice(0, 300);
+      if (budget <= 0 || line === last) return;
+      budget--; last = line;
+      try {
+        fetch("/api/client-error", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: (window.overlayApi ? "canvas" : "tracker-page"),
+            msg: line, stack: String(stack || "").slice(0, 1200),
+          }),
+        }).catch(() => { /* sidecar down — that failure is already loud elsewhere */ });
+      } catch { /* error reporting must never itself throw */ }
+    };
+    window.addEventListener("error", (e) => send(e.message, e.error && e.error.stack));
+    window.addEventListener("unhandledrejection", (e) => send(
+      (e.reason && (e.reason.message || e.reason)) || "unhandled rejection",
+      e.reason && e.reason.stack));
+  })();
   let current = null;
   // Canvas / widget mode: the Electron overlay-app is a full-screen transparent canvas that
   // hosts the panel as a free-floating, draggable, independently-scalable widget. ?canvas=1

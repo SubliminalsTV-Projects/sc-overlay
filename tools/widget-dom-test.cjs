@@ -1930,6 +1930,25 @@ const TYPINGGRAB = `(async () => {
   return out;
 })()`;
 
+// ── Suite: a page error reaches the sidecar ───────────────────────────────────
+// The canvas forwards window error events to POST /api/client-error (its own console does not
+// exist packaged). Drive it with a synthetic ErrorEvent and read it back from diagnostics —
+// end to end through the real route. Negative-controlled: with the forwarding hook removed
+// from missions.html, "a page error reaches the sidecar" goes red.
+const CLIENTERR = `(async () => {
+  ${PRELUDE}
+  const tag = "harness-synthetic-error-" + Date.now();
+  window.dispatchEvent(new ErrorEvent("error", { message: tag }));
+  await sleep(400);
+  let d = null;
+  try { d = await (await fetch("/api/diagnostics", { cache: "no-store" })).json(); } catch { d = null; }
+  const errs = (d && d.recentClientErrors) || [];
+  ok("a page error reaches the sidecar", errs.some((e) => e.msg === tag), JSON.stringify(errs.slice(-3)).slice(0, 140));
+  ok("...tagged with where it came from", errs.some((e) => e.msg === tag && (e.from === "canvas" || e.from === "tracker-page")));
+  ok("the diagnostics log tail is present or says why not", !!(d && d.logTail && (d.logTail.lines.length || d.logTail.note)));
+  return out;
+})()`;
+
 // ── Suite 11: per-widget angle ────────────────────────────────────────────────
 // Sub's report: "people can't change the angle of the widget, and the newer ones don't even have
 // the option." Both were real. The angle was written to --wangle inside the `scaled` branch of
@@ -4012,6 +4031,7 @@ app.whenReady().then(async () => {
     fails += await run("chrome anchoring + latches", ANCHOR, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("lifecycle: closed = idle", LIFECYCLE, null);
     fails += await run("typing grab: hiding releases it", TYPINGGRAB, path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
     fails += await run("nothing animates at rest", IDLEPAINT, null);

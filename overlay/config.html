@@ -606,6 +606,7 @@
     <div class="hkrow">
       <span class="hklabel">Report</span>
       <button type="button" id="diagBtn" class="hkbtn">Copy diagnostics</button>
+      <button type="button" id="logsBtn" class="hkbtn">Open logs folder</button>
       <div class="hint" id="diagMsg"></div>
     </div>
     <pre id="diagOut" style="display:none; margin-top:10px; max-height:260px; overflow:auto;
@@ -1421,6 +1422,12 @@
         " mining=" + d.screenReading.miningAssistant + " shareLogs=" + d.screenReading.shareLogs);
       add("Display", "hwAccel=" + d.display.hwAccel + " amdCompat=" + d.display.amdCompat + " skin=" + d.display.theme);
       add("Twitch", "channel=" + d.twitch.chatChannel + " signed in as " + d.twitch.signedInAs);
+      // Recent page errors — the "what went wrong" half the state report never had.
+      const errs = Array.isArray(d.recentClientErrors) ? d.recentClientErrors : [];
+      if (errs.length) {
+        add("Recent UI errors", String(errs.length) + " this session");
+        for (const er of errs.slice(-5)) lines.push("  " + er.at + " [" + er.from + "] " + er.msg);
+      }
     }
     // Elevation matters because in-game hotkeys silently do nothing without it (UIPI over an
     // elevated Star Citizen) — the single most common "hotkeys don't work" cause.
@@ -1431,6 +1438,15 @@
       add("Primary display", s.width + "x" + s.height + " @ " + (window.devicePixelRatio || 1) + "x scaling");
     } catch { /* not worth failing the report over */ }
 
+    // The tail of sidecar.log rides in the same paste — one copy carries state AND history,
+    // instead of a second trip through %APPDATA% on Discord. The sidecar redacts tokens by
+    // value before it ever hands the tail over, so the "no passwords or tokens" promise holds.
+    if (d && d.logTail && Array.isArray(d.logTail.lines) && d.logTail.lines.length) {
+      lines.push("");
+      lines.push("--- sidecar.log, last " + d.logTail.lines.length + " lines" +
+        (d.logTail.modifiedMinutesAgo != null ? " (written " + d.logTail.modifiedMinutesAgo + " min ago)" : "") + " ---");
+      for (const ln of d.logTail.lines) lines.push(ln);
+    }
     const report = "SC Overlay diagnostics\n" + new Date().toISOString() + "\n\n" + lines.join("\n");
     out.textContent = report;
     out.style.display = "block";
@@ -1440,6 +1456,12 @@
     } catch {
       msg.textContent = "Couldn't reach the clipboard — select the text below and copy it.";
     }
+  });
+
+  // Where sidecar.log and sidecar-prev.log live. Same bridge as the party-sessions folder;
+  // standalone in a browser there is no shell to ask, and the call is a documented no-op.
+  document.getElementById("logsBtn")?.addEventListener("click", () => {
+    window.overlayConfig?.openDataFolder?.("logs");
   });
 
   document.getElementById("perfBtn")?.addEventListener("click", async () => {
