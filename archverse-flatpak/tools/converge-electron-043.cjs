@@ -38,12 +38,23 @@ capture = replaceOnce(
   'generic OCR gate'
 );
 
-// Older Linux shells had variants where RapidOCR was conditioned on scan-mode evidence. Strip only
-// that condition, leaving the mining opt-in and the RapidOCR preference as the whole gate.
+// Older Linux shells had variants where RapidOCR was conditioned on scan-mode evidence, sometimes
+// formatted across several lines. Find the single if-condition that contains BOTH mining and the
+// RapidOCR preference and replace the whole condition, not just one textual spelling of it.
 if (!capture.includes('if (mining && cfg.rapidOcr !== false) {')) {
-  const rapidGate = /if \(mining && cfg\.rapidOcr !== false && \([^\n]+\)\) \{/;
-  must(rapidGate.test(capture), 'RapidOCR mining gate: neither 0.1.43 form nor a recognized old form exists');
-  capture = capture.replace(rapidGate, 'if (mining && cfg.rapidOcr !== false) {');
+  const ifRe = /if\s*\(([\s\S]{0,500}?)\)\s*\{/g;
+  const matches = [];
+  let m;
+  while ((m = ifRe.exec(capture))) {
+    const cond = m[1];
+    if (/\bmining\b/.test(cond) && /cfg\.rapidOcr\s*!==\s*false/.test(cond)) {
+      matches.push({ start: m.index, end: ifRe.lastIndex, text: m[0], cond });
+    }
+  }
+  must(matches.length === 1,
+    `RapidOCR mining gate: expected exactly one legacy mining+rapidOcr if, found ${matches.length}`);
+  const g = matches[0];
+  capture = capture.slice(0, g.start) + 'if (mining && cfg.rapidOcr !== false) {' + capture.slice(g.end);
 }
 
 // Fast cadence follows upstream: parsed signature is proof; scanHud text is only an early hint.
