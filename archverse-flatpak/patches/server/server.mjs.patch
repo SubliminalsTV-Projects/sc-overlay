@@ -9,7 +9,7 @@
  var configPath = join11(userDir, "config.json");
  var seedConfigPath = join11(overlayDir, "config.json");
  var dataDir = join11(userDir, "data");
-@@ -6600,1 +6600,10 @@
+@@ -6600,1 +6600,9 @@
 -  ocrHealth = await ocrSelfTest();
 +  // ARCHVERSE_043_LINUX_OCR_HEALTH: upstream's RapidOCR failure check has already run above.
 +  // Skip only the Windows.Media.Ocr/PowerShell probe; the Flatpak uses RapidOCR in Electron,
