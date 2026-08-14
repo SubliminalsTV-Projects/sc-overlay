@@ -1624,6 +1624,11 @@
   .mi-faction { font-family: var(--sans); font-size: 13.5px; color: var(--cyan-bright);
     margin: 0 0 7px; }
   .mi-chip.crime { color: #ffd7d7; background: rgba(255, 90, 90, 0.22); border-color: rgba(255, 120, 120, 0.5); }
+  /* Timing facts from the game files. Accent-tinted rather than neutral so "when can I run this
+     again" reads apart from the category chips beside it, using the skin's own accent so it
+     retints with every manufacturer theme instead of picking a colour of its own. */
+  .mi-chip.time { color: var(--cyan-bright); border-color: rgba(var(--accent-rgb), 0.45);
+    background: rgba(var(--accent-rgb), 0.14); }
   .mi-chip.said { background: transparent; border-style: dashed; color: var(--cyan-dim); }
   /* The headline number. It is what Sub asked for and the one figure worth reading at a glance,
      so it gets size rather than a row of its own competing with the labels below. */
@@ -3065,6 +3070,42 @@
   // Worded so the chip needs no heading — "Soloable" says what it is, "Soloable: yes" does not
   // say any more (Sub, 2026-08-12).
   const COMBAT_CHIP = { none: "No combat", fps: "On-foot combat", ship: "Ship combat", both: "Ship + on-foot" };
+  // ── Contract facts from the game files (mission-facts.<cl>.json) ─────────────────────────────
+  // Chips, per Sub's pick of option A1 — no new structure, they join the row that already exists.
+  //
+  // 🔑 "RETAKE AFTER 15m" IS THE PERSONAL COOLDOWN, and it is not the same thing as the run
+  // length: the Ling Hauling contract takes 27 minutes to run and can be retaken 15 minutes after
+  // it is finished. An earlier draft showed `boardRespawnMin` here by accident — that is when an
+  // EXPIRED offer reappears on the Contract Manager, which Sub correctly cut: nobody watches an
+  // offer time out and then waits for it to come back.
+  // 🔑 Every chip self-hides. Coverage runs 46–77%, so a fixed set would print blanks on half the
+  // catalogue — the same reason the payout row has always been conditional.
+  function gameFactChips(v) {
+    const f = v && v.facts;
+    if (!f) return [];
+    const out = [];
+    if (f.cd != null) {
+      out.push(chip("Retake after " + f.cd + "m", "time",
+        "How long after finishing this contract before you can accept it again"
+        + (f.cdVar ? ", give or take " + f.cdVar + " minutes" : "") + "."));
+    }
+    if (f.dur != null) {
+      out.push(chip("~" + f.dur + "m run", null,
+        "Roughly how long the contract itself takes — the designers' expected duration, not a cooldown."));
+    }
+    if (f.diff != null) {
+      out.push(chip("Difficulty " + f.diff + "/7", null,
+        "CIG's own blended difficulty rating for this contract, on their 1–7 scale."));
+    }
+    // ⚠️ Only ever asserts the NEGATIVE. An unrecognised contract also has no flag, so "you can
+    // retry" is never claimed — the same rule the Illegal chip follows.
+    if (f.noRetry) {
+      out.push(chip("No retry if failed", "crime",
+        "Fail this contract and you cannot accept it again."));
+    }
+    return out;
+  }
+
   function factChips(v) {
     const f = v.community && v.community.facts;
     if (!f || !f.samples) return [];
@@ -3119,6 +3160,9 @@
       const chips = [];
       if (v.illegal) chips.push(chip("Illegal", "crime", "Criminal work — expect a CrimeStat for taking this."));
       if (type) chips.push(chip(type));
+      // Game-file facts before player-reported ones: these are certain, those are crowdsourced,
+      // and the dashed border on the reported chips already says which is which.
+      chips.push(...gameFactChips(v));
       chips.push(...factChips(v));
 
       // ── 2. The money, given size ────────────────────────────────────────────────────────
@@ -3386,6 +3430,11 @@
     }
     const dur = fmtDur(c.durationMs);
     if (dur) stats.push(mrStat(dur, "time"));
+    // 🔑 Option B1 (Sub's pick): one more stat tile rather than a new row. It answers the question
+    // the pool bar below immediately raises — "can I just run that again?" — and it is the
+    // PERSONAL COOLDOWN, the wait after finishing, not the board-respawn timer that was cut.
+    // Self-hides on the 45% of contracts with no cooldown in the game files.
+    if (c.facts && c.facts.cd != null) stats.push(mrStat(c.facts.cd + "m", "retake in"));
     // Only meaningful next to a payout, and deliberately absent on calculated-reward missions
     // rather than shown as a zero — see completionRate().
     if (c.aUecPerHour != null) stats.push(mrStat(Math.round(c.aUecPerHour / 1000) + "k", "aUEC/hr"));
