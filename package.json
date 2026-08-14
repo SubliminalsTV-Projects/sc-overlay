@@ -39,6 +39,7 @@
     "dev:fresh": "node tools/dev-fresh.mjs",
     "test:location": "tsx src/location.test.ts",
     "check:dataset": "node tools/check-dataset-fresh.mjs --strict",
+    "audit:scmdb": "node tools/scmdb-audit.mjs",
     "test:contracts": "tsx src/contract-list.test.ts && tsx src/contract-match.test.ts && tsx src/payout-scan.test.ts && tsx src/payout-mode.test.ts"
   },
   "dependencies": {
