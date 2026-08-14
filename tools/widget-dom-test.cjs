@@ -2249,6 +2249,20 @@ const MISSIONINFO = `(async () => {
   ok("...and the estimate keeps its info affordance to explain itself",
      estH.indexOf("mi-info") >= 0 && estH.indexOf(">i<") >= 0);
 
+  // A lone BOARD SCAN publishes, but says it is unconfirmed — and says it in the tooltip, not on
+  // the face of the pill (Sub, 2026-08-14: "that way it doesn't clutter up the UI").
+  const loneScan = { samples: 1, contributors: 1, min: 63000, max: 63000, median: 63000, currency: "UEC", singleContributor: true, ocrOnly: true };
+  const loneH = payAll(loneScan);
+  ok("a lone board scan still shows its number", strip(loneH).indexOf("63,000") >= 0, strip(loneH));
+  ok("...says it is unconfirmed IN THE TOOLTIP", loneH.indexOf("One unconfirmed board scan") >= 0);
+  ok("...and NOT on the face of the pill", strip(loneH).indexOf("unconfirmed") < 0, strip(loneH));
+  // Corroborated, or backed by a typed report, and the caveat goes away — a caveat that never
+  // clears is one people stop reading.
+  const manyScans = payAll({ samples: 4, contributors: 1, min: 63000, max: 63000, median: 63000, currency: "UEC", singleContributor: true, ocrOnly: true });
+  ok("several scans are no longer 'one unconfirmed read'", manyScans.indexOf("One unconfirmed board scan") < 0);
+  const typed = payAll({ samples: 1, contributors: 1, min: 63000, max: 63000, median: 63000, currency: "UEC", singleContributor: true, ocrOnly: false });
+  ok("a typed report is never called an unconfirmed scan", typed.indexOf("One unconfirmed board scan") < 0);
+
   // ── payouts ──────────────────────────────────────────────────────────────
   ok("no observations renders NOTHING, not a zero", pay(null) === "" && pay({ samples: 0 }) === "");
   const loneAll = payAll({ samples: 1, contributors: 1, min: 48000, max: 48000, median: 48000, currency: "UEC", singleContributor: true });

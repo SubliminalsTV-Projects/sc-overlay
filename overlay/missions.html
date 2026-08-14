@@ -2738,9 +2738,19 @@
     // the number was a second line of caption competing with the figure it qualified — but it must
     // not be dropped, because how thin the evidence is IS the caveat on the number. So it goes
     // where the rest of this panel already puts its qualifications: the circled i.
+    // 🔑 "Unconfirmed" goes in the TOOLTIP, never on the face of the pill (Sub, 2026-08-14) —
+    // the panel is already dense and this is a qualification, not a headline. Same call as the
+    // sample count, which moved in here on 2026-08-13 for the same reason.
+    // Only worth saying while it is genuinely uncorroborated: a scan seen several times is no
+    // longer "one unconfirmed read", and repeating the caveat everywhere would train people to
+    // ignore it in the one place it matters.
+    const lone = p.ocrOnly && p.samples === 1
+      ? "\n\nOne unconfirmed board scan — nobody has reported what it actually paid yet, and the"
+        + " board rounds what it shows."
+      : "";
     const why = "Read off the contract board by players running this. The game works most payouts"
       + " out when you accept, so this is the only place the number exists."
-      + "\n\nBased on " + note + (spread ? ". Seen between " + spread + "." : ".");
+      + "\n\nBased on " + note + (spread ? ". Seen between " + spread + "." : ".") + lone;
     return '<div class="mi-pay">'
       + '<span class="amt">' + money(p.median) + '</span><span class="cur">' + escapeHtml(cur) + "</span>"
       + info(why) + "</div>";

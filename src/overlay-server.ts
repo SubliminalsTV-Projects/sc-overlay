@@ -867,7 +867,11 @@ const fabClaims = new FabClaims();
 // ⚠️ It is an outbound request naming the contract you are running. No token, no identity, and
 // only when a mission is actually tracked — but it IS a request that did not happen before. Gate
 // it on `config.syncEnabled` if that ever needs to be tighter.
-type CommunityPayout = { samples: number; contributors: number; min: number; max: number; median: number; currency: string; singleContributor: boolean };
+/** `ocrOnly` = every observation behind this figure came from a BOARD SCAN, with no typed report
+ *  or log line corroborating it. The board abbreviates ("63k"), so a scan is the true value
+ *  floored to that magnitude — systematically imprecise — and OCR is the one source that can
+ *  misread outright. The widget says so in the tooltip rather than on the face of the pill. */
+type CommunityPayout = { samples: number; contributors: number; min: number; max: number; median: number; currency: string; singleContributor: boolean; ocrOnly?: boolean };
 type CommunityFacts = { samples: number; combatTop: string | null; difficulty: number | null; difficultyAnswers: number; soloRate: number | null; soloAnswers: number; ships: { ship: string; count: number }[] };
 type Community = { payout: CommunityPayout | null; facts: CommunityFacts | null };
 const communityCache = new Map<string, { at: number; data: Community | null }>();
