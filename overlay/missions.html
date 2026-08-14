@@ -3082,34 +3082,34 @@
   // catalogue — the same reason the payout row has always been conditional.
   function gameFactChips(v) {
     const f = v && v.facts;
-    if (!f) return [];
-    const out = [];
+    const out = {};
+    if (!f) return out;
     if (f.cd != null) {
-      out.push(chip("Retake after " + f.cd + "m", "time",
+      out.retake = chip("Retake after " + f.cd + "m", "time",
         "How long after finishing this contract before you can accept it again"
-        + (f.cdVar ? ", give or take " + f.cdVar + " minutes" : "") + "."));
+        + (f.cdVar ? ", give or take " + f.cdVar + " minutes" : "") + ".");
     }
     if (f.dur != null) {
-      out.push(chip("~" + f.dur + "m run", null,
-        "Roughly how long the contract itself takes — the designers' expected duration, not a cooldown."));
+      out.run = chip("~" + f.dur + "m run", null,
+        "Roughly how long the contract itself takes — the designers' expected duration, not a cooldown.");
     }
     if (f.diff != null) {
-      out.push(chip("Difficulty " + f.diff + "/7", null,
-        "CIG's own blended difficulty rating for this contract, on their 1–7 scale."));
+      out.difficulty = chip("Difficulty " + f.diff + "/7", null,
+        "CIG's own blended difficulty rating for this contract, on their 1–7 scale.");
     }
     // ⚠️ Only ever asserts the NEGATIVE. An unrecognised contract also has no flag, so "you can
     // retry" is never claimed — the same rule the Illegal chip follows.
     if (f.noRetry) {
-      out.push(chip("No retry if failed", "crime",
-        "Fail this contract and you cannot accept it again."));
+      out.noretry = chip("No retry if failed", "crime",
+        "Fail this contract and you cannot accept it again.");
     }
     return out;
   }
 
   function factChips(v) {
     const f = v.community && v.community.facts;
-    if (!f || !f.samples) return [];
-    const out = [];
+    const out = {};
+    if (!f || !f.samples) return out;
     // 🔑 The sample count is shown ON THE CHIP only while the evidence is THIN, and lives in the
     // tooltip once it is not. Printing "· 14 reports" beside every fact is the clutter Sub was
     // objecting to; hiding it entirely is how one person's opinion starts looking like a fact.
@@ -3123,12 +3123,12 @@
       // statistic-shaped way of saying "both of them soloed it".
       const pct = Math.round(f.soloRate * 100);
       const word = pct >= 100 ? "Soloable" : pct <= 0 ? "Needs a group" : pct + "% solo";
-      out.push(chip(word + thin(f.soloAnswers), "said", "From " + reports(f.soloAnswers) + "."));
+      out.solo = chip(word + thin(f.soloAnswers), "said", "From " + reports(f.soloAnswers) + ".");
     }
     // Only a real majority, never a plurality — the site takes the same line, and a 3-2-2 split
     // is not a fact about the mission.
     if (f.combatTop && COMBAT_CHIP[f.combatTop]) {
-      out.push(chip(COMBAT_CHIP[f.combatTop], "said", "What most players who answered reported."));
+      out.combat = chip(COMBAT_CHIP[f.combatTop], "said", "What most players who answered reported.");
     }
     return out;
   }
@@ -3157,13 +3157,13 @@
       // 🔑 Illegal LEADS (Sub, 2026-08-13, swapping it ahead of the type). Whether a contract
       // will earn you a CrimeStat outranks what kind of contract it is — it is the one fact here
       // that changes whether you take the job at all.
-      const chips = [];
-      if (v.illegal) chips.push(chip("Illegal", "crime", "Criminal work — expect a CrimeStat for taking this."));
-      if (type) chips.push(chip(type));
-      // Game-file facts before player-reported ones: these are certain, those are crowdsourced,
-      // and the dashed border on the reported chips already says which is which.
-      chips.push(...gameFactChips(v));
-      chips.push(...factChips(v));
+      // 🔑 EVERY PILL IS KEYED, and PILL_ORDER below is the single place that decides the row.
+      // They used to be pushed in construction order across four different places, so "move the
+      // difficulty pill up" meant finding which block built it and re-threading the pushes. Now
+      // the build order is irrelevant and the order is data.
+      const K = Object.assign({}, gameFactChips(v), factChips(v));
+      if (v.illegal) K.illegal = chip("Illegal", "crime", "Criminal work — expect a CrimeStat for taking this.");
+      if (type) K.type = chip(type);
 
       // ── 2. The money, given size ────────────────────────────────────────────────────────
       // ── 3. Everything that genuinely needs a label, in a tight two-column grid ──────────
@@ -3174,9 +3174,10 @@
       // they sit side by side and the same facts take roughly half the height. They also WRAP
       // instead of truncating, so a narrow widget keeps every fact — Sub was explicit that
       // nothing may be dropped for being narrow.
-      const grid = [], fgrid = [];
-      const mk = (into) => (k, html, cls) => into.push(kchip(k, html, cls));
-      const gRow = mk(grid), fRow = mk(fgrid);
+      // `fgrid` is gone: Rank and Reputation moved into the main row (see PILL_ORDER), so the
+      // Faction group now carries the faction name and your standing bar only.
+      const grid = [];
+      const gRow = (k, html, cls) => grid.push(kchip(k, html, cls));
       // 🔑 Only shown once the VARIANT is resolved. Same-title variants are offered in different
       // regions drawing from DIFFERENT pools, so before the tracker knows which one you took,
       // naming places would send you somewhere that cannot drop what this panel lists —
@@ -3234,8 +3235,7 @@
       // names were already bundled. 93% resolve; the rest fall back to the number rather than
       // inventing a rung.
       if (v.rankRequired != null) {
-        fRow("Rank needed", escapeHtml(v.rankRequiredName || String(v.rankRequired)),
-          null);
+        K.rank = kchip("Rank needed", escapeHtml(v.rankRequiredName || String(v.rankRequired)), null);
       }
       // Reputation. One chip per scope — see the note in repSection.
       const repSection = (list0, neg, label) => {
@@ -3261,7 +3261,9 @@
           const own = !r.faction || r.faction === giver;
           const scopeWord = SCOPE_LABEL[r.scope] || (neg ? "Rep lost" : "Reputation");
           const label = own ? scopeWord : (r.faction + " " + scopeWord.toLowerCase());
-          fRow(label, amt + extraHint(r), neg ? "neg" : "pos");
+          // Several scopes can pay out, so reputation is a LIST under one key rather than one
+          // pill — the order below places the group, and the scopes keep their own order in it.
+          (K.rep || (K.rep = [])).push(kchip(label, amt + extraHint(r), neg ? "neg" : "pos"));
         }
       };
       repSection(rg, false, "Reputation");
@@ -3298,21 +3300,51 @@
       // was a nearly-empty row holding one number — the money belongs beside the facts that
       // describe the job, not stacked beneath them.
       const pay = payBlock(v);
-      const allChips = chips.slice();
-      if (pay) allChips.push(pay);
-      allChips.push(...grid);
-      if (link) allChips.push(link);
+      if (pay) K.payout = pay;
+      if (link) K.site = link;
+      // `grid` keeps its own internal order (pick up, then other pools, then usually flown) —
+      // those three are built as a sequence and Sub ordered them as a block.
+      K.grid = grid;
+
+      // 🔴 THE ROW ORDER, AND THE ONLY PLACE IT IS DECIDED (Sub, 2026-08-14). To change the row,
+      // move a line here — nothing else. Reads top-to-bottom as it renders left-to-right.
+      //
+      // 🔑 Reputation and Rank moved OUT of the Faction group into the main row, which is the one
+      // structural consequence of this order: that group now holds the faction name and your
+      // standing bar only. It still coheres — who you are working for and where you stand with
+      // them — but it is a smaller block than it was, and the rule above it now separates less.
+      // 🔑 The payout keeps its own larger treatment; it is placed IN the row, not turned into a
+      // plain chip, so the one number people scan for still reads as the headline.
+      const PILL_ORDER = [
+        "illegal",     // is it criminal work
+        "type",        // what kind of contract
+        "difficulty",  // how hard the game files call it
+        "solo",        // player-reported
+        "combat",      // player-reported
+        "payout",      // the money
+        "rep",         // standing awarded (a list — one per scope)
+        "rank",        // standing required
+        "retake",      // wait before you can take it again
+        "noretry",     // fail and you are locked out
+        "run",         // how long a run takes
+        "grid",        // pick up · other pools · usually flown
+        "site",        // through to the full write-up
+      ];
+      const allChips = PILL_ORDER.flatMap((k) => {
+        const v2 = K[k];
+        return v2 == null ? [] : Array.isArray(v2) ? v2 : [v2];
+      });
       body = '<div class="mi-body">'
         + (allChips.length ? '<div class="mi-chips">' + allChips.join("") + "</div>" : "")
         + difficultyMeter(v.community && v.community.facts)
         + "</div>";
       facBody = '<div class="mi-body">'
         + facName
-        + (fgrid.length ? '<div class="mi-chips">' + fgrid.join("") + "</div>" : "")
+
         + (standing ? '<div class="mi-standing">' + standing + "</div>" : "")
         + "</div>";
       // A group with nothing in it is worse than no group — don't draw an empty drawer header.
-      if (!fgrid.length && !standing) facBody = null;
+      if (!standing) facBody = null;
     }
     // 🔑 NO DRAWERS. These were two collapsible sections with headers and carets, because the
     // label/value rows they used to hold ran long enough that someone might want them out of the
