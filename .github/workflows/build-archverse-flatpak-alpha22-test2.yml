@@ -2,8 +2,7 @@ name: Build ArchVerse Alpha22 Flatpak Test2
 
 on:
   push:
-    branches:
-      - integration/flatpak-alpha22-test2
+    branches: [integration/flatpak-alpha22-test2]
     paths:
       - 'archverse-flatpak/**'
       - '.github/workflows/build-archverse-flatpak-alpha22-test2.yml'
@@ -30,13 +29,13 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Install Node dependencies and build current upstream sidecar
+      - name: Build current upstream sidecar
         run: |
           set -euxo pipefail
           npm ci
           npm run build:server
 
-      - name: Run Linux-safe upstream regression suites
+      - name: Run upstream Linux-safe regressions
         run: |
           set -euxo pipefail
           npm run test:handover
@@ -44,21 +43,19 @@ jobs:
           npm run test:location
           npm run test:contracts
 
-      - name: Reconstruct the verified ArchVerse Alpha 22 Linux shell
+      - name: Reconstruct verified Alpha 22 Linux shell
         run: |
           set -euxo pipefail
           rm -rf /tmp/archverse-a20 /tmp/archverse-stage /tmp/archverse-alpha20.tar.gz
-          mkdir -p /tmp/archverse-a20 /tmp/archverse-stage/app /tmp/archverse-stage/bin /tmp/archverse-stage/flatpak /tmp/archverse-stage/tests
-
+          mkdir -p /tmp/archverse-a20 /tmp/archverse-stage/{app,bin,flatpak,tests}
           curl --fail --location --retry 3 --retry-delay 2 \
             https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/releases/download/v0.1.42-r31-alpha.20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz \
-            --output /tmp/archverse-alpha20.tar.gz
+            -o /tmp/archverse-alpha20.tar.gz
           echo 'f4256aeac8c13fb0a64fc6065a8869bf58015dbe694200a550aaf9e99e3dd0a6  /tmp/archverse-alpha20.tar.gz' | sha256sum -c -
           tar -xzf /tmp/archverse-alpha20.tar.gz -C /tmp/archverse-a20 \
             --strip-components=2 --wildcards '*/app/electron/*'
           test -f /tmp/archverse-a20/electron/capture.cjs
           cp -a /tmp/archverse-a20/electron /tmp/archverse-stage/app/
-
           patch --batch /tmp/archverse-stage/app/electron/capture.cjs < archverse-flatpak/patches/electron/capture.patch
           patch --batch /tmp/archverse-stage/app/electron/linux/focus-controller.cjs < archverse-flatpak/patches/electron/focus-controller.patch
           patch --batch /tmp/archverse-stage/app/electron/main.cjs < archverse-flatpak/patches/electron/main.patch
@@ -67,7 +64,7 @@ jobs:
           cp archverse-flatpak/files/runtime-env.cjs /tmp/archverse-stage/app/electron/linux/
           cp archverse-flatpak/files/flatpak-star-citizen-session.cjs /tmp/archverse-stage/app/electron/linux/
 
-      - name: Apply Alpha 22 sidecar and Linux safety deltas
+      - name: Apply Alpha 22 sidecar safety deltas
         run: |
           set -euxo pipefail
           patch --batch build/server/overlay/config.html < archverse-flatpak/patches/server/config.html.patch
@@ -77,7 +74,7 @@ jobs:
           cp archverse-flatpak/files/overlay/archverse-resource-scanner.js build/server/overlay/
           cp archverse-flatpak/files/overlay/archverse-widget-appearance.js build/server/overlay/
 
-      - name: Stage production runtime and Flatpak payload
+      - name: Stage production payload
         run: |
           set -euxo pipefail
           npm prune --omit=dev
@@ -91,7 +88,7 @@ jobs:
           cp archverse-flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.yml /tmp/archverse-stage/
           cp archverse-flatpak/tests/flatpak-session-binder.test.cjs /tmp/archverse-stage/tests/
 
-      - name: Verify Alpha 22 invariants and Flatpak portability rules
+      - name: Verify Alpha 22 and Flatpak invariants
         working-directory: /tmp/archverse-stage
         run: |
           set -euxo pipefail
@@ -112,7 +109,6 @@ jobs:
           8cdd1cb1c3d533eabd027f490c7f1c92d8f883ec5465424b81058777007ef8a1  bin/sc-blueprint-tracker
           EOF
           sha256sum -c /tmp/archverse-expected.sha256
-
           node --check app/electron/capture.cjs
           node --check app/electron/main.cjs
           node --check app/electron/window-manager.cjs
@@ -121,7 +117,6 @@ jobs:
           node --check app/electron/linux/runtime-env.cjs
           node --check app/electron/linux/flatpak-star-citizen-session.cjs
           node tests/flatpak-session-binder.test.cjs
-
           grep -q 'salvageConfirmed === true' app/server/overlay/mining.html
           grep -q 'salvageConfirmed === true' app/server/overlay/archverse-resource-scanner.js
           grep -q 'SC_TRACKER_CONFIG_DIR' app/server/server.mjs
@@ -130,7 +125,7 @@ jobs:
           grep -q 'SC_OVERLAY_DEFAULT_ZONE_WIDTH' flatpak/archverse-overlay
           ! grep -R --line-number -E 'flatpak-spawn[[:space:]]+--host|org\.freedesktop\.Flatpak' .
 
-      - name: Install Flatpak and virtual X11 build tools
+      - name: Install Flatpak and headless desktop tools
         run: |
           set -euxo pipefail
           sudo apt-get update
@@ -138,7 +133,7 @@ jobs:
           command -v dbus-run-session
           flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
-      - name: Render icon and validate AppStream metadata
+      - name: Render icon and validate metadata
         run: |
           set -euxo pipefail
           rsvg-convert -w 512 -h 512 \
@@ -149,7 +144,7 @@ jobs:
           cp /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.png /tmp/archverse-stage/app/server/overlay/tray-icon.png
           appstreamcli validate --no-net /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.metainfo.xml
 
-      - name: Build distribution-neutral Flatpak Test 2
+      - name: Build Flatpak Test 2
         working-directory: /tmp/archverse-stage
         run: |
           set -euxo pipefail
@@ -188,11 +183,22 @@ jobs:
             /app/bin/archverse-node -e "console.log(\"Electron-as-Node\", process.versions.electron, process.version)"
           '
 
-      - name: Launch real ArchVerse GUI under Xvfb + D-Bus and require liveness
+      - name: Launch real ArchVerse GUI under Xvfb, private runtime dir, and D-Bus
         run: |
           set -euxo pipefail
+          export XDG_RUNTIME_DIR="${RUNNER_TEMP}/archverse-xdg-runtime"
+          rm -rf "$XDG_RUNTIME_DIR"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          test -O "$XDG_RUNTIME_DIR"
+          ls -ld "$XDG_RUNTIME_DIR"
+
           dbus-run-session -- bash -ceu '
             set -o pipefail
+            echo "CI runtime dir: $XDG_RUNTIME_DIR"
+            echo "CI session bus: ${DBUS_SESSION_BUS_ADDRESS:-missing}"
+            test -n "${DBUS_SESSION_BUS_ADDRESS:-}"
+
             Xvfb :99 -screen 0 1280x720x24 -ac +extension RANDR >/tmp/archverse-xvfb.log 2>&1 &
             XVFB_PID=$!
             cleanup() {
@@ -202,9 +208,6 @@ jobs:
             trap cleanup EXIT
             export DISPLAY=:99
             sleep 1
-
-            echo "CI session bus: ${DBUS_SESSION_BUS_ADDRESS:-missing}"
-            test -n "${DBUS_SESSION_BUS_ADDRESS:-}"
 
             flatpak run --env=SC_TRACKER_RENDER_MODE=gpu-off \
               io.github.gbmccray32_boop.ArchVerseOverlay \
@@ -216,6 +219,7 @@ jobs:
               if ! kill -0 "$GUI_PID" 2>/dev/null; then
                 echo "ArchVerse exited before GUI liveness gate." >&2
                 cat /tmp/archverse-flatpak-gui.log >&2 || true
+                cat /tmp/archverse-xvfb.log >&2 || true
                 exit 1
               fi
               if curl -fsS http://127.0.0.1:8778/api/config >/tmp/archverse-api-config.json 2>/dev/null; then
@@ -225,7 +229,14 @@ jobs:
               sleep 1
             done
 
-            test "$ready" = 1
+            if [ "$ready" != 1 ]; then
+              echo "Sidecar did not become ready within 20 seconds." >&2
+              cat /tmp/archverse-flatpak-gui.log >&2 || true
+              cat /tmp/archverse-xvfb.log >&2 || true
+              find "$XDG_RUNTIME_DIR" -maxdepth 3 -ls >&2 || true
+              exit 1
+            fi
+
             kill -0 "$GUI_PID"
             flatpak ps | grep -F io.github.gbmccray32_boop.ArchVerseOverlay
             grep -Fq "[flatpak] detected desktop canvas: 1280x720" /tmp/archverse-flatpak-gui.log
@@ -235,11 +246,11 @@ jobs:
             sleep 4
             kill -0 "$GUI_PID"
             curl -fsS http://127.0.0.1:8778/api/config >/tmp/archverse-api-config-final.json
-            echo "ArchVerse Flatpak GUI remained alive and sidecar responded under Xvfb + a real session bus."
+            echo "ArchVerse Flatpak GUI remained alive and sidecar responded."
             cat /tmp/archverse-flatpak-gui.log
           '
 
-      - name: Prepare Test 2 field-test tools and instructions
+      - name: Prepare Test 2 field-test package
         if: success()
         run: |
           set -euxo pipefail
@@ -251,16 +262,14 @@ jobs:
           ======================================================
 
           Test 2 fixes the incomplete Electron resource extraction found by the first Nobara test.
-          It also detects the available X11/XWayland desktop canvas at launch instead of inheriting
-          a hard-coded 6360x2160 profile. The first-run 1920x1080 safe zone is clamped on smaller
-          desktops. Explicit canvas environment overrides remain supported.
+          It dynamically detects the available X11/XWayland desktop canvas instead of inheriting
+          6360x2160. The first-run safe zone is clamped on smaller desktops. Explicit canvas
+          environment overrides remain supported.
 
-          Target:
-            x86_64 Linux with Flatpak and X11/XWayland.
-            Intended for Fedora/Nobara, Debian/Ubuntu/Mint/Pop!_OS, Arch/CachyOS, and other
-            Flatpak-capable distributions.
+          Target: x86_64 Flatpak Linux with X11/XWayland, including Fedora/Nobara,
+          Debian/Ubuntu/Mint/Pop!_OS, and Arch/CachyOS.
 
-          Install or replace Test 1:
+          Install/replace Test 1:
             flatpak install --user --reinstall ./ArchVerse-Overlay-0.1.42-r31-alpha.22-flatpak-test2-x86_64.flatpak
 
           Run:
@@ -269,26 +278,16 @@ jobs:
           Diagnostic:
             ./flatpak-doctor.sh
 
-          On launch, verify the terminal reports the actual machine desktop size, for example:
+          Expected launch lines use the actual machine desktop, e.g.:
             [flatpak] detected desktop canvas: 1920x1080
             [launcher] canvas profile: 1920x1080 origin=auto,auto
 
-          If the Wine prefix is outside ~/Games, /mnt, /media, or /run/media, grant only that path:
+          If the Wine prefix is outside ~/Games, /mnt, /media, or /run/media:
             flatpak override --user --filesystem=/path/to/star-citizen:ro io.github.gbmccray32_boop.ArchVerseOverlay
 
-          Field-test priorities:
-            1. Overlay starts and remains alive with Star Citizen closed.
-            2. Canvas matches the computer's available desktop rather than 6360x2160.
-            3. Desktop clicking remains accessible with Star Citizen closed.
-            4. With Star Citizen running, flatpak-doctor.sh identifies the SC X11/XWayland window.
-            5. Held F interaction works on the first attempt.
-            6. Shift+F6 Arrange mode works; Alt-Tab releases overlay interaction.
-            7. Closing Star Citizen while interacting immediately returns desktop access.
-            8. game.log mission tracking and payout scanning work.
-            9. Resource Scanner OCR and Scan Mode gating work.
-           10. 2,000-multiple signatures never produce false salvage confirmation.
-           11. Chat/Friends/party controls and tray behavior work.
-           12. Settings and widget positions persist after restart.
+          Priorities: launch/liveness, dynamic canvas, desktop focus handoff, held-F interaction,
+          Shift+F6, Star Citizen close handoff, game.log tracking, payout scan, Resource Scanner OCR,
+          strict no-false-salvage rule, chat/party, tray behavior, and settings persistence.
 
           This remains a field-test package, not the final public LUG release.
           EOF
