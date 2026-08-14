@@ -360,6 +360,16 @@ export interface TrackedView {
    *  receipt is never missed when it lands on a same-named mission you aren't viewing.
    *  null until a blueprint is received live this session. `at` = the log receipt time. */
   justReceived: (BlueprintReward & { at: string }) | null;
+  /**
+   * Blueprints the log recorded that we could not place — the raw string the game wrote,
+   * newest first — plus whether a modified language file is what is doing the renaming.
+   *
+   * 🔑 Shown rather than swallowed. An unmatched receipt is otherwise completely invisible:
+   * the pool simply stays dark, which reads as "the app is broken" instead of "your language
+   * file calls this something else". `packActive` is what decides whether offering Calibrate
+   * would even make sense — there is nothing to recalibrate against on a stock install.
+   */
+  unrecognized: { names: string[]; packActive: boolean };
   /** Present for ~30s after a mission COMPLETES — the report card's data (payout, duration,
    *  blueprints received, plus the crowdsourcing context). null the rest of the time.
    *  An abandoned mission never sets this: there is no reward to summarise and nothing worth
@@ -3086,6 +3096,12 @@ export class MissionTracker extends EventEmitter {
       closestPools: this.closestPools(),
       earnings: this.earningRates(),
       justReceived: this.justReceived,
+      unrecognized: {
+        // Capped: this is a nudge toward Calibrate, not a report. The full list is in
+        // /api/diagnostics, which is where someone actually debugging will look.
+        names: [...this.unrecognized].sort((a, b) => b[1].localeCompare(a[1])).slice(0, 5).map(([n]) => n),
+        packActive: this.phrasebook.status().source === "ini",
+      },
       completion: holdActive
         ? {
             title: this.completion!.title ?? mission?.title ?? tracked?.title ?? null,

@@ -2224,6 +2224,47 @@ const IDLEPAINT = `(async () => {
 // observation at all and most come from a single player, so the failure mode is not a missing
 // row — it is a lone reading rendered as though it were a settled fact. The site takes the same
 // line, and the two must not disagree about what counts as known.
+const UNRECOGNIZED = `(async () => {
+  ${PRELUDE}
+  // 🔑 No regex escape here on purpose. This whole suite is a template literal, so a "\\s+"
+  // written by a scripted edit arrives as "s+" and the strip helper silently eats every letter
+  // s — which reads as a broken FEATURE ("2 blueprint  could not be identified", "Colo u")
+  // rather than a broken test. Split/join needs no escapes and cannot fail that way.
+  const strip = (h) => h.replace(/<[^>]+>/g, " ").split(" ").filter(Boolean).join(" ").trim();
+  const view = (names, packActive) => ({ unrecognized: { names: names, packActive: packActive } });
+
+  ok("nothing unplaceable draws no banner at all",
+     unrecognizedHtml(view([], false)) === "" && unrecognizedHtml({}) === "",
+     JSON.stringify(unrecognizedHtml(view([], false))));
+
+  // 🔑 THE RAW STRING IS THE FEATURE. A count alone ("3 unknown") is a shrug; seeing the literal
+  // the game wrote is what makes the cause self-evident and turns a support report from
+  // "your app is broken" into "my language file renames things".
+  const packH = unrecognizedHtml(view(["Glacier Military A", "B10 Colossus"], true));
+  ok("the raw name the game logged is shown verbatim",
+     packH.indexOf("Glacier Military A") >= 0 && packH.indexOf("B10 Colossus") >= 0, strip(packH));
+  ok("...and it is counted in the headline", strip(packH).indexOf("2 blueprints could not be identified") >= 0, strip(packH));
+  ok("one of them reads as singular", strip(unrecognizedHtml(view(["Solo"], true))).indexOf("1 blueprint could not be identified") >= 0);
+
+  // Calibrate is only reachable when there is something to recalibrate AGAINST. Offering it on a
+  // stock install would be a button that cannot help, which is worse than no button.
+  ok("a modified language file offers Recalibrate", packH.indexOf("unrecCal") >= 0);
+  const stockH = unrecognizedHtml(view(["Whatever This Is"], false));
+  ok("a stock install does NOT offer Recalibrate — there is nothing to read", stockH.indexOf("unrecCal") < 0, strip(stockH));
+  ok("...but still names what it could not place", stockH.indexOf("Whatever This Is") >= 0);
+
+  // Same rule as every other explanation on this panel: the prose lives in the info affordance,
+  // not on the face of the banner, or the panel becomes a paragraph.
+  ok("the explanation is carried by the info affordance", packH.indexOf("mi-info") >= 0);
+  ok("...and the reason names the language file", packH.indexOf("language file renames items") >= 0);
+
+  // A name is arbitrary text out of a log file and goes straight into innerHTML.
+  const evil = unrecognizedHtml(view(["<img src=x onerror=alert(1)>"], false));
+  ok("a hostile name is escaped, not injected",
+     evil.indexOf("<img") < 0 && evil.indexOf("&lt;img") >= 0, evil.slice(0, 120));
+  return out;
+})();`;
+
 const MISSIONINFO = `(async () => {
   ${PRELUDE}
   const strip = (h) => h.replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim();
@@ -3988,6 +4029,7 @@ app.whenReady().then(async () => {
     fails += await run("split fade: panel vs text", SPLITFADE, null);
     fails += await run("nothing animates at rest", IDLEPAINT, null);
     fails += await run("mission info from community data", MISSIONINFO, null);
+    fails += await run("unrecognized blueprint names", UNRECOGNIZED, null);
     fails += await run("cog auto-hide on game focus", COGHIDE,
       path.join(__dirname, "widget-dom-stub-preload.cjs"), "coghide=250");
     fails += await run("unlock notifier", UNLOCK, null, null, "unlockalert.html");

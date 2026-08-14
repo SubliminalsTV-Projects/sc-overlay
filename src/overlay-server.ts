@@ -1517,6 +1517,18 @@ function startWatcher(): void {
   // 🔴 Hand over from the seed read at its exact byte, not at whatever the file measures NOW.
   // The two used to be independent, and everything the game logged in between belonged to
   // neither — see the startPosition note in watcher.ts for what that costs.
+  // Build the phrasebook here rather than at construction: this is the one place that always
+  // runs with a SETTLED log path, on boot and again after the user repoints it. Without it a
+  // player on a non-English UI, or running a language pack, resolves nothing — see localization.ts.
+  try {
+    const loc = tracker.setLogPath(config.logPath);
+    console.log(`[localization] ${loc.source}${loc.path ? ` ${loc.path}` : ""} (${loc.entries} names`
+      + `${loc.language ? `, g_language=${loc.language}` : ""})`);
+    if (loc.formatDrift.length)
+      console.log(`[localization] !! notification wording differs from English: ${loc.formatDrift.join(", ")}`);
+  } catch (err) {
+    console.log(`[localization] failed: ${(err as Error).message}`);
+  }
   watcher = new LogWatcher(config.logPath, {
     pollInterval: 1000,
     ...(seedEndsAt != null ? { startPosition: seedEndsAt } : {}),
@@ -1887,7 +1899,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // /api/ocr/health names security software running on this PC and how it is failing — a
     // profile of the machine, useless to the owner's OBS and no business of anything on the LAN.
     "/api/config", "/api/diagnostics", "/api/setup", "/api/ocr/health", "/api/mining/tone", "/api/scfeed/tone",
-    "/api/can-embed", "/api/dev/note",
+    // Names the path of the player's global.ini on disk — same class as diagnostics/setup.
+    "/api/can-embed", "/api/dev/note", "/api/localization",
   ]);
   const mutating = req.method !== "GET" && req.method !== "HEAD";
   const sensitive = mutating || SENSITIVE_GET.has(url);
@@ -2128,6 +2141,28 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     seedTrackerFromLog();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // Re-read the player's language file. This is the Calibrate button: a language pack updating
+  // is not something we can detect from the outside (and not something we want to poll a 10 MB
+  // file for), so the user tells us. `force` skips the size+mtime short-circuit because an edit
+  // that happens to preserve both would otherwise appear to do nothing.
+  // 🔑 Also re-runs the seed, so blueprints already recorded under names we could not place get
+  // resolved retroactively — without that, Calibrate would only help FUTURE receipts and the
+  // player would still be staring at the empty pool they pressed it for.
+  if (url === "/api/localization/calibrate" && req.method === "POST") {
+    const info = tracker.setLogPath(config.logPath, true);
+    seedTrackerFromLog();
+    console.log(`[localization] recalibrated: ${info.source} (${info.entries} names)`);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, ...tracker.localizationStatus() }));
+    return;
+  }
+
+  if (url === "/api/localization" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(tracker.localizationStatus()));
     return;
   }
 
@@ -3229,6 +3264,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // window in the wrong place from a canvas laid out at the wrong scale. These are the numbers
       // that tell them apart, so they belong in the paste-able report rather than in a log file.
       geometry: overlayGeometry ?? "(the overlay has not reported yet — is it switched off?)",
+      // Which language the log is being read in, and what we could not place. An unmatched
+      // receipt is otherwise invisible — this is the difference between a user reporting "the
+      // app is broken" and reporting "my language pack renamed these five things".
+      localization: tracker.localizationStatus(),
       // Standing per giver plus the completion count behind it. A sum out of proportion to the
       // count is an accrual leak, and the count is the half that makes the sum interpretable.
       reputation: tracker.repDiagnostics(),

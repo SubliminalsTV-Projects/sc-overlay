@@ -1221,6 +1221,20 @@
   .pgind { font-family: var(--mono); font-size: 10.5px; color: var(--cyan-dim); min-width: 42px; text-align: center; }
   .ambig { margin: 8px 3px 2px; padding: 6px 9px; border-radius: 3px; font-size: 10px; line-height: 1.35;
     color: var(--gold); border: 1px solid rgba(var(--value-rgb), 0.35); background: rgba(var(--value-rgb), 0.08); }
+  /* Unplaceable blueprint names. Same visual family as .ambig on purpose — both say "this is
+     real but we cannot name it precisely", and a player should read them the same way. */
+  .unrec { margin: 8px 3px 2px; padding: 6px 9px; border-radius: 3px; font-size: 10px; line-height: 1.4;
+    color: var(--gold); border: 1px solid rgba(var(--value-rgb), 0.35); background: rgba(var(--value-rgb), 0.08); }
+  .unrec ul { margin: 4px 0 0; padding: 0 0 0 14px; }
+  /* The raw string the game wrote. Monospace because it IS a literal — seeing "Glacier Military A"
+     is what makes the cause obvious without a word of explanation. */
+  .unrec li { font-family: ui-monospace, Consolas, monospace; font-size: 10px; color: var(--faint); }
+  .unrec-cal { margin-top: 6px; font: inherit; color: var(--cyan-bright); cursor: pointer;
+    background: rgba(var(--value-rgb), 0.10); border: 1px solid rgba(var(--value-rgb), 0.45);
+    border-radius: 3px; padding: 3px 9px; }
+  .unrec-cal:hover { border-color: var(--cyan-bright); }
+  .unrec-cal[disabled] { opacity: 0.6; cursor: default; }
+
   .rewnote { margin-top: 7px; padding: 0 3px; font-size: 10.5px; color: var(--faint); }
 
   /* Idle per-hour rates. The .rates / .rt-grid table these used to live in was folded into the
@@ -2514,6 +2528,7 @@
 
     let html = missionInfoHtml(v) + rewardsHtml(v);
     if (v.ambiguous) html += '<div class="ambig">⚠ Multiple mission tiers share this name — showing all possible drops. Your actual mission draws from one tier, so odds are approximate.</div>';
+    html += unrecognizedHtml(v);
     if (need.length || have.length) html += '<div class="poolhead">Blueprint pool<span class="ph-sub">1 random blueprint per completion</span></div>';
     html += pageRows.map(rowHtml).join("");
     if (!need.length && have.length) html += '<div class="allgot">✓ You already have every blueprint in this pool.</div>';
@@ -3116,6 +3131,52 @@
   }
 
   // Payout line + ITEM rewards (actual items — not blueprints; display-only).
+  /**
+   * Blueprints we recorded but could not name.
+   *
+   * 🔑 It shows the RAW string the game wrote, verbatim and in monospace. That is the whole
+   * design: "Glacier Military A" or "Omnisky-III-Kanone" sitting there explains the cause
+   * without anyone having to read the sentence above it, and turns a support report from
+   * "your app is broken" into "my language file renames things". A count alone ("3 unknown")
+   * would be a shrug.
+   *
+   * ONE banner, never one per row — a wall of warnings is worse than a single clear one. And
+   * Calibrate is offered only when a modified language file is actually present: on a stock
+   * install there is nothing to recalibrate against, so the button would be a dead end.
+   */
+  function unrecognizedHtml(v) {
+    const u = v.unrecognized;
+    if (!u || !u.names || !u.names.length) return "";
+    const list = u.names.map((n) => "<li>" + escapeHtml(n) + "</li>").join("");
+    const why = u.packActive
+      ? "Your game's language file renames items, and these names are not in it — it may have been updated since the app last read it."
+      : "Your game logged these blueprint names, but they match nothing in the current patch's data.";
+    return '<div class="unrec">⚠ ' + escapeHtml(v.unrecognized.names.length === 1 ? "1 blueprint could not be identified" : u.names.length + " blueprints could not be identified")
+      + " " + info(why + " They are not counted in your pools.")
+      + "<ul>" + list + "</ul>"
+      + (u.packActive ? '<button type="button" class="unrec-cal" id="unrecCal">Recalibrate from my language file</button>' : "")
+      + "</div>";
+  }
+
+  // Delegated, because the banner is rebuilt by innerHTML on every render — a listener bound to
+  // the button itself would be thrown away by the next frame.
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest && e.target.closest("#unrecCal");
+    if (!btn) return;
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = "Reading your language file…";
+    try {
+      const r = await (await fetch("/api/localization/calibrate", { method: "POST" })).json();
+      // The seed re-runs server-side, so anything now resolvable has already been re-credited
+      // and the next view frame simply arrives without it.
+      btn.textContent = r && r.entries ? "Done — " + r.entries + " names loaded" : "Done";
+    } catch {
+      btn.textContent = "Could not read it — is the game installed where the app is pointed?";
+      btn.disabled = false;
+    }
+  });
+
   function rewardsHtml(v) {
     // Physical item rewards (actual items/ships, NOT blueprints). The log never reports item
     // awards, so ticking is MANUAL + local-only — it never touches the blueprint count or sync.
