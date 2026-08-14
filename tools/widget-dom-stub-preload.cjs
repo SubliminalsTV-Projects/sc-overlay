@@ -41,6 +41,10 @@ const real = {
   // and watching it stay green. Assert against these rects instead; they are what the shell
   // actually receives, and anything outside one is unclickable no matter how it renders.
   reportRegions: (rects) => { window.__regions = rects; },
+  // The canvas-wide typing grab. Pages arm it through host().editStart() and the shell is the
+  // only thing that can see it, so record it — a suite asserts the grab is actually RELEASED
+  // when a typing widget hides, which is invisible to every DOM measurement.
+  notepadEditing: (on) => { window.__editing = !!on; },
   // Same deal for "is the game in front" — only the shell can know, so a test drives it directly.
   // wantForeground resolves null (helper hasn't answered), which is what a real cold start does.
   onGameFocus: (cb) => { window.__fireGameFocus = cb; },

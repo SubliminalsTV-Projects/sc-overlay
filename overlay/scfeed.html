@@ -157,7 +157,7 @@
   let actx = null, master = null;
   function ensureActx() {
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); } catch { /* no audio */ }
-    if (actx && actx.state === "suspended") actx.resume().catch(() => {});
+    if (actx && actx.state === "suspended") actx.resume().catch(() => { /* stays suspended — retried on the next gesture */ });
     return actx;
   }
   ["pointerdown", "keydown"].forEach((ev) => window.addEventListener(ev, ensureActx));

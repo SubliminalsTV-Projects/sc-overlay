@@ -183,7 +183,7 @@ function ensureWebView() {
   // Target=_blank and window.open must not spawn a second frameless always-on-top window over
   // the game — send those to the real browser instead.
   webView.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {});
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => { /* OS has no handler — nothing useful to do */ });
     return { action: "deny" };
   });
   // Keep the widget's chrome honest about what it's showing.
@@ -255,6 +255,7 @@ function recomputeWebViewMask() {
 // first sign of trouble was a fetch failing minutes later ("couldn't reach the overlay service").
 // Truncated per launch — this is for diagnosing the session you're in, not history.
 const SIDECAR_LOG = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", "sidecar.log");
+const SIDECAR_PREV_LOG = path.join(path.dirname(SIDECAR_LOG), "sidecar-prev.log");
 
 let sidecarLogOpened = false;
 
@@ -263,6 +264,13 @@ function sidecarLogStream() {
     fs.mkdirSync(path.dirname(SIDECAR_LOG), { recursive: true });
     // Truncate once per APP launch, then append. A respawn must not erase the crash it is
     // recovering from — that stack is the entire reason this file exists.
+    // 🔑 And keep ONE previous generation: "restart the app" is the first thing every user tries
+    // before reporting a problem, and truncating here used to destroy the exact log that covered
+    // the incident. sidecar-prev.log is the session they are reporting ABOUT.
+    if (!sidecarLogOpened) {
+      try { fs.rmSync(SIDECAR_PREV_LOG, { force: true }); fs.renameSync(SIDECAR_LOG, SIDECAR_PREV_LOG); }
+      catch { /* first ever run — nothing to keep yet */ }
+    }
     const fd = fs.openSync(SIDECAR_LOG, sidecarLogOpened ? "a" : "w");
     sidecarLogOpened = true;
     return fd;
@@ -277,6 +285,20 @@ function sidecarLogStream() {
 function noteInSidecarLog(line) {
   try { fs.appendFileSync(SIDECAR_LOG, `\n[electron ${new Date().toISOString()}] ${line}\n`); } catch { /* best effort */ }
 }
+
+// A renderer or GPU process dying takes a whole surface with it — the canvas going blank, the Web
+// Page widget's view vanishing — and used to be recorded NOWHERE: this process's console does not
+// exist in a packaged build. One line in the sidecar log turns "it just went blank" into a cause.
+// Log-only on purpose: Electron's default recovery behaviour is unchanged.
+app.on("render-process-gone", (_e, contents, details) => {
+  let where = "(no url)";
+  try { where = String(contents.getURL()).slice(0, 120); } catch { /* contents already destroyed */ }
+  noteInSidecarLog(`renderer gone: ${details.reason} (exitCode ${details.exitCode}) — ${where}`);
+});
+app.on("child-process-gone", (_e, details) => {
+  if (details.reason === "clean-exit") return; // normal teardown is not an incident
+  noteInSidecarLog(`child process gone: ${details.type} — ${details.reason} (exitCode ${details.exitCode})`);
+});
 
 // Restart backoff. A sidecar that crashes on startup (a bad dataset, a port fight) must not be
 // respawned in a tight loop — back off, and give up loudly rather than churning forever.
@@ -1645,6 +1667,8 @@ function setupUpdater() {
       buttons: ["OK"],
     });
   });
+  // A rejected check also fires the "error" handler above, which owns all reporting — these
+  // catches only silence the duplicate unhandled-rejection noise.
   autoUpdater.checkForUpdates().catch(() => {});
   setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 3 * 60 * 60 * 1000);
 }
@@ -1941,7 +1965,7 @@ if (!app.requestSingleInstanceLock()) {
   // Re-validated here, not just in the preload: a renderer is never the authority on what the
   // shell is allowed to launch. https only, same rule as overlay:open-url.
   ipcMain.on("setup:open-external", (_e, url) => {
-    if (typeof url === "string" && /^https:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+    if (typeof url === "string" && /^https:\/\//i.test(url)) shell.openExternal(url).catch(() => { /* OS has no handler — nothing useful to do */ });
   });
   ipcMain.on("setup:close", () => setupWin?.close());
   // The nudge banner's "set it up" button, and its dismiss. Both come from the canvas.
@@ -2211,9 +2235,10 @@ if (!app.requestSingleInstanceLock()) {
     };
   });
   ipcMain.on("app:open-data-folder", (_e, which) => {
-    const dirs = { "party-sessions": "party-sessions", "fab-captures": "fab-captures" };
+    // "logs" is the data-dir root — that is where sidecar.log and sidecar-prev.log live.
+    const dirs = { "party-sessions": "party-sessions", "fab-captures": "fab-captures", "logs": "" };
     const sub = dirs[String(which)];
-    if (!sub) return;
+    if (sub === undefined) return;
     const dir = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", sub);
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* best-effort */ }
     shell.openPath(dir);

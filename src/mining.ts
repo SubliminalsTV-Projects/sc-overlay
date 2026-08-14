@@ -174,7 +174,7 @@ export class MiningTracker extends EventEmitter {
     try {
       this.data = JSON.parse(readFileSync(join(opts.dataDir, "mineables.json"), "utf8")) as MineablesData;
     } catch {
-      this.data = null;
+      this.data = null; // not silent: every read then reports why: "no rock table loaded"
     }
     this.load();
     // Fire "refinery-done" as jobs cross zero, and prune long-finished ones.

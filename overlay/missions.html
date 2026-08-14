@@ -2158,6 +2158,33 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
+  // A JS error in this window used to vanish — its console does not exist in a packaged build,
+  // which is how "it just looks frozen" bugs (the mission-report repaint class) left nothing a
+  // user could send. Forward the first few to the sidecar, which is the durable half
+  // (sidecar.log + /api/diagnostics). Registered FIRST so an error during init is still caught.
+  // Budgeted and deduped here as well as server-side: an error loop must not spend its whole
+  // budget saying the same thing, and the sidecar being down is its own, already-visible failure.
+  (() => {
+    let budget = 10, last = "";
+    const send = (msg, stack) => {
+      const line = String(msg || "").slice(0, 300);
+      if (budget <= 0 || line === last) return;
+      budget--; last = line;
+      try {
+        fetch("/api/client-error", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: (window.overlayApi ? "canvas" : "tracker-page"),
+            msg: line, stack: String(stack || "").slice(0, 1200),
+          }),
+        }).catch(() => { /* sidecar down — that failure is already loud elsewhere */ });
+      } catch { /* error reporting must never itself throw */ }
+    };
+    window.addEventListener("error", (e) => send(e.message, e.error && e.error.stack));
+    window.addEventListener("unhandledrejection", (e) => send(
+      (e.reason && (e.reason.message || e.reason)) || "unhandled rejection",
+      e.reason && e.reason.stack));
+  })();
   let current = null;
   // Canvas / widget mode: the Electron overlay-app is a full-screen transparent canvas that
   // hosts the panel as a free-floating, draggable, independently-scalable widget. ?canvas=1
@@ -3645,7 +3672,7 @@
           if (d.answer.solo != null) mrAnswers.solo = d.answer.solo;
           $("mrAsk").innerHTML = reportAsk(c);
         })
-        .catch(() => {});
+        .catch(() => { /* no prefill — the questions just start blank */ });
     }
     // No abandoned variant any more — an abandon never produces a completion at all.
     $("mrBody").innerHTML = reportBody(c);
@@ -3780,7 +3807,10 @@
         difficulty: mrAnswers.difficulty ?? null,
         solo: mrAnswers.solo ?? null,
       }),
-    }).then((r) => { if (r.ok) { mrAnswers.saved = true; } }).catch(() => {});
+    }).then((r) => { if (r.ok) { mrAnswers.saved = true; } })
+      // saved stays false, so the card never claims a save that didn't happen — and any later
+      // answer click re-posts all three fields, so a dropped request heals itself.
+      .catch(() => {});
   }
 
   $("mrX").addEventListener("click", hideReport);
@@ -4192,6 +4222,10 @@
       key: "twitchChat", page: "twitchchat.html", title: "Twitch Chat",
       def: { x: 860, y: 60 }, size: { w: 340, h: 460, minW: 260, maxW: 900, minH: 220, maxH: 1100 },
       focusFn: "__twitchChatFocus",
+      // Hiding mid-typing must release the keyboard grab, or the whole canvas stays interactive
+      // with nothing visible to explain it — and hide UNLOADS the iframe, so the page can never
+      // release it after the fact. Same rule as notepad/party/chat.
+      onHide: (w) => { try { frameWin(w)?.__twitchChatExitTyping?.(); } catch { /* iframe gone */ } },
       // Sign-in sends the user to twitch.tv/activate — that has to open in a real browser.
       host: () => ({ openUrl: (u) => window.overlayApi?.openUrl?.(u) }),
     },
@@ -4275,7 +4309,11 @@
       // Tabbed away, closed, or the whole overlay hidden: the view must go with it, or someone
       // else's website floats over the game with nothing behind it.
       onShow: (w) => scheduleWebViewSync(w),
-      onHide: () => window.overlayApi?.webViewShow?.(false),
+      // The typing grab must release BEFORE the iframe unloads (same rule as notepad/party/chat).
+      onHide: (w) => {
+        try { frameWin(w)?.__webViewExitTyping?.(); } catch { /* iframe gone */ }
+        window.overlayApi?.webViewShow?.(false);
+      },
     },
     {
       key: "bindingChart", page: "bindingwidget.html", title: "Infographic Viewer",
@@ -6669,7 +6707,7 @@
   const q0 = new URLSearchParams(location.search);
   if (!FIXTURES.some((f) => q0.has(f))) {
     const es = new EventSource("/missions/events");
-    es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
+    es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch { /* malformed frame — skip it, the next one repaints */ } };
     es.onerror = () => { /* auto-reconnects */ };
   }
 </script>

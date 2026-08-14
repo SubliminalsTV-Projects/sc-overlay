@@ -552,7 +552,7 @@
 
   function speak(text) {
     if (!voiceOn()) return;
-    try { const u = new SpeechSynthesisUtterance(text); u.rate = 1.02; u.volume = getVol(); speechSynthesis.cancel(); speechSynthesis.speak(u); } catch {}
+    try { const u = new SpeechSynthesisUtterance(text); u.rate = 1.02; u.volume = getVol(); speechSynthesis.cancel(); speechSynthesis.speak(u); } catch { /* no TTS voice — the call-out is just silent */ }
   }
   // Set by the parent canvas whenever the widget is shown/hidden. Hidden => no audio, no speech.
   // 🔑 Defaults to HIDDEN when embedded: this page can be loaded while off-screen (armed, waiting
@@ -568,8 +568,8 @@
   // A Web-Audio context created outside a user gesture starts "suspended" (silent). Create
   // it lazily and resume it here + on first interaction so alert tones always sound.
   function ensureActx() {
-    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); } catch {}
-    if (actx && actx.state === "suspended") actx.resume().catch(() => {});
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); } catch { /* no audio */ }
+    if (actx && actx.state === "suspended") actx.resume().catch(() => { /* stays suspended — retried on the next gesture */ });
     return actx;
   }
   ["pointerdown", "keydown"].forEach((ev) => window.addEventListener(ev, ensureActx));
@@ -589,7 +589,7 @@
       g.gain.exponentialRampToValueAtTime(0.35, t + 0.02);
       g.gain.exponentialRampToValueAtTime(0.0001, t + ms / 1000);
       o.start(t); o.stop(t + ms / 1000 + 0.02);
-    } catch {}
+    } catch { /* no audio device — the cue is best-effort */ }
   }
   // A single alert cue — a user-supplied WAV (served at /api/mining/tone) if set, else the
   // built-in synth. `dbl` plays the two-note built-in default for the mission-complete alarm.
@@ -657,7 +657,8 @@
   // (HAL's five "I don't know what that is" lines used to live here. An `unknown` value is one the
   // game cannot draw as a signature, so it is now refused by the tracker and never reaches this
   // widget at all — see applyMineableRead. The c_unknown1..5 clips are still in overlay/tts/ if the
-  // call-out is ever wanted back.)
+  // call-out is ever wanted back. Same deal for c_breaking, c_debrisor and c_thiscouldbe — retired
+  // wordings whose clips stay on disk because regenerating HAL audio costs far more than it saves.)
 
   // ---- render ----
   function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
@@ -739,7 +740,7 @@
     const b = ev.target.closest && ev.target.closest("button.pm");
     if (!b) return;
     fetch("/api/mining/place-mode", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: b.dataset.pm }) }).catch(() => {});
+      body: JSON.stringify({ mode: b.dataset.pm }) }).catch(() => { /* buttons paint from server state — a lost POST leaves this one unlit, which is the truth */ });
   });
 
   function renderTargets() {
@@ -857,7 +858,7 @@
     if (a.overlayScale != null) applyMiningScale(a.overlayScale);
   }
   async function loadCfg() {
-    try { cfg = await fetch("api/config").then((r) => r.json()); } catch {}
+    try { cfg = await fetch("api/config").then((r) => r.json()); } catch { /* keep the previous cfg — controls fall back to defaults */ }
     $("toneClr").classList.toggle("hidden", !cfg.miningTone);
     applyMiningScale(cfg.overlayScale);
   }

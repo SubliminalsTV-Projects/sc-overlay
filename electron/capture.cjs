@@ -7,6 +7,12 @@
 // these to subliminal.gg. A tracked-mission read is logged for the picker wiring.
 //
 // This runs only in the Electron main process (needs desktopCapturer + nativeImage).
+//
+// ⚠️ console.* here is DEV-ONLY — the packaged app is a detached GUI process with no stdout, so
+// those lines are invisible to every installed user. They mark transient, self-healing failures
+// (a sidecar POST that the next tick retries). Anything that can fail PERSISTENTLY must surface
+// through a loud path instead: reportRapidFailure() → the widget, the /api/heartbeat diagnostics,
+// or a field on an existing request the sidecar logs. That split is the 0.1.42 lesson.
 
 const { desktopCapturer, screen, nativeImage } = require("electron");
 const { execFile } = require("node:child_process");
