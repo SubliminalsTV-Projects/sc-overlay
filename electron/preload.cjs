@@ -147,6 +147,9 @@ contextBridge.exposeInMainWorld("overlayApi", {
     pickPng: () => ipcRenderer.invoke("pick-png"),
     pickLog: (current) => ipcRenderer.invoke("pick-log", current),
     setOverlayHotkey: (a) => ipcRenderer.invoke("set-overlay-hotkey", a),
+    // Per-widget hotkeys: one call for every widget, keyed by registry key.
+    setWidgetHotkey: (key, a) => ipcRenderer.invoke("set-widget-hotkey", key, a),
+    listWidgetHotkeys: () => ipcRenderer.invoke("list-widget-hotkeys"),
     setBindingHotkey: (a) => ipcRenderer.invoke("set-binding-hotkey", a),
     setMiningHotkey: (a) => ipcRenderer.invoke("set-mining-hotkey", a),
     setWebViewHotkey: (a) => ipcRenderer.invoke("set-webview-hotkey", a),

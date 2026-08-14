@@ -298,11 +298,29 @@ export interface MissionPreview {
   repBar: RepBar | null;
   ambiguous: boolean;
   hasPool: boolean;
+  /** Contract facts. Taken from the single variant only — see the note in previewByTitle. */
+  facts: MissionFacts | null;
   /** How many dataset contracts share this title — shown so "1 of 253" is never a surprise. */
   variants: number;
   pools: { poolUuid: string; blueprints: BlueprintStatus[] }[];
   owned: number;
   total: number;
+}
+
+/** Contract facts from `mission-facts.<cl>.json`. Every field is optional — coverage runs 46–77%
+ *  and a renderer must self-hide rather than print a blank. */
+export interface MissionFacts {
+  /** Minutes before you can take this contract again after finishing it (55%). */
+  cd?: number;
+  /** Variance on that wait, in minutes. */
+  cdVar?: number;
+  /** How long a run is expected to take, in minutes (47%). A DIFFERENT number from `cd`. */
+  dur?: number;
+  /** CIG's own blended difficulty, 1–7 (46%). */
+  diff?: number;
+  /** Only ever true: failing this contract locks you out of retaking it (77%).
+   *  ⚠️ Absence means "not stated", never "you can retry" — assert only the negative. */
+  noRetry?: boolean;
 }
 
 export interface TrackedView {
@@ -322,6 +340,8 @@ export interface TrackedView {
    *  DatasetMission.payoutCalculated. The widget must render it as an estimate; it is wrong
    *  one time in four and is shaped exactly like a real payout. */
   payoutEstimated: boolean;
+  /** Contract facts (retake wait, run length, difficulty). null when the dataset has none. */
+  facts: MissionFacts | null;
   /** ITEM rewards (not blueprints) the shown mission hands out. Display-only. */
   /** Guaranteed ITEM rewards (not blueprints). `owned` is a manual, local-only tick —
    *  item awards never appear in the log, so it's never auto-set and never synced. */
@@ -414,6 +434,8 @@ export interface TrackedView {
      *  card MUST mark it: the model is wrong about one time in four, and a completion card
      *  saying a flat number is read as "this is what you were just paid". */
     payoutEstimated: boolean;
+    /** Contract facts — the card uses `cd` for "you can take this again in N". */
+    facts: MissionFacts | null;
     /** Accept→complete duration in ms, or null if the accept wasn't seen. */
     durationMs: number | null;
     /** Blueprints received during the mission (name + item image for the card). */
@@ -1162,6 +1184,7 @@ export class MissionTracker extends EventEmitter {
         this.patch = this.dataset.version;
         // Follow the same changelist with the crafting-detail dataset (recipes/stats).
         this.detail.loadForChangelist(this.dataset.changelist);
+        this.loadMissionFacts(this.dataset.changelist);
         this.buildTitleIndex();
         this.buildRepTitleIndex();
         // Follow the patch with the phrasebook too. Detecting a new build mid-session swaps the
@@ -1177,6 +1200,49 @@ export class MissionTracker extends EventEmitter {
         /* try next */
       }
     }
+  }
+
+  /** Contract facts the main dataset does not carry — how long before you can take a mission
+   *  again, how long it runs, CIG's blended difficulty, and whether failing locks you out.
+   *
+   *  🔑 A TRIMMED file (`tools/build-mission-facts.mjs`), not the site's `mission-extra`. That one
+   *  is 6 MB and the app already ships a 4.5 MB dataset; the site reads it server-side and never
+   *  sends it anywhere, so only the app pays for size. Trimmed to what the UI renders it is 0.38 MB.
+   *  🔑 Absent file = every fact simply missing, which every renderer already handles — this must
+   *  never be a hard dependency, because a dataset built before this existed has no such file. */
+  private missionFacts: Record<string, MissionFacts> = {};
+  private loadMissionFacts(changelist?: string): void {
+    this.missionFacts = {};
+    for (const p of [
+      changelist ? join(this.dataDir, `mission-facts.${changelist}.json`) : null,
+      join(this.dataDir, "mission-facts.latest.json"),
+    ].filter(Boolean) as string[]) {
+      if (!existsSync(p)) continue;
+      try {
+        const d = JSON.parse(readFileSync(p, "utf8")) as { missions?: Record<string, MissionFacts> };
+        this.missionFacts = d.missions ?? {};
+        return;
+      } catch { /* try next */ }
+    }
+  }
+  /** Facts for one contract key, or null. */
+  factsFor(key: string | null | undefined): MissionFacts | null {
+    return (key && this.missionFacts[key]) || null;
+  }
+
+  /** Facts common to EVERY variant of a title — a field survives only when they all agree.
+   *  Used by the search brief, where a title can cover several contracts; the live panel and the
+   *  completion card use `factsFor()` instead, because there the exact contract is known. */
+  private mergeFacts(keys: string[]): MissionFacts | null {
+    const all = keys.map((k) => this.missionFacts[k]).filter(Boolean) as MissionFacts[];
+    if (!all.length) return null;
+    const out: MissionFacts = {};
+    for (const field of ["cd", "cdVar", "dur", "diff", "noRetry"] as const) {
+      const first = all[0][field];
+      if (first == null) continue;
+      if (all.every((f) => f[field] === first)) (out as Record<string, unknown>)[field] = first;
+    }
+    return Object.keys(out).length ? out : null;
   }
 
   /** Path to the NEWEST bundled dataset in a version family ("4.9" → the highest 4.9.x
@@ -3106,6 +3172,12 @@ export class MissionTracker extends EventEmitter {
       repBar: giver ? this.computeRepBar(records[0]) : null,
       ambiguous,
       hasPool: total > 0,
+      // 🔑 AGREE-OR-OMIT PER FIELD, not all-or-nothing on the title. Dropping every fact whenever
+      // a title had siblings was too blunt and measurably wrong: the three "Cargo Hauling
+      // Opportunity with Ling Hauling" variants share a 15-minute retake wait and differ only in
+      // run length (27 / 41 / 65 min), so an all-or-nothing rule threw away a fact all three
+      // agree on. Each field is kept when every variant states the same value.
+      facts: this.mergeFacts(keys),
       variants: keys.length,
       pools,
       owned,
@@ -3291,6 +3363,7 @@ export class MissionTracker extends EventEmitter {
       ambiguous,
       payout: mission?.payout ?? null,
       payoutEstimated: mission?.payoutCalculated === true,
+      facts: this.factsFor(key),
       itemRewards: (mission?.items ?? []).map((i) => ({
         name: i.name,
         amount: Number(i.amount) || 1,
@@ -3341,6 +3414,7 @@ export class MissionTracker extends EventEmitter {
             // `mission` in this scope IS the completed contract during the hold (see the note
             // below on effectiveId), so the flag comes from the same record the payout did.
             payoutEstimated: mission?.payoutCalculated === true,
+            facts: this.factsFor(key),
             durationMs: this.completion!.acceptedAtMs != null ? this.completion!.completedAtMs - this.completion!.acceptedAtMs : null,
             blueprints: this.forcedBlueprints ?? this.completionBlueprints(),
             // During the hold, `effectiveId` IS the completed mission (see holdActive above),

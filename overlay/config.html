@@ -515,6 +515,12 @@
       <input type="hidden" id="moveHotkey" />
       <div class="hint" id="moveHotkeyHint"></div>
     </div>
+    <!-- A hotkey for every remaining widget. Rows are GENERATED from one list in the script (see
+         WIDGET_HOTKEYS) so adding a widget later costs one line, not a block of markup plus a
+         config field plus a shell registration. They ship unbound on purpose. -->
+    <div class="sechead" style="margin-top:14px">Widgets</div>
+    <div class="hint" style="margin-bottom:2px">Each widget can have its own show/hide key. None is set by default — pick only the ones you actually want.</div>
+    <div id="widgetHotkeyRows"></div>
     <!-- Moved here from "Performance & fixes": this whole block exists to explain why the hotkeys
          above don't reach the game, so it belongs beside them rather than in a card nobody with
          that problem would think to open. -->
@@ -900,9 +906,14 @@
     // changed in a widget while this window sat open would be silently written back stale.
     // `?? def`, NOT `|| def`: "" is a hotkey the user deliberately REMOVED and has to survive a
     // reload; only a missing field means "never set" and takes the default.
+    // Rows must EXIST before their values are applied — setHotkeyDisplay writes into elements by
+    // id, and a row that has not been generated yet silently swallows its saved value.
+    buildWidgetHotkeyRows();
+    const wmapSaved = (cfg.widgetHotkeys && typeof cfg.widgetHotkeys === "object") ? cfg.widgetHotkeys : {};
     for (const which of Object.keys(HOTKEYS)) {
-      const saved = cfg[which + "Hotkey"];
-      setHotkeyDisplay(which, typeof saved === "string" ? saved : HOTKEYS[which].def);
+      const spec = HOTKEYS[which];
+      const saved = spec.widget ? wmapSaved[spec.widget] : cfg[which + "Hotkey"];
+      setHotkeyDisplay(which, typeof saved === "string" ? saved : spec.def);
     }
     hotkeysLoaded = true;
     setOpacitySlider(Number.isFinite(cfg.unfocusedOpacity) ? Math.round(cfg.unfocusedOpacity * 100) : 100);
@@ -989,9 +1000,18 @@
     // fields are left untouched by the server, so an early Save can no longer wipe six hotkeys by
     // submitting the empty inputs it happens to be looking at.
     if (hotkeysLoaded) {
+      // 🔑 Widget entries go into the MAP, everything else stays a flat field. The map is merged
+      // per key server-side, so posting only the widgets this page knows about can never delete a
+      // hotkey belonging to a widget it has not heard of.
+      const wmap = {};
       for (const which of Object.keys(HOTKEYS)) {
-        body[which + "Hotkey"] = document.getElementById(HOTKEYS[which].input).value.trim();
+        const spec = HOTKEYS[which];
+        const el = document.getElementById(spec.input);
+        if (!el) continue; // a row that was never built — never throw mid-save
+        if (spec.widget) wmap[spec.widget] = el.value.trim();
+        else body[which + "Hotkey"] = el.value.trim();
       }
+      if (Object.keys(wmap).length) body.widgetHotkeys = wmap;
     }
     const token = document.getElementById("syncToken").value.trim();
     // The field may still show the truncated preview (contains "…"); only submit a real pasted token.
@@ -1260,6 +1280,46 @@
     opacity: { input: "opacityHotkey", btn: "opacityHotkeyBtn", hint: "opacityHotkeyHint", def: "",
                apply: (a) => window.overlayConfig && window.overlayConfig.setOpacityHotkey && window.overlayConfig.setOpacityHotkey(a) },
   };
+
+  // ── A hotkey for every widget ───────────────────────────────────────────────────────────────
+  // The seven widgets that never had one. Mining, Journal, Web Page and Infographic Viewer keep
+  // their original rows above — they already work, and rewriting a working control to make the
+  // list tidy is how you break four bindings to add seven.
+  //
+  // 🔑 NO DEFAULTS (Sub's call). Eleven default chords would collide with each other, with the
+  // game, and with whatever the player already uses, so these ship unbound and say so.
+  // 🔑 These persist into `config.widgetHotkeys` (a MAP keyed by registry key) rather than as a
+  // field each, so a widget added later needs one line here and nothing anywhere else.
+  const WIDGET_HOTKEYS = [
+    ["party", "Loot Split"],
+    ["battaglia", "Event Tracker"],
+    ["chat", "Chat"],
+    ["twitchChat", "Twitch Chat"],
+    ["scFeed", "SC Feed"],
+    ["unlockAlert", "Unlock Alerts"],
+    ["config", "Settings"],
+  ];
+  for (const [key, label] of WIDGET_HOTKEYS) {
+    HOTKEYS[key] = {
+      input: key + "WHotkey", btn: key + "WHotkeyBtn", hint: key + "WHotkeyHint", def: "",
+      widget: key, // marks it as belonging in the widgetHotkeys MAP rather than a flat field
+      apply: (a) => window.overlayConfig && window.overlayConfig.setWidgetHotkey
+        && window.overlayConfig.setWidgetHotkey(key, a),
+    };
+  }
+  /** Build the rows. Generated rather than hand-written so a new widget is one line above. */
+  function buildWidgetHotkeyRows() {
+    const host = document.getElementById("widgetHotkeyRows");
+    if (!host) return;
+    host.innerHTML = WIDGET_HOTKEYS.map(([key, label]) =>
+      '<div class="hkrow">'
+      + '<span class="hklabel">' + label + "</span>"
+      + '<button type="button" id="' + key + 'WHotkeyBtn" class="hkbtn unset" onclick="startCaptureHotkey(\'' + key + '\')">Not set</button>'
+      + '<button type="button" class="hkclear hidden" id="' + key + 'WHotkeyClear" title="Remove this hotkey" onclick="clearHotkey(\'' + key + '\')">&#10005;</button>'
+      + '<input type="hidden" id="' + key + 'WHotkey" />'
+      + '<div class="hint" id="' + key + 'WHotkeyHint"></div>'
+      + "</div>").join("");
+  }
   // The fade slider applies LIVE (like the canvas controls) — you judge a transparency by
   // looking at it, not by saving and alt-tabbing. 100 reads as "Off" because that is what it is.
   function setOpacitySlider(pct) {

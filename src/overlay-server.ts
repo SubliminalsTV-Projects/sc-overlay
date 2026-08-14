@@ -245,6 +245,19 @@ interface Config {
   /** Seconds an Unlock Alert card stays up. Same clamp, same reasoning. */
   unlockAlertShowSeconds: number;
   miningHotkey: string;
+  /** Per-widget show/hide hotkeys, keyed by REGISTRY key (mining, party, chat, …).
+   *
+   *  🔑 One map instead of a scalar per widget. Four widgets had a hand-written config field, a
+   *  hand-written shell registration and a hand-written settings row each, and the other seven had
+   *  no hotkey at all — so "every widget gets one" meant writing that boilerplate seven more times
+   *  and again for every widget ever added. A map keyed on the registry key means a new widget
+   *  gets a hotkey for free.
+   *  🔑 NO DEFAULTS (Sub, 2026-08-14: "we don't even necessarily need to put in a default"). An
+   *  absent entry means no hotkey, which is also the only safe answer — eleven default chords
+   *  would collide with each other, with the game, and with whatever the player already uses.
+   *  ⚠️ `""` is a REAL saved value meaning "removed", distinct from absent. The legacy migration
+   *  below depends on that distinction. */
+  widgetHotkeys: Record<string, string>;
   webViewHotkey: string;
   /** Global hotkey that shows/hides the Journal widget (Electron accelerator syntax).
    *  Read by electron/main.cjs at startup. */
@@ -395,6 +408,7 @@ const DEFAULTS: Config = {
   scFeedShowSeconds: 12,
   unlockAlertShowSeconds: 8,
   miningHotkey: "Shift+F3",
+  widgetHotkeys: {},
   webViewHotkey: "Ctrl+Shift+F3",
   notepadHotkey: "Alt+F3",
   interactHotkey: "F",
@@ -2880,6 +2894,19 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.bindingHotkey === "string") config.bindingHotkey = body.bindingHotkey.trim();
     if (typeof body.overlayHotkey === "string") config.overlayHotkey = body.overlayHotkey.trim();
     if (typeof body.miningHotkey === "string") config.miningHotkey = body.miningHotkey.trim();
+    // 🔑 MERGED per key, never replaced wholesale. A widget's own cog posts only its own entry
+    // (the sidecar merges field-by-field, which is what makes a partial POST safe), so replacing
+    // the map would let one widget's settings sheet delete every other widget's hotkey. Keys are
+    // taken from the body as-is; an unknown one is inert because the shell only registers keys
+    // that exist in its toggle table.
+    if (body.widgetHotkeys && typeof body.widgetHotkeys === "object" && !Array.isArray(body.widgetHotkeys)) {
+      const merged: Record<string, string> = { ...(config.widgetHotkeys ?? {}) };
+      for (const [k, v] of Object.entries(body.widgetHotkeys as Record<string, unknown>)) {
+        if (typeof v === "string") merged[k] = v.trim();
+        else if (v === null) delete merged[k]; // null = forget this widget entirely
+      }
+      config.widgetHotkeys = merged;
+    }
     if (typeof body.webViewHotkey === "string") config.webViewHotkey = body.webViewHotkey.trim();
     if (typeof body.notepadHotkey === "string") config.notepadHotkey = body.notepadHotkey.trim();
     // Clamped SERVER-side as well as in the input: a hand-edited config.json with 0 (or a string)
