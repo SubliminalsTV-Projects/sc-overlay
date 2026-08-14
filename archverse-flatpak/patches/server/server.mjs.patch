@@ -9,18 +9,14 @@
  var configPath = join11(userDir, "config.json");
  var seedConfigPath = join11(overlayDir, "config.json");
  var dataDir = join11(userDir, "data");
-@@ -6580,7 +6580,16 @@
--  if (ocrHealth && Date.now() - ocrHealthAt < maxAgeMs) return ocrHealth;
-+  // ARCHVERSE_043_LINUX_OCR_HEALTH: the 0.1.43 RapidOCR failure check above remains
-+  // authoritative. Only skip the Windows.Media.Ocr/PowerShell self-test that follows;
-+  // Flatpak uses RapidOCR in the Electron capture process and CI starts that engine from
-+  // the packaged sandbox before this build is accepted.
+@@ -6600,1 +6600,10 @@
+-  ocrHealth = await ocrSelfTest();
++  // ARCHVERSE_043_LINUX_OCR_HEALTH: upstream's RapidOCR failure check has already run above.
++  // Skip only the Windows.Media.Ocr/PowerShell probe; the Flatpak uses RapidOCR in Electron,
++  // and CI starts that exact packaged engine before accepting the artifact.
 +  if (process.platform !== "win32") {
 +    return { ok: true, matched: true, skipped: true, lines: 0, text: "", ranAt: new Date().toISOString(), ms: 0,
 +      reason: null, engine: "ArchVerse Linux RapidOCR (Electron capture)",
 +      signal: { spawnError: null, exitedBeforeReady: false, lastExitCode: null, everReady: true } };
 +  }
-+  if (ocrHealth && Date.now() - ocrHealthAt < maxAgeMs) return ocrHealth;
-   ocrHealth = await ocrSelfTest();
-   ocrHealthAt = Date.now();
-   return ocrHealth;
++  ocrHealth = await ocrSelfTest();
