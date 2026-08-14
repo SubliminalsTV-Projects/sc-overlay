@@ -657,7 +657,8 @@
   // (HAL's five "I don't know what that is" lines used to live here. An `unknown` value is one the
   // game cannot draw as a signature, so it is now refused by the tracker and never reaches this
   // widget at all — see applyMineableRead. The c_unknown1..5 clips are still in overlay/tts/ if the
-  // call-out is ever wanted back.)
+  // call-out is ever wanted back. Same deal for c_breaking, c_debrisor and c_thiscouldbe — retired
+  // wordings whose clips stay on disk because regenerating HAL audio costs far more than it saves.)
 
   // ---- render ----
   function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
