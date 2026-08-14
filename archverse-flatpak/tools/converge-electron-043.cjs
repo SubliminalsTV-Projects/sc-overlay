@@ -84,10 +84,12 @@ if (!capture.includes('function reportLinuxRapidFailure(')) {
   must(capture.includes(startAnchor), 'startFabCapture anchor missing');
   capture = capture.replace(startAnchor, `${startAnchor}\n  sidecarPort043 = port;`);
 
-  const catchAnchor = 'console.warn("[ocr] RapidOCR worker unavailable; continuing with Tesseract fallback:", error?.message || error);';
-  must(capture.includes(catchAnchor), 'RapidOCR optional failure catch anchor missing');
-  capture = capture.replace(catchAnchor,
-    `${catchAnchor}\n      reportLinuxRapidFailure(\`Text recognition could not start — \${String(error?.message || error).slice(0, 200)}. Mining call-outs and the contract scanner may not work until this is fixed.\`);`);
+  // Attach to the semantic catch block instead of the warning text: the shipped Alpha 22 shell and
+  // branch copies use slightly different wording, but both funnel optional worker failures here.
+  const optionalCatch = /(async function ocrRapidLinesOptional\([\s\S]{0,1200}?catch \(error\) \{)/;
+  must(optionalCatch.test(capture), 'RapidOCR optional failure catch block missing');
+  capture = capture.replace(optionalCatch,
+    `$1\n    reportLinuxRapidFailure(\`Text recognition could not start — \${String(error?.message || error).slice(0, 200)}. Mining call-outs and the contract scanner may not work until this is fixed.\`);`);
 }
 
 must(capture.includes('if (mining && cfg.rapidOcr !== false) {'), 'mining RapidOCR is still gated by something besides mining + preference');
@@ -96,6 +98,7 @@ must(!capture.includes('const locked = mining && archScanModeRead.active'), 'rad
 must(capture.includes('const needGeneric = fab || miss || claim || payout;'), 'generic OCR still carries mining/radar gate');
 must(capture.includes('typeof read.signature === "number"'), 'parsed signature does not drive fast cadence');
 must(capture.includes('Math.round(lastTickMs * 1.5)'), 'self-tuning mining cadence missing');
+must(capture.includes('reportLinuxRapidFailure(`Text recognition could not start'), 'RapidOCR failure does not reach sidecar reporting');
 write(capturePath, capture);
 
 let main = read(mainPath);
