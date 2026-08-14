@@ -16,7 +16,7 @@
  *
  * Run with:  npx tsx src/watcher-handover.test.ts
  */
-import { mkdtempSync, writeFileSync, appendFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, appendFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LogWatcher } from "./watcher.js";
@@ -78,6 +78,13 @@ async function collect(w: LogWatcher, ms: number): Promise<string[]> {
   appendFileSync(log, "fresh\n");
   const seen4 = await seen4Promise;
   check("with no seed, tailing still starts at the end", !seen4.includes("old") && seen4.includes("fresh"), seen4.join(","));
+
+  // 🔑 Clean up. This used to leave "<tmp>/handover-*/game.log" behind on every run, and
+  // log-paths.test.ts scans the SIBLINGS of a channel folder on purpose (a player with separate
+  // LIVE and PTU installs is pointed at whichever they launched last) — so those leftovers made
+  // ITS degenerate-input assertion read 21 instead of 0. A suite that turns a different suite red
+  // depending on run order is the worst kind of failure: neither file looks wrong on its own.
+  rmSync(dir, { recursive: true, force: true });
 
   console.log(failed ? `\n${failed} FAILED` : "\nALL PASS");
   process.exit(failed ? 1 : 0);

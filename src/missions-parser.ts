@@ -100,20 +100,32 @@ export function regionOfShard(shard: string | null): string | null {
   return seg.length >= 3 ? seg[1] : null;
 }
 
-function normalizeMissionTitle(title: string | null): string | null {
-  if (!title) return null;
-  return title
+/**
+ * Remove the decorations a language pack wraps around game text: engine markup tags
+ * (`<EM4>…</EM4>`) and mission-board tags (`[300 Rep]`, `[BP]`, a trailing `*`).
+ *
+ * 🔑 This is the ONLY thing standing between us and a total data loss for pack users, so it
+ * runs on the whole notification rather than just the captured payload. ExoAE and Remix2
+ * redefine `crafting_hud_notification_received_blueprint` as `<EM4>Received Blueprint: %s
+ * [BP]</EM4>`, which moves markup IN FRONT of the words we anchor on — the old
+ * `"Received Blueprint:` literal could never match, so those users recorded ZERO unlocks
+ * with nothing anywhere reporting a problem. Verified against all three packs, 2026-08-14.
+ *
+ * Vanilla 4.9.0 global.ini contains no `[BP]`/`[N Rep]` markup at all (measured: 0 lines),
+ * so on a stock install every rule here is a no-op.
+ */
+function stripDecorations(s: string): string {
+  return s
     .replace(/<[^>]+>/g, "")
-    // Mission-board tags. 🔑 Match ANY bracket containing "Rep"/"BP" as a word, not a fixed list
-    // of prefixes. The old form was `[(?:BP|N Rep|Rep|BP\*)…]`, which anchored on the literal
-    // "N Rep" — a PLACEHOLDER. The live game substitutes the real number, so a Battaglia contract
-    // arrives as "Ship In Distress <EM4>[300 Rep] [BP]*</EM4>" and "[300 Rep]" survived the strip.
-    // The leftover rode into the title key ("SHIP IN DISTRESS 300 REP" vs the dataset's "SHIP IN
-    // DISTRESS"), missed the rep-title index, and accrueFromTitle skips what it can't resolve —
-    // so the player ground Battaglia contracts and watched their standing sit at zero, with
-    // nothing anywhere reporting a problem (johnrgoudy, 0.1.36, 2026-08-03).
-    // 🔑 Not every player sees these tags: a second user's log has the SAME contract with no
-    // markup at all, so this cannot be reproduced by playing the mission — only from a log.
+    // Match ANY bracket containing "Rep"/"BP" as a word, not a fixed list of prefixes. The
+    // old form anchored on the literal "N Rep" — a PLACEHOLDER. The live game substitutes
+    // the real number, so a Battaglia contract arrives as "Ship In Distress <EM4>[300 Rep]
+    // [BP]*</EM4>" and "[300 Rep]" survived the strip. The leftover rode into the title key
+    // ("SHIP IN DISTRESS 300 REP" vs the dataset's "SHIP IN DISTRESS"), missed the rep-title
+    // index, and accrueFromTitle skips what it can't resolve — so the player ground Battaglia
+    // contracts and watched their standing sit at zero (johnrgoudy, 0.1.36, 2026-08-03).
+    // 🔑 That markup was never CIG's: it comes from the ExoAE/Remix2 packs, which is why a
+    // second user's log had the same contract clean and it could not be reproduced by playing.
     // Verified against the dataset: 0 of 761 real mission titles are altered by this.
     .replace(/\[[^\]]*\b(?:Rep|BP)\b[^\]]*\]/gi, "")
     .replace(/\s*\*\s*/g, " ")
@@ -122,19 +134,31 @@ function normalizeMissionTitle(title: string | null): string | null {
     .trim();
 }
 
+function normalizeMissionTitle(title: string | null): string | null {
+  if (!title) return null;
+  return stripDecorations(title);
+}
+
 const RE = {
-  acceptTitle: /Added notification "Contract Accepted:\s*(.+?):\s*"/,
-  completeTitle: /Added notification "Contract Complete:\s*(.+?):\s*"/,
+  // The notification's TEXT, taken as a whole so it can be cleaned before anything is matched
+  // against it. 🔑 Anchored on the full `" [<n>] to queue.` terminator rather than the closing
+  // quote, because titles legitimately contain quotes (`Terrorist Shigemori "Jester" Amsden`)
+  // and a lazy `"([^"]*)"` truncates them mid-name.
+  notification: /Added notification "([\s\S]*?)"\s*\[\d+\]\s*to queue\./,
+  // The patterns below run against stripDecorations(notification), so they anchor at ^/$ —
+  // "Contract Accepted:  <title>: " with the trailing ": " the engine appends for an empty body.
+  acceptTitle: /^Contract Accepted:\s*(.+?):\s*$/,
+  completeTitle: /^Contract Complete:\s*(.+?):\s*$/,
   // "New Objective: Go to Pyro 5a Abandoned Outpost: " — the objective TEXT, which is the
   // only thing in the log that names WHERE a mission sends you. Same MissionId as the
   // accept. This is what tells same-title variants apart (see narrowByPlace in missions.ts).
-  newObjective: /Added notification "New Objective:\s*(.+?):\s*"/,
+  newObjective: /^New Objective:\s*(.+?):\s*$/,
   // "…Projected Start Location is Bloom for route to destination RegionB_1base_ab_pyro…"
   // The destination's Region token is the variant letter itself. Start location is
   // captured too because it is the only log line that names where the player IS.
   routeRegion: /Projected Start Location is\s+(.+?)\s+for route to destination\s+Region([A-Za-z0-9]+)/,
-  reward: /Added notification "Awarded\s+([\d,]+)\s+aUEC/,
-  blueprint: /Added notification "Received Blueprint:\s*(.+?):\s*"/,
+  reward: /^Awarded\s+([\d,]+)\s+aUEC/,
+  blueprint: /^Received Blueprint:\s*(.+?):\s*$/,
   missionIdField: new RegExp(`MissionId:\\s*\\[(${UUID})\\]`),
   // CreateMarker fields (note: contractDefinitionId has NO space before its bracket)
   mkMissionId: new RegExp(`missionId\\s*\\[(${UUID})\\]`),
@@ -189,18 +213,25 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
 
   switch (tag) {
     case "SHUDEvent_OnNotification": {
-      const bp = m.match(RE.blueprint);
+      // Clean the whole notification ONCE, then match. A language pack can put its markup in
+      // front of the words we anchor on, so cleaning has to happen before the first match and
+      // not on the captured payload afterwards.
+      const note = m.match(RE.notification);
+      if (!note) return null;
+      const text = stripDecorations(note[1]);
+
+      const bp = text.match(RE.blueprint);
       if (bp) {
         const mid = m.match(RE.missionIdField);
         return { kind: "blueprintReceived", ts: e.timestamp, name: bp[1].trim(), missionId: mid?.[1] ?? null };
       }
-      const acc = m.match(RE.acceptTitle);
+      const acc = text.match(RE.acceptTitle);
       if (acc) {
         const mid = m.match(RE.missionIdField);
         const title = normalizeMissionTitle(acc[1]);
         if (mid) return { kind: "accept", ts: e.timestamp, missionId: mid[1], title };
       }
-      const cc = m.match(RE.completeTitle);
+      const cc = text.match(RE.completeTitle);
       if (cc) {
         const mid = m.match(RE.missionIdField);
         const title = normalizeMissionTitle(cc[1]);
@@ -209,12 +240,12 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
       // Must come AFTER accept/complete: those notifications are distinct strings, but
       // keeping the order explicit means a future "New Objective Complete:"-style line
       // cannot start shadowing the accept branch.
-      const no = m.match(RE.newObjective);
+      const no = text.match(RE.newObjective);
       if (no) {
         const mid = m.match(RE.missionIdField);
         return { kind: "newObjective", ts: e.timestamp, missionId: mid?.[1] ?? null, text: no[1].trim() };
       }
-      const rw = m.match(RE.reward);
+      const rw = text.match(RE.reward);
       if (rw) {
         return { kind: "reward", ts: e.timestamp, amount: parseInt(rw[1].replace(/,/g, ""), 10) };
       }

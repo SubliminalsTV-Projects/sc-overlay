@@ -394,6 +394,25 @@
     <div id="detected" class="hint"></div>
   </div>
 
+  <!-- Sits directly under Game log on purpose: the language file is FOUND from that path
+       (<channel>/data/Localization/<g_language>/global.ini), so the two belong together and
+       repointing the log is what changes this readout.
+       🔑 Deliberately carries NO form input. The settings page saves the WHOLE form, so a control
+       here would be a second writer racing whatever else touches the same state — and there is
+       nothing for the user to choose anyway: the language is a fact about their install, not a
+       preference. Status plus one action. -->
+  <div class="card">
+    <div class="cardhead">
+      <div class="label">Game language</div>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Star Citizen writes its log in whatever language it is displaying, so the app translates the names back before matching them. Nine languages ship built in and need nothing from you. If you use a community <strong>language pack</strong> (a modified <code>global.ini</code> that renames components), the app reads that file straight from your game folder — press <strong>Recalibrate</strong> after you update the pack. Nothing is ever written to your game files.</span></span>
+    </div>
+    <div class="hint" id="locStatus">Checking…</div>
+    <div class="add" id="locActions" style="display:none">
+      <button id="locCal" onclick="recalibrateLanguage()">Recalibrate from my language file</button>
+    </div>
+    <div class="hint" id="locUnknown" style="display:none; color:#ffb4a8"></div>
+  </div>
+
   <div class="card">
     <div class="cardhead">
       <div class="label">Appearance</div>
@@ -1009,6 +1028,10 @@
     if (b) { b.textContent = "Saved ✓"; b.classList.add("ok"); setTimeout(() => { b.textContent = "Save"; b.classList.remove("ok"); }, 1600); }
     const s = document.getElementById("saved"); s.classList.add("show"); setTimeout(() => s.classList.remove("show"), 1400);
     await loadCfg();
+    // Repointing the log path moves where the language file is looked for, and the server rebuilds
+    // the phrasebook when it restarts the watcher — so the card would otherwise describe the OLD
+    // install until the page was reopened.
+    loadLanguage();
   }
 
   async function detectLog() {
@@ -1025,6 +1048,85 @@
     save();
   }
   function pickLog(i) { document.getElementById("logPath").value = window.__detected[i].path; save(); }
+
+  // Both the file PATH and the unplaceable names below are attacker-adjacent strings — one comes
+  // off disk, the other straight out of a log file — and both go into innerHTML.
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  /**
+   * Show which language file the log is being read through, and what could not be placed.
+   *
+   * 🔑 The two sources read very differently to a user and must not be described the same way.
+   * "Built in" is the no-action case (nine languages ship with the app and it just works, so the
+   * line exists only to say so). "Your own file" is the case where a stale read is possible and
+   * Recalibrate is the fix — so the button appears ONLY there. On a stock install there is no
+   * file to re-read and the button would be a dead end.
+   */
+  async function loadLanguage() {
+    const s = document.getElementById("locStatus");
+    const actions = document.getElementById("locActions");
+    const unknown = document.getElementById("locUnknown");
+    let r;
+    try { r = await (await fetch("/api/localization")).json(); } catch { s.textContent = "Could not read language status."; return; }
+
+    if (r.source === "ini") {
+      s.innerHTML = "Reading your game's own language file — <strong>" + r.entries + "</strong> renamed items."
+        + '<br /><code>' + escapeHtml(r.path || "") + "</code>"
+        + (r.language ? " &nbsp;·&nbsp; <code>g_language = " + escapeHtml(r.language) + "</code>" : "");
+      actions.style.display = "";
+    } else if (r.source === "bundled") {
+      s.innerHTML = "Using the built-in translations — <strong>" + r.entries
+        + "</strong> names across the nine languages the game ships with. Nothing to do.";
+      actions.style.display = "none";
+    } else {
+      s.textContent = "No translation data is loaded — blueprint names will only match if your game is in English.";
+      actions.style.display = "none";
+    }
+
+    // The names, not just a count. Seeing the literal the game wrote is what makes the cause
+    // obvious, and it is the one thing a support report actually needs.
+    const names = Array.isArray(r.unrecognized) ? r.unrecognized : [];
+    if (names.length) {
+      unknown.style.display = "";
+      unknown.innerHTML = "⚠ " + names.length + (names.length === 1 ? " blueprint could not be identified" : " blueprints could not be identified")
+        + " and " + (names.length === 1 ? "is" : "are") + " not counted in your pools:<br />"
+        + names.slice(0, 12).map((u) => "<code>" + escapeHtml(u.name) + "</code>").join(" ")
+        + (names.length > 12 ? " …and " + (names.length - 12) + " more" : "");
+    } else {
+      unknown.style.display = "none";
+    }
+
+    // Only reachable if a pack (or CIG) reworded the notification text itself. No pack does today
+    // — this exists so that if it ever happens it is visible here instead of presenting as
+    // "the app stopped seeing my blueprints".
+    if (r.formatDrift && r.formatDrift.length) {
+      unknown.style.display = "";
+      unknown.innerHTML += "<br />⚠ Your language file also changes the wording of the game's own"
+        + " notifications (" + escapeHtml(r.formatDrift.join(", ")) + "), which the app may not be"
+        + " able to read. Please report this.";
+    }
+  }
+
+  async function recalibrateLanguage() {
+    const b = document.getElementById("locCal");
+    const label = b.textContent;
+    b.disabled = true; b.textContent = "Reading…";
+    try {
+      await fetch("/api/localization/calibrate", { method: "POST" });
+      // The server re-seeds from the log as part of this, so anything now resolvable has already
+      // been re-credited — the refreshed status reflects the finished state, not a pending one.
+      await loadLanguage();
+      b.textContent = "Recalibrated ✓"; b.classList.add("ok");
+      setTimeout(() => { b.textContent = label; b.classList.remove("ok"); b.disabled = false; }, 1800);
+    } catch {
+      b.textContent = "Could not read it"; b.disabled = false;
+      setTimeout(() => { b.textContent = label; }, 2400);
+    }
+  }
 
   // chooseBinding/clearBinding moved to the Infographic Viewer widget, which owns the setting now.
 
@@ -1398,6 +1500,10 @@
     } catch { /* ignore */ }
   });
   loadCfg();
+  // Independent of loadCfg: this reads a different endpoint and must not be blocked by, or block,
+  // the main form load. A failure here leaves one card saying "Checking…" rather than costing the
+  // page its settings.
+  loadLanguage();
   initOverlayToggle();
 
   // Partner promos — pulled live from subliminal.gg so they stay in sync with the site's
