@@ -1,7 +1,7 @@
 import { createServer, type ServerResponse } from "node:http";
 import { networkInterfaces } from "node:os";
 import { writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync, rmSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readFile, readdirSync, statSync, mkdirSync, copyFileSync, rmSync, openSync, readSync, closeSync, realpathSync, writeFileSync } from "node:fs";
 import { extname, join, dirname, basename, resolve, sep } from "node:path";
 
 import { LogWatcher } from "./watcher.js";
@@ -1050,6 +1050,64 @@ async function flushPayouts(): Promise<void> {
 // Flushed on a timer rather than per capture: the board is re-read every few seconds and
 // a request per read would be pointless traffic for rows that are nearly all duplicates.
 setInterval(() => { void flushPayouts(); }, 30_000).unref?.();
+
+// ── Mission completions ─────────────────────────────────────────────────────
+// Every finished contract, queued to disk and flushed to subliminal.gg.
+//
+// 🔴 PERSISTED, and that is not optional. The payout queue learned this the hard way: it
+// was in-memory first, Sub swept his whole board while the parser was still being fixed,
+// and every restart silently binned the lot. A completion is worth more than a payout
+// observation — it can never be re-derived once the log rotates away — so losing one to a
+// crash or an update is permanent.
+//
+// 🔑 The queue keeps the contractKey the log line does not carry. A live completion can be
+// attributed to a specific same-titled variant; a log backfill can only ever say the title.
+const completionQueuePath = join(userDir, "completion-queue.json");
+type QueuedCompletion = { contractKey: string; title: string; completedAt: string };
+let completionQueue: QueuedCompletion[] = [];
+try {
+  const raw = JSON.parse(readFileSync(completionQueuePath, "utf8"));
+  if (Array.isArray(raw)) completionQueue = raw.filter((r) => r && r.completedAt && (r.title || r.contractKey));
+} catch { /* no queue yet, or corrupt — start clean rather than refuse to run */ }
+const saveCompletionQueue = () => {
+  try { writeFileSync(completionQueuePath, JSON.stringify(completionQueue)); }
+  catch (e) { console.error("[completions] queue save failed:", String(e)); }
+};
+
+tracker.on("completed", (c: { contractKey?: string; title?: string; at?: string }) => {
+  const completedAt = c?.at || new Date().toISOString();
+  if (!c?.title && !c?.contractKey) return;
+  // Same idempotency triple the server enforces, applied locally too — the tracker can
+  // re-emit an end for a mission it re-marked, and there is no reason to send a row the
+  // server will only throw away.
+  const key = `${c.contractKey || ""}§${completedAt}`;
+  if (completionQueue.some((q) => `${q.contractKey}§${q.completedAt}` === key)) return;
+  completionQueue.push({ contractKey: c.contractKey || "", title: c.title || "", completedAt });
+  saveCompletionQueue();
+});
+
+async function flushCompletions(): Promise<void> {
+  if (!completionQueue.length) return;
+  if (!config.syncEnabled || !config.syncToken) return;
+  const base = (process.env.SC_SYNC_BASE || "https://subliminal.gg").replace(/\/+$/, "");
+  const batch = completionQueue.slice(0, 200);
+  try {
+    const res = await fetch(`${base}/api/sc/mission-completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.syncToken}` },
+      body: JSON.stringify({ completions: batch }),
+    });
+    if (!res.ok) {
+      console.log(`[completions] upload refused (${res.status}) — ${completionQueue.length} still queued`);
+      return; // keep them; the server is idempotent so a retry costs nothing
+    }
+    completionQueue = completionQueue.slice(batch.length);
+    saveCompletionQueue();
+  } catch (e) {
+    console.log(`[completions] upload failed (${String(e)}) — ${completionQueue.length} still queued`);
+  }
+}
+setInterval(() => { void flushCompletions(); }, 60_000).unref?.();
 
 const missionFeedback = new MissionFeedbackStore(userDir);
 
