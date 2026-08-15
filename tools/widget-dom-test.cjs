@@ -1256,76 +1256,142 @@ const IDLEPANEL = `(async () => {
   // overlay — so without driving it to a known state first, every assertion below is really an
   // assertion about which mockup he last clicked. That is the "a test that asserts a USER
   // PREFERENCE fails on a clean tree" trap, and it would have gone red for him and nobody else.
-  const saved = localStorage.getItem("scIdleLayoutPick");
+  const saved = localStorage.getItem("scIdleStandingsPick");
   const pickLayout = async (id) => {
     const b = pool.querySelector('.ra-mk-b[data-mk="' + id + '"]');
     if (b) b.click();
     await sleep(150);
   };
-  await pickLayout("ledger");
+  await pickLayout("bars");
 
-  const heads = [...pool.querySelectorAll(".ra-h")].map((e) => e.textContent);
+  // ⚠️ Read the heading's TITLE CELL, not its whole text: two headings now carry a circled-i
+  // button inside them, so raw textContent reads "Standingi" and the assertion would be about
+  // punctuation rather than order.
+  const heads = [...pool.querySelectorAll(".ra-h")].map((e) => {
+    const first = e.querySelector("span");
+    return (first ? first.textContent : e.textContent).trim();
+  });
   // The per-hour rates are folded INTO "This session" (2026-08-13). "Latest" split in two
   // (2026-08-15) and the blueprint half then became a row of PICTURES sized by the widget's
-  // WIDTH, so only the missions list still competes for leftover height.
+  // WIDTH, so only the missions list still competes for leftover height. Standing sits directly
+  // under Closest to done, because it is the same question asked a second way.
   ok("the idle panel is in the documented order",
-     heads.join(" | ") === "Closest to done | This session | Latest blueprints | Latest missions",
+     heads.join(" | ") === "Closest to done | Standing | This session | Latest blueprints | Latest missions",
      heads.join(" | "));
   ok("...with a rule between what to do next and what the session was worth",
      !!pool.querySelector(".ra-rule"));
 
-  // Closest to done: the half that answers "what should I go do".
-  const cp = [...pool.querySelectorAll(".cp")];
-  ok("it lists what you are closest to finishing", cp.length === 2, String(cp.length));
+  // Closest to done: the half that answers "what should I go do". Pinned to the SHORTLIST layout
+  // (Sub settled on it 2026-08-15), so the switcher no longer touches this section at all.
+  const sl = [...pool.querySelectorAll(".sl-r")];
+  ok("it lists what you are closest to finishing", sl.length === 4, String(sl.length));
   // 🔴 THE ROW NAMES THE POOL, NOT ONE OF ITS CONTRACTS. This list used to iterate contracts, so
   // one pool fed by many of them filled the panel with itself — Sub saw four rows that were four
   // titles of the SAME pool, all reading 5/8. 65 of the 89 pools span more than one title, so it
   // was the normal case. The fixture's first pool is 26 variants across 3 titles.
   ok("...naming the POOL rather than one of its contracts",
-     cp[0].querySelector(".cp-n").textContent === "Headhunters · Mercenary" &&
-     cp[0].querySelector(".cp-c").textContent === "5 of 7" &&
-     /2/.test(cp[0].querySelector(".cp-l").textContent),
-     cp[0].querySelector(".cp-n").textContent);
+     sl[0].querySelector(".sl-n").textContent === "Mercenary · Headhunters" &&
+     sl[0].querySelector(".sl-c").textContent === "5/7",
+     sl[0].querySelector(".sl-n").textContent);
+  // 🔑 TYPE FIRST, GIVER SECOND (Sub): what kind of work it is, is what you decide on.
+  ok("...type first, giver second",
+     sl[0].querySelector(".sl-n").textContent.indexOf("Mercenary ·") === 0,
+     sl[0].querySelector(".sl-n").textContent);
   ok("...with a bar that matches the fraction, not a guess",
-     cp[0].querySelector(".cp-bar i").style.width === "71%",
-     cp[0].querySelector(".cp-bar i").style.width);
+     sl[0].querySelector(".sl-bar i").style.width === "71%",
+     sl[0].querySelector(".sl-bar i").style.width);
+  const sub0 = sl[0].nextElementSibling;
   ok("...and where to pick it up, because a suggestion you cannot act on is a statistic",
-     /Rat's Nest/.test(cp[0].querySelector(".cp-w").textContent));
+     /Rat's Nest/.test(sub0.textContent), sub0.textContent.trim());
   // What you still need leads the sub-line: the row's most useful fact, and the only thing that
   // separates two pools sharing a giver and a type.
-  const need0 = cp[0].querySelector(".cp-need");
+  const need0 = sub0.querySelector(".cp-need");
   ok("...and what you still need to finish it",
      !!need0 && need0.textContent.indexOf("need Karna Rifle") === 0,
      need0 ? need0.textContent.trim() : "(no .cp-need)");
   ok("...with a count rather than the whole list, which the popover carries",
      !!need0 && need0.textContent.indexOf("+1") > 0, need0 ? need0.textContent.trim() : "");
+  // 🔴 NO HORIZONTAL SCROLLBAR. The pool box is overflow:auto, so a sub-line that cannot shrink pushes
+  // the panel wider than the widget and grows one across the bottom. Sub hit exactly that with a
+  // third element on this row. Asserted at the widget's NARROWEST, which is where it shows first.
+  const scroller = document.querySelector("#panel .pool") || pool;
+  // ⚠️ Its own handle: the shared panel const is declared further down, in the picture-row
+  // section, and a suite body is one scope — reaching for it here is a temporal-dead-zone throw,
+  // which the harness reports as a bare error naming no feature.
+  const panelEl = document.getElementById("panel");
+  panelEl.style.width = "300px";
+  await sleep(120);
+  ok("...and the row never grows a horizontal scrollbar, even at the narrowest width",
+     scroller.scrollWidth - scroller.clientWidth === 0,
+     (scroller.scrollWidth - scroller.clientWidth) + "px over");
+  panelEl.style.width = "380px";
+  await sleep(120);
   // A pool fed by several contracts says so — Sub asked for an indicator that the one name on
   // screen is not the only way to farm it. The circled i, not an eye: an eye was tried on
   // 2026-08-12 and "read as something else entirely".
-  const cpInfo = cp[0].querySelector(".cp-r .mi-info");
-  ok("...and flags that other contracts fill the same pool", !!cpInfo,
-     cp[0].querySelector(".cp-r").textContent.trim());
+  const cpInfo = sl[0].querySelector(".mi-info");
+  ok("...and flags that other contracts fill the same pool", !!cpInfo, sl[0].textContent.trim());
   ok("...naming them in the popover rather than on the row",
      !!cpInfo && /3 different contracts/.test(cpInfo.getAttribute("data-tip") || ""),
      (cpInfo && cpInfo.getAttribute("data-tip") || "").slice(0, 70));
   // The way out to the pool's own page. The uuid IS the address.
-  const cpLink = cp[0].querySelector(".cp-link");
+  const cpLink = sub0.querySelector(".cp-link");
   ok("...and offers the pool's own page", !!cpLink && cpLink.dataset.pool.length === 36,
      cpLink ? cpLink.dataset.pool : "(no link)");
 
-  // 🔴 TWO POOLS CAN SHARE A NAME. Sub has two "Shubin Interstellar · Ship Mining" pools open at
+  // 🔴 TWO POOLS CAN SHARE A NAME. Sub has two "Ship Mining · Shubin Interstellar" pools open at
   // once — same giver, same type, overlapping contract titles, both mining lasers and radars.
   // Appending the missing blueprint to the NAME was tried and measured useless: the combined
   // string does not fit a 380px row, so both ellipsised to the same thing and the disambiguator
   // was exactly the part that got cut. The sub-line is where it has room.
-  await pickLayout("shortlist");
   const slNames = [...pool.querySelectorAll(".sl-n")].map((e) => e.textContent);
-  const dupe = slNames.filter((x) => x === "Shubin Interstellar · Ship Mining");
+  const dupe = slNames.filter((x) => x === "Ship Mining · Shubin Interstellar");
   ok("two pools sharing a giver and a type both still appear", dupe.length === 2, slNames.join(" | "));
   const slNeeds = [...pool.querySelectorAll(".sl-sub .cp-need")].map((e) => e.textContent.trim());
   ok("...told apart by what you still need, not by a truncated name",
      slNeeds[1] !== slNeeds[3] && slNeeds[1].length > 0, slNeeds.join(" | "));
-  await pickLayout("ledger");
+
+  // ── Standing with your mission givers ──────────────────────────────────────────────────
+  // 🔴 THE REP NUMBER IS A FLOOR in every layout: the game never reports reputation anywhere the
+  // app can read, so it is reconstructed from the player's own completions and cannot count what
+  // happened before the app existed. Each layout must carry the circled i that says so.
+  for (const id of ["bars", "contracts", "unlock"]) {
+    await pickLayout(id);
+    const h = [...pool.querySelectorAll(".ra-h")].map((e) => {
+      const first = e.querySelector("span");
+      return (first ? first.textContent : e.textContent).trim();
+    });
+    ok(id + ": the standings segment is on screen", h.length >= 2 && h[0] === "Closest to done",
+       h.join(" | "));
+    ok(id + ": ...directly under what to go do next, above the scoreboard",
+       h.indexOf("This session") > 1, h.join(" | "));
+    const seg = [...pool.querySelectorAll(".ra-sec")][1];
+    ok(id + ": ...saying the rep total is an estimate", !!seg.querySelector(".mi-info"),
+       seg.querySelector(".ra-h") ? seg.querySelector(".ra-h").textContent.trim() : "");
+    // Max-rank givers are dropped: there is no next rank to incentivise.
+    ok(id + ": ...and never lists a giver with nothing left to earn",
+       seg.textContent.indexOf("Maxed Faction") < 0, seg.textContent.slice(0, 60));
+  }
+  // Layout-specific claims.
+  await pickLayout("bars");
+  const bar0 = pool.querySelectorAll(".ra-sec")[1].querySelector(".cp-n");
+  ok("bars: the most-progressed giver leads, not the one with fewest rep left",
+     !!bar0 && bar0.textContent === "Recco Battaglia", bar0 ? bar0.textContent : "");
+  await pickLayout("contracts");
+  const st0 = pool.querySelector(".st-go");
+  ok("contracts: rep is expressed as contracts, which is the actionable number",
+     !!st0 && /contract/.test(st0.textContent), st0 ? st0.textContent.trim() : "");
+  ok("...and approximate, because rep per contract varies with rank",
+     !!st0 && st0.textContent.indexOf("~") === 0, st0 ? st0.textContent.trim() : "");
+  await pickLayout("unlock");
+  const su0 = pool.querySelector(".su-t");
+  ok("unlock: it leads with what the next rank hands over",
+     !!su0 && su0.textContent.indexOf("MISC Prospector") === 0, su0 ? su0.textContent.trim() : "");
+  // ⚠️ Most ranks gate nothing. A giver with no reward must fall back to the rank name rather
+  // than rendering an empty promise.
+  const suAll = [...pool.querySelectorAll(".su-t")].map((e) => e.textContent.trim());
+  ok("...and never renders an empty promise", suAll.every((t) => t.length > 0), suAll.join(" | "));
+  await pickLayout("bars");
 
   // The session half.
   const ss = [...pool.querySelectorAll(".ss > div")].map((d) => d.querySelector(".ss-l").textContent);
@@ -1452,9 +1518,27 @@ const IDLEPANEL = `(async () => {
   // 🔴 The bug this suite exists for. Sub, collapsing the panel to its minimum: "it doesn't show
   // anything under Latest. It's just nothing." A heading over a void is worse than one row.
   ok("NEVER empty, however small the widget gets", tiny >= 1, String(tiny));
-  at(700);
-  ok("...and it says how many it is not showing", !!mul.querySelector(".ra-more"),
-     mul.textContent.slice(0, 60));
+  // ⚠️ A height where there is something to truncate AND room to say so. Measured: 700-800 shows
+  // one row and drops the line (correctly — it would be clipped), 900 shows 2 with the count,
+  // 1000 shows 7 with it, and by 1100 all ten fit so there is no count to show at all. Both ends
+  // are legitimate, which is exactly why this needs a measured height rather than a big number.
+  at(1000);
+  // 🔑 ASSERT THE RULE, NOT A HAND-PICKED HEIGHT. Both outcomes are legitimate here — a list that
+  // shows everything has no count to give, and one squeezed to a single row DROPS the count
+  // rather than let the overflow slice it in half — so pinning this to one pixel height made the
+  // assertion about my choice of number instead of about the behaviour. It failed twice that way
+  // at heights that were behaving perfectly. The contract is: if rows are hidden AND another row
+  // would fit, the count must be there.
+  {
+    const shown = mrows();
+    const room = mul.getBoundingClientRect().height;
+    const hidden = shown < (current.recentMissions || []).length;
+    const roomForCount = (shown + 1) * 21 <= room + 1;
+    ok("...and it says how many it is not showing, whenever there is room to say it",
+       !hidden || !roomForCount || !!mul.querySelector(".ra-more"),
+       shown + " shown, room " + Math.round(room) + "px, hidden=" + hidden
+       + ", counted=" + !!mul.querySelector(".ra-more"));
+  }
   at(560);
 
   // ── TEMPORARY: the three idle mockups ───────────────────────────────────────
@@ -1464,72 +1548,42 @@ const IDLEPANEL = `(async () => {
   // ("Deep space hit") has no payout and no run length precisely so that second case is exercised.
   const mkOn = () => pool.querySelector(".ra-mk-b.on") && pool.querySelector(".ra-mk-b.on").dataset.mk;
   ok("the mockup switcher offers three layouts", pool.querySelectorAll(".ra-mk-b").length === 3);
-  ok("...and shows which one is up", mkOn() === "ledger", String(mkOn()));
+  ok("...and shows which one is up", mkOn() === "bars", String(mkOn()));
 
   // 🔴 NO ECONOMICS IN THIS SECTION. Sub, 2026-08-15: the per-hour figure was only ever meant for
   // the session tracker, "NOT with the closest to done". A first pass hung each pool's aUEC/hr,
   // payout and run length off these rows and it was wrong about what the section is for. The
   // assertion is kept pointed at the ABSENCE, because the fields are still on the view model and
   // rendering them is a one-line temptation.
-  const cpText = [...pool.querySelectorAll(".cp")].map((e) => e.textContent).join(" ");
-  ok("ledger: closest-to-done carries no rate, payout or run length",
-     !/\\/hr/.test(cpText) && !/aUEC/.test(cpText) && !/~/.test(cpText), cpText.slice(0, 80));
-
-  // Mockup 2 — the dense shortlist: every open pool rather than the top two.
-  await pickLayout("shortlist");
-  const sl = [...pool.querySelectorAll(".sl-r")];
-  ok("shortlist: it lists every open pool, not just the top two", sl.length === 4, String(sl.length));
-  ok("...each with its count, its bar and what is left",
+  const slText = [...pool.querySelectorAll(".sl")].map((e) => e.textContent).join(" ");
+  ok("closest-to-done carries no rate, payout or run length",
+     slText.indexOf("/hr") < 0 && slText.indexOf("aUEC") < 0 && slText.indexOf("~") < 0,
+     slText.slice(0, 80));
+  ok("...each row with its count, its bar and what is left",
      !!sl[0].querySelector(".sl-c") && !!sl[0].querySelector(".sl-bar i") && !!sl[0].querySelector(".sl-left"),
      sl[0].textContent.trim());
   ok("...ordered closest-first, as the view already sorted them",
      sl[0].querySelector(".sl-left").textContent.trim() === "2 to go", sl[0].textContent.trim());
-  const slText = [...pool.querySelectorAll(".sl")].map((e) => e.textContent).join(" ");
-  ok("...and no economics here either", !/\\/hr/.test(slText) && !/~/.test(slText), slText.slice(0, 80));
 
-  // Mockup 3 — one recommendation.
-  await pickLayout("target");
-  const tgt = pool.querySelector(".tg-t");
-  ok("target: it commits to the pool with the fewest left",
-     !!tgt && tgt.textContent === "Headhunters · Mercenary",
-     tgt ? tgt.textContent : "(no hero)");
-  const tgs = [...pool.querySelectorAll(".tg-s-l")].map((e) => e.textContent);
-  ok("...leading with how many are left, then how far through it is",
-     tgs.join(" | ") === "to go of 7 | complete", tgs.join(" | "));
-  const also = pool.querySelector(".tg-also");
-  ok("...and it does not forget the pools it did not pick",
-     !!also && also.textContent.indexOf("Adagio Holdings · Salvage 3/5") >= 0,
-     also ? also.textContent.trim() : "");
-  // The runners-up can collide on name too. Same rule, applied only inside this one line.
-  ok("...qualifying two runners-up that would otherwise read identically",
-     !!also && also.textContent.indexOf("(Arbor MH1 Mining Laser)") >= 0
-     && also.textContent.indexOf("(Lawson Mining Laser)") >= 0,
-     also ? also.textContent.trim() : "");
-
-  // Whatever the layout, the halves Sub asked to keep are still there and still in his order.
-  // 🔑 The shortlist's heading carries a totals span INSIDE it, so read the title cell rather than
-  // the whole heading — otherwise this reads "Closest to done4 pools open..." and proves nothing.
+  // Whatever the standings layout, the sections Sub asked to keep are there and in his order.
   const headTitles = () => [...pool.querySelectorAll(".ra-h")].map((e) => {
     const first = e.querySelector("span");
     return (first ? first.textContent : e.textContent).trim();
   });
-  const LEADS = ["Closest to done", "Go finish this"];
-  for (const id of ["ledger", "shortlist", "target"]) {
+  for (const id of ["bars", "contracts", "unlock"]) {
     await pickLayout(id);
     const h = headTitles();
-    ok(id + ": the session scoreboard and both Latest lists survive the layout",
-       h.length === 4 && h[1] === "This session"
-       && h[2] === "Latest blueprints" && h[3] === "Latest missions", h.join(" | "));
-    // Sub's 2026-08-13 order. A layout that put the scoreboard first would still pass every
-    // assertion above it, so the order is asserted on its own.
+    ok(id + ": the scoreboard and both Latest sections survive the layout",
+       h.length === 5 && h[2] === "This session"
+       && h[3] === "Latest blueprints" && h[4] === "Latest missions", h.join(" | "));
     ok(id + ": ...and what to go do next still leads",
-       LEADS.indexOf(h[0]) >= 0 && !!pool.querySelector(".ss") && !!document.getElementById("raLatestArt"),
+       h[0] === "Closest to done" && !!pool.querySelector(".ss") && !!document.getElementById("raLatestArt"),
        h[0]);
   }
 
   // Hand the user's own choice back — this suite drives the real localStorage on this origin.
-  if (saved) localStorage.setItem("scIdleLayoutPick", saved);
-  else localStorage.removeItem("scIdleLayoutPick");
+  if (saved) localStorage.setItem("scIdleStandingsPick", saved);
+  else localStorage.removeItem("scIdleStandingsPick");
   panel.style.width = "";
   return out;
 })()`;

@@ -1262,21 +1262,20 @@
      the far edge instead of running on from the place list as if it were another place. */
   .cp-w { display: flex; align-items: baseline; gap: 8px; font-size: 10.5px; color: var(--faint);
     margin-top: 2px; }
-  /* 🔑 What you still need LEADS the sub-line and does not shrink: it is the most useful fact on
-     the row and the only thing separating two pools that share a giver and a type. The places
-     shrink and ellipsise around it — they are repeated in the info popover, so nothing is lost. */
-  .cp-need { flex: none; max-width: 62%; overflow: hidden; text-overflow: ellipsis;
+  /* 🔴 EVERY TEXT CHILD OF THE SUB-LINE MUST BE ABLE TO SHRINK. Sub got a HORIZONTAL SCROLLBAR
+     across the bottom of the tracker, because the pool box is overflow:auto and this row pushed
+     past the panel. The cause was TWO flex:none children carrying percentage max-widths — the
+     tell at 46% and this at 62% — which come to 108% before the fixed-width link is even placed,
+     and flex:none forbids the shrink that would have absorbed the excess.
+     ⚠️ Removing the tell is what actually fixed it; measured afterwards, flex:none here alone no
+     longer overflows at any width down to the 300px minimum. This shrink is DEFENCE, not the fix
+     — it is what stops a third element being added to this row and quietly bringing the scrollbar
+     back. Only the link stays fixed, because a truncated control is a broken control. */
+  .cp-need { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; color: var(--cyan-dim); }
   .cp-need-n { color: var(--faint); }
-  /* The in-game tell, set apart from the rest of the sub-line because it is an instruction
-     ("take this contract") rather than a fact about the pool. */
-  .cp-tell { flex: none; font-family: var(--sans); font-weight: 700; font-size: 9px;
-    letter-spacing: 0.04em; text-transform: uppercase; color: var(--gold);
-    max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    border-bottom: 1px dotted rgba(var(--accent-rgb), 0.4); }
-  /* No tell exists — the two pools really are indistinguishable at the board. Dim, because it is
-     an admission rather than an instruction, and the title explains why. */
-  .cp-tell-none { color: var(--faint); }
+  /* The row itself must not become a scroll source either — belt to the shrinking braces above. */
+  .cp-w, .sl-sub { min-width: 0; overflow: hidden; }
 
   /* ── Latest blueprints as pictures ──────────────────────────────────────────────────────
      Sized by the widget's WIDTH, not its height: a fixed slice of the panel, one row of art. */
@@ -1337,6 +1336,29 @@
   .sl-sub { display: flex; align-items: baseline; gap: 8px; font-size: 10px; color: var(--faint);
     margin: 1px 0 6px; }
   .sl-r:last-of-type + .sl-sub { margin-bottom: 0; }
+
+  /* ── Standing with your mission givers ──────────────────────────────────────────────────
+     Three layouts share these; the bars layout reuses .cp-* wholesale on purpose. */
+  .ra-h-row { display: flex; align-items: baseline; gap: 8px; }
+  .ra-h-row > span:first-child { flex: 1; min-width: 0; }
+  .ra-h-note { flex: none; }
+  /* 2 — contracts-to-next-rank. The effort figure is the headline and holds the right column. */
+  .st-r { display: flex; align-items: baseline; gap: 8px; }
+  .st-n { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--cyan-bright);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st-go { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 500;
+    color: var(--gold); }
+  .st-sub { font-size: 10px; color: var(--faint); margin: 1px 0 6px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .st-arrow { color: var(--cyan-dim); }
+  /* 3 — what the next rank unlocks. The PRIZE is the headline; who and how far are the caption. */
+  .su { margin-bottom: 8px; }
+  .su:last-child { margin-bottom: 0; }
+  .su-t { font-size: 12.5px; color: var(--gold); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .su-more { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  .su-s { font-size: 10px; color: var(--faint); margin: 1px 0 3px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
 
   /* Mockup 3 — one recommendation, given the room to be one. */
   .tg-t { font-size: 14px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
@@ -2451,21 +2473,21 @@
   // be width-driven ("the wider the widget is, the more blueprints show up"), which is a
   // measurement, not a preference. Default is the shortlist, the one he is focusing on.
   const IDLE_LAYOUTS = [
-    { id: "ledger",    n: "1", t: "Ledger — the top two pools, as the panel shipped" },
-    { id: "shortlist", n: "2", t: "Shortlist — every open pool, one compact row each" },
-    { id: "target",    n: "3", t: "Target — one recommendation, big; the rest on one line" },
+    { id: "bars",      n: "1", t: "Standing — a progress row per giver, same shape as Closest to done" },
+    { id: "contracts", n: "2", t: "Next rank — how many contracts away, not how much rep" },
+    { id: "unlock",    n: "3", t: "Worth going back for — what the next rank actually hands over" },
   ];
   // ⚠️ A FRESH KEY each time this control's MEANING changes. It has been repurposed twice, and
   // reusing the old name meant whatever was last clicked under the previous meaning silently kept
   // choosing — the panel came up on "target" for exactly that reason, which reads as the default
   // not working. A repurposed control inherits a stale answer unless you rename its storage.
-  const IDLE_LAYOUT_KEY = "scIdleLayoutPick";
+  const IDLE_LAYOUT_KEY = "scIdleStandingsPick";
   function idleLayout() {
     try {
       const s = localStorage.getItem(IDLE_LAYOUT_KEY);
       if (IDLE_LAYOUTS.some((l) => l.id === s)) return s;
     } catch { /* private mode — fall through to the default */ }
-    return "shortlist";
+    return "bars";
   }
   function idleSwitcherHtml() {
     const cur = idleLayout();
@@ -2551,30 +2573,13 @@
       + "</span>";
   }
 
-  /** How to tell this pool from the other one wearing the same name, AT THE BOARD.
-   *
-   *  🔴 A number would be useless here (Sub, 2026-08-15): "job 1" and "job 2" mean nothing once
-   *  you are looking at the mobiGlas. So the row names a contract only this pool offers — "take
-   *  Med. Purchase Order" — which is a thing you can read off the board.
-   *  🔴 AND WHEN THERE ISN'T ONE, IT SAYS SO. Sub's two Shubin pools are byte-identical on every
-   *  player-visible field for the four titles they share, so for those there is genuinely no tell.
-   *  Inventing one would be a confidently wrong answer about which pool a contract feeds, which is
-   *  the single most expensive class of bug this project has had. The label falls back to a bare
-   *  "1 of 2" and the popover explains why that is all we can say. */
-  function poolTell(p) {
-    if (p.tell === undefined) return "";
-    if (p.tell) {
-      return '<span class="cp-tell" title="' + escapeAttr(
-          "Two pools here share a name. This one is the only place “" + p.tell + "”"
-          + " comes from, so take that contract and you know which you are filling.")
-        + '">take ' + escapeHtml(p.tell) + "</span>";
-    }
-    return '<span class="cp-tell cp-tell-none" title="' + escapeAttr(
-        "Two pools here share a name and the game gives you no way to tell them apart at the"
-        + " board: for every contract they both offer, the rank, the locations and the payout are"
-        + " identical. Go by what you are still missing instead.")
-      + '">' + (p.tellIndex || 1) + " of " + (p.tellOf || 2) + "</span>";
-  }
+  // (poolTell — a contract title only ONE of two same-named pools offers, so you could tell
+  //  them apart at the board — was removed 2026-08-15. Sub: the second row carried too much, and
+  //  the pool NAME already gets you there: pick the category, then find a mission from that
+  //  giver. Two measurements are worth keeping. For the titles two same-named pools SHARE they
+  //  are byte-identical on rank, locations and payout, so for those there was no tell to give.
+  //  And its own max-width was half of a HORIZONTAL SCROLLBAR: two flex:none children at 46% and
+  //  62% come to 108% before the fixed-width link is placed.)
 
   // ── Latest blueprints, as pictures ────────────────────────────────────────────────────────
   // 🔑 TWO IMAGE SOURCES AND THE CAPTURE WINS. `image` is the crowdsourced fabricator capture —
@@ -2631,6 +2636,100 @@
     if (window.overlayApi && window.overlayApi.openUrl) window.overlayApi.openUrl(url);
   });
 
+  // ── Standing with your mission givers ─────────────────────────────────────────────────────
+  // Sub, 2026-08-15: a segment that auto-picks up to four givers and shows where you stand, to
+  // make going back for the next rank feel worth it. Three ways of arguing that, switchable.
+  //
+  // 🔴 THE REP NUMBER IS A FLOOR, IN ALL THREE. The game never reports reputation anywhere the app
+  // can read, so it is reconstructed from the player's own completions and cannot count anything
+  // earned before the app was installed or in a log since rotated away. That is why the tracked
+  // mission's rep bar already carries a circled i, and why every layout here carries one too.
+  const REP_TIP =
+    "Reconstructed from your own completion history, so it is a FLOOR: anything you earned before"
+    + " installing the app, or in a log that has since rotated away, cannot be counted."
+    + "\n\nThe game does not report reputation anywhere the app can read, so there is no way to"
+    + " check it against the real number. Treat the rank you are shown as the worst case — you may"
+    + " already be further along.";
+  /** Faction name, trimmed of the tail that makes a 380px row truncate for nothing. */
+  const facName = (f) => String(f || "").replace(/\s+(Incorporated|Interstellar|Independent Contractors)$/i, "");
+
+  function standingsHtml(v, layout) {
+    // 🔑 A giver at MAX RANK is dropped, in every layout: there is no next rank to work toward, so
+    // listing them is an invitation to nothing. That is what `toGo == null` means.
+    const st = (v.standings || []).filter((s) => s.toGo != null);
+    if (!st.length) return "";
+    if (layout === "contracts") return standingsContracts(st);
+    if (layout === "unlock") return standingsUnlock(st);
+    return standingsBars(st);
+  }
+
+  // ── STANDINGS 1 · "Bars" ──────────────────────────────────────────────────────────────────
+  // The same shape as Closest to done, one rank at a time: who, where you stand, how far through,
+  // what is left. The argument is CONSISTENCY — the panel already teaches this row, so a second
+  // progress list reads instantly and costs no new vocabulary.
+  function standingsBars(st) {
+    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Standing</span>'
+      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div>';
+    for (const s of st.slice(0, 4)) {
+      html += '<div class="cp">'
+        + '<div class="cp-r"><span class="cp-n">' + escapeHtml(facName(s.faction)) + '</span>'
+        + '<span class="cp-c">' + escapeHtml(s.standing) + '</span>'
+        + '<span class="cp-l">' + s.pct + '%</span></div>'
+        + '<div class="cp-bar"><i style="width:' + s.pct + '%"></i></div>'
+        + '<div class="cp-w"><span class="cp-w-p">'
+        + escapeHtml(compactNum(s.toGo) + ' rep to ' + (s.nextName || 'the next rank'))
+        + '</span></div></div>';
+    }
+    return html + '</div>';
+  }
+
+  // ── STANDINGS 2 · "Contracts" ─────────────────────────────────────────────────────────────
+  // 🔑 REP IS AN ABSTRACTION; CONTRACTS ARE AN ACTION. "5,300 rep to Prestige 2" does not tell you
+  // whether that is an evening or a month — "~27 contracts" does, and that is the number that
+  // decides whether you go. Derived from the MEDIAN rep this giver's missions award, so it is
+  // approximate by construction and says so with a tilde.
+  function standingsContracts(st) {
+    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Next rank</span>'
+      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div><div class="sl">';
+    for (const s of st.slice(0, 4)) {
+      const eff = s.contractsToGo
+        ? '~' + s.contractsToGo + (s.contractsToGo === 1 ? ' contract' : ' contracts')
+        : compactNum(s.toGo) + ' rep';
+      html += '<div class="st-r">'
+        + '<span class="st-n">' + escapeHtml(facName(s.faction)) + '</span>'
+        + '<span class="st-go">' + escapeHtml(eff) + '</span></div>'
+        + '<div class="st-sub">' + escapeHtml(s.standing) + ' <span class="st-arrow">&rsaquo;</span> '
+        + escapeHtml(s.nextName || 'next') + '</div>';
+    }
+    return html + '</div></div>';
+  }
+
+  // ── STANDINGS 3 · "What it unlocks" ───────────────────────────────────────────────────────
+  // 🔑 THE REASON TO CARE, NOT THE DISTANCE TO IT. A rank is only worth grinding for what it hands
+  // over, and several givers gate SHIPS this way — the tracked mission's rep bar had exactly this
+  // problem before `nextRewards` existed: "a number with no stated reason to care".
+  // ⚠️ Most ranks gate nothing, so this layout MUST degrade: a giver with no reward at the next
+  // rank falls back to the rank name itself rather than rendering an empty promise.
+  function standingsUnlock(st) {
+    const withRewards = st.filter((s) => (s.nextRewards || []).length);
+    const rows = (withRewards.length ? withRewards : st).slice(0, 4);
+    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Worth going back for</span>'
+      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div>';
+    for (const s of rows) {
+      const prize = (s.nextRewards || [])[0];
+      const more = (s.nextRewards || []).length - 1;
+      html += '<div class="su">'
+        + '<div class="su-t">' + escapeHtml(prize || (s.nextName || 'The next rank'))
+        + (prize && more > 0 ? ' <span class="su-more">+' + more + '</span>' : '') + '</div>'
+        + '<div class="su-s">' + escapeHtml(facName(s.faction))
+        + ' · ' + escapeHtml(s.nextName || 'next rank')
+        + (s.contractsToGo ? ' · ~' + s.contractsToGo + (s.contractsToGo === 1 ? ' contract' : ' contracts') : '')
+        + '</div>'
+        + '<div class="cp-bar"><i style="width:' + s.pct + '%"></i></div></div>';
+    }
+    return html + '</div>';
+  }
+
   function closestHtml(closest, layout) {
     if (layout === "shortlist") return closestShortlist(closest);
     if (layout === "target") return closestTarget(closest);
@@ -2651,7 +2750,7 @@
         + '<span class="cp-l">' + left + " to go</span></div>"
         + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
         + '<div class="cp-w">'
-        + poolTell(p) + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
         + poolLink(p) + "</div>"
         + "</div>";
     }
@@ -2675,7 +2774,7 @@
         + '<span class="sl-left">' + left + " to go</span>"
         + "</div>"
         + '<div class="sl-sub">'
-        + poolTell(p) + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
         + poolLink(p) + "</div>";
     }
     return html + "</div></div>";
@@ -2702,7 +2801,7 @@
       + '<div class="tg-s-l">complete</div></div>'
       + "</div>"
       + '<div class="cp-w">'
-      + poolTell(p) + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+      + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
       + poolLink(p) + "</div>"
       + "</div>";
     // The runners-up are not gone, just demoted to the one thing you would use them for: knowing
@@ -2745,7 +2844,13 @@
     let html = '<div class="recent">' + idleSwitcherHtml();
 
     // ── Closest to done ────────────────────────────────────────────────────────────────────
-    if (closest.length) html += closestHtml(closest, idleLayout());
+    if (closest.length) html += closestHtml(closest, "shortlist");
+
+    // ── Standing with your mission givers ──────────────────────────────────────────────────
+    // Directly under "what to go do next", because it IS that question asked a second way: the
+    // pools say what to finish, this says who to finish it for. Above the rule, so the scoreboard
+    // half still reads as the separate thing it is.
+    html += standingsHtml(v, idleLayout());
 
     // ── This session ───────────────────────────────────────────────────────────────────────
     // Behind a rule, because it answers a different question from everything above it.
@@ -6601,16 +6706,37 @@
           // "more contracts" affordance, and a PAIR that collide on giver+type exactly as Sub's
           // two Shubin mining pools do, so the disambiguation has something to disambiguate.
           // Payouts are always modelled on pool contracts; they are carried but not rendered.
+          // Standing with four givers, shaped like the real thing (measured on Sub’s collection:
+          // 9 givers carry witnessed rep, Battaglia furthest through its rank at 72%).
+          // 🔑 The LAST entry is at max rank — toGo null — and must be dropped by every layout:
+          // there is no next rank to incentivise, so listing it is an invitation to nothing.
+          // Only ONE giver gates a reward at its next rank, which is the honest ratio and is what
+          // forces the "unlock" layout to degrade rather than render an empty promise.
+          standings: [
+            { faction: "Recco Battaglia", scope: "MissionProviderReputation_Battaglia",
+              standing: "Prestige 1", nextName: "Prestige 2", estimate: 24700, curMin: 20000,
+              nextMin: 30000, pct: 72, toGo: 5300, contractsToGo: 27,
+              nextRewards: ["MISC Prospector Alliance", "Drake Golem Alliance"] },
+            { faction: "Covalex Independent Contractors", scope: "Hauling",
+              standing: "Junior", nextName: "Member", estimate: 1800, curMin: 750,
+              nextMin: 5250, pct: 31, toGo: 3450, contractsToGo: 7, nextRewards: [] },
+            { faction: "United Wayfarers Club", scope: "FactionReputation",
+              standing: "Neutral", nextName: "Jr. Contractor", estimate: 200, curMin: 0,
+              nextMin: 800, pct: 25, toGo: 600, contractsToGo: 3, nextRewards: [] },
+            { faction: "Maxed Faction", scope: "FactionReputation",
+              standing: "Head Contractor", nextName: null, estimate: 99000, curMin: 90000,
+              nextMin: null, pct: 100, toGo: null, contractsToGo: null, nextRewards: [] },
+          ],
           closestPools: [
             { poolUuid: "819a9851-9c2e-4a24-872b-b860331d32d0", key: "a", title: "Turf War",
-              poolName: "Headhunters · Mercenary", variants: 26,
+              poolName: "Mercenary · Headhunters", variants: 26,
               missionTitles: ["Turf War", "Turf War: Escalation", "Clear the Nest"],
               missing: ["Karna Rifle", "Salvo Frag Pistol"],
               owned: 5, total: 7, places: ["Rat's Nest", "Starlight Service Station"],
               payMin: 54500, payMax: 54500, payoutEstimated: true, durMin: 15.12, rep: 100,
               cooldownMin: 30, giver: "Headhunters", missionType: "Mercenary" },
             { poolUuid: "32463294-45d5-4e92-a773-dce1f28a2a2b", key: "b", title: "Cargo Run: Bloom",
-              poolName: "Shubin Interstellar · Ship Mining", variants: 36,
+              poolName: "Ship Mining · Shubin Interstellar", variants: 36,
               missionTitles: ["XL Purchase Order: Ship Mined Ore", "Purchase Order: Ship Mined Ore"],
               missing: ["Arbor MH1 Mining Laser", "Helix I Mining Laser", "Pitman Mining Laser"],
               owned: 8, total: 11, places: ["Orbituary"],
@@ -6618,14 +6744,14 @@
               cooldownMin: null, giver: "Shubin Interstellar", missionType: "Ship Mining" },
             { poolUuid: "7c495074-f31a-4f52-bde2-c912b183ac81", key: "c",
               title: "Salvager Needed (Med. Supply of RMC)",
-              poolName: "Adagio Holdings · Salvage", variants: 1,
+              poolName: "Salvage · Adagio Holdings", variants: 1,
               missionTitles: ["Salvager Needed (Med. Supply of RMC)"],
               missing: ["Cinch Scraper Module", "Trawler Scraper Module"],
               owned: 3, total: 5, places: ["Checkmate"],
               payMin: 108250, payMax: 108250, payoutEstimated: true, durMin: 30, rep: 100,
               cooldownMin: 30, giver: "Adagio Holdings", missionType: "Salvage" },
             { poolUuid: "253e9697-5605-4732-b4fa-56af7a3dc140", key: "d", title: "Deep space hit",
-              poolName: "Shubin Interstellar · Ship Mining", variants: 19,
+              poolName: "Ship Mining · Shubin Interstellar", variants: 19,
               missionTitles: ["XL Purchase Order: Ship Mined Ore", "Deep space hit"],
               missing: ["Lawson Mining Laser", "Surveyor-Go"],
               owned: 6, total: 8, places: [],
