@@ -14,9 +14,11 @@ finish-args:
   - --share=ipc
   - --socket=x11
   - --device=dri
-  # uiohook-napi blocks during native load inside the sandbox, so the F-hold interaction gate
-  # uses ArchVerse's evdev fallback. Grant only /dev/input rather than the much broader --device=all.
-  - --device=input
+
+  # Do not put --device=input in the exported manifest yet. Modern Flatpak versions accept it,
+  # but Flatpak 1.14.x rejects that device type at install/build time. The F-hold evdev fallback
+  # can be enabled narrowly on hosts that support it with a per-user --device=input override.
+  # This preserves compatibility without falling back to the much broader --device=all.
 
   # Voice callouts and network-backed chat/companion services.
   - --socket=pulseaudio
