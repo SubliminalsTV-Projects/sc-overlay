@@ -1258,7 +1258,24 @@
   .cp-bar { height: 4px; border-radius: 2px; background: rgba(var(--accent-rgb), 0.16);
     overflow: hidden; margin-top: 3px; }
   .cp-bar i { display: block; height: 100%; background: var(--cyan); }
-  .cp-w { font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+  /* Where to pick it up, and the way out to the pool's own page. A flex row so the link sits at
+     the far edge instead of running on from the place list as if it were another place. */
+  .cp-w { display: flex; align-items: baseline; gap: 8px; font-size: 10.5px; color: var(--faint);
+    margin-top: 2px; }
+  /* 🔑 What you still need LEADS the sub-line and does not shrink: it is the most useful fact on
+     the row and the only thing separating two pools that share a giver and a type. The places
+     shrink and ellipsise around it — they are repeated in the info popover, so nothing is lost. */
+  .cp-need { flex: none; max-width: 62%; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--cyan-dim); }
+  .cp-need-n { color: var(--faint); }
+  .cp-w-p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* A quiet control, not a call to action — it competes with the pool name directly above it and
+     must lose. Underlined rather than boxed, because a button shape here would read as the row's
+     primary action when the row's job is to be read. */
+  .cp-link { flex: none; padding: 0; border: 0; background: none; cursor: pointer;
+    font-family: var(--sans); font-size: 10px; color: var(--cyan-dim);
+    text-decoration: underline; text-underline-offset: 2px; }
+  .cp-link:hover { color: var(--cyan-bright); }
 
   /* ── TEMPORARY: idle-panel mockup scaffolding ────────────────────────────────────────────
      ⚠️ Everything from here to the end of the .tg- block goes out with the switcher once Sub
@@ -1290,8 +1307,8 @@
   /* "N to go" holds the right-hand column, in the same gold the ledger gives it. */
   .sl-left { flex: none; min-width: 48px; text-align: right; font-family: var(--sans);
     font-size: 10.5px; font-weight: 700; color: var(--gold); }
-  .sl-sub { font-size: 10px; color: var(--faint); margin: 1px 0 6px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
+  .sl-sub { display: flex; align-items: baseline; gap: 8px; font-size: 10px; color: var(--faint);
+    margin: 1px 0 6px; }
   .sl-r:last-of-type + .sl-sub { margin-bottom: 0; }
 
   /* Mockup 3 — one recommendation, given the room to be one. */
@@ -2450,6 +2467,75 @@
   // dataset. Do not "tidy" them out of src/missions.ts.
   const poolLeft = (p) => ({ left: p.total - p.owned, pct: Math.round((p.owned / p.total) * 100) });
 
+  // ── A pool's name, and the way out to its page ────────────────────────────────────────────
+  // 🔑 THE HEADLINE IS THE POOL, NOT A CONTRACT. `poolName` is giver + type ("United Wayfarers
+  // Club · Refueling"), which says what the collection IS where a contract title only ever named
+  // one of the (up to 79) ways to farm it.
+  const poolTitle = (p) => p.poolName || p.title;
+
+  /** How many contracts feed this pool, and what they are called — the "there is more here than
+   *  the one name you can see" affordance. Sub asked for an eye; the panel's settled idiom for
+   *  "there is more to know" is the circled i (an eye glyph was tried on 2026-08-12 and "read as
+   *  something else entirely"), so it is that. Self-hides for a single-contract pool. */
+  function poolMoreInfo(p) {
+    const titles = p.missionTitles || [];
+    const missing = p.missing || [];
+    const places = p.places || [];
+    if (titles.length < 2 && !missing.length) return "";
+    const shown = titles.slice(0, 6);
+    const parts = [];
+    if (missing.length) {
+      parts.push("Still missing: " + missing.slice(0, 10).join(", ")
+        + (missing.length > 10 ? ", +" + (missing.length - 10) + " more" : ""));
+    }
+    if (titles.length > 1) {
+      parts.push(titles.length + " different contracts fill this pool, so you are never stuck"
+        + " waiting for one to come back:\n• " + shown.join("\n• ")
+        + (titles.length > shown.length ? "\n• …and " + (titles.length - shown.length) + " more" : "")
+        + (p.variants > titles.length
+            ? "\n\n" + p.variants + " variants of them are on the boards you can reach."
+            : ""));
+    } else if (titles.length === 1) {
+      parts.push("One contract fills this pool: " + titles[0] + ".");
+    }
+    // 🔑 The places live in here as well as on the row. The row's copy is the first thing
+    // truncation eats on a narrow widget, and a pickup point you cannot read is not a pickup point.
+    if (places.length) parts.push("Pick it up at: " + places.join(", ") + ".");
+    return info(parts.join("\n\n"));
+  }
+
+  /** What you still need, leading the sub-line. This is the row's most useful fact AND the thing
+   *  that tells two same-named pools apart — Sub has two "Shubin Interstellar · Ship Mining" pools
+   *  open at once and nothing in the taxonomy separates them. First name plus a count, because the
+   *  full list is in the info popover and a row cannot hold five blueprint names. */
+  function poolNeed(p) {
+    const m = p.missing || [];
+    if (!m.length) return "";
+    return '<span class="cp-need">need ' + escapeHtml(m[0])
+      + (m.length > 1 ? ' <span class="cp-need-n">+' + (m.length - 1) + "</span>" : "")
+      + "</span>";
+  }
+
+  // ⚠️ THE POOL PAGE DOES NOT EXIST YET. Sub is coordinating it with the website flight
+  // (2026-08-15); the uuid is the whole address, so nothing here needs to change when it lands.
+  // Until then this link 404s — which is why it is rendered ONLY when the shell can open a real
+  // browser (overlayApi.openUrl), never as a bare href a standalone/OBS view would follow, and
+  // why it is one small labelled control rather than the row itself being clickable.
+  const POOL_PAGE_BASE = "https://subliminal.gg/pools/";
+  function poolLink(p) {
+    if (!p.poolUuid) return "";
+    return '<button type="button" class="cp-link" data-pool="' + escapeAttr(p.poolUuid) + '">'
+      + "see all contracts</button>";
+  }
+  // 🔑 openUrl(), never target=_blank — a second always-on-top window over the game is exactly
+  // what this app exists to avoid. https only, enforced shell-side.
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest(".cp-link");
+    if (!b) return;
+    const url = POOL_PAGE_BASE + encodeURIComponent(b.dataset.pool);
+    if (window.overlayApi && window.overlayApi.openUrl) window.overlayApi.openUrl(url);
+  });
+
   function closestHtml(closest, layout) {
     if (layout === "shortlist") return closestShortlist(closest);
     if (layout === "target") return closestTarget(closest);
@@ -2465,13 +2551,13 @@
     for (const p of closest.slice(0, 2)) {
       const { left, pct } = poolLeft(p);
       html += '<div class="cp">'
-        + '<div class="cp-r"><span class="cp-n">' + escapeHtml(p.title) + "</span>"
+        + '<div class="cp-r"><span class="cp-n">' + escapeHtml(poolTitle(p)) + "</span>" + poolMoreInfo(p)
         + '<span class="cp-c">' + p.owned + " of " + p.total + "</span>"
         + '<span class="cp-l">' + left + " to go</span></div>"
         + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
-        + (p.places.length
-          ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>"
-          : "")
+        + '<div class="cp-w">'
+        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+        + poolLink(p) + "</div>"
         + "</div>";
     }
     return html + "</div>";
@@ -2488,14 +2574,14 @@
     for (const p of closest) {
       const { left, pct } = poolLeft(p);
       html += '<div class="sl-r">'
-        + '<span class="sl-n">' + escapeHtml(p.title) + "</span>"
+        + '<span class="sl-n">' + escapeHtml(poolTitle(p)) + "</span>" + poolMoreInfo(p)
         + '<span class="sl-c">' + p.owned + "/" + p.total + "</span>"
         + '<span class="sl-bar"><i style="width:' + pct + '%"></i></span>'
         + '<span class="sl-left">' + left + " to go</span>"
         + "</div>"
-        + (p.places.length
-          ? '<div class="sl-sub">' + escapeHtml(p.places.join(" · ")) + "</div>"
-          : '<div class="sl-sub"></div>');
+        + '<div class="sl-sub">'
+        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+        + poolLink(p) + "</div>";
     }
     return html + "</div></div>";
   }
@@ -2512,7 +2598,7 @@
     const { left, pct } = poolLeft(p);
     let html = '<div class="ra-sec"><div class="ra-h">Go finish this</div>'
       + '<div class="tg">'
-      + '<div class="tg-t">' + escapeHtml(p.title) + "</div>"
+      + '<div class="tg-t">' + escapeHtml(poolTitle(p)) + "</div>"
       + '<div class="tg-bar"><i style="width:' + pct + '%"></i></div>'
       + '<div class="tg-r">'
       + '<div class="tg-s"><div class="tg-s-n"><span class="tg-big">' + left + "</span></div>"
@@ -2520,7 +2606,9 @@
       + '<div class="tg-s"><div class="tg-s-n">' + pct + "%</div>"
       + '<div class="tg-s-l">complete</div></div>'
       + "</div>"
-      + (p.places.length ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>" : "")
+      + '<div class="cp-w">'
+      + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+      + poolLink(p) + "</div>"
       + "</div>";
     // The runners-up are not gone, just demoted to the one thing you would use them for: knowing
     // they exist. Dropping them would make the panel forget pools you have started.
@@ -2528,7 +2616,14 @@
     if (rest.length) {
       html += '<div class="tg-also"><span class="tg-also-l">also close</span>'
         + '<span class="tg-also-n">'
-        + escapeHtml(rest.map((r) => r.title + " " + r.owned + "/" + r.total).join(" · "))
+        // ⚠️ Two runners-up can share a name here for the same reason two rows can — so the label
+        // picks up its first missing blueprint ONLY when the name would otherwise repeat inside
+        // this one line. Unqualified names stay short, which is the whole point of this line.
+        + escapeHtml(rest.map((r) => {
+            const dupe = rest.filter((o) => poolTitle(o) === poolTitle(r)).length > 1;
+            const tag = dupe && r.missing && r.missing.length ? " (" + r.missing[0] + ")" : "";
+            return poolTitle(r) + tag + " " + r.owned + "/" + r.total;
+          }).join(" · "))
         + "</span></div>";
     }
     return html + "</div>";
@@ -6305,23 +6400,41 @@
             .map((title, i) => ({ title, aUEC: i % 2 ? null : 9000 + i * 1500,
               at: new Date(now - (i + 1) * 11 * 60000).toISOString() })),
           recentBlueprints: bps,
-          // Shaped like the real thing: payouts are ALWAYS modelled on pool contracts, most
-          // carry a run length, half carry a cooldown, and one deliberately carries NEITHER a
-          // payout nor a duration — that is the row every layout has to survive without
-          // inventing a rate or a finish time.
+          // POOLS, not contracts — one row per poolUuid. Shaped like the real thing: a pool fed by
+          // many contracts (the common case, 65 of 89), a single-contract pool that must show no
+          // "more contracts" affordance, and a PAIR that collide on giver+type exactly as Sub's
+          // two Shubin mining pools do, so the disambiguation has something to disambiguate.
+          // Payouts are always modelled on pool contracts; they are carried but not rendered.
           closestPools: [
-            { key: "a", title: "Turf War", owned: 5, total: 7, places: ["Rat's Nest", "Starlight Service Station"],
+            { poolUuid: "819a9851-9c2e-4a24-872b-b860331d32d0", key: "a", title: "Turf War",
+              poolName: "Headhunters · Mercenary", variants: 26,
+              missionTitles: ["Turf War", "Turf War: Escalation", "Clear the Nest"],
+              missing: ["Karna Rifle", "Salvo Frag Pistol"],
+              owned: 5, total: 7, places: ["Rat's Nest", "Starlight Service Station"],
               payMin: 54500, payMax: 54500, payoutEstimated: true, durMin: 15.12, rep: 100,
               cooldownMin: 30, giver: "Headhunters", missionType: "Mercenary" },
-            { key: "b", title: "Cargo Run: Bloom", owned: 8, total: 11, places: ["Orbituary"],
+            { poolUuid: "32463294-45d5-4e92-a773-dce1f28a2a2b", key: "b", title: "Cargo Run: Bloom",
+              poolName: "Shubin Interstellar · Ship Mining", variants: 36,
+              missionTitles: ["XL Purchase Order: Ship Mined Ore", "Purchase Order: Ship Mined Ore"],
+              missing: ["Arbor MH1 Mining Laser", "Helix I Mining Laser", "Pitman Mining Laser"],
+              owned: 8, total: 11, places: ["Orbituary"],
               payMin: 96000, payMax: 96000, payoutEstimated: true, durMin: 40.24, rep: 250,
-              cooldownMin: null, giver: "Covalex", missionType: "Hauling" },
-            { key: "c", title: "Salvager Needed (Med. Supply of RMC)", owned: 3, total: 5, places: ["Checkmate"],
+              cooldownMin: null, giver: "Shubin Interstellar", missionType: "Ship Mining" },
+            { poolUuid: "7c495074-f31a-4f52-bde2-c912b183ac81", key: "c",
+              title: "Salvager Needed (Med. Supply of RMC)",
+              poolName: "Adagio Holdings · Salvage", variants: 1,
+              missionTitles: ["Salvager Needed (Med. Supply of RMC)"],
+              missing: ["Cinch Scraper Module", "Trawler Scraper Module"],
+              owned: 3, total: 5, places: ["Checkmate"],
               payMin: 108250, payMax: 108250, payoutEstimated: true, durMin: 30, rep: 100,
               cooldownMin: 30, giver: "Adagio Holdings", missionType: "Salvage" },
-            { key: "d", title: "Deep space hit", owned: 6, total: 8, places: [],
+            { poolUuid: "253e9697-5605-4732-b4fa-56af7a3dc140", key: "d", title: "Deep space hit",
+              poolName: "Shubin Interstellar · Ship Mining", variants: 19,
+              missionTitles: ["XL Purchase Order: Ship Mined Ore", "Deep space hit"],
+              missing: ["Lawson Mining Laser", "Surveyor-Go"],
+              owned: 6, total: 8, places: [],
               payMin: null, payMax: null, payoutEstimated: false, durMin: null, rep: null,
-              cooldownMin: null, giver: null, missionType: null },
+              cooldownMin: null, giver: "Shubin Interstellar", missionType: "Ship Mining" },
           ],
         };
         const el = $("pool");

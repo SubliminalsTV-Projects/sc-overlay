@@ -1276,16 +1276,55 @@ const IDLEPANEL = `(async () => {
   // Closest to done: the half that answers "what should I go do".
   const cp = [...pool.querySelectorAll(".cp")];
   ok("it lists what you are closest to finishing", cp.length === 2, String(cp.length));
-  ok("...naming the pool, the count and what is left",
-     cp[0].querySelector(".cp-n").textContent === "Turf War" &&
+  // 🔴 THE ROW NAMES THE POOL, NOT ONE OF ITS CONTRACTS. This list used to iterate contracts, so
+  // one pool fed by many of them filled the panel with itself — Sub saw four rows that were four
+  // titles of the SAME pool, all reading 5/8. 65 of the 89 pools span more than one title, so it
+  // was the normal case. The fixture's first pool is 26 variants across 3 titles.
+  ok("...naming the POOL rather than one of its contracts",
+     cp[0].querySelector(".cp-n").textContent === "Headhunters · Mercenary" &&
      cp[0].querySelector(".cp-c").textContent === "5 of 7" &&
      /2/.test(cp[0].querySelector(".cp-l").textContent),
-     cp[0].textContent.trim().slice(0, 60));
+     cp[0].querySelector(".cp-n").textContent);
   ok("...with a bar that matches the fraction, not a guess",
      cp[0].querySelector(".cp-bar i").style.width === "71%",
      cp[0].querySelector(".cp-bar i").style.width);
   ok("...and where to pick it up, because a suggestion you cannot act on is a statistic",
      /Rat's Nest/.test(cp[0].querySelector(".cp-w").textContent));
+  // What you still need leads the sub-line: the row's most useful fact, and the only thing that
+  // separates two pools sharing a giver and a type.
+  const need0 = cp[0].querySelector(".cp-need");
+  ok("...and what you still need to finish it",
+     !!need0 && need0.textContent.indexOf("need Karna Rifle") === 0,
+     need0 ? need0.textContent.trim() : "(no .cp-need)");
+  ok("...with a count rather than the whole list, which the popover carries",
+     !!need0 && need0.textContent.indexOf("+1") > 0, need0 ? need0.textContent.trim() : "");
+  // A pool fed by several contracts says so — Sub asked for an indicator that the one name on
+  // screen is not the only way to farm it. The circled i, not an eye: an eye was tried on
+  // 2026-08-12 and "read as something else entirely".
+  const cpInfo = cp[0].querySelector(".cp-r .mi-info");
+  ok("...and flags that other contracts fill the same pool", !!cpInfo,
+     cp[0].querySelector(".cp-r").textContent.trim());
+  ok("...naming them in the popover rather than on the row",
+     !!cpInfo && /3 different contracts/.test(cpInfo.getAttribute("data-tip") || ""),
+     (cpInfo && cpInfo.getAttribute("data-tip") || "").slice(0, 70));
+  // The way out to the pool's own page. The uuid IS the address.
+  const cpLink = cp[0].querySelector(".cp-link");
+  ok("...and offers the pool's own page", !!cpLink && cpLink.dataset.pool.length === 36,
+     cpLink ? cpLink.dataset.pool : "(no link)");
+
+  // 🔴 TWO POOLS CAN SHARE A NAME. Sub has two "Shubin Interstellar · Ship Mining" pools open at
+  // once — same giver, same type, overlapping contract titles, both mining lasers and radars.
+  // Appending the missing blueprint to the NAME was tried and measured useless: the combined
+  // string does not fit a 380px row, so both ellipsised to the same thing and the disambiguator
+  // was exactly the part that got cut. The sub-line is where it has room.
+  await pickLayout("shortlist");
+  const slNames = [...pool.querySelectorAll(".sl-n")].map((e) => e.textContent);
+  const dupe = slNames.filter((x) => x === "Shubin Interstellar · Ship Mining");
+  ok("two pools sharing a giver and a type both still appear", dupe.length === 2, slNames.join(" | "));
+  const slNeeds = [...pool.querySelectorAll(".sl-sub .cp-need")].map((e) => e.textContent.trim());
+  ok("...told apart by what you still need, not by a truncated name",
+     slNeeds[1] !== slNeeds[3] && slNeeds[1].length > 0, slNeeds.join(" | "));
+  await pickLayout("ledger");
 
   // The session half.
   const ss = [...pool.querySelectorAll(".ss > div")].map((d) => d.querySelector(".ss-l").textContent);
@@ -1411,14 +1450,21 @@ const IDLEPANEL = `(async () => {
   // Mockup 3 — one recommendation.
   await pickLayout("target");
   const tgt = pool.querySelector(".tg-t");
-  ok("target: it commits to the pool with the fewest left", !!tgt && tgt.textContent === "Turf War",
+  ok("target: it commits to the pool with the fewest left",
+     !!tgt && tgt.textContent === "Headhunters · Mercenary",
      tgt ? tgt.textContent : "(no hero)");
   const tgs = [...pool.querySelectorAll(".tg-s-l")].map((e) => e.textContent);
   ok("...leading with how many are left, then how far through it is",
      tgs.join(" | ") === "to go of 7 | complete", tgs.join(" | "));
   const also = pool.querySelector(".tg-also");
   ok("...and it does not forget the pools it did not pick",
-     !!also && /Cargo Run: Bloom 8\\/11/.test(also.textContent), also ? also.textContent.trim() : "");
+     !!also && also.textContent.indexOf("Adagio Holdings · Salvage 3/5") >= 0,
+     also ? also.textContent.trim() : "");
+  // The runners-up can collide on name too. Same rule, applied only inside this one line.
+  ok("...qualifying two runners-up that would otherwise read identically",
+     !!also && also.textContent.indexOf("(Arbor MH1 Mining Laser)") >= 0
+     && also.textContent.indexOf("(Lawson Mining Laser)") >= 0,
+     also ? also.textContent.trim() : "");
 
   // Whatever the layout, the halves Sub asked to keep are still there and still in his order.
   // 🔑 The shortlist's heading carries a totals span INSIDE it, so read the title cell rather than

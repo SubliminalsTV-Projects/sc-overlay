@@ -40,17 +40,48 @@ export interface RepEntry {
   scope: string;
   amount: number;
 }
-/** A started-but-unfinished blueprint pool, for the idle panel's "closest to done" list.
+/** A started-but-unfinished blueprint POOL, for the idle panel's "closest to done" list.
  *
- *  🔑 The cost/reward fields are what turn "5 of 8" into a decision. Measured 2026-08-15 over the
- *  755 pool-bearing contracts in 4.9.0-LIVE.12344265: **748 carry a payout AND a run length**, 726
- *  a reputation award, 377 a re-accept cooldown. So a per-contract aUEC/hr is available for 99% of
- *  what this list can ever show — the productivity staple, applied to the pool you are chasing.
- *  Every field is optional and the UI must omit rather than invent: a run length of 0 would make
- *  the rate infinite, and a missing payout must never render as a free grind. */
+ *  🔴 THE UNIT IS THE POOL, NOT THE MISSION — changed 2026-08-15, and it was a real bug. This list
+ *  used to iterate contracts, so a pool fed by many contracts filled the panel with itself: Sub saw
+ *  four rows that were four TITLES of one pool (`819a9851…`, United Wayfarers Club refuelling),
+ *  all reading 5/8, where he should have seen four different pools. The old dedupe keyed on
+ *  title + progress and could not catch it, because the titles genuinely differ.
+ *  Measured over 4.9.0-LIVE.12344265: **89 distinct pools** behind 755 pool-bearing contracts, and
+ *  **65 of the 89 span more than one title** — so this is the normal case, not an edge case. That
+ *  one refuelling pool has **79 contract variants across 5 titles**.
+ *
+ *  🔑 A pool has ONE identity and it is `poolUuid`. That is also the key the website's pool page is
+ *  addressed by, so the widget can link straight out to it.
+ *
+ *  🔑 The cost/reward fields are measured and deliberately left UN-RENDERED (Sub, 2026-08-15: the
+ *  per-hour figure belongs to the session tracker, "not with the closest to done"). They are kept
+ *  because they are cheap and already computed; do not tidy them away, and do not render them
+ *  without asking. Coverage over the 755 contracts: 748 carry a payout AND a run length, 726 a
+ *  reputation award, 377 a re-accept cooldown. Where a pool's contracts disagree, the value is the
+ *  representative contract's — these describe ONE run of ONE contract, never the pool as a whole. */
 export interface ClosestPool {
+  /** The pool's own uuid — its identity, and the key the website's pool page uses. */
+  poolUuid: string;
+  /** A representative contract key, for anything that still needs to name a mission. */
   key: string;
+  /** The representative contract's title — what the pool used to be called here. */
   title: string;
+  /** A readable name for the POOL rather than for one of its contracts: giver + type, which is
+   *  unambiguous for 85 of 89 pools (one giver) and 77 (one type). Falls back to the
+   *  representative title when the pool's contracts disagree, so it is never a half-truth. */
+  poolName: string;
+  /** Every distinct contract title that feeds this pool, shortest first. The UI shows the first
+   *  and offers the rest — "there are other ways to farm this" is the useful part. */
+  missionTitles: string[];
+  /** How many contract VARIANTS feed it (79 for the refuelling pool, not 5). */
+  variants: number;
+  /** The blueprints still missing from this pool, alphabetical — what "3 to go" actually means.
+   *  🔑 Also the tie-breaker on the name: two DIFFERENT pools can share a giver and a type (Sub
+   *  has two "Shubin Interstellar · Ship Mining" pools open, both mining lasers and radars, and
+   *  even their contract titles collide), so a name alone would reintroduce the very repetition
+   *  this restructure removed. What you still need is the thing that actually tells them apart. */
+  missing: string[];
   owned: number;
   total: number;
   places: string[];
@@ -1916,65 +1947,127 @@ export class MissionTracker extends EventEmitter {
   // view model should not be the thing that caps it. The default layout still slices to two, so
   // nothing on screen changed by widening this.
   private closestPools(n = 4): ClosestPool[] {
-    const out: ClosestPool[] = [];
-    if (!this.dataset) return out;   // no dataset loaded yet — the idle panel just shows less
+    if (!this.dataset) return [];   // no dataset loaded yet — the idle panel just shows less
     // 🔴 Only what you can actually reach. Sub, 2026-08-13, in Pyro and being shown Nyx pools:
     // "I don't want to see anything for Nyx." A suggestion in another system is not a suggestion,
     // it is a chore you cannot start — and the panel exists to answer "what should I go do now".
     const here = this.playingIn();
+
+    // ── Gather by POOL, not by contract ──────────────────────────────────────────────────────
+    // The old loop pushed one row per CONTRACT and then tried to dedupe on title, which cannot
+    // work: one pool is fed by up to 79 contracts across 5 different titles. Group on the pool's
+    // own uuid and the repetition is gone by construction rather than by cleanup.
+    type Acc = {
+      entries: Map<string, PoolEntry>;    // keyed to collapse pure duplication — see below
+      titles: Map<string, number>;        // title -> how many variants carry it
+      variants: number;
+      places: string[];
+      givers: Set<string>;
+      types: Set<string>;
+      repKey: string; repTitle: string;   // the representative contract
+      repRank: number;
+    };
+    const acc = new Map<string, Acc>();
     for (const [key, m] of Object.entries(this.dataset.missions)) {
-      if (here) {
+      const reachable = !here || (() => {
         const sys = this.systemOf(m.places);
         // Unknown stays IN. 2,092 of 4,075 missions carry no place list at all, and dropping
         // every one of them would quietly hide most of the dataset to enforce a guess.
-        if (sys && sys !== here) continue;
+        return !sys || sys === here;
+      })();
+      if (!reachable) continue;
+      for (const [uuid, list] of Object.entries(m.pools ?? {})) {
+        if (!Array.isArray(list) || list.length < 2) continue;   // not a collection to finish
+        let a = acc.get(uuid);
+        if (!a) {
+          a = { entries: new Map(), titles: new Map(), variants: 0, places: [], givers: new Set(),
+                types: new Set(), repKey: key, repTitle: m.title, repRank: Infinity };
+          acc.set(uuid, a);
+        }
+        a.variants++;
+        a.titles.set(m.title, (a.titles.get(m.title) ?? 0) + 1);
+        if (m.giver) a.givers.add(m.giver);
+        if (m.missionType) a.types.add(m.missionType);
+        for (const w of m.where ?? []) if (!a.places.includes(w)) a.places.push(w);
+        // 🔴 DEDUPE ON THE ITEM UUID, NOT THE NAME. Three contracts list this refuelling pool's 8
+        // blueprints TWICE — same names AND same item uuids — which would report "of 16" for a
+        // pool of 8. But a repeated NAME is usually real: dataset-wide 165 mission-pool copies
+        // repeat a name and 150 of those have all-distinct items (there are genuinely three
+        // separate "Cinch Scraper Module" items). Keying on the item collapses only the true
+        // duplication and leaves the counting semantics of everything else exactly as they were.
+        // Entries with no item uuid fall back to a per-position key so they are never merged.
+        list.forEach((e, i) => {
+          a!.entries.set(e.item ?? `${key}#${i}`, e);
+        });
+        // The representative contract is the one with the SHORTEST title, tie-broken
+        // alphabetically — deterministic, and the short title is reliably the least cluttered of
+        // a pool's variants ("REFUEL REQUEST: [Ship]" over "CRITICAL REFUEL REQUEST: [Ship]").
+        const rank = m.title.length;
+        if (rank < a.repRank || (rank === a.repRank && m.title < a.repTitle)) {
+          a.repRank = rank; a.repKey = key; a.repTitle = m.title;
+        }
       }
-      const entries = Object.values(m.pools ?? {}).flat();
-      if (entries.length < 2) continue;   // a one-item pool is not a collection to finish
+    }
+
+    // ── Score them ───────────────────────────────────────────────────────────────────────────
+    const out: ClosestPool[] = [];
+    for (const [uuid, a] of acc) {
+      const entries = [...a.entries.values()];
+      if (entries.length < 2) continue;
       let owned = 0;
-      for (const e of entries) if (this.isOwned(e.blueprint).owned) owned++;
+      const missing = new Set<string>();
+      for (const e of entries) {
+        if (this.isOwned(e.blueprint).owned) owned++;
+        else missing.add(e.blueprint);
+      }
       if (owned === 0 || owned === entries.length) continue;   // untouched, or already done
-      // What one run costs and pays. Straight off the dataset the tracker already holds — the
-      // panel derives the rate, so nothing here is a stored opinion.
-      const f = this.factsFor(key);
-      const repSum = (m.reputationGained ?? []).reduce((a, r) => a + (r.amount || 0), 0);
+      const m = this.dataset.missions[a.repKey];
+      const f = this.factsFor(a.repKey);
+      const repSum = (m?.reputationGained ?? []).reduce((s, r) => s + (r.amount || 0), 0);
+      // 🔑 The friendly name is giver + type, which Sub asked for ("instead of it saying critical
+      // fleet refuel it'll say Covalex refueling missions"). Stated ONLY when the pool's contracts
+      // agree on both — 85 of 89 pools have one giver and 77 one type, and a pool spanning six
+      // factions (there is one) must not be labelled with whichever we saw first. Otherwise the
+      // representative title, which is at least true of something.
+      const poolName = a.givers.size === 1 && a.types.size === 1
+        ? `${[...a.givers][0]} · ${[...a.types][0]}`
+        : a.repTitle;
       out.push({
-        key,
-        title: m.title,
+        poolUuid: uuid,
+        key: a.repKey,
+        title: a.repTitle,
+        poolName,
+        // Shortest first, so the one the UI shows is the least cluttered.
+        missionTitles: [...a.titles.keys()].sort((x, y) => x.length - y.length || x.localeCompare(y)),
+        variants: a.variants,
+        missing: [...missing].sort(),
         owned,
         total: entries.length,
         // Where to take it. `where` is the availability list the mission-info drawer uses; a
         // suggestion you cannot act on is just a statistic.
-        places: (m.where ?? []).slice(0, 2),
-        payMin: m.payout?.min ?? null,
-        payMax: m.payout?.max ?? null,
-        payoutEstimated: m.payoutCalculated === true,
-        // 🔑 Guard the zero. `dur: 0` would divide into an infinite aUEC/hr, and a contract that
+        places: a.places.slice(0, 3),
+        payMin: m?.payout?.min ?? null,
+        payMax: m?.payout?.max ?? null,
+        payoutEstimated: m?.payoutCalculated === true,
+        // 🔑 Guard the zero. `dur: 0` would divide into an infinite rate, and a contract that
         // takes no time is not a thing the panel should ever claim.
         durMin: f?.dur && f.dur > 0 ? f.dur : null,
         rep: repSum > 0 ? repSum : null,
         cooldownMin: f?.cd && f.cd > 0 ? f.cd : null,
-        giver: m.giver ?? null,
-        missionType: m.missionType ?? null,
+        giver: a.givers.size === 1 ? [...a.givers][0] : null,
+        missionType: a.types.size === 1 ? [...a.types][0] : null,
       });
     }
     out.sort((a, b) => (a.total - a.owned) - (b.total - b.owned)
       || b.owned / b.total - a.owned / a.total
-      || a.title.localeCompare(b.title));
-    // 🔴 SAME-TITLED VARIANTS ARE SEPARATE DATASET KEYS, and 460 of the 540 multi-variant titles
-    // are the SAME pool offered in several places — so the raw list opens with the same contract
-    // twice, identical counts and all, which reads as a bug rather than a suggestion. Seen live
-    // on Sub's collection the moment this shipped: "CRITICAL FLEET REFUEL 5/8" listed twice.
-    // Collapsed on title + how far through it is, merging the places, because to someone deciding
-    // where to go those really are one errand.
-    const seen = new Map<string, ClosestPool>();
-    for (const p of out) {
-      const k = p.title + "|" + p.owned + "/" + p.total;
-      const had = seen.get(k);
-      if (!had) { seen.set(k, { ...p, places: [...p.places] }); continue; }
-      for (const place of p.places) if (!had.places.includes(place)) had.places.push(place);
-    }
-    return [...seen.values()].slice(0, n).map((p) => ({ ...p, places: p.places.slice(0, 3) }));
+      || a.poolName.localeCompare(b.poolName));
+    // 🔑 TWO POOLS CAN SHARE A NAME AND THAT IS FINE HERE — the widget separates them on the line
+    // below, with what you still need. Appending the missing blueprint to `poolName` was tried
+    // first and MEASURED AS USELESS: "Shubin Interstellar · Ship Mining · BroadSpec" does not fit
+    // a 380px row, so both rows ellipsised to the identical "Shubin Interstellar · Ship Mining…"
+    // and the disambiguator was the part that got cut. A name is the wrong place to put the thing
+    // that tells two names apart. `missing` is on the record and the renderer leads with it.
+    return out.slice(0, n);
   }
 
   private recentBlueprints(n = 10): RecentBlueprint[] {
