@@ -2,6 +2,8 @@
 'use strict';
 
 const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const [capturePath, mainPath] = process.argv.slice(2);
 if (!capturePath || !mainPath) {
@@ -130,13 +132,8 @@ if (!main.includes('ARCHVERSE_FLATPAK_GAME_FOCUS_HANDOFF')) {
   main = replaceOnce(main, oldDesktopLog, newDesktopLog, 'desktop focus release log');
 }
 
-// Restore the proven Linux interaction contract: F only arms/focuses the overlay when the pointer
-// is inside a classified widget. A click may keep that widget latched after F is released so text
-// fields, checkboxes, scrolling, etc. remain usable, but the latch belongs to widget hover, not the
-// full-screen transparent canvas. Once the pointer has been outside every widget for a short debounce
-// window, release all overlay input ownership and restore the exact pre-overlay native focus target.
-// The transparent canvas then becomes a true pass-through surface, so the user's next click naturally
-// focuses Star Citizen, Discord, Konsole, or any other window underneath without synthetic clicks.
+// Temporary 0.1.43 implementation. The generic Linux policy pass below promotes this into the
+// version-independent contract and verifies the final names/semantics used by the packaged build.
 if (!main.includes('ARCHVERSE_FLATPAK_HOVER_SCOPED_LATCH')) {
   const lifecycleAnchor = 'let linuxScLifecycleTimer = null;';
   must(main.includes(lifecycleAnchor), 'Linux lifecycle timer anchor missing for hover-scoped latch');
@@ -155,8 +152,16 @@ if (!main.includes('ARCHVERSE_FLATPAK_HOVER_SCOPED_LATCH')) {
 must(main.includes('drag lock held 30s'), '0.1.43 drag-lock watchdog missing after convergence');
 must(main.includes('ARCHVERSE_FLATPAK_GAME_FOCUS_HANDOFF'), 'Flatpak Star Citizen focus handoff recovery missing after convergence');
 must(main.includes('[game-focus] Star Citizen click handoff restored the pre-overlay game focus'), 'game focus handoff diagnostic missing');
-must(main.includes('ARCHVERSE_FLATPAK_HOVER_SCOPED_LATCH'), 'hover-scoped post-F interaction latch missing');
-must(main.includes('pointer left all widgets after F release; click-through restored and previous focus returned'), 'hover-scoped latch focus-return diagnostic missing');
 write(mainPath, main);
+
+// Every Linux Electron convergence ends by enforcing the version-independent interaction policy.
+// This is deliberately separate from 0.1.43 so future upstream upgrades cannot silently change the
+// held-F/widget-latch/focus-return behavior. If upstream refactors the required hooks, packaging fails.
+const policyScript = path.join(__dirname, 'enforce-linux-interaction-policy.cjs');
+const policy = spawnSync(process.execPath, [policyScript, mainPath], { stdio: 'inherit' });
+must(policy.status === 0, `durable Linux interaction policy failed (status ${policy.status})`);
+main = read(mainPath);
+must(main.includes('ARCHVERSE_LINUX_HOVER_SCOPED_LATCH'), 'durable Linux hover-scoped latch policy missing after enforcement');
+must(main.includes('[linux-interaction] pointer left all widgets; overlay released and previous focus restored'), 'durable Linux focus-return diagnostic missing after enforcement');
 
 console.log('0.1.43 Electron convergence applied and verified');
