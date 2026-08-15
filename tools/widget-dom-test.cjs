@@ -1256,17 +1256,18 @@ const IDLEPANEL = `(async () => {
   // overlay — so without driving it to a known state first, every assertion below is really an
   // assertion about which mockup he last clicked. That is the "a test that asserts a USER
   // PREFERENCE fails on a clean tree" trap, and it would have gone red for him and nobody else.
-  const saved = localStorage.getItem("scIdleLayoutMockup");
+  const saved = localStorage.getItem("scIdleLayoutPick");
   const pickLayout = async (id) => {
     const b = pool.querySelector('.ra-mk-b[data-mk="' + id + '"]');
     if (b) b.click();
-    await sleep(120);
+    await sleep(150);
   };
   await pickLayout("ledger");
 
   const heads = [...pool.querySelectorAll(".ra-h")].map((e) => e.textContent);
-  // The per-hour rates are folded INTO "This session" (2026-08-13). "Latest" became two lists
-  // sharing the leftover space (2026-08-15) — blueprints, then missions.
+  // The per-hour rates are folded INTO "This session" (2026-08-13). "Latest" split in two
+  // (2026-08-15) and the blueprint half then became a row of PICTURES sized by the widget's
+  // WIDTH, so only the missions list still competes for leftover height.
   ok("the idle panel is in the documented order",
      heads.join(" | ") === "Closest to done | This session | Latest blueprints | Latest missions",
      heads.join(" | "));
@@ -1361,20 +1362,62 @@ const IDLEPANEL = `(async () => {
      !!ssRows[1].children[1].querySelector(".rt-na"),
      ssRows[1].children[1].textContent.trim());
 
-  // The size-driven lists. Both are filled by the same fitter off ONE measurement of the room
-  // they share, so they are asserted together.
+  // ── Latest blueprints, as pictures ──────────────────────────────────────────────────────
+  // Sized by the widget's WIDTH (how many fit across), not its height, so unlike the missions
+  // list it takes a fixed slice of the panel.
   const panel = document.getElementById("panel");
-  const ul = document.getElementById("raLatest");
-  const mul = document.getElementById("raLatestMissions");
-  const rows = () => ul.querySelectorAll("li:not(.ra-more)").length;
-  const mrows = () => mul.querySelectorAll("li:not(.ra-more)").length;
-  const at = (h) => { panel.style.height = h + "px"; window.__fitLatest(); return rows(); };
-  const both = (h) => { at(h); return [rows(), mrows()]; };
+  const artRow = document.getElementById("raLatestArt");
+  const tiles = () => artRow.querySelectorAll(".bt").length;
+  // 🔑 DRIVE THE FIT, do not resize and hope. Same reasoning as the row-count assertions below:
+  // layout callbacks are unreliable in a window the compositor considers hidden, so a suite that
+  // waits on a ResizeObserver is measuring the harness. (A real drag WAS verified separately, in
+  // both directions.) The panel width is set, the fit is called, then it is measured.
+  const across = (w) => { panel.style.width = w + "px"; window.__fitLatest(); return tiles(); };
+  ok("recent blueprints are shown as pictures", !!artRow && tiles() >= 2, String(artRow && tiles()));
+  // The tracker's registry entry is { w: 380, minW: 300 }. Sub put his widget at "about the
+  // smallest size that someone will reasonably set it to" and asked for TWO there, so 380 => 2
+  // is the anchor the 160px minimum tile was solved for — not a taste call.
+  ok("...two across at the widget's default width", across(380) === 2, String(across(380)));
+  ok("...still two at the narrowest the widget can go", across(300) === 2, String(across(300)));
+  ok("...more as it gets wider", across(640) > 2 && across(900) > across(640),
+     across(380) + " -> " + across(640) + " -> " + across(900));
+  ok("...capped at ten however wide it gets", across(3000) <= 10, String(across(3000)));
+  across(380);
+  ok("...with a bigger tile when there are fewer of them",
+     parseFloat(getComputedStyle(artRow.querySelector(".bt-art")).height) > 90,
+     getComputedStyle(artRow.querySelector(".bt-art")).height);
+  across(900);
+  ok("...and a smaller one when there are more",
+     parseFloat(getComputedStyle(artRow.querySelector(".bt-art")).height) < 90,
+     getComputedStyle(artRow.querySelector(".bt-art")).height);
+  across(380);
+  // 🔑 The capture is tried FIRST and the clay render is the fallback — the render is grey,
+  // untextured and shared between items that reuse a model, so it shows a shape, not an identity.
+  const CAP = "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+  const REN = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  const firstImg = artRow.querySelector(".bt-i");
+  ok("...leading with the crowdsourced fabricator capture",
+     !!firstImg && firstImg.getAttribute("src") === CAP,
+     firstImg ? firstImg.getAttribute("src") : "(no img)");
+  ok("...carrying the render as a fallback for when that 404s",
+     !!firstImg && !!firstImg.getAttribute("data-fb"),
+     firstImg ? String(firstImg.getAttribute("data-fb")) : "");
+  // ⚠️ The fixture's every-third entry has no capture, so the row must not be all-captures.
+  across(900);   // index 2 is the render-only fixture entry, so widen until it is on screen
+  const srcs = [...artRow.querySelectorAll(".bt-i")].map((i) => i.getAttribute("src"));
+  ok("...and going straight to the render when there is no capture at all",
+     srcs.some((s) => s === REN), srcs.map((s) => (s === CAP ? "capture" : s === REN ? "render" : s)).join(" | "));
+  ok("...naming each one, because the render alone cannot identify an item",
+     artRow.querySelectorAll(".bt-n").length === tiles(), String(tiles()));
 
-  // ⚠️ Size the panel FIRST. At the harness's default height these lists hold one row each, and a
-  // single row happens to be one that carries an aUEC figure — so the "some rows have no figure"
-  // assertion below passed or failed on which mission sorted first, not on the behaviour.
-  const [bpTall, msTall] = both(900);
+  const mul = document.getElementById("raLatestMissions");
+  const mrows = () => mul.querySelectorAll("li:not(.ra-more)").length;
+  const at = (h) => { panel.style.height = h + "px"; window.__fitLatest(); return mrows(); };
+
+  // ⚠️ Size the panel FIRST. At the harness's default height this list holds one row, and that
+  // row happens to be one carrying an aUEC figure — so the "some rows have no figure" assertion
+  // below passed or failed on which mission sorted first, not on the behaviour.
+  at(900);
   ok("the last completed missions are listed again", !!mul && mrows() >= 1, String(mul && mrows()));
   ok("...with the aUEC the game actually logged, where it logged one",
      !!mul.querySelector(".ra-val"), mul.textContent.slice(0, 50));
@@ -1384,17 +1427,13 @@ const IDLEPANEL = `(async () => {
      mrows() > mul.querySelectorAll(".ra-val").length,
      mrows() + " rows, " + mul.querySelectorAll(".ra-val").length + " with a value");
 
-  // Sub, 2026-08-15: "have it split that space that latest currently occupies" — half each, up to
-  // ten apiece, more rows as the widget grows.
-  const [bpMid, msMid] = both(640);
-  const [bpSmall, msSmall] = both(420);
-  ok("the two lists SPLIT the leftover space rather than one taking it",
-     Math.abs(bpTall - msTall) <= 1 && Math.abs(bpMid - msMid) <= 1,
-     bpTall + "/" + msTall + " tall, " + bpMid + "/" + msMid + " mid");
-  ok("...both growing as the widget gets taller", bpTall > bpSmall && msTall > msSmall,
-     bpSmall + "->" + bpTall + " and " + msSmall + "->" + msTall);
-  ok("...each capped at ten", bpTall <= 10 && msTall <= 10, bpTall + "/" + msTall);
-  // 🔴 The "+N more" line is ~15px, not a 22px row, and nothing reserved it — so a truncated list
+  // 🔑 The picture row is fixed-height, so the missions list is what absorbs the leftover — and
+  // it must still GROW with the widget rather than being squeezed out by the art above it.
+  // (The two lists briefly SHARED the leftover height; the blueprint half became a width-driven
+  // picture row on 2026-08-15, so only this one is height-driven now.)
+  ok("...growing as the widget gets taller", at(900) > at(420), at(420) + " -> " + at(900));
+  // 🔴 The "+N more" line is a full 21px row, not the 15px it was first guessed at — it is an li
+  // in the same list and inherits the same padding. Nothing reserved it, so a truncated list
   // rendered its last row and had the more-line sliced in half by the section's overflow. It read
   // as a rendering fault. Whenever a list is truncated, its rows plus that line must FIT.
   const fits = (u) => {
@@ -1402,9 +1441,9 @@ const IDLEPANEL = `(async () => {
     if (!more) return true;
     return Math.round(more.getBoundingClientRect().bottom) <= Math.round(u.getBoundingClientRect().bottom) + 1;
   };
-  both(640);
-  ok("a truncated list leaves room for its own '+N more' line", fits(ul) && fits(mul),
-     (ul.querySelector(".ra-more") || {}).textContent + " / " + (mul.querySelector(".ra-more") || {}).textContent);
+  at(640);
+  ok("a truncated list leaves room for its own '+N more' line", fits(mul),
+     String((mul.querySelector(".ra-more") || {}).textContent));
 
   const tall = at(900), mid = at(500), small = at(300), tiny = at(120);
   ok("a tall widget shows more rows than a short one", tall > small, tall + " vs " + small);
@@ -1413,8 +1452,9 @@ const IDLEPANEL = `(async () => {
   // 🔴 The bug this suite exists for. Sub, collapsing the panel to its minimum: "it doesn't show
   // anything under Latest. It's just nothing." A heading over a void is worse than one row.
   ok("NEVER empty, however small the widget gets", tiny >= 1, String(tiny));
-  ok("...and it says how many it is not showing", !!ul.querySelector(".ra-more"),
-     ul.textContent.slice(0, 60));
+  at(700);
+  ok("...and it says how many it is not showing", !!mul.querySelector(".ra-more"),
+     mul.textContent.slice(0, 60));
   at(560);
 
   // ── TEMPORARY: the three idle mockups ───────────────────────────────────────
@@ -1483,13 +1523,14 @@ const IDLEPANEL = `(async () => {
     // Sub's 2026-08-13 order. A layout that put the scoreboard first would still pass every
     // assertion above it, so the order is asserted on its own.
     ok(id + ": ...and what to go do next still leads",
-       LEADS.indexOf(h[0]) >= 0 && !!pool.querySelector(".ss") && !!document.getElementById("raLatest"),
+       LEADS.indexOf(h[0]) >= 0 && !!pool.querySelector(".ss") && !!document.getElementById("raLatestArt"),
        h[0]);
   }
 
   // Hand the user's own choice back — this suite drives the real localStorage on this origin.
-  if (saved) localStorage.setItem("scIdleLayoutMockup", saved);
-  else localStorage.removeItem("scIdleLayoutMockup");
+  if (saved) localStorage.setItem("scIdleLayoutPick", saved);
+  else localStorage.removeItem("scIdleLayoutPick");
+  panel.style.width = "";
   return out;
 })()`;
 

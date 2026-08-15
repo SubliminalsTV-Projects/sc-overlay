@@ -82,6 +82,16 @@ export interface ClosestPool {
    *  even their contract titles collide), so a name alone would reintroduce the very repetition
    *  this restructure removed. What you still need is the thing that actually tells them apart. */
   missing: string[];
+  /** A contract title that ONLY this pool offers, when two shown pools share a name — something
+   *  you can read off the board, where "job 1" and "job 2" mean nothing. **Null when the colliding
+   *  pools genuinely have no distinguishing contract**, which happens: Sub's two Shubin mining
+   *  pools are identical on every player-visible field for the four titles they share. Absent
+   *  entirely (undefined) when the name does not collide at all. */
+  tell?: string | null;
+  /** Position within the colliding group, and its size — a bare label for the case where `tell`
+   *  is null and there is nothing better to say. */
+  tellIndex?: number;
+  tellOf?: number;
   owned: number;
   total: number;
   places: string[];
@@ -299,6 +309,14 @@ export interface RecentBlueprint {
   name: string;
   /** ISO-8601 receipt time from the log. */
   at: string | null;
+  /** Resolved item UUID, or null when the name could not be placed. */
+  item: string | null;
+  /** The crowdsourced fabricator CAPTURE — what a player actually recognises. 404s for anything
+   *  nobody has captured (coverage was 27% in 2026-07), so the client falls back. */
+  image: string | null;
+  /** The generated clay render: exists for ~70% more, but is grey, untextured and SHARED between
+   *  items that reuse a model — so it can identify a shape, not always an item. */
+  imageFallback: string | null;
 }
 /** Per-hour earning rates for the idle screen. rep is dataset-reliable; aUEC is null when the
  *  game logged no payout (calculated-reward missions) — the UI shows "—", never a false 0. */
@@ -1239,6 +1257,9 @@ export class MissionTracker extends EventEmitter {
       try {
         this.dataset = JSON.parse(readFileSync(p, "utf8")) as Dataset;
         this.patch = this.dataset.version;
+        // The name -> item/image cache is keyed to THIS dataset. Detecting a new build mid-session
+        // swaps it under us, and a stale uuid would show the wrong picture for a renamed item.
+        this.rewardCache.clear();
         // Follow the same changelist with the crafting-detail dataset (recipes/stats).
         this.detail.loadForChangelist(this.dataset.changelist);
         this.loadMissionFacts(this.dataset.changelist);
@@ -2029,8 +2050,10 @@ export class MissionTracker extends EventEmitter {
       // agree on both — 85 of 89 pools have one giver and 77 one type, and a pool spanning six
       // factions (there is one) must not be labelled with whichever we saw first. Otherwise the
       // representative title, which is at least true of something.
+      // 🔑 TYPE FIRST, GIVER SECOND (Sub, 2026-08-15) — "Refueling · United Wayfarers Club". What
+      // kind of work it is, is what you decide on; who is paying is the qualifier.
       const poolName = a.givers.size === 1 && a.types.size === 1
-        ? `${[...a.givers][0]} · ${[...a.types][0]}`
+        ? `${[...a.types][0]} · ${[...a.givers][0]}`
         : a.repTitle;
       out.push({
         poolUuid: uuid,
@@ -2067,7 +2090,51 @@ export class MissionTracker extends EventEmitter {
     // a 380px row, so both rows ellipsised to the identical "Shubin Interstellar · Ship Mining…"
     // and the disambiguator was the part that got cut. A name is the wrong place to put the thing
     // that tells two names apart. `missing` is on the record and the renderer leads with it.
-    return out.slice(0, n);
+    const top = out.slice(0, n);
+
+    // ── The in-game tell ─────────────────────────────────────────────────────────────────────
+    // 🔴 A NUMBER ON THE ROW IS USELESS AT THE CONTRACT BOARD. Sub, 2026-08-15: calling them
+    // "Refueling job 1" and "2" "means nothing to them once they're looking at it in the
+    // mobiGlas" — so when two shown pools share a name, each carries a CONTRACT TITLE that only
+    // it offers. That is a thing you can actually read off the board.
+    //
+    // 🔴 AND SOMETIMES THERE ISN'T ONE, WHICH MUST BE SAID RATHER THAN FAKED. Measured on Sub's
+    // own two Shubin pools: for a title they SHARE ("XL Purchase Order: Ship Mined Ore") the two
+    // are byte-identical on every field a player can see — same rank, same locations, same
+    // payout. Nothing distinguishes them at the board. What IS exclusive: "Med. Purchase Order"
+    // is only ever pool A, "XS"/"Small Purchase Order" only ever pool B. So the tell is real for
+    // some contracts and absent for others, and `tell: null` is an honest answer the UI renders
+    // as such. Never invent one — a confidently wrong pool is the lesson this whole file is
+    // built around.
+    const byName = new Map<string, ClosestPool[]>();
+    for (const p of top) byName.set(p.poolName, [...(byName.get(p.poolName) ?? []), p]);
+    for (const [, group] of byName) {
+      if (group.length < 2) continue;
+      group.forEach((p, i) => {
+        const others = new Set(group.flatMap((o) => (o === p ? [] : o.missionTitles)));
+        const exclusive = p.missionTitles.filter((t) => !others.has(t));
+        // Shortest exclusive title: the least cluttered thing to go looking for.
+        p.tell = exclusive.length
+          ? exclusive.reduce((a, b) => (b.length < a.length ? b : a))
+          : null;
+        p.tellIndex = i + 1;      // only a label, and the UI leans on `tell` wherever it exists
+        p.tellOf = group.length;
+      });
+    }
+    return top;
+  }
+
+  /** name -> the reward record (item uuid + image URLs).
+   *  🔑 MEMOISED, and it has to be. `itemUuidsForName()` rebuilds an entry list by walking every
+   *  mission and every pool in the dataset on each call — fine for a receipt, which happens
+   *  rarely, but this list resolves ten names on EVERY view frame and a frame goes out on every
+   *  SSE tick. The dataset is immutable for the life of a load, so the answer cannot go stale;
+   *  the cache is cleared wherever the dataset is swapped. */
+  private rewardCache = new Map<string, BlueprintReward>();
+  private blueprintRewardCached(name: string): BlueprintReward {
+    let r = this.rewardCache.get(name);
+    if (!r) { r = this.blueprintReward(name); this.rewardCache.set(name, r); }
+    return r;
   }
 
   private recentBlueprints(n = 10): RecentBlueprint[] {
@@ -2075,7 +2142,10 @@ export class MissionTracker extends EventEmitter {
       .filter(([, ts]) => Number.isFinite(Date.parse(ts)))
       .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
       .slice(0, n)
-      .map(([name, at]) => ({ name, at }));
+      .map(([name, at]) => {
+        const r = this.blueprintRewardCached(name);
+        return { name, at, item: r.item, image: r.image, imageFallback: r.imageFallback };
+      });
   }
 
   /** Re-scan a set of log files for `Received Blueprint` receipts and fold them into

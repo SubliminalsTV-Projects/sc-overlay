@@ -1268,6 +1268,33 @@
   .cp-need { flex: none; max-width: 62%; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; color: var(--cyan-dim); }
   .cp-need-n { color: var(--faint); }
+  /* The in-game tell, set apart from the rest of the sub-line because it is an instruction
+     ("take this contract") rather than a fact about the pool. */
+  .cp-tell { flex: none; font-family: var(--sans); font-weight: 700; font-size: 9px;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--gold);
+    max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border-bottom: 1px dotted rgba(var(--accent-rgb), 0.4); }
+  /* No tell exists — the two pools really are indistinguishable at the board. Dim, because it is
+     an admission rather than an instruction, and the title explains why. */
+  .cp-tell-none { color: var(--faint); }
+
+  /* ── Latest blueprints as pictures ──────────────────────────────────────────────────────
+     Sized by the widget's WIDTH, not its height: a fixed slice of the panel, one row of art. */
+  .ra-bp-sec { flex: none; }
+  .bt-row { display: grid; grid-template-columns: repeat(var(--bt-across, 3), minmax(0, 1fr));
+    gap: 8px; }
+  .bt { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  /* An absolute height, and the image contained inside it — see the note at the call site. */
+  .bt-art { height: var(--bt-h, 78px); display: flex; align-items: center; justify-content: center;
+    background: rgba(var(--accent-rgb), 0.1); border: 1px solid var(--border); border-radius: 4px;
+    overflow: hidden; }
+  .bt-i { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  /* A capture that 404s with no render behind it leaves the box empty rather than broken. */
+  .bt-i.bt-dead { display: none; }
+  .bt-none { font-size: 15px; color: var(--cyan-dim); opacity: 0.5; }
+  .bt-n { font-size: 9.5px; line-height: 1.2; color: var(--cyan-text); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .bt-w { font-family: var(--mono); font-size: 8.5px; color: var(--faint); }
   .cp-w-p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* A quiet control, not a call to action — it competes with the pool name directly above it and
      must lose. Underlined rather than boxed, because a button shape here would read as the row's
@@ -2419,18 +2446,26 @@
   // All three keep Sub's 2026-08-13 order (what to go do next leads, the scoreboard follows) and
   // all three keep every section that is there today. They differ only in how much they say about
   // the pools, and how hard they push you at one of them.
+  // The switcher chooses the closest-to-done LAYOUT. It briefly chose how many blueprint pictures
+  // fit across instead — that question answered itself on 2026-08-15 when Sub asked for the row to
+  // be width-driven ("the wider the widget is, the more blueprints show up"), which is a
+  // measurement, not a preference. Default is the shortlist, the one he is focusing on.
   const IDLE_LAYOUTS = [
-    { id: "ledger",    n: "1", t: "Ledger — today's panel, plus what each pool costs and pays" },
-    { id: "shortlist", n: "2", t: "Shortlist — every open pool ranked by what it earns per hour" },
+    { id: "ledger",    n: "1", t: "Ledger — the top two pools, as the panel shipped" },
+    { id: "shortlist", n: "2", t: "Shortlist — every open pool, one compact row each" },
     { id: "target",    n: "3", t: "Target — one recommendation, big; the rest on one line" },
   ];
-  const IDLE_LAYOUT_KEY = "scIdleLayoutMockup";
+  // ⚠️ A FRESH KEY each time this control's MEANING changes. It has been repurposed twice, and
+  // reusing the old name meant whatever was last clicked under the previous meaning silently kept
+  // choosing — the panel came up on "target" for exactly that reason, which reads as the default
+  // not working. A repurposed control inherits a stale answer unless you rename its storage.
+  const IDLE_LAYOUT_KEY = "scIdleLayoutPick";
   function idleLayout() {
     try {
       const s = localStorage.getItem(IDLE_LAYOUT_KEY);
       if (IDLE_LAYOUTS.some((l) => l.id === s)) return s;
     } catch { /* private mode — fall through to the default */ }
-    return "ledger";
+    return "shortlist";
   }
   function idleSwitcherHtml() {
     const cur = idleLayout();
@@ -2449,7 +2484,7 @@
     const el = $("pool");
     if (!el || !el.classList.contains("idle") || !current) return;
     el.innerHTML = recentActivityHtml(current);
-    latestShown = latestMisShown = -1;
+    latestShown = latestMisShown = bpShown = -1;
     observeLatest();
   });
 
@@ -2516,6 +2551,66 @@
       + "</span>";
   }
 
+  /** How to tell this pool from the other one wearing the same name, AT THE BOARD.
+   *
+   *  🔴 A number would be useless here (Sub, 2026-08-15): "job 1" and "job 2" mean nothing once
+   *  you are looking at the mobiGlas. So the row names a contract only this pool offers — "take
+   *  Med. Purchase Order" — which is a thing you can read off the board.
+   *  🔴 AND WHEN THERE ISN'T ONE, IT SAYS SO. Sub's two Shubin pools are byte-identical on every
+   *  player-visible field for the four titles they share, so for those there is genuinely no tell.
+   *  Inventing one would be a confidently wrong answer about which pool a contract feeds, which is
+   *  the single most expensive class of bug this project has had. The label falls back to a bare
+   *  "1 of 2" and the popover explains why that is all we can say. */
+  function poolTell(p) {
+    if (p.tell === undefined) return "";
+    if (p.tell) {
+      return '<span class="cp-tell" title="' + escapeAttr(
+          "Two pools here share a name. This one is the only place “" + p.tell + "”"
+          + " comes from, so take that contract and you know which you are filling.")
+        + '">take ' + escapeHtml(p.tell) + "</span>";
+    }
+    return '<span class="cp-tell cp-tell-none" title="' + escapeAttr(
+        "Two pools here share a name and the game gives you no way to tell them apart at the"
+        + " board: for every contract they both offer, the rank, the locations and the payout are"
+        + " identical. Go by what you are still missing instead.")
+      + '">' + (p.tellIndex || 1) + " of " + (p.tellOf || 2) + "</span>";
+  }
+
+  // ── Latest blueprints, as pictures ────────────────────────────────────────────────────────
+  // 🔑 TWO IMAGE SOURCES AND THE CAPTURE WINS. `image` is the crowdsourced fabricator capture —
+  // what a player recognises. `imageFallback` is a generated clay render: grey, untextured, and
+  // SHARED between items that reuse a model, so it shows a shape rather than an identity. The
+  // capture 404s for anything nobody has captured, so we chain.
+  // ⚠️ Chain with a FLAG, never by comparing img.src to the fallback URL — `.src` reads back as
+  // the resolved ABSOLUTE url, so a relative fallback never compares equal and the handler
+  // re-sets the same broken source forever.
+  // 🔑 Item art is PORTRAIT (measured: capture 373x746, render 168x273). A square tile is the
+  // worst of both — it crops the width away AND makes the row taller than it needs to be.
+  function blueprintTile(b) {
+    const label = escapeHtml(b.name);
+    const art = b.image
+      ? '<img class="bt-i" alt="" loading="lazy" src="' + escapeAttr(b.image) + '"'
+        + (b.imageFallback ? ' data-fb="' + escapeAttr(b.imageFallback) + '"' : "") + ">"
+      : (b.imageFallback
+          ? '<img class="bt-i" alt="" loading="lazy" src="' + escapeAttr(b.imageFallback) + '">'
+          : '<span class="bt-none">◆</span>');
+    const w = fmtWhen(b.at);
+    const when = w ? (PREFS.timeRelative ? w.rel : w.date) : "";
+    return '<figure class="bt" title="' + escapeAttr(b.name) + '">'
+      + '<span class="bt-art">' + art + "</span>"
+      + '<figcaption class="bt-n">' + label + "</figcaption>"
+      + '<span class="bt-w">' + escapeHtml(when) + "</span></figure>";
+  }
+  // One delegated handler for the whole page: a capture that 404s swaps to the render ONCE.
+  document.addEventListener("error", (e) => {
+    const img = e.target;
+    if (!img || img.tagName !== "IMG" || !img.classList.contains("bt-i")) return;
+    const fb = img.getAttribute("data-fb");
+    if (!fb) { img.classList.add("bt-dead"); return; }
+    img.removeAttribute("data-fb");   // the flag: one swap, never a loop
+    img.src = fb;
+  }, true);   // capture phase — error does not bubble
+
   // ⚠️ THE POOL PAGE DOES NOT EXIST YET. Sub is coordinating it with the website flight
   // (2026-08-15); the uuid is the whole address, so nothing here needs to change when it lands.
   // Until then this link 404s — which is why it is rendered ONLY when the shell can open a real
@@ -2556,7 +2651,7 @@
         + '<span class="cp-l">' + left + " to go</span></div>"
         + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
         + '<div class="cp-w">'
-        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+        + poolTell(p) + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
         + poolLink(p) + "</div>"
         + "</div>";
     }
@@ -2580,7 +2675,7 @@
         + '<span class="sl-left">' + left + " to go</span>"
         + "</div>"
         + '<div class="sl-sub">'
-        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+        + poolTell(p) + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
         + poolLink(p) + "</div>";
     }
     return html + "</div></div>";
@@ -2607,7 +2702,7 @@
       + '<div class="tg-s-l">complete</div></div>'
       + "</div>"
       + '<div class="cp-w">'
-      + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+      + poolTell(p) + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
       + poolLink(p) + "</div>"
       + "</div>";
     // The runners-up are not gone, just demoted to the one thing you would use them for: knowing
@@ -2710,8 +2805,18 @@
     // about. The two SHARE what is left of the panel, half each, 1–10 rows apiece (Sub,
     // 2026-08-15: "have it split that space that latest currently occupies").
     if (blueprints.length) {
-      html += '<div class="ra-sec ra-latest-sec"><div class="ra-h">Latest blueprints</div>'
-        + '<ul class="ra-list ra-latest" id="raLatest"></ul></div>';
+      // 🔑 The blueprint half is a PICTURE ROW now (Sub, 2026-08-15). It sizes itself from the
+      // widget's WIDTH, not its height, so unlike the missions list below it takes a fixed slice
+      // of the panel rather than competing for the leftover — one row of art, truncated to
+      // whatever fits across.
+      html += '<div class="ra-sec ra-bp-sec"><div class="ra-h">Latest blueprints</div>'
+        // 🔑 The art box needs an ABSOLUTE height. A percentage height on a centred grid item
+        // resolves against an auto row, i.e. to `auto`, and `object-fit` then has nothing to do —
+        // that is exactly how the completion card rendered a 169x338 image inside a 92px box with
+        // overflow chopping it. Fewer across means a bigger tile, so the height rides the count.
+        // Rendered EMPTY and filled by fitBlueprintArt() once the row has a measured WIDTH —
+        // how many fit across is a property of the widget's size, which this string cannot know.
+        + '<div class="bt-row" id="raLatestArt"></div></div>';
     }
     if (missions.length) {
       html += '<div class="ra-sec ra-latest-sec ra-latest-mis-sec"><div class="ra-h">Latest missions</div>'
@@ -2773,6 +2878,13 @@
   // Watching the PANEL rather than the list itself: the list's own height is an output of this
   // computation, so observing it is a feedback loop waiting to happen.
   let latestRO = null;
+  // Coalesced deferred re-check. One pending pair at a time, so a drag that fires the observer on
+  // every pixel schedules one follow-up, not hundreds.
+  let reFitT = null;
+  function reFit() {
+    if (reFitT) return;
+    reFitT = setTimeout(() => { reFitT = null; fitLatest(); setTimeout(fitLatest, 90); }, 0);
+  }
   function observeLatest() {
     // 🔴 NOT requestAnimationFrame. It does not fire in a window the compositor considers hidden,
     // and this overlay is hidden all the time — toggled off in the hub, behind the game, or a
@@ -2785,11 +2897,32 @@
     if (!window.ResizeObserver) return;
     // Measuring inside the observer callback is already post-layout, so there is nothing to defer
     // to and nothing to wait for.
-    if (!latestRO) latestRO = new ResizeObserver(() => fitLatest());
+    // 🔴 THE OBSERVER ALONE IS NOT ENOUGH, and the failure is a SILENT OFF-BY-ONE rather than a
+    // dead panel. Measured 2026-08-15 across seven widget widths: the fit was right at 380, 640,
+    // 720 and 900 but one step low at 540 — and re-running it by hand at that same width gave the
+    // right answer, so the arithmetic was never wrong. This overlay is hidden constantly (toggled
+    // off, behind the game, a background page in the harness) and a window the compositor
+    // considers hidden delivers resize callbacks late, once, or not at all.
+    // So the callback ALSO re-checks on a timer, the same defence observeLatest() already uses for
+    // the first layout pass. Both fits early-return unless the ANSWER changed, so a redundant run
+    // costs nothing and cannot loop.
+    // 🔴 THE CALLBACK ONLY SCHEDULES — it must not touch the DOM. Fitting inline made the picture
+    // row's height change cascade into the missions section, which IS observed, so the observer
+    // re-fired during its own delivery: "ResizeObserver loop completed with undelivered
+    // notifications", caught by the suite's console check in an unrelated suite. Deferring the
+    // work out of the delivery breaks the cycle, and reFit coalesces so a drag schedules one
+    // follow-up rather than one per pixel.
+    if (!latestRO) latestRO = new ResizeObserver(() => reFit());
     latestRO.disconnect();
     // Observe the SECTION, not the panel: in the canvas the panel is a widget whose box can be
     // replaced, and an observer pointed at a detached node silently never fires again.
     // BOTH list sections — observing only the first meant resizing never re-fitted the second.
+    // 🔴 NOT `.ra-bp-sec`. Observing the picture row's own section made the fit rewrite the very
+    // box it was watching — Chromium reported "ResizeObserver loop completed with undelivered
+    // notifications" and the widget suite's console check caught it in a DIFFERENT suite entirely.
+    // The comment above already said observing the list is a feedback loop waiting to happen; the
+    // picture row is the same trap wearing different clothes. `#panel` below is what changes WIDTH
+    // and is never written to by the fit, so it is the safe thing to watch for this.
     for (const sec of document.querySelectorAll(".ra-latest-sec")) latestRO.observe(sec);
     const panel = document.getElementById("panel");
     if (panel) latestRO.observe(panel);
@@ -2806,10 +2939,53 @@
     let h = "";
     for (const r of rows.slice(0, n)) h += latestRow(r.name, r.at, r.val);
     const rest = rows.length - n;
-    if (rest > 0) h += '<li class="ra-more">+' + rest + " more</li>";
+    // 🔴 THE "NEVER EMPTY" FLOOR CAN OUTVOTE THE RESERVATION, and then the +N line has nowhere to
+    // go. At the widget's smallest the box holds less than two rows, so `rowsFor` clamps up to one
+    // — correct, a heading over a void is worse — but that one row already fills the box and the
+    // more-line gets sliced by the overflow, which is the very fault the reservation exists to
+    // prevent. When it cannot fit, it is DROPPED: the count is a nicety, a half-cut line is a bug.
+    const room = ul.getBoundingClientRect().height;
+    if (rest > 0 && (n + 1) * LATEST_ROW_PX <= room + 1) h += '<li class="ra-more">+' + rest + " more</li>";
     ul.innerHTML = h;
   }
+  // ── How many blueprint pictures fit ACROSS ────────────────────────────────────────────────
+  // The mirror of fitLatest: that one divides leftover HEIGHT into rows, this one divides the
+  // row's WIDTH into tiles. Sub, 2026-08-15: "the wider the widget is, the more blueprints show
+  // up" — so it is measured, not chosen, and the switcher went back to picking layouts.
+  //
+  // 🔑 THE NUMBERS COME FROM THE WIDGET'S OWN REGISTRY ENTRY, not from taste. The tracker is
+  // `{ w: 380, minW: 300 }`, and Sub put his own widget at "about the smallest size that someone
+  // will reasonably set it to" and asked for TWO there. A 160px minimum tile lands 2 at the 380
+  // default, 3 at ~540 and 4 at ~720 — checked against those three widths rather than eyeballed.
+  // 🔑 The floor is 2 for the same reason the Latest list's floor is 1: below it the tiles just
+  // shrink (the grid track is `minmax(0, 1fr)`), which is better than a heading over one lonely
+  // picture at a size nobody uses on purpose.
+  const BP_MIN = 2, BP_MAX = 10, BP_TILE_PX = 160, BP_GAP_PX = 8;
+  // Fewer across means a bigger tile. Item art is PORTRAIT (measured: capture 373x746, render
+  // 168x273), so height rides the count rather than being one fixed number that suits neither.
+  const BP_ART_H = { 2: 104, 3: 78, 4: 60 };
+  let bpShown = -1;
+  function fitBlueprintArt() {
+    const row = document.getElementById("raLatestArt");
+    if (!row || !current) { bpShown = -1; return; }
+    const all = current.recentBlueprints || [];
+    if (!all.length) return;
+    const w = row.getBoundingClientRect().width;
+    let n = Math.floor((w + BP_GAP_PX) / (BP_TILE_PX + BP_GAP_PX));
+    if (!Number.isFinite(n) || n < BP_MIN) n = BP_MIN;
+    if (n > BP_MAX) n = BP_MAX;
+    if (n > all.length) n = all.length;
+    // Only touch the DOM when the ANSWER changes — this runs off a ResizeObserver, and rebuilding
+    // the row on every pixel of a drag would re-request every image.
+    if (n === bpShown) return;
+    bpShown = n;
+    row.style.setProperty("--bt-across", String(n));
+    row.style.setProperty("--bt-h", (BP_ART_H[n] || 56) + "px");
+    row.innerHTML = all.slice(0, n).map(blueprintTile).join("");
+  }
+
   function fitLatest() {
+    fitBlueprintArt();
     if (!current) { latestShown = latestMisShown = -1; return; }
     const bpUl = document.getElementById("raLatest");
     const msUl = document.getElementById("raLatestMissions");
@@ -2899,7 +3075,7 @@
         // The list is written EMPTY above; how many rows it holds depends on the height it ends
         // up with, which only exists after layout. Reset first so a re-render with different data
         // recomputes instead of trusting the previous answer.
-        latestShown = latestMisShown = -1;
+        latestShown = latestMisShown = bpShown = -1;
         observeLatest();
       } else {
         panel.classList.add("empty");
@@ -6383,10 +6559,30 @@
       if (q.has("rates")) {
         $("panel").classList.remove("empty"); document.body.classList.remove("empty");
         const now = Date.now();
+        // Two distinguishable 1x1 GIFs standing in for the two image sources. Inline, so the
+        // fixture costs no network and cannot 404 the suite's console/network check.
+        const FIXTURE_CAPTURE = "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+        const FIXTURE_RENDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
         const bps = ["Atzkav Sniper Rifle", "Calico Arms Tactical", "Atzkav \"Igniter\" Sniper Rifle",
           "Custodian SMG", "Karna Rifle", "Yubarev Pistol", "Salvo Frag Pistol", "Behring P8-AR",
           "Lumin V SMG", "Arclight II", "Devastator-12", "Gallant Rifle"]
-          .map((name, i) => ({ name, at: new Date(now - (i + 1) * 18 * 60000).toISOString() }));
+          // 🔑 A real-shaped mix of image coverage, because the tile has three code paths and the
+          // measured split is roughly 27% capture / 70% render-only / 3% neither. Every third
+          // entry carries only a render and every fourth carries nothing, so a fixture render
+          // exercises the fallback chain AND the no-art glyph rather than only the happy path.
+          //
+          // ⚠️ INLINE DATA URIs, NOT URL-SHAPED FAKES. Pointing these at
+          // `/api/fab-img/<made-up-uuid>` made every fixture tile fetch something that does not
+          // exist, and `test:widgets` correctly failed the run on four 404s — a fixture must not
+          // put the suite's own network check in the red. Two DISTINCT one-pixel images so the
+          // assertions can still tell which source a tile chose.
+          .map((name, i) => ({
+            name,
+            at: new Date(now - (i + 1) * 18 * 60000).toISOString(),
+            item: i % 4 === 3 ? null : "fixture-item-" + i,
+            image: i % 4 === 3 || i % 3 === 2 ? null : FIXTURE_CAPTURE,
+            imageFallback: i % 4 === 3 ? null : FIXTURE_RENDER,
+          }));
         current = {
           earnings: { repLastHr: 1240, repPace: 1480, aUECLastHr: null, aUECPace: null,
             aUECTotal: 148250, repTotal: 2860, missions: 6 },
@@ -6438,7 +6634,7 @@
           ],
         };
         const el = $("pool");
-        if (el) { el.innerHTML = recentActivityHtml(current); el.classList.add("idle"); latestShown = latestMisShown = -1; observeLatest(); }
+        if (el) { el.innerHTML = recentActivityHtml(current); el.classList.add("idle"); latestShown = latestMisShown = bpShown = -1; observeLatest(); }
         // The suite drives the fit directly: how many rows fit is the behaviour under test, and
         // waiting on a ResizeObserver to maybe fire is how a size test becomes flaky.
         window.__fitLatest = fitLatest;
