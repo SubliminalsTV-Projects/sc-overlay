@@ -22,6 +22,26 @@ function replaceOnce(text, from, to, label) {
 
 let main = fs.readFileSync(mainPath, 'utf8');
 
+// Promote the temporary 0.1.43 field-test implementation into the permanent Linux contract when
+// packaging a shell that already carries it. This keeps current 0.1.43 builds byte-behaviorally
+// equivalent while removing the version-specific ownership of the policy.
+if (!main.includes('ARCHVERSE_LINUX_HOVER_SCOPED_LATCH') && main.includes('ARCHVERSE_FLATPAK_HOVER_SCOPED_LATCH')) {
+  const renames = [
+    ['ARCHVERSE_FLATPAK_HOVER_SCOPED_LATCH', 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH'],
+    ['postReleaseHoverTimer043', 'linuxHoverLatchTimer'],
+    ['postReleaseHoverMissSince043', 'linuxHoverLatchMissSince'],
+    ['POST_RELEASE_HOVER_MISS_MS_043', 'LINUX_HOVER_LATCH_MISS_MS'],
+    ['postReleasePointerInsideWidget043', 'linuxPointerInsideClassifiedWidget'],
+    ['tickPostReleaseHoverLatch043', 'tickLinuxHoverScopedLatch'],
+    ['startPostReleaseHoverLatch043', 'startLinuxHoverScopedLatch'],
+    ['stopPostReleaseHoverLatch043', 'stopLinuxHoverScopedLatch'],
+    ['pointer left all widgets after F release', 'pointer left all widgets after interaction-key release'],
+    ['[focus-latch] pointer left all widgets after interaction-key release; click-through restored and previous focus returned',
+      '[linux-interaction] pointer left all widgets; overlay released and previous focus restored'],
+  ];
+  for (const [from, to] of renames) main = main.split(from).join(to);
+}
+
 // This is a durable Linux behavior contract, not an upstream-version-specific tweak.
 //
 // Required behavior:
