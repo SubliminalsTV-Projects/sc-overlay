@@ -130,9 +130,33 @@ if (!main.includes('ARCHVERSE_FLATPAK_GAME_FOCUS_HANDOFF')) {
   main = replaceOnce(main, oldDesktopLog, newDesktopLog, 'desktop focus release log');
 }
 
+// Restore the proven Linux interaction contract: F only arms/focuses the overlay when the pointer
+// is inside a classified widget. A click may keep that widget latched after F is released so text
+// fields, checkboxes, scrolling, etc. remain usable, but the latch belongs to widget hover, not the
+// full-screen transparent canvas. Once the pointer has been outside every widget for a short debounce
+// window, release all overlay input ownership and restore the exact pre-overlay native focus target.
+// The transparent canvas then becomes a true pass-through surface, so the user's next click naturally
+// focuses Star Citizen, Discord, Konsole, or any other window underneath without synthetic clicks.
+if (!main.includes('ARCHVERSE_FLATPAK_HOVER_SCOPED_LATCH')) {
+  const lifecycleAnchor = 'let linuxScLifecycleTimer = null;';
+  must(main.includes(lifecycleAnchor), 'Linux lifecycle timer anchor missing for hover-scoped latch');
+  const hoverLatch = `let postReleaseHoverTimer043 = null;\nlet postReleaseHoverMissSince043 = 0;\nconst POST_RELEASE_HOVER_MISS_MS_043 = 90;\n\nfunction postReleasePointerInsideWidget043() {\n  let p = null;\n  try { p = overlayWindows.pointerLocation?.(); } catch {}\n  if (!p || !Number.isFinite(Number(p.x)) || !Number.isFinite(Number(p.y))) {\n    try { p = screen.getCursorScreenPoint(); } catch {}\n  }\n  if (!p || !Number.isFinite(Number(p.x)) || !Number.isFinite(Number(p.y))) return true;\n  try { return !!overlayRegionAtPoint({ x: Number(p.x), y: Number(p.y) }); } catch { return true; }\n}\n\nfunction tickPostReleaseHoverLatch043() {\n  // ARCHVERSE_FLATPAK_HOVER_SCOPED_LATCH: after F-up, a clicked widget owns focus only while\n  // the pointer remains inside any classified overlay widget. Fail-safe on unknown pointer state.\n  if (fHoverHeld || !overlayInteractionLatched || modalOpen || dragging || moveMode || miningMoveMode) {\n    postReleaseHoverMissSince043 = 0;\n    return;\n  }\n  if (postReleasePointerInsideWidget043()) {\n    postReleaseHoverMissSince043 = 0;\n    return;\n  }\n  const now = Date.now();\n  if (!postReleaseHoverMissSince043) {\n    postReleaseHoverMissSince043 = now;\n    return;\n  }\n  if (now - postReleaseHoverMissSince043 < POST_RELEASE_HOVER_MISS_MS_043) return;\n  postReleaseHoverMissSince043 = 0;\n  const released = releaseOverlayOwnershipToDesktop("pointer left all widgets after F release");\n  if (!released) return;\n  setTimeout(() => {\n    if (overlayExclusiveInteractionActive()) return;\n    restoreLinuxPreviousWindow();\n    console.log("[focus-latch] pointer left all widgets after F release; click-through restored and previous focus returned");\n  }, 35);\n}\n\nfunction startPostReleaseHoverLatch043() {\n  if (postReleaseHoverTimer043) return;\n  postReleaseHoverTimer043 = setInterval(tickPostReleaseHoverLatch043, 32);\n  postReleaseHoverTimer043.unref?.();\n}\n\nfunction stopPostReleaseHoverLatch043() {\n  if (postReleaseHoverTimer043) clearInterval(postReleaseHoverTimer043);\n  postReleaseHoverTimer043 = null;\n  postReleaseHoverMissSince043 = 0;\n}\n\n${lifecycleAnchor}`;
+  main = main.replace(lifecycleAnchor, hoverLatch);
+
+  const startAnchor = 'function startLinuxDesktopFocusWatch() {\n  if (process.platform !== "linux" || linuxScLifecycleTimer) return;';
+  const startReplacement = 'function startLinuxDesktopFocusWatch() {\n  if (process.platform !== "linux" || linuxScLifecycleTimer) return;\n  startPostReleaseHoverLatch043();';
+  main = replaceOnce(main, startAnchor, startReplacement, 'hover-scoped latch startup');
+
+  const stopAnchor = 'function stopLinuxDesktopFocusWatch() {\n  if (linuxScLifecycleTimer) clearInterval(linuxScLifecycleTimer);';
+  const stopReplacement = 'function stopLinuxDesktopFocusWatch() {\n  stopPostReleaseHoverLatch043();\n  if (linuxScLifecycleTimer) clearInterval(linuxScLifecycleTimer);';
+  main = replaceOnce(main, stopAnchor, stopReplacement, 'hover-scoped latch shutdown');
+}
+
 must(main.includes('drag lock held 30s'), '0.1.43 drag-lock watchdog missing after convergence');
 must(main.includes('ARCHVERSE_FLATPAK_GAME_FOCUS_HANDOFF'), 'Flatpak Star Citizen focus handoff recovery missing after convergence');
 must(main.includes('[game-focus] Star Citizen click handoff restored the pre-overlay game focus'), 'game focus handoff diagnostic missing');
+must(main.includes('ARCHVERSE_FLATPAK_HOVER_SCOPED_LATCH'), 'hover-scoped post-F interaction latch missing');
+must(main.includes('pointer left all widgets after F release; click-through restored and previous focus returned'), 'hover-scoped latch focus-return diagnostic missing');
 write(mainPath, main);
 
 console.log('0.1.43 Electron convergence applied and verified');
