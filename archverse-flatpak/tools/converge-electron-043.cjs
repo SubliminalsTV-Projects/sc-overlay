@@ -113,7 +113,26 @@ if (!main.includes('drag lock held 30s')) {
   must(handler.test(main), 'overlay:drag-lock handler missing');
   main = main.replace(handler, (m) => `${m}\n    clearTimeout(dragLockWatchdog043);\n    dragLockWatchdog043 = null;\n    if (dragging) {\n      dragLockWatchdog043 = setTimeout(() => {\n        if (!dragging) return;\n        console.error('[overlay] drag lock held 30s — releasing it; the page never sent pointerup');\n        dragging = false;\n        applyMouse();\n      }, 30_000);\n      dragLockWatchdog043.unref?.();\n    }`);
 }
+
+// Flatpak/KWin focus handoff. The first click back into Star Citizen can blur Electron before the
+// global mouse-down path gets a chance to call releaseFocusLatchToGame(). Alpha 22's desktop-focus
+// cleanup then cleared the latch but deliberately left focus where the compositor happened to put
+// it. When that blur target is positively identified as Star Citizen, clear click ownership first
+// and then restore the exact pre-overlay native window captured on F-down. External desktop apps
+// still keep their own focus; no click is ever synthesized into Star Citizen.
+if (!main.includes('ARCHVERSE_FLATPAK_GAME_FOCUS_HANDOFF')) {
+  const oldHandoff = `    const active = overlayWindows.activeWindowDetails?.();\n    if (active && overlayWindows.isOwnOverlayWindow?.(active)) return;\n    const reason = overlayWindows.isStarCitizenDirectlyActive?.()\n      ? "Star Citizen clicked"\n      : \`external window clicked\${active?.title ? \`: \${active.title}\` : ""}\`;\n    releaseOverlayOwnershipToDesktop(reason);`;
+  const newHandoff = `    const active = overlayWindows.activeWindowDetails?.();\n    if (active && overlayWindows.isOwnOverlayWindow?.(active)) return;\n    const gameActive = !!overlayWindows.isStarCitizenDirectlyActive?.();\n    const reason = gameActive\n      ? "Star Citizen clicked"\n      : \`external window clicked\${active?.title ? \`: \${active.title}\` : ""}\`;\n    const released = releaseOverlayOwnershipToDesktop(reason);\n    if (gameActive && released) {\n      // ARCHVERSE_FLATPAK_GAME_FOCUS_HANDOFF: click-through must exist before restoring the game.\n      setTimeout(() => {\n        if (overlayExclusiveInteractionActive()) return;\n        if (!overlayWindows.starCitizenProcessRunning?.()) return;\n        restoreLinuxPreviousWindow();\n        console.log("[game-focus] Star Citizen click handoff restored the pre-overlay game focus");\n      }, 35);\n    }`;
+  main = replaceOnce(main, oldHandoff, newHandoff, 'Star Citizen focus handoff');
+
+  const oldDesktopLog = 'if (had) console.log(`[desktop-focus] overlay input ownership released (${reason}); desktop keeps focus`);';
+  const newDesktopLog = 'if (had) console.log(`[desktop-focus] overlay input ownership released (${reason}); click-through restored`);';
+  main = replaceOnce(main, oldDesktopLog, newDesktopLog, 'desktop focus release log');
+}
+
 must(main.includes('drag lock held 30s'), '0.1.43 drag-lock watchdog missing after convergence');
+must(main.includes('ARCHVERSE_FLATPAK_GAME_FOCUS_HANDOFF'), 'Flatpak Star Citizen focus handoff recovery missing after convergence');
+must(main.includes('[game-focus] Star Citizen click handoff restored the pre-overlay game focus'), 'game focus handoff diagnostic missing');
 write(mainPath, main);
 
 console.log('0.1.43 Electron convergence applied and verified');
