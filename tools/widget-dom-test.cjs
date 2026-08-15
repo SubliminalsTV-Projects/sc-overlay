@@ -1265,9 +1265,10 @@ const IDLEPANEL = `(async () => {
   await pickLayout("ledger");
 
   const heads = [...pool.querySelectorAll(".ra-h")].map((e) => e.textContent);
-  // Three sections, not four: the per-hour rates were folded INTO "This session" on 2026-08-13.
+  // The per-hour rates are folded INTO "This session" (2026-08-13). "Latest" became two lists
+  // sharing the leftover space (2026-08-15) — blueprints, then missions.
   ok("the idle panel is in the documented order",
-     heads.join(" | ") === "Closest to done | This session | Latest",
+     heads.join(" | ") === "Closest to done | This session | Latest blueprints | Latest missions",
      heads.join(" | "));
   ok("...with a rule between what to do next and what the session was worth",
      !!pool.querySelector(".ra-rule"));
@@ -1300,11 +1301,51 @@ const IDLEPANEL = `(async () => {
      && getComputedStyle(ssRows[0]).gridTemplateColumns === getComputedStyle(ssRows[1]).gridTemplateColumns,
      ssRows.length + " rows");
 
-  // The size-driven list.
+  // The size-driven lists. Both are filled by the same fitter off ONE measurement of the room
+  // they share, so they are asserted together.
   const panel = document.getElementById("panel");
   const ul = document.getElementById("raLatest");
+  const mul = document.getElementById("raLatestMissions");
   const rows = () => ul.querySelectorAll("li:not(.ra-more)").length;
+  const mrows = () => mul.querySelectorAll("li:not(.ra-more)").length;
   const at = (h) => { panel.style.height = h + "px"; window.__fitLatest(); return rows(); };
+  const both = (h) => { at(h); return [rows(), mrows()]; };
+
+  // ⚠️ Size the panel FIRST. At the harness's default height these lists hold one row each, and a
+  // single row happens to be one that carries an aUEC figure — so the "some rows have no figure"
+  // assertion below passed or failed on which mission sorted first, not on the behaviour.
+  const [bpTall, msTall] = both(900);
+  ok("the last completed missions are listed again", !!mul && mrows() >= 1, String(mul && mrows()));
+  ok("...with the aUEC the game actually logged, where it logged one",
+     !!mul.querySelector(".ra-val"), mul.textContent.slice(0, 50));
+  // 🔑 A calculated-reward contract logs no payout. Omit the figure; never print a zero, which
+  // would read as "this paid nothing" rather than "the game did not say".
+  ok("...and no figure at all on the ones it did not",
+     mrows() > mul.querySelectorAll(".ra-val").length,
+     mrows() + " rows, " + mul.querySelectorAll(".ra-val").length + " with a value");
+
+  // Sub, 2026-08-15: "have it split that space that latest currently occupies" — half each, up to
+  // ten apiece, more rows as the widget grows.
+  const [bpMid, msMid] = both(640);
+  const [bpSmall, msSmall] = both(420);
+  ok("the two lists SPLIT the leftover space rather than one taking it",
+     Math.abs(bpTall - msTall) <= 1 && Math.abs(bpMid - msMid) <= 1,
+     bpTall + "/" + msTall + " tall, " + bpMid + "/" + msMid + " mid");
+  ok("...both growing as the widget gets taller", bpTall > bpSmall && msTall > msSmall,
+     bpSmall + "->" + bpTall + " and " + msSmall + "->" + msTall);
+  ok("...each capped at ten", bpTall <= 10 && msTall <= 10, bpTall + "/" + msTall);
+  // 🔴 The "+N more" line is ~15px, not a 22px row, and nothing reserved it — so a truncated list
+  // rendered its last row and had the more-line sliced in half by the section's overflow. It read
+  // as a rendering fault. Whenever a list is truncated, its rows plus that line must FIT.
+  const fits = (u) => {
+    const more = u.querySelector(".ra-more");
+    if (!more) return true;
+    return Math.round(more.getBoundingClientRect().bottom) <= Math.round(u.getBoundingClientRect().bottom) + 1;
+  };
+  both(640);
+  ok("a truncated list leaves room for its own '+N more' line", fits(ul) && fits(mul),
+     (ul.querySelector(".ra-more") || {}).textContent + " / " + (mul.querySelector(".ra-more") || {}).textContent);
+
   const tall = at(900), mid = at(500), small = at(300), tiny = at(120);
   ok("a tall widget shows more rows than a short one", tall > small, tall + " vs " + small);
   ok("...capped at ten however tall it gets", tall <= 10, String(tall));
@@ -1380,8 +1421,9 @@ const IDLEPANEL = `(async () => {
   for (const id of ["ledger", "shortlist", "target"]) {
     await pickLayout(id);
     const h = headTitles();
-    ok(id + ": the session scoreboard and Latest survive the layout",
-       h.length === 3 && h[1] === "This session" && h[2] === "Latest", h.join(" | "));
+    ok(id + ": the session scoreboard and both Latest lists survive the layout",
+       h.length === 4 && h[1] === "This session"
+       && h[2] === "Latest blueprints" && h[3] === "Latest missions", h.join(" | "));
     // Sub's 2026-08-13 order. A layout that put the scoreboard first would still pass every
     // assertion above it, so the order is asserted on its own.
     ok(id + ": ...and what to go do next still leads",

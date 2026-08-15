@@ -2439,7 +2439,7 @@
     const el = $("pool");
     if (!el || !el.classList.contains("idle") || !current) return;
     el.innerHTML = recentActivityHtml(current);
-    latestShown = -1;
+    latestShown = latestMisShown = -1;
     observeLatest();
   });
 
@@ -2691,12 +2691,18 @@
       }
     }
 
-    // ── Latest ─────────────────────────────────────────────────────────────────────────────
-    // 🔑 Rendered EMPTY here and filled by fitLatest() once the box has been measured — how many
-    // rows fit is a function of the widget's height, which this string knows nothing about.
+    // ── Latest blueprints, then Latest missions ────────────────────────────────────────────
+    // 🔑 Both rendered EMPTY here and filled by fitLists() once the boxes have been measured —
+    // how many rows fit is a function of the widget's height, which this string knows nothing
+    // about. The two SHARE what is left of the panel, half each, 1–10 rows apiece (Sub,
+    // 2026-08-15: "have it split that space that latest currently occupies").
     if (blueprints.length) {
-      html += '<div class="ra-sec ra-latest-sec"><div class="ra-h">Latest</div>'
+      html += '<div class="ra-sec ra-latest-sec"><div class="ra-h">Latest blueprints</div>'
         + '<ul class="ra-list ra-latest" id="raLatest"></ul></div>';
+    }
+    if (missions.length) {
+      html += '<div class="ra-sec ra-latest-sec ra-latest-mis-sec"><div class="ra-h">Latest missions</div>'
+        + '<ul class="ra-list ra-latest" id="raLatestMissions"></ul></div>';
     }
     return html + "</div>";
   }
@@ -2722,8 +2728,18 @@
   // one row — so the floor is one, enforced by the CSS min-height as well as here, and the section
   // overflows rather than rendering empty. Nobody sizes the widget that small on purpose, but the
   // state has to be coherent when they do.
-  const LATEST_MIN = 1, LATEST_MAX = 10, LATEST_ROW_PX = 22;
-  let latestShown = -1;
+  //
+  // 🔑 TWO lists now share that space, half each (Sub, 2026-08-15). The split is measured ONCE
+  // over the room both of them have together, rather than letting flexbox hand each section a box
+  // and reading it back — a list whose height is an output of the count cannot also be the input
+  // to it, which is the same feedback loop the observer note below is about.
+  // 🔑 MEASURED, not estimated (2026-08-15): a row is 21.0px and the "+N more" line is ALSO 21.0px
+  // — it is an `li` in the same list, so it inherits the same 3px padding, and its smaller type
+  // buys nothing. It was guessed at 15px, which under-reserved by 6px and left the line clipped by
+  // the section's overflow. So a truncated list costs exactly one extra ROW; there is no separate
+  // constant to keep in sync.
+  const LATEST_MIN = 1, LATEST_MAX = 10, LATEST_ROW_PX = 21;
+  let latestShown = -1, latestMisShown = -1;
   // One observer for the life of the page, re-pointed at whatever list is currently on screen.
   // Watching the PANEL rather than the list itself: the list's own height is an output of this
   // computation, so observing it is a feedback loop waiting to happen.
@@ -2744,37 +2760,73 @@
     latestRO.disconnect();
     // Observe the SECTION, not the panel: in the canvas the panel is a widget whose box can be
     // replaced, and an observer pointed at a detached node silently never fires again.
-    const sec = document.querySelector(".ra-latest-sec");
-    if (sec) latestRO.observe(sec);
+    // BOTH list sections — observing only the first meant resizing never re-fitted the second.
+    for (const sec of document.querySelectorAll(".ra-latest-sec")) latestRO.observe(sec);
     const panel = document.getElementById("panel");
     if (panel) latestRO.observe(panel);
   }
-  function fitLatest() {
-    const ul = document.getElementById("raLatest");
-    if (!ul || !current) { latestShown = -1; return; }
-    const all = current.recentBlueprints || [];
-    if (!all.length) return;
-    // Measure the room LEFT for the list: from its own top to the bottom of the scroll area.
-    const box = ul.parentElement.parentElement;   // .recent
-    const avail = box.getBoundingClientRect().bottom - ul.getBoundingClientRect().top;
-    let n = Math.floor(avail / LATEST_ROW_PX);
-    if (!Number.isFinite(n) || n < LATEST_MIN) n = LATEST_MIN;
-    if (n > LATEST_MAX) n = LATEST_MAX;
-    if (n > all.length) n = all.length;
-    // Only touch the DOM when the ANSWER changes — this runs off a ResizeObserver, and rewriting
-    // the same list on every pixel of a drag is the idle-repaint mistake again.
-    if (n === latestShown) return;
-    latestShown = n;
+  /** One row of either list. `val` is the optional gold figure — only missions carry one. */
+  function latestRow(name, at, val) {
+    const w = fmtWhen(at);
+    const label = w ? (PREFS.timeRelative ? w.rel : w.date) : "";
+    return '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(name) + "</span>"
+      + (val ? '<span class="ra-val">' + escapeHtml(val) + "</span>" : "")
+      + '<span class="ra-when"><span class="ra-date">' + escapeHtml(label) + "</span></span></li>";
+  }
+  function fillList(ul, rows, n) {
     let h = "";
-    for (const b of all.slice(0, n)) {
-      const w = fmtWhen(b.at);
-      const label = w ? (PREFS.timeRelative ? w.rel : w.date) : "";
-      h += '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(b.name) + "</span>"
-        + '<span class="ra-when"><span class="ra-date">' + escapeHtml(label) + "</span></span></li>";
-    }
-    const rest = all.length - n;
+    for (const r of rows.slice(0, n)) h += latestRow(r.name, r.at, r.val);
+    const rest = rows.length - n;
     if (rest > 0) h += '<li class="ra-more">+' + rest + " more</li>";
     ul.innerHTML = h;
+  }
+  function fitLatest() {
+    if (!current) { latestShown = latestMisShown = -1; return; }
+    const bpUl = document.getElementById("raLatest");
+    const msUl = document.getElementById("raLatestMissions");
+    if (!bpUl && !msUl) { latestShown = latestMisShown = -1; return; }
+    const bps = (current.recentBlueprints || []).map((b) => ({ name: b.name, at: b.at, val: null }));
+    // 🔑 aUEC is COMPACT here, not toLocaleString as the original list had it. "54.5k" beside a
+    // contract title and a timestamp fits a 380px panel; "54,500 aUEC" pushed the title into an
+    // ellipsis. It is also a REAL logged award, so it takes no estimate tilde — unlike everything
+    // in the closest-to-done section, which is modelled.
+    const mss = (current.recentMissions || []).map((m) => ({
+      name: m.title || "Mission", at: m.at,
+      val: m.aUEC != null ? compactNum(m.aUEC) : null,
+    }));
+
+    // 🔑 MEASURE EACH LIST'S OWN BOX; do not compute a share. Deriving it as "panel bottom minus
+    // list top, less a heading and a gap" was off by whatever margins the headings carry, so the
+    // reserved space and the box flexbox actually handed over disagreed and the "+N more" line
+    // still got clipped. The uls are `flex:1` inside `flex:1` sections with overflow:hidden, so
+    // their height is a pure function of the CONTAINER — content cannot grow them, and there is
+    // therefore no feedback loop in reading them back. That is what makes this exact.
+    //
+    // 🔑 The halves are weighted by how much DATA each list has, not by what is rendered — so
+    // twelve blueprints beside one mission does not leave half the panel blank, and ten beside
+    // ten is the even split Sub asked for. Data-driven, so this cannot feed back either.
+    if (bpUl && msUl) {
+      bpUl.parentElement.style.flexGrow = String(Math.min(bps.length, LATEST_MAX));
+      msUl.parentElement.style.flexGrow = String(Math.min(mss.length, LATEST_MAX));
+    }
+    // A truncated list has to pay for its own "+N more" line — one row's worth. Nothing reserved
+    // it before, so the last thing in the list was sliced in half by the section's overflow and
+    // read as a rendering fault rather than as "there is more".
+    const rowsFor = (px, len) => {
+      let n = Math.floor(px / LATEST_ROW_PX);
+      if (n < len) n -= 1;
+      if (!Number.isFinite(n)) n = LATEST_MIN;
+      return Math.max(LATEST_MIN, Math.min(LATEST_MAX, len, n));
+    };
+    const nBp = bpUl ? rowsFor(bpUl.getBoundingClientRect().height, bps.length) : -1;
+    const nMs = msUl ? rowsFor(msUl.getBoundingClientRect().height, mss.length) : -1;
+
+    // Only touch the DOM when the ANSWER changes — this runs off a ResizeObserver, and rewriting
+    // the same list on every pixel of a drag is the idle-repaint mistake again.
+    if (bpUl && nBp !== latestShown) { latestShown = nBp; fillList(bpUl, bps, nBp); }
+    if (msUl && nMs !== latestMisShown) { latestMisShown = nMs; fillList(msUl, mss, nMs); }
+    if (!bpUl) latestShown = -1;
+    if (!msUl) latestMisShown = -1;
   }
 
   // The "Blueprint Received" toast moved OUT of this panel into its own placeable notifier widget
@@ -2818,7 +2870,7 @@
         // The list is written EMPTY above; how many rows it holds depends on the height it ends
         // up with, which only exists after layout. Reset first so a re-render with different data
         // recomputes instead of trusting the previous answer.
-        latestShown = -1;
+        latestShown = latestMisShown = -1;
         observeLatest();
       } else {
         panel.classList.add("empty");
@@ -6309,7 +6361,15 @@
         current = {
           earnings: { repLastHr: 1240, repPace: 1480, aUECLastHr: null, aUECPace: null,
             aUECTotal: 148250, repTotal: 2860, missions: 6 },
-          recentMissions: [{ title: "Blackbox Retrieval Very Dangerous", aUEC: null, at: new Date(now).toISOString() }],
+          // TEN, like the blueprint list — the two share the leftover space and a one-entry
+          // fixture cannot exercise the split, the ten-row cap, or the "+N more" reservation.
+          // Half carry no aUEC on purpose: calculated-reward contracts log no payout, and the row
+          // must simply omit the figure rather than print a zero.
+          recentMissions: ["Blackbox Retrieval Very Dangerous", "Deep space hit", "Moraine Data Retrieval",
+            "Need a death at Asteroid Base", "Turf War", "Critical Fleet Refuel", "Cargo Run: Bloom",
+            "Salvager Needed", "Wanted: Dead or Alive", "Urgent Convoy Refuel"]
+            .map((title, i) => ({ title, aUEC: i % 2 ? null : 9000 + i * 1500,
+              at: new Date(now - (i + 1) * 11 * 60000).toISOString() })),
           recentBlueprints: bps,
           // Shaped like the real thing: payouts are ALWAYS modelled on pool contracts, most
           // carry a run length, half carry a cooldown, and one deliberately carries NEITHER a
@@ -6331,7 +6391,7 @@
           ],
         };
         const el = $("pool");
-        if (el) { el.innerHTML = recentActivityHtml(current); el.classList.add("idle"); latestShown = -1; observeLatest(); }
+        if (el) { el.innerHTML = recentActivityHtml(current); el.classList.add("idle"); latestShown = latestMisShown = -1; observeLatest(); }
         // The suite drives the fit directly: how many rows fit is the behaviour under test, and
         // waiting on a ResizeObserver to maybe fire is how a size test becomes flaky.
         window.__fitLatest = fitLatest;
