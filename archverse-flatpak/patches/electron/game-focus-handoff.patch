@@ -1,0 +1,29 @@
+--- a/electron/main.cjs
++++ b/electron/main.cjs
+@@ -1 +1 @@
+-  if (had) console.log(`[desktop-focus] overlay input ownership released (${reason}); desktop keeps focus`);
++  if (had) console.log(`[desktop-focus] overlay input ownership released (${reason}); click-through restored`);
+@@ -1,8 +1,20 @@
+     const active = overlayWindows.activeWindowDetails?.();
+     if (active && overlayWindows.isOwnOverlayWindow?.(active)) return;
+-    const reason = overlayWindows.isStarCitizenDirectlyActive?.()
++    const gameActive = !!overlayWindows.isStarCitizenDirectlyActive?.();
++    const reason = gameActive
+       ? "Star Citizen clicked"
+       : `external window clicked${active?.title ? `: ${active.title}` : ""}`;
+-    releaseOverlayOwnershipToDesktop(reason);
++    const released = releaseOverlayOwnershipToDesktop(reason);
++    if (gameActive && released) {
++      // ARCHVERSE_FLATPAK_GAME_FOCUS_HANDOFF: the click that blurs the interactive overlay can
++      // be consumed while KWin/XWayland is applying the new input shape. The F-down path captured
++      // Star Citizen before focusing Electron, so restore that exact pre-overlay native window
++      // after click-through is active. Never synthesize/replay a click into the game.
++      setTimeout(() => {
++        if (overlayExclusiveInteractionActive()) return;
++        if (!overlayWindows.starCitizenProcessRunning?.()) return;
++        restoreLinuxPreviousWindow();
++        console.log("[game-focus] Star Citizen click handoff restored the pre-overlay game focus");
++      }, 35);
++    }
+   }, 80);
+ }
