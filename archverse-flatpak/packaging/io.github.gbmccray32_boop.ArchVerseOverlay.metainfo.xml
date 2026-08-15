@@ -20,9 +20,9 @@
   <url type="homepage">https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux</url>
   <url type="bugtracker">https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/issues</url>
   <releases>
-    <release version="0.1.43-r31-alpha.22-upstream043-test1" date="2026-08-14">
+    <release version="0.1.43-r31-alpha.22-hoverlatch-test3" date="2026-08-14">
       <description>
-        <p>Flatpak field-test converged on upstream 0.1.43 mining semantics, packaged RapidOCR validation, Linux session binding, and sandbox-safe hotkey fallback.</p>
+        <p>Flatpak field test for the durable Linux hover-scoped interaction policy: held-F activates only over classified widgets, clicked widgets may remain interactive after F release, and leaving all widgets restores click-through plus the pre-overlay focus target.</p>
       </description>
     </release>
   </releases>
