@@ -1301,6 +1301,27 @@ const IDLEPANEL = `(async () => {
      && getComputedStyle(ssRows[0]).gridTemplateColumns === getComputedStyle(ssRows[1]).gridTemplateColumns,
      ssRows.length + " rows");
 
+  // 🔑 THE PACE IS ON SCREEN, not only in a tooltip. It was demoted into a title attribute when
+  // the old two-column "Per hour · this grind" block was folded in on 2026-08-13, and Sub
+  // asked for exactly that number back on 2026-08-15 ("what you're trending at at the rate that
+  // you're going"). The fixture's rep pace is 1480 against 1240 in the last hour.
+  const repStat = ssRows[1].children[0];
+  const pace = repStat.querySelector(".ss-pace");
+  ok("the rate shows what the grind is TRENDING at, not just the last hour",
+     !!pace, repStat.textContent.trim());
+  ok("...as a suffix on the figure it qualifies, inside the same stat",
+     !!pace && repStat.querySelector(".ss-n").contains(pace)
+     && repStat.querySelector(".ss-n").textContent.trim().indexOf("1.2k") === 0,
+     repStat.querySelector(".ss-n").textContent.trim());
+  ok("...set smaller than the measured figure it hangs off, being an extrapolation",
+     !!pace && parseFloat(getComputedStyle(pace).fontSize)
+        < parseFloat(getComputedStyle(repStat.querySelector(".ss-n")).fontSize),
+     pace ? getComputedStyle(pace).fontSize : "");
+  // A rate the game never reported must stay a dash — a pace suffix on nothing would invent one.
+  ok("...and a rate with no data is still a plain dash",
+     !!ssRows[1].children[1].querySelector(".rt-na"),
+     ssRows[1].children[1].textContent.trim());
+
   // The size-driven lists. Both are filled by the same fitter off ONE measurement of the room
   // they share, so they are asserted together.
   const panel = document.getElementById("panel");
@@ -1366,46 +1387,35 @@ const IDLEPANEL = `(async () => {
   ok("the mockup switcher offers three layouts", pool.querySelectorAll(".ra-mk-b").length === 3);
   ok("...and shows which one is up", mkOn() === "ledger", String(mkOn()));
 
-  // Mockup 1 — the cost/reward line added under each pool.
-  const eco = pool.querySelector(".cp .cp-eco");
-  ok("ledger: a pool says what finishing it costs", !!eco && /2 more runs/.test(eco.textContent),
-     eco ? eco.textContent.trim() : "(no .cp-eco)");
-  ok("...and how long, from the contract's own run length", !!eco && /30m/.test(eco.textContent),
-     eco ? eco.textContent.trim() : "");
-  ok("...with the per-hour rate the grind is worth",
-     !!eco && eco.querySelector(".cp-rate").textContent.trim() === "~216k/hr",
-     eco && eco.querySelector(".cp-rate") ? eco.querySelector(".cp-rate").textContent : "");
-  // 🔴 EVERY pool payout in the dataset is MODELLED. A bare figure here would be the panel
-  // claiming to know something the game has not decided yet.
-  ok("...and every aUEC figure carries the estimate tilde", /~109k/.test(eco.textContent),
-     eco.textContent.trim());
-  ok("...explained by the same circled i the tracked mission uses", !!eco.querySelector(".mi-info"));
+  // 🔴 NO ECONOMICS IN THIS SECTION. Sub, 2026-08-15: the per-hour figure was only ever meant for
+  // the session tracker, "NOT with the closest to done". A first pass hung each pool's aUEC/hr,
+  // payout and run length off these rows and it was wrong about what the section is for. The
+  // assertion is kept pointed at the ABSENCE, because the fields are still on the view model and
+  // rendering them is a one-line temptation.
+  const cpText = [...pool.querySelectorAll(".cp")].map((e) => e.textContent).join(" ");
+  ok("ledger: closest-to-done carries no rate, payout or run length",
+     !/\\/hr/.test(cpText) && !/aUEC/.test(cpText) && !/~/.test(cpText), cpText.slice(0, 80));
 
-  // Mockup 2 — the ranked shortlist.
+  // Mockup 2 — the dense shortlist: every open pool rather than the top two.
   await pickLayout("shortlist");
   const sl = [...pool.querySelectorAll(".sl-r")];
   ok("shortlist: it lists every open pool, not just the top two", sl.length === 4, String(sl.length));
-  const rates = sl.map((r) => r.querySelector(".sl-rate").textContent.trim());
-  ok("...ranked by what each earns per hour, best first",
-     rates[0] === "~217k/hr" && rates[1] === "~216k/hr" && rates[2] === "~143k/hr", rates.join(" | "));
-  // 🔑 The unscoreable pool is DEMOTED, never dropped — it is still a pool you have started.
-  ok("...with a pool that carries no payout sunk to the bottom, not hidden",
-     sl[3].querySelector(".sl-n").textContent === "Deep space hit", sl[3].textContent.trim());
-  ok("...showing a dash for it rather than a made-up rate",
-     !!sl[3].querySelector(".sl-rate .rt-na"), rates[3]);
-  const tot = pool.querySelector(".ra-h-tot");
-  ok("...and a heading total over the whole list", !!tot && /4 pools open/.test(tot.textContent),
-     tot ? tot.textContent.trim() : "(no total)");
+  ok("...each with its count, its bar and what is left",
+     !!sl[0].querySelector(".sl-c") && !!sl[0].querySelector(".sl-bar i") && !!sl[0].querySelector(".sl-left"),
+     sl[0].textContent.trim());
+  ok("...ordered closest-first, as the view already sorted them",
+     sl[0].querySelector(".sl-left").textContent.trim() === "2 to go", sl[0].textContent.trim());
+  const slText = [...pool.querySelectorAll(".sl")].map((e) => e.textContent).join(" ");
+  ok("...and no economics here either", !/\\/hr/.test(slText) && !/~/.test(slText), slText.slice(0, 80));
 
   // Mockup 3 — one recommendation.
   await pickLayout("target");
   const tgt = pool.querySelector(".tg-t");
-  // Soonest done, NOT best rate: Turf War is 2 runs of 15m where the best-paying pool is 2 of 30m.
-  ok("target: it commits to the pool that finishes soonest", !!tgt && tgt.textContent === "Turf War",
+  ok("target: it commits to the pool with the fewest left", !!tgt && tgt.textContent === "Turf War",
      tgt ? tgt.textContent : "(no hero)");
   const tgs = [...pool.querySelectorAll(".tg-s-l")].map((e) => e.textContent);
-  ok("...leading with how many are left, then the cost and the reward",
-     tgs.join(" | ") === "to go of 7 | to finish | aUEC on the way", tgs.join(" | "));
+  ok("...leading with how many are left, then how far through it is",
+     tgs.join(" | ") === "to go of 7 | complete", tgs.join(" | "));
   const also = pool.querySelector(".tg-also");
   ok("...and it does not forget the pools it did not pick",
      !!also && /Cargo Run: Bloom 8\\/11/.test(also.textContent), also ? also.textContent.trim() : "");

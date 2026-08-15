@@ -1273,20 +1273,10 @@
     border-radius: 3px; cursor: pointer; }
   .ra-mk-b.on { color: var(--bg, #05121a); background: var(--cyan); border-color: var(--cyan); }
 
-  /* Mockup 1 — the cost/reward line under a pool. The rate is pushed to the right edge so it
-     lines up down the list and can be read as a column without being drawn as one. */
-  .cp-eco { display: flex; align-items: baseline; gap: 7px; margin-top: 3px; }
-  .cp-eco-l { flex: 1; min-width: 0; font-size: 10.5px; color: var(--cyan-dim);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cp-rate { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 500;
-    color: var(--gold); font-variant-numeric: tabular-nums; }
+  /* Mockup 1 adds no chrome of its own — it IS the shipping panel. */
 
-  /* Mockup 2 — the ranked shortlist. Two lines per pool: the scannable row, then its detail in
-     the caption weight, so four pools fit where two used to and the eye still lands on names. */
-  .ra-h-row { display: flex; align-items: baseline; gap: 8px; }
-  .ra-h-row > span:first-child { flex: 1; min-width: 0; }
-  .ra-h-tot { flex: none; font-family: var(--mono); font-size: 9.5px; font-weight: 400;
-    letter-spacing: 0; text-transform: none; color: var(--gold); }
+  /* Mockup 2 — the dense shortlist. Two lines per pool: the scannable row, then where to take it
+     in the caption weight, so four pools fit where two used to and the eye still lands on names. */
   .sl-r { display: flex; align-items: center; gap: 7px; }
   .sl-n { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--cyan-bright);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1297,8 +1287,9 @@
   .sl-bar { flex: none; width: 44px; height: 4px; border-radius: 2px; overflow: hidden;
     background: rgba(var(--accent-rgb), 0.16); }
   .sl-bar i { display: block; height: 100%; background: var(--cyan); }
-  .sl-rate { flex: none; min-width: 52px; text-align: right; font-family: var(--mono);
-    font-size: 11px; font-weight: 500; color: var(--gold); font-variant-numeric: tabular-nums; }
+  /* "N to go" holds the right-hand column, in the same gold the ledger gives it. */
+  .sl-left { flex: none; min-width: 48px; text-align: right; font-family: var(--sans);
+    font-size: 10.5px; font-weight: 700; color: var(--gold); }
   .sl-sub { font-size: 10px; color: var(--faint); margin: 1px 0 6px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   .sl-r:last-of-type + .sl-sub { margin-bottom: 0; }
@@ -1316,12 +1307,10 @@
      staircase — measured, not guessed: "TO GO OF 7" sat a line below "TO FINISH". */
   .tg-s-n { font-family: var(--mono); font-size: 13px; line-height: 1.15; color: var(--cyan-bright);
     white-space: nowrap; height: 22px; display: flex; align-items: flex-end; }
-  .tg-s-n .gold { color: var(--gold); }
   /* The count is the headline of the headline — it is the number that says "close". */
   .tg-big { font-size: 20px; }
   .tg-s-l { font-family: var(--sans); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em;
     text-transform: uppercase; color: var(--faint); margin-top: 2px; white-space: nowrap; }
-  .tg-run { font-size: 10.5px; color: var(--cyan-dim); margin-top: 7px; }
   .tg-also { display: flex; align-items: baseline; gap: 7px; margin-top: 8px; font-size: 10.5px;
     color: var(--faint); }
   .tg-also-l { flex: none; font-family: var(--sans); font-size: 8px; font-weight: 700;
@@ -1346,6 +1335,10 @@
   .ss.ss-rates .ss-n { font-size: 14px; }
   .ss-n { font-family: var(--mono); font-size: 17px; line-height: 1.15; color: var(--cyan-bright); }
   .ss-n.gold { color: var(--gold); }
+  /* The trend suffix. Smaller and dimmer than the figure it hangs off — it is an extrapolation
+     sitting beside a measurement, and identical type would claim they are the same kind of fact.
+     Inherits the gold on the aUEC stat, so the pair still reads as one number. */
+  .ss-pace { font-size: 0.62em; opacity: 0.62; margin-left: 4px; letter-spacing: -0.02em; }
   .ss-n.green { color: var(--green, #7fd6a8); }
   .ss-l { font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
     text-transform: uppercase; color: var(--faint); margin-top: 1px; }
@@ -2443,57 +2436,19 @@
     observeLatest();
   });
 
-  // ── What a pool costs and what it pays ────────────────────────────────────────────────────
-  // Everything here is DERIVED at render time from fields the dataset already carried; nothing is
-  // a stored opinion, so a patch that changes a payout changes these with it.
+  // ── Closest to done, three ways ───────────────────────────────────────────────────────────
+  // 🔴 NO ECONOMICS HERE. A first pass hung each pool's aUEC/hr, payout and run length off these
+  // rows; Sub, 2026-08-15: the per-hour figure "just meant a tracker that basically tracks how
+  // much money they've been making per hour with the missions that they've done, NOT with the
+  // closest to done". That number belongs to the session block and lives there. This section
+  // answers one question — how close am I — and every layout below answers it with the title, the
+  // count, the bar and where to pick it up, exactly as it always did.
   //
-  // 🔴 EVERY aUEC FIGURE ON THIS PANEL IS AN ESTIMATE. All 748 pool-bearing contracts that carry a
-  // payout carry a MODELLED one (`payoutCalculated`) — the game works these rewards out at accept
-  // time, so the number is not in the game files at all. They get the same tilde + circled i the
-  // tracked mission's payout gets; see payBlock(). Never print one bare.
-  //
-  // 🔑 "AT LEAST" IS THE HONEST WORD, and it is load-bearing. `left` more drops is a FLOOR, not a
-  // forecast: a run need not drop a blueprint, and nothing here proves the game refuses to hand
-  // you a duplicate. So the panel says "≥ 30m" and "2 more runs", never "30m to finish" — a floor
-  // that turns out optimistic still made finishing look close, which is the point, where a
-  // confident wrong estimate would be the pool-merge lesson again in a smaller hat.
-  function poolFacts(p) {
-    const left = p.total - p.owned;
-    const pct = Math.round((p.owned / p.total) * 100);
-    // min === max on all but a handful; a genuine spread averages rather than picking an end.
-    const pay = p.payMax == null ? null
-      : (p.payMin != null && p.payMin !== p.payMax ? (p.payMin + p.payMax) / 2 : p.payMax);
-    const dur = p.durMin || null;   // 0 is already nulled server-side; belt and braces on the divide
-    return {
-      left, pct, pay, dur,
-      rate: pay != null && dur ? (pay / dur) * 60 : null,
-      repRate: p.rep != null && dur ? (p.rep / dur) * 60 : null,
-      finishMin: dur ? left * dur : null,
-      finishPay: pay != null ? left * pay : null,
-      finishRep: p.rep != null ? left * p.rep : null,
-    };
-  }
-  /** Minutes → "15m" / "1h 04m". Never "0m": a sub-minute run length is a data error, not a fact.
-   *
-   *  🔴 NOT `fmtDur` — this page ALREADY has one, taking MILLISECONDS, for the completion card.
-   *  Function declarations hoist and the later one wins, so naming this `fmtDur` silently replaced
-   *  it for the whole page and fed minutes into a ms formatter: every duration on this panel
-   *  rendered as "0:00" and nothing threw. Grep the page for a helper name before declaring it. */
-  function fmtRunMin(min) {
-    const m = Math.max(1, Math.round(min));
-    if (m < 60) return m + "m";
-    const h = Math.floor(m / 60), r = m % 60;
-    return r ? h + "h " + String(r).padStart(2, "0") + "m" : h + "h";
-  }
-  /** An aUEC amount with the estimate tilde attached, so the two can never be separated. */
-  const est = (p, n) => (p.payoutEstimated ? "~" : "") + compactNum(Math.round(n));
-  /** The one tooltip that explains every aUEC figure in this panel. */
-  const POOL_EST_TIP =
-    "Estimated, not read from the game. The game works these rewards out when you accept, so the"
-    + " figure is calculated from a formula fitted to CIG's own data and lands within rounding"
-    + " about three times in four."
-    + "\n\nRun lengths are the game's own expected duration. “At least” is meant literally:"
-    + " it assumes every run drops a blueprint you do not already have, which is the best case.";
+  // The pool facts are still on the view model (payMin/payMax/durMin/rep/cooldownMin/…) and are
+  // deliberately left there un-rendered: they are cheap, they are measured, and the moment
+  // anything wants them they are one field access away rather than a round trip through the
+  // dataset. Do not "tidy" them out of src/missions.ts.
+  const poolLeft = (p) => ({ left: p.total - p.owned, pct: Math.round((p.owned / p.total) * 100) });
 
   function closestHtml(closest, layout) {
     if (layout === "shortlist") return closestShortlist(closest);
@@ -2502,131 +2457,78 @@
   }
 
   // ── MOCKUP 1 · "Ledger" ───────────────────────────────────────────────────────────────────
-  // Today's panel, unchanged, with ONE line added per pool: what finishing it costs and what it
-  // pays you on the way. The most conservative of the three on purpose — it is the option that
-  // risks nothing, so it is the baseline the other two have to beat.
-  //
-  // 🔑 The added line answers "is this worth an hour" without moving anything that already
-  // answers "what am I close to". Two pools, as today; the view now carries four.
+  // Exactly the panel that is already shipping: the top two pools, each with its count, its bar
+  // and where to take it. The baseline the other two have to beat, and the option that risks
+  // nothing.
   function closestLedger(closest) {
     let html = '<div class="ra-sec"><div class="ra-h">Closest to done</div>';
     for (const p of closest.slice(0, 2)) {
-      const f = poolFacts(p);
-      // Cost of finishing on the left, the rate that buys it on the right. The rate is the
-      // productivity staple applied to a POOL rather than to the session — this is what lets you
-      // hold it against the "aUEC / hr" you are actually making, two sections down.
-      const bits = [];
-      bits.push(f.left + (f.left === 1 ? " more run" : " more runs"));
-      if (f.finishMin) bits.push("≥ " + fmtRunMin(f.finishMin));
-      if (f.finishPay != null) bits.push(est(p, f.finishPay));
-      const eco = f.rate != null || f.finishMin
-        ? '<div class="cp-eco"><span class="cp-eco-l">' + escapeHtml(bits.join(" · "))
-          + (f.finishPay != null || f.finishMin ? info(POOL_EST_TIP) : "") + "</span>"
-          + (f.rate != null ? '<span class="cp-rate">' + est(p, f.rate) + "/hr</span>" : "")
-          + "</div>"
-        : "";
+      const { left, pct } = poolLeft(p);
       html += '<div class="cp">'
         + '<div class="cp-r"><span class="cp-n">' + escapeHtml(p.title) + "</span>"
         + '<span class="cp-c">' + p.owned + " of " + p.total + "</span>"
-        + '<span class="cp-l">' + f.left + " to go</span></div>"
-        + '<div class="cp-bar"><i style="width:' + f.pct + '%"></i></div>'
+        + '<span class="cp-l">' + left + " to go</span></div>"
+        + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
         + (p.places.length
           ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>"
           : "")
-        + eco
         + "</div>";
     }
     return html + "</div>";
   }
 
   // ── MOCKUP 2 · "Shortlist" ────────────────────────────────────────────────────────────────
-  // The same question asked as a CHOICE. Every open pool the view carries, one dense row each,
-  // ranked by what it earns per hour rather than by how few blueprints are left — because "2 to
-  // go" on a 40-minute contract is further away than "4 to go" on a 15-minute one, and the
-  // fewest-left sort quietly hides that. The heading carries the total: what closing all of them
-  // costs and is worth, which is the "finishing is close" claim made once for the whole list.
+  // The same information, denser, and ALL of it: every pool the view carries rather than the top
+  // two, one compact row each. The argument is that "closest to done" is a shortlist you scan,
+  // not a headline — four pools in the space the ledger spends on two.
   //
-  // ⚠️ A pool with no run length CANNOT be ranked and sinks to the bottom rather than being
-  // dropped — it is still a pool you have started, and the panel must not hide what it cannot
-  // score. Those rows simply show no rate.
+  // Order is the view's own: fewest blueprints left first, which is what "closest" means.
   function closestShortlist(closest) {
-    const rows = closest.map((p) => ({ p, f: poolFacts(p) }))
-      .sort((a, b) => (b.f.rate ?? -1) - (a.f.rate ?? -1));
-    // Totals only over the rows that HAVE the number — a sum that silently skips half the list
-    // and does not say so is the "how thin is the evidence" problem again.
-    const timed = rows.filter((r) => r.f.finishMin != null);
-    const paid = rows.filter((r) => r.f.finishPay != null);
-    const totMin = timed.reduce((a, r) => a + r.f.finishMin, 0);
-    const totPay = paid.reduce((a, r) => a + r.f.finishPay, 0);
-    const head = [];
-    head.push(rows.length + (rows.length === 1 ? " pool open" : " pools open"));
-    if (timed.length) head.push("≥ " + fmtRunMin(totMin));
-    if (paid.length) head.push(est(paid[0].p, totPay));
-    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Closest to done</span>'
-      + '<span class="ra-h-tot">' + escapeHtml(head.join(" · ")) + info(POOL_EST_TIP) + "</span></div>"
-      + '<div class="sl">';
-    for (const { p, f } of rows) {
+    let html = '<div class="ra-sec"><div class="ra-h">Closest to done</div><div class="sl">';
+    for (const p of closest) {
+      const { left, pct } = poolLeft(p);
       html += '<div class="sl-r">'
         + '<span class="sl-n">' + escapeHtml(p.title) + "</span>"
         + '<span class="sl-c">' + p.owned + "/" + p.total + "</span>"
-        + '<span class="sl-bar"><i style="width:' + f.pct + '%"></i></span>'
-        + '<span class="sl-rate">' + (f.rate != null ? est(p, f.rate) + "/hr" : '<span class="rt-na">—</span>') + "</span>"
+        + '<span class="sl-bar"><i style="width:' + pct + '%"></i></span>'
+        + '<span class="sl-left">' + left + " to go</span>"
         + "</div>"
-        + '<div class="sl-sub">' + escapeHtml(
-            [f.left + " to go", f.finishMin ? "≥ " + fmtRunMin(f.finishMin) : null,
-             p.places.length ? p.places.join(" · ") : null].filter(Boolean).join(" · ")) + "</div>";
+        + (p.places.length
+          ? '<div class="sl-sub">' + escapeHtml(p.places.join(" · ")) + "</div>"
+          : '<div class="sl-sub"></div>');
     }
     return html + "</div></div>";
   }
 
   // ── MOCKUP 3 · "Target" ───────────────────────────────────────────────────────────────────
-  // The opinionated one: pick ONE and say so. The panel exists to make finishing a pool feel
-  // close and worth chasing, and a list of four does not do that — it defers the decision back to
-  // the player at exactly the moment they opened the panel to have it made.
+  // The opinionated one: pick ONE and say so. The panel exists to make finishing a pool feel close
+  // and worth chasing, and a list of four defers that decision back to the player at exactly the
+  // moment they opened the panel to have it made.
   //
-  // 🔑 THE SCORE IS "SOONEST DONE", NOT "BEST RATE". What makes finishing feel close is the time
-  // to the end of the pool, so the hero is the pool with the smallest `left × run length`; the
-  // rate is shown beside it as the reason to be happy about it rather than as the thing being
-  // optimised. A pool with no run length can still be the hero if nothing else can be scored —
-  // otherwise the panel would refuse to recommend anything on a thin dataset.
+  // 🔑 The hero is the pool with the FEWEST left, tie-broken by how far through it is — the view is
+  // already sorted that way, so this is the first entry and the sort is not second-guessed here.
   function closestTarget(closest) {
-    const scored = closest.map((p) => ({ p, f: poolFacts(p) }))
-      .sort((a, b) => (a.f.finishMin ?? Infinity) - (b.f.finishMin ?? Infinity)
-        || a.f.left - b.f.left);
-    const { p, f } = scored[0];
-    const rest = scored.slice(1, 4);
-    const stat = (n, l) => '<div class="tg-s"><div class="tg-s-n">' + n + "</div>"
-      + '<div class="tg-s-l">' + escapeHtml(l) + "</div></div>";
-    // One line of context under the headline numbers: the shape of a single run. `cooldownMin` is
-    // the re-accept wait — how fast you can actually repeat this, which is the ceiling on the
-    // estimate above it. Only 377 of 755 contracts state one, so it self-hides.
-    const runBits = [];
-    if (f.dur) runBits.push(fmtRunMin(f.dur) + " a run");
-    if (f.pay != null) runBits.push(est(p, f.pay) + " each");
-    if (p.rep != null) runBits.push("+" + compactNum(p.rep) + " rep");
-    if (p.cooldownMin) runBits.push("retake " + fmtRunMin(p.cooldownMin));
+    const p = closest[0];
+    const { left, pct } = poolLeft(p);
     let html = '<div class="ra-sec"><div class="ra-h">Go finish this</div>'
       + '<div class="tg">'
       + '<div class="tg-t">' + escapeHtml(p.title) + "</div>"
-      + '<div class="tg-bar"><i style="width:' + f.pct + '%"></i></div>'
+      + '<div class="tg-bar"><i style="width:' + pct + '%"></i></div>'
       + '<div class="tg-r">'
-      + stat('<span class="tg-big">' + f.left + "</span>", "to go of " + p.total)
-      + (f.finishMin ? stat("≥ " + fmtRunMin(f.finishMin), "to finish") : "")
-      + (f.finishPay != null
-          ? stat('<span class="gold">' + est(p, f.finishPay) + "</span>", "aUEC on the way")
-          : "")
+      + '<div class="tg-s"><div class="tg-s-n"><span class="tg-big">' + left + "</span></div>"
+      + '<div class="tg-s-l">to go of ' + p.total + "</div></div>"
+      + '<div class="tg-s"><div class="tg-s-n">' + pct + "%</div>"
+      + '<div class="tg-s-l">complete</div></div>'
       + "</div>"
-      + (runBits.length
-          ? '<div class="tg-run">' + escapeHtml(runBits.join(" · ")) + info(POOL_EST_TIP) + "</div>"
-          : "")
       + (p.places.length ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>" : "")
       + "</div>";
     // The runners-up are not gone, just demoted to the one thing you would use them for: knowing
     // they exist. Dropping them would make the panel forget pools you have started.
+    const rest = closest.slice(1, 4);
     if (rest.length) {
       html += '<div class="tg-also"><span class="tg-also-l">also close</span>'
         + '<span class="tg-also-n">'
-        + escapeHtml(rest.map((r) => r.p.title + " " + r.p.owned + "/" + r.p.total).join(" · "))
+        + escapeHtml(rest.map((r) => r.title + " " + r.owned + "/" + r.total).join(" · "))
         + "</span></div>";
     }
     return html + "</div>";
@@ -2680,13 +2582,29 @@
           + stat(blueprints.length, "Blueprints", "green")
           + "</div>"
           // Second row, same shape: what that works out to per hour.
+          //
+          // 🔑 THE PACE IS ON SCREEN, NOT IN THE TOOLTIP (Sub, 2026-08-15). The old separate
+          // "Per hour · this grind" block was a two-column table — last 60m AND pace — and when it
+          // was folded into this section on 2026-08-13 the pace was demoted into a `title`. Sub
+          // asked for it back in the words "what you're trending at at the rate that you're
+          // going", which is precisely the number that went missing; what he did NOT ask for is
+          // the old block's second shape. So it returns as a suffix on the figure it qualifies,
+          // inside the stat treatment that is already here — one section, one shape, both numbers.
+          //
+          // ⚠️ The arrow is a plain ASCII-safe glyph rendered from a text node, not an emoji:
+          // missions.html links no emoji face, so anything outside the base fonts is at the mercy
+          // of the OS. Same trap that turned o7 into a box.
           + '<div class="ss ss-rates">'
-          + stat(e.repLastHr != null ? compactNum(e.repLastHr) : na, "Rep / hr", null,
-              "Reputation earned in the last 60 minutes."
-              + (e.repPace != null ? " Session pace: " + e.repPace.toLocaleString() + "/hr." : ""))
-          + stat(e.aUECLastHr != null ? compactNum(e.aUECLastHr) : na, "aUEC / hr", "gold",
-              "aUEC in the last 60 minutes, from missions with a known payout."
-              + (e.aUECPace != null ? " Session pace: " + e.aUECPace.toLocaleString() + "/hr." : ""))
+          + stat(rateWithPace(e.repLastHr, e.repPace, na), "Rep / hr", null,
+              "Reputation earned in the last 60 minutes"
+              + (e.repPace != null
+                  ? ", and the pace this whole grind is trending at (" + e.repPace.toLocaleString() + "/hr)."
+                  : "."))
+          + stat(rateWithPace(e.aUECLastHr, e.aUECPace, na), "aUEC / hr", "gold",
+              "aUEC in the last 60 minutes, from missions with a known payout"
+              + (e.aUECPace != null
+                  ? ", and the pace this whole grind is trending at (" + e.aUECPace.toLocaleString() + "/hr)."
+                  : "."))
           + "</div></div>";
       }
     }
@@ -2705,6 +2623,22 @@
         + '<ul class="ra-list ra-latest" id="raLatestMissions"></ul></div>';
     }
     return html + "</div>";
+  }
+
+  /** "1.2k ↗1.5k" — what the last hour actually paid, and what the grind is trending at.
+   *
+   *  🔑 The pace is DIMMER AND SMALLER on purpose. The two are not equally solid: the last-60m
+   *  figure is measured, the pace is an extrapolation that is noisy until a session has some
+   *  length to it. Same type and weight would present them as two readings of the same kind.
+   *  🔑 Omitted entirely when the pace is null (the first minute of a grind) or when it matches
+   *  the hour figure — an arrow pointing at the number it came from is noise, not information. */
+  function rateWithPace(lastHr, pace, na) {
+    if (lastHr == null) return na;
+    const now = compactNum(lastHr);
+    if (pace == null) return now;
+    const then = compactNum(pace);
+    if (then === now) return now;
+    return now + '<span class="ss-pace">↗' + then + "</span>";
   }
 
   /** Compact aUEC — a session total is a big number in a narrow column. */
