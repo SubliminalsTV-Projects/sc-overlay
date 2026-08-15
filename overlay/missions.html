@@ -1259,6 +1259,77 @@
     overflow: hidden; margin-top: 3px; }
   .cp-bar i { display: block; height: 100%; background: var(--cyan); }
   .cp-w { font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+
+  /* ── TEMPORARY: idle-panel mockup scaffolding ────────────────────────────────────────────
+     ⚠️ Everything from here to the end of the .tg- block goes out with the switcher once Sub
+     picks a layout. Kept in one run so removing it is one delete, not an archaeology exercise. */
+  /* The switcher. Deliberately plain and small — it is scaffolding sitting on top of the thing
+     being judged, so it must not read as part of the design under review. */
+  .ra-mk { display: flex; align-items: center; gap: 4px; opacity: 0.55; }
+  .ra-mk-l { font-family: var(--sans); font-size: 8px; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+  .ra-mk-b { font-family: var(--mono); font-size: 9px; line-height: 1; padding: 2px 5px;
+    color: var(--cyan-dim); background: transparent; border: 1px solid var(--border);
+    border-radius: 3px; cursor: pointer; }
+  .ra-mk-b.on { color: var(--bg, #05121a); background: var(--cyan); border-color: var(--cyan); }
+
+  /* Mockup 1 — the cost/reward line under a pool. The rate is pushed to the right edge so it
+     lines up down the list and can be read as a column without being drawn as one. */
+  .cp-eco { display: flex; align-items: baseline; gap: 7px; margin-top: 3px; }
+  .cp-eco-l { flex: 1; min-width: 0; font-size: 10.5px; color: var(--cyan-dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cp-rate { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 500;
+    color: var(--gold); font-variant-numeric: tabular-nums; }
+
+  /* Mockup 2 — the ranked shortlist. Two lines per pool: the scannable row, then its detail in
+     the caption weight, so four pools fit where two used to and the eye still lands on names. */
+  .ra-h-row { display: flex; align-items: baseline; gap: 8px; }
+  .ra-h-row > span:first-child { flex: 1; min-width: 0; }
+  .ra-h-tot { flex: none; font-family: var(--mono); font-size: 9.5px; font-weight: 400;
+    letter-spacing: 0; text-transform: none; color: var(--gold); }
+  .sl-r { display: flex; align-items: center; gap: 7px; }
+  .sl-n { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--cyan-bright);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sl-c { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--faint);
+    font-variant-numeric: tabular-nums; }
+  /* A fixed-width bar so the rates align: a percentage-width bar would make every row a
+     different length and the column it is holding open would wander. */
+  .sl-bar { flex: none; width: 44px; height: 4px; border-radius: 2px; overflow: hidden;
+    background: rgba(var(--accent-rgb), 0.16); }
+  .sl-bar i { display: block; height: 100%; background: var(--cyan); }
+  .sl-rate { flex: none; min-width: 52px; text-align: right; font-family: var(--mono);
+    font-size: 11px; font-weight: 500; color: var(--gold); font-variant-numeric: tabular-nums; }
+  .sl-sub { font-size: 10px; color: var(--faint); margin: 1px 0 6px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .sl-r:last-of-type + .sl-sub { margin-bottom: 0; }
+
+  /* Mockup 3 — one recommendation, given the room to be one. */
+  .tg-t { font-size: 14px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .tg-bar { height: 5px; border-radius: 3px; background: rgba(var(--accent-rgb), 0.16);
+    overflow: hidden; margin: 5px 0 7px; }
+  .tg-bar i { display: block; height: 100%; background: var(--cyan); }
+  .tg-r { display: flex; align-items: flex-start; gap: 14px; }
+  .tg-s { min-width: 0; }
+  /* 🔑 The values are DIFFERENT SIZES (the count is the headline), so their labels only line up if
+     the value box has a fixed height and the text sits on its floor. Without this the labels
+     staircase — measured, not guessed: "TO GO OF 7" sat a line below "TO FINISH". */
+  .tg-s-n { font-family: var(--mono); font-size: 13px; line-height: 1.15; color: var(--cyan-bright);
+    white-space: nowrap; height: 22px; display: flex; align-items: flex-end; }
+  .tg-s-n .gold { color: var(--gold); }
+  /* The count is the headline of the headline — it is the number that says "close". */
+  .tg-big { font-size: 20px; }
+  .tg-s-l { font-family: var(--sans); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--faint); margin-top: 2px; white-space: nowrap; }
+  .tg-run { font-size: 10.5px; color: var(--cyan-dim); margin-top: 7px; }
+  .tg-also { display: flex; align-items: baseline; gap: 7px; margin-top: 8px; font-size: 10.5px;
+    color: var(--faint); }
+  .tg-also-l { flex: none; font-family: var(--sans); font-size: 8px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase; }
+  /* ⚠️ text-overflow does nothing on the FLEX CONTAINER — it clips mid-word with no ellipsis, which
+     reads as a rendering fault rather than as "there is more". It has to be on the text child. */
+  .tg-also-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* The rule between the two halves — they answer different questions. */
   .ra-rule { border-top: 1px solid var(--border); margin: 1px 0; }
   /* Session totals. */
@@ -2330,6 +2401,237 @@
   // folded into the session section on 2026-08-13 and removed with its last caller. The rates now
   // use the same stat treatment as the totals, one section, one shape.)
 
+  // ── TEMPORARY: three idle-panel mockups, switchable live ──────────────────────────────────
+  // ⚠️ THE SWITCHER IS SCAFFOLDING. It exists so Sub can look at three designs in the real widget
+  // instead of reading three descriptions of them. Once he picks one, the other two renderers and
+  // this whole block come OUT — do not build anything on `idleLayout()`.
+  //
+  // All three keep Sub's 2026-08-13 order (what to go do next leads, the scoreboard follows) and
+  // all three keep every section that is there today. They differ only in how much they say about
+  // the pools, and how hard they push you at one of them.
+  const IDLE_LAYOUTS = [
+    { id: "ledger",    n: "1", t: "Ledger — today's panel, plus what each pool costs and pays" },
+    { id: "shortlist", n: "2", t: "Shortlist — every open pool ranked by what it earns per hour" },
+    { id: "target",    n: "3", t: "Target — one recommendation, big; the rest on one line" },
+  ];
+  const IDLE_LAYOUT_KEY = "scIdleLayoutMockup";
+  function idleLayout() {
+    try {
+      const s = localStorage.getItem(IDLE_LAYOUT_KEY);
+      if (IDLE_LAYOUTS.some((l) => l.id === s)) return s;
+    } catch { /* private mode — fall through to the default */ }
+    return "ledger";
+  }
+  function idleSwitcherHtml() {
+    const cur = idleLayout();
+    return '<div class="ra-mk"><span class="ra-mk-l">mockup</span>'
+      + IDLE_LAYOUTS.map((l) =>
+          '<button type="button" class="ra-mk-b' + (l.id === cur ? " on" : "") + '"'
+          + ' data-mk="' + l.id + '" title="' + escapeAttr(l.t) + '">' + l.n + "</button>").join("")
+      + "</div>";
+  }
+  // Re-render in place rather than waiting for the next SSE frame — a switcher that takes a second
+  // to answer reads as broken, and this panel only repaints on a view push.
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest(".ra-mk-b");
+    if (!b) return;
+    try { localStorage.setItem(IDLE_LAYOUT_KEY, b.dataset.mk); } catch { /* no storage — session only */ }
+    const el = $("pool");
+    if (!el || !el.classList.contains("idle") || !current) return;
+    el.innerHTML = recentActivityHtml(current);
+    latestShown = -1;
+    observeLatest();
+  });
+
+  // ── What a pool costs and what it pays ────────────────────────────────────────────────────
+  // Everything here is DERIVED at render time from fields the dataset already carried; nothing is
+  // a stored opinion, so a patch that changes a payout changes these with it.
+  //
+  // 🔴 EVERY aUEC FIGURE ON THIS PANEL IS AN ESTIMATE. All 748 pool-bearing contracts that carry a
+  // payout carry a MODELLED one (`payoutCalculated`) — the game works these rewards out at accept
+  // time, so the number is not in the game files at all. They get the same tilde + circled i the
+  // tracked mission's payout gets; see payBlock(). Never print one bare.
+  //
+  // 🔑 "AT LEAST" IS THE HONEST WORD, and it is load-bearing. `left` more drops is a FLOOR, not a
+  // forecast: a run need not drop a blueprint, and nothing here proves the game refuses to hand
+  // you a duplicate. So the panel says "≥ 30m" and "2 more runs", never "30m to finish" — a floor
+  // that turns out optimistic still made finishing look close, which is the point, where a
+  // confident wrong estimate would be the pool-merge lesson again in a smaller hat.
+  function poolFacts(p) {
+    const left = p.total - p.owned;
+    const pct = Math.round((p.owned / p.total) * 100);
+    // min === max on all but a handful; a genuine spread averages rather than picking an end.
+    const pay = p.payMax == null ? null
+      : (p.payMin != null && p.payMin !== p.payMax ? (p.payMin + p.payMax) / 2 : p.payMax);
+    const dur = p.durMin || null;   // 0 is already nulled server-side; belt and braces on the divide
+    return {
+      left, pct, pay, dur,
+      rate: pay != null && dur ? (pay / dur) * 60 : null,
+      repRate: p.rep != null && dur ? (p.rep / dur) * 60 : null,
+      finishMin: dur ? left * dur : null,
+      finishPay: pay != null ? left * pay : null,
+      finishRep: p.rep != null ? left * p.rep : null,
+    };
+  }
+  /** Minutes → "15m" / "1h 04m". Never "0m": a sub-minute run length is a data error, not a fact.
+   *
+   *  🔴 NOT `fmtDur` — this page ALREADY has one, taking MILLISECONDS, for the completion card.
+   *  Function declarations hoist and the later one wins, so naming this `fmtDur` silently replaced
+   *  it for the whole page and fed minutes into a ms formatter: every duration on this panel
+   *  rendered as "0:00" and nothing threw. Grep the page for a helper name before declaring it. */
+  function fmtRunMin(min) {
+    const m = Math.max(1, Math.round(min));
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60), r = m % 60;
+    return r ? h + "h " + String(r).padStart(2, "0") + "m" : h + "h";
+  }
+  /** An aUEC amount with the estimate tilde attached, so the two can never be separated. */
+  const est = (p, n) => (p.payoutEstimated ? "~" : "") + compactNum(Math.round(n));
+  /** The one tooltip that explains every aUEC figure in this panel. */
+  const POOL_EST_TIP =
+    "Estimated, not read from the game. The game works these rewards out when you accept, so the"
+    + " figure is calculated from a formula fitted to CIG's own data and lands within rounding"
+    + " about three times in four."
+    + "\n\nRun lengths are the game's own expected duration. “At least” is meant literally:"
+    + " it assumes every run drops a blueprint you do not already have, which is the best case.";
+
+  function closestHtml(closest, layout) {
+    if (layout === "shortlist") return closestShortlist(closest);
+    if (layout === "target") return closestTarget(closest);
+    return closestLedger(closest);
+  }
+
+  // ── MOCKUP 1 · "Ledger" ───────────────────────────────────────────────────────────────────
+  // Today's panel, unchanged, with ONE line added per pool: what finishing it costs and what it
+  // pays you on the way. The most conservative of the three on purpose — it is the option that
+  // risks nothing, so it is the baseline the other two have to beat.
+  //
+  // 🔑 The added line answers "is this worth an hour" without moving anything that already
+  // answers "what am I close to". Two pools, as today; the view now carries four.
+  function closestLedger(closest) {
+    let html = '<div class="ra-sec"><div class="ra-h">Closest to done</div>';
+    for (const p of closest.slice(0, 2)) {
+      const f = poolFacts(p);
+      // Cost of finishing on the left, the rate that buys it on the right. The rate is the
+      // productivity staple applied to a POOL rather than to the session — this is what lets you
+      // hold it against the "aUEC / hr" you are actually making, two sections down.
+      const bits = [];
+      bits.push(f.left + (f.left === 1 ? " more run" : " more runs"));
+      if (f.finishMin) bits.push("≥ " + fmtRunMin(f.finishMin));
+      if (f.finishPay != null) bits.push(est(p, f.finishPay));
+      const eco = f.rate != null || f.finishMin
+        ? '<div class="cp-eco"><span class="cp-eco-l">' + escapeHtml(bits.join(" · "))
+          + (f.finishPay != null || f.finishMin ? info(POOL_EST_TIP) : "") + "</span>"
+          + (f.rate != null ? '<span class="cp-rate">' + est(p, f.rate) + "/hr</span>" : "")
+          + "</div>"
+        : "";
+      html += '<div class="cp">'
+        + '<div class="cp-r"><span class="cp-n">' + escapeHtml(p.title) + "</span>"
+        + '<span class="cp-c">' + p.owned + " of " + p.total + "</span>"
+        + '<span class="cp-l">' + f.left + " to go</span></div>"
+        + '<div class="cp-bar"><i style="width:' + f.pct + '%"></i></div>'
+        + (p.places.length
+          ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>"
+          : "")
+        + eco
+        + "</div>";
+    }
+    return html + "</div>";
+  }
+
+  // ── MOCKUP 2 · "Shortlist" ────────────────────────────────────────────────────────────────
+  // The same question asked as a CHOICE. Every open pool the view carries, one dense row each,
+  // ranked by what it earns per hour rather than by how few blueprints are left — because "2 to
+  // go" on a 40-minute contract is further away than "4 to go" on a 15-minute one, and the
+  // fewest-left sort quietly hides that. The heading carries the total: what closing all of them
+  // costs and is worth, which is the "finishing is close" claim made once for the whole list.
+  //
+  // ⚠️ A pool with no run length CANNOT be ranked and sinks to the bottom rather than being
+  // dropped — it is still a pool you have started, and the panel must not hide what it cannot
+  // score. Those rows simply show no rate.
+  function closestShortlist(closest) {
+    const rows = closest.map((p) => ({ p, f: poolFacts(p) }))
+      .sort((a, b) => (b.f.rate ?? -1) - (a.f.rate ?? -1));
+    // Totals only over the rows that HAVE the number — a sum that silently skips half the list
+    // and does not say so is the "how thin is the evidence" problem again.
+    const timed = rows.filter((r) => r.f.finishMin != null);
+    const paid = rows.filter((r) => r.f.finishPay != null);
+    const totMin = timed.reduce((a, r) => a + r.f.finishMin, 0);
+    const totPay = paid.reduce((a, r) => a + r.f.finishPay, 0);
+    const head = [];
+    head.push(rows.length + (rows.length === 1 ? " pool open" : " pools open"));
+    if (timed.length) head.push("≥ " + fmtRunMin(totMin));
+    if (paid.length) head.push(est(paid[0].p, totPay));
+    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Closest to done</span>'
+      + '<span class="ra-h-tot">' + escapeHtml(head.join(" · ")) + info(POOL_EST_TIP) + "</span></div>"
+      + '<div class="sl">';
+    for (const { p, f } of rows) {
+      html += '<div class="sl-r">'
+        + '<span class="sl-n">' + escapeHtml(p.title) + "</span>"
+        + '<span class="sl-c">' + p.owned + "/" + p.total + "</span>"
+        + '<span class="sl-bar"><i style="width:' + f.pct + '%"></i></span>'
+        + '<span class="sl-rate">' + (f.rate != null ? est(p, f.rate) + "/hr" : '<span class="rt-na">—</span>') + "</span>"
+        + "</div>"
+        + '<div class="sl-sub">' + escapeHtml(
+            [f.left + " to go", f.finishMin ? "≥ " + fmtRunMin(f.finishMin) : null,
+             p.places.length ? p.places.join(" · ") : null].filter(Boolean).join(" · ")) + "</div>";
+    }
+    return html + "</div></div>";
+  }
+
+  // ── MOCKUP 3 · "Target" ───────────────────────────────────────────────────────────────────
+  // The opinionated one: pick ONE and say so. The panel exists to make finishing a pool feel
+  // close and worth chasing, and a list of four does not do that — it defers the decision back to
+  // the player at exactly the moment they opened the panel to have it made.
+  //
+  // 🔑 THE SCORE IS "SOONEST DONE", NOT "BEST RATE". What makes finishing feel close is the time
+  // to the end of the pool, so the hero is the pool with the smallest `left × run length`; the
+  // rate is shown beside it as the reason to be happy about it rather than as the thing being
+  // optimised. A pool with no run length can still be the hero if nothing else can be scored —
+  // otherwise the panel would refuse to recommend anything on a thin dataset.
+  function closestTarget(closest) {
+    const scored = closest.map((p) => ({ p, f: poolFacts(p) }))
+      .sort((a, b) => (a.f.finishMin ?? Infinity) - (b.f.finishMin ?? Infinity)
+        || a.f.left - b.f.left);
+    const { p, f } = scored[0];
+    const rest = scored.slice(1, 4);
+    const stat = (n, l) => '<div class="tg-s"><div class="tg-s-n">' + n + "</div>"
+      + '<div class="tg-s-l">' + escapeHtml(l) + "</div></div>";
+    // One line of context under the headline numbers: the shape of a single run. `cooldownMin` is
+    // the re-accept wait — how fast you can actually repeat this, which is the ceiling on the
+    // estimate above it. Only 377 of 755 contracts state one, so it self-hides.
+    const runBits = [];
+    if (f.dur) runBits.push(fmtRunMin(f.dur) + " a run");
+    if (f.pay != null) runBits.push(est(p, f.pay) + " each");
+    if (p.rep != null) runBits.push("+" + compactNum(p.rep) + " rep");
+    if (p.cooldownMin) runBits.push("retake " + fmtRunMin(p.cooldownMin));
+    let html = '<div class="ra-sec"><div class="ra-h">Go finish this</div>'
+      + '<div class="tg">'
+      + '<div class="tg-t">' + escapeHtml(p.title) + "</div>"
+      + '<div class="tg-bar"><i style="width:' + f.pct + '%"></i></div>'
+      + '<div class="tg-r">'
+      + stat('<span class="tg-big">' + f.left + "</span>", "to go of " + p.total)
+      + (f.finishMin ? stat("≥ " + fmtRunMin(f.finishMin), "to finish") : "")
+      + (f.finishPay != null
+          ? stat('<span class="gold">' + est(p, f.finishPay) + "</span>", "aUEC on the way")
+          : "")
+      + "</div>"
+      + (runBits.length
+          ? '<div class="tg-run">' + escapeHtml(runBits.join(" · ")) + info(POOL_EST_TIP) + "</div>"
+          : "")
+      + (p.places.length ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>" : "")
+      + "</div>";
+    // The runners-up are not gone, just demoted to the one thing you would use them for: knowing
+    // they exist. Dropping them would make the panel forget pools you have started.
+    if (rest.length) {
+      html += '<div class="tg-also"><span class="tg-also-l">also close</span>'
+        + '<span class="tg-also-n">'
+        + escapeHtml(rest.map((r) => r.p.title + " " + r.p.owned + "/" + r.p.total).join(" · "))
+        + "</span></div>";
+    }
+    return html + "</div>";
+  }
+
   // The idle panel — what fills the tracker when NOTHING is tracked. Two halves, in this order
   // (Sub, 2026-08-13): what you are closest to finishing, then what this session has been worth.
   //
@@ -2348,26 +2650,10 @@
       const label = PREFS.timeRelative ? w.rel : w.date;
       return '<span class="ra-when"><span class="ra-date">' + label + "</span></span>";
     }
-    let html = '<div class="recent">';
+    let html = '<div class="recent">' + idleSwitcherHtml();
 
     // ── Closest to done ────────────────────────────────────────────────────────────────────
-    if (closest.length) {
-      html += '<div class="ra-sec"><div class="ra-h">Closest to done</div>';
-      for (const p of closest) {
-        const left = p.total - p.owned;
-        const pct = Math.round((p.owned / p.total) * 100);
-        html += '<div class="cp">'
-          + '<div class="cp-r"><span class="cp-n">' + escapeHtml(p.title) + "</span>"
-          + '<span class="cp-c">' + p.owned + " of " + p.total + "</span>"
-          + '<span class="cp-l">' + left + " to go</span></div>"
-          + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
-          + (p.places.length
-            ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>"
-            : "")
-          + "</div>";
-      }
-      html += "</div>";
-    }
+    if (closest.length) html += closestHtml(closest, idleLayout());
 
     // ── This session ───────────────────────────────────────────────────────────────────────
     // Behind a rule, because it answers a different question from everything above it.
@@ -6025,9 +6311,23 @@
             aUECTotal: 148250, repTotal: 2860, missions: 6 },
           recentMissions: [{ title: "Blackbox Retrieval Very Dangerous", aUEC: null, at: new Date(now).toISOString() }],
           recentBlueprints: bps,
+          // Shaped like the real thing: payouts are ALWAYS modelled on pool contracts, most
+          // carry a run length, half carry a cooldown, and one deliberately carries NEITHER a
+          // payout nor a duration — that is the row every layout has to survive without
+          // inventing a rate or a finish time.
           closestPools: [
-            { key: "a", title: "Turf War", owned: 5, total: 7, places: ["Rat's Nest", "Starlight Service Station"] },
-            { key: "b", title: "Cargo Run: Bloom", owned: 8, total: 11, places: ["Orbituary"] },
+            { key: "a", title: "Turf War", owned: 5, total: 7, places: ["Rat's Nest", "Starlight Service Station"],
+              payMin: 54500, payMax: 54500, payoutEstimated: true, durMin: 15.12, rep: 100,
+              cooldownMin: 30, giver: "Headhunters", missionType: "Mercenary" },
+            { key: "b", title: "Cargo Run: Bloom", owned: 8, total: 11, places: ["Orbituary"],
+              payMin: 96000, payMax: 96000, payoutEstimated: true, durMin: 40.24, rep: 250,
+              cooldownMin: null, giver: "Covalex", missionType: "Hauling" },
+            { key: "c", title: "Salvager Needed (Med. Supply of RMC)", owned: 3, total: 5, places: ["Checkmate"],
+              payMin: 108250, payMax: 108250, payoutEstimated: true, durMin: 30, rep: 100,
+              cooldownMin: 30, giver: "Adagio Holdings", missionType: "Salvage" },
+            { key: "d", title: "Deep space hit", owned: 6, total: 8, places: [],
+              payMin: null, payMax: null, payoutEstimated: false, durMin: null, rep: null,
+              cooldownMin: null, giver: null, missionType: null },
           ],
         };
         const el = $("pool");

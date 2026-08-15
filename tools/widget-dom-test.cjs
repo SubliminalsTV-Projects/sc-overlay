@@ -1250,6 +1250,20 @@ const MIDRAWERS = `(async () => {
 const IDLEPANEL = `(async () => {
   ${PRELUDE}
   const pool = document.getElementById("pool");
+
+  // ⚠️ TEMPORARY, and it goes when the mockup switcher goes. Until Sub picks a layout there are
+  // three, the choice lives in localStorage, and this suite shares an origin with his real
+  // overlay — so without driving it to a known state first, every assertion below is really an
+  // assertion about which mockup he last clicked. That is the "a test that asserts a USER
+  // PREFERENCE fails on a clean tree" trap, and it would have gone red for him and nobody else.
+  const saved = localStorage.getItem("scIdleLayoutMockup");
+  const pickLayout = async (id) => {
+    const b = pool.querySelector('.ra-mk-b[data-mk="' + id + '"]');
+    if (b) b.click();
+    await sleep(120);
+  };
+  await pickLayout("ledger");
+
   const heads = [...pool.querySelectorAll(".ra-h")].map((e) => e.textContent);
   // Three sections, not four: the per-hour rates were folded INTO "This session" on 2026-08-13.
   ok("the idle panel is in the documented order",
@@ -1301,6 +1315,83 @@ const IDLEPANEL = `(async () => {
   ok("...and it says how many it is not showing", !!ul.querySelector(".ra-more"),
      ul.textContent.slice(0, 60));
   at(560);
+
+  // ── TEMPORARY: the three idle mockups ───────────────────────────────────────
+  // Goes out with the switcher. What is worth guarding while they are up is not the styling but
+  // the two things every layout can get wrong: printing an aUEC figure without saying it is an
+  // estimate, and inventing a number for a contract that carries none. The fixture's fourth pool
+  // ("Deep space hit") has no payout and no run length precisely so that second case is exercised.
+  const mkOn = () => pool.querySelector(".ra-mk-b.on") && pool.querySelector(".ra-mk-b.on").dataset.mk;
+  ok("the mockup switcher offers three layouts", pool.querySelectorAll(".ra-mk-b").length === 3);
+  ok("...and shows which one is up", mkOn() === "ledger", String(mkOn()));
+
+  // Mockup 1 — the cost/reward line added under each pool.
+  const eco = pool.querySelector(".cp .cp-eco");
+  ok("ledger: a pool says what finishing it costs", !!eco && /2 more runs/.test(eco.textContent),
+     eco ? eco.textContent.trim() : "(no .cp-eco)");
+  ok("...and how long, from the contract's own run length", !!eco && /30m/.test(eco.textContent),
+     eco ? eco.textContent.trim() : "");
+  ok("...with the per-hour rate the grind is worth",
+     !!eco && eco.querySelector(".cp-rate").textContent.trim() === "~216k/hr",
+     eco && eco.querySelector(".cp-rate") ? eco.querySelector(".cp-rate").textContent : "");
+  // 🔴 EVERY pool payout in the dataset is MODELLED. A bare figure here would be the panel
+  // claiming to know something the game has not decided yet.
+  ok("...and every aUEC figure carries the estimate tilde", /~109k/.test(eco.textContent),
+     eco.textContent.trim());
+  ok("...explained by the same circled i the tracked mission uses", !!eco.querySelector(".mi-info"));
+
+  // Mockup 2 — the ranked shortlist.
+  await pickLayout("shortlist");
+  const sl = [...pool.querySelectorAll(".sl-r")];
+  ok("shortlist: it lists every open pool, not just the top two", sl.length === 4, String(sl.length));
+  const rates = sl.map((r) => r.querySelector(".sl-rate").textContent.trim());
+  ok("...ranked by what each earns per hour, best first",
+     rates[0] === "~217k/hr" && rates[1] === "~216k/hr" && rates[2] === "~143k/hr", rates.join(" | "));
+  // 🔑 The unscoreable pool is DEMOTED, never dropped — it is still a pool you have started.
+  ok("...with a pool that carries no payout sunk to the bottom, not hidden",
+     sl[3].querySelector(".sl-n").textContent === "Deep space hit", sl[3].textContent.trim());
+  ok("...showing a dash for it rather than a made-up rate",
+     !!sl[3].querySelector(".sl-rate .rt-na"), rates[3]);
+  const tot = pool.querySelector(".ra-h-tot");
+  ok("...and a heading total over the whole list", !!tot && /4 pools open/.test(tot.textContent),
+     tot ? tot.textContent.trim() : "(no total)");
+
+  // Mockup 3 — one recommendation.
+  await pickLayout("target");
+  const tgt = pool.querySelector(".tg-t");
+  // Soonest done, NOT best rate: Turf War is 2 runs of 15m where the best-paying pool is 2 of 30m.
+  ok("target: it commits to the pool that finishes soonest", !!tgt && tgt.textContent === "Turf War",
+     tgt ? tgt.textContent : "(no hero)");
+  const tgs = [...pool.querySelectorAll(".tg-s-l")].map((e) => e.textContent);
+  ok("...leading with how many are left, then the cost and the reward",
+     tgs.join(" | ") === "to go of 7 | to finish | aUEC on the way", tgs.join(" | "));
+  const also = pool.querySelector(".tg-also");
+  ok("...and it does not forget the pools it did not pick",
+     !!also && /Cargo Run: Bloom 8\\/11/.test(also.textContent), also ? also.textContent.trim() : "");
+
+  // Whatever the layout, the halves Sub asked to keep are still there and still in his order.
+  // 🔑 The shortlist's heading carries a totals span INSIDE it, so read the title cell rather than
+  // the whole heading — otherwise this reads "Closest to done4 pools open..." and proves nothing.
+  const headTitles = () => [...pool.querySelectorAll(".ra-h")].map((e) => {
+    const first = e.querySelector("span");
+    return (first ? first.textContent : e.textContent).trim();
+  });
+  const LEADS = ["Closest to done", "Go finish this"];
+  for (const id of ["ledger", "shortlist", "target"]) {
+    await pickLayout(id);
+    const h = headTitles();
+    ok(id + ": the session scoreboard and Latest survive the layout",
+       h.length === 3 && h[1] === "This session" && h[2] === "Latest", h.join(" | "));
+    // Sub's 2026-08-13 order. A layout that put the scoreboard first would still pass every
+    // assertion above it, so the order is asserted on its own.
+    ok(id + ": ...and what to go do next still leads",
+       LEADS.indexOf(h[0]) >= 0 && !!pool.querySelector(".ss") && !!document.getElementById("raLatest"),
+       h[0]);
+  }
+
+  // Hand the user's own choice back — this suite drives the real localStorage on this origin.
+  if (saved) localStorage.setItem("scIdleLayoutMockup", saved);
+  else localStorage.removeItem("scIdleLayoutMockup");
   return out;
 })()`;
 

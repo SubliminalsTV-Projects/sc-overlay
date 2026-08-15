@@ -40,13 +40,39 @@ export interface RepEntry {
   scope: string;
   amount: number;
 }
-/** A started-but-unfinished blueprint pool, for the idle panel's "closest to done" list. */
+/** A started-but-unfinished blueprint pool, for the idle panel's "closest to done" list.
+ *
+ *  🔑 The cost/reward fields are what turn "5 of 8" into a decision. Measured 2026-08-15 over the
+ *  755 pool-bearing contracts in 4.9.0-LIVE.12344265: **748 carry a payout AND a run length**, 726
+ *  a reputation award, 377 a re-accept cooldown. So a per-contract aUEC/hr is available for 99% of
+ *  what this list can ever show — the productivity staple, applied to the pool you are chasing.
+ *  Every field is optional and the UI must omit rather than invent: a run length of 0 would make
+ *  the rate infinite, and a missing payout must never render as a free grind. */
 export interface ClosestPool {
   key: string;
   title: string;
   owned: number;
   total: number;
   places: string[];
+  /** Dataset payout for ONE completion, before the 5–20% standing bonus. Null when unlisted.
+   *  min === max for the overwhelming majority; the UI shows a range only when they differ. */
+  payMin: number | null;
+  payMax: number | null;
+  /** 🔴 TRUE FOR EVERY POOL CONTRACT MEASURED — all 748 with a payout are MODELLED, not read from
+   *  the game files, because the game works these rewards out at accept time. So the idle panel's
+   *  aUEC figures are estimates WITHOUT EXCEPTION and must carry the tilde + the circled i, the
+   *  same treatment `payBlock()` gives the tracked mission. A rate built on this is a ballpark. */
+  payoutEstimated: boolean;
+  /** Expected minutes for one run (`dur` in mission-facts). Null when unlisted. */
+  durMin: number | null;
+  /** Reputation one completion awards, summed across scopes. Null when the contract lists none. */
+  rep: number | null;
+  /** Minutes before the same contract can be taken again (`cd`). Null when it has no cooldown.
+   *  🔑 NOT `boardRespawnMin` — this is "when can I run it again", which is what caps the grind. */
+  cooldownMin: number | null;
+  /** Who gives it, and what kind of work it is — context for "do I want to spend an hour here". */
+  giver: string | null;
+  missionType: string | null;
 }
 /** One rank on a reputation scope's ladder: the rep floor to reach it + its name. */
 export interface RepLadderRank {
@@ -1885,7 +1911,11 @@ export class MissionTracker extends EventEmitter {
     return null;
   }
 
-  private closestPools(n = 2): ClosestPool[] {
+  // 🔑 FOUR, not two — the view now carries more candidates than any one layout shows, because
+  // the idle panel's shortlist is a RENDERING decision (how many fit, how they are ranked) and the
+  // view model should not be the thing that caps it. The default layout still slices to two, so
+  // nothing on screen changed by widening this.
+  private closestPools(n = 4): ClosestPool[] {
     const out: ClosestPool[] = [];
     if (!this.dataset) return out;   // no dataset loaded yet — the idle panel just shows less
     // 🔴 Only what you can actually reach. Sub, 2026-08-13, in Pyro and being shown Nyx pools:
@@ -1904,6 +1934,10 @@ export class MissionTracker extends EventEmitter {
       let owned = 0;
       for (const e of entries) if (this.isOwned(e.blueprint).owned) owned++;
       if (owned === 0 || owned === entries.length) continue;   // untouched, or already done
+      // What one run costs and pays. Straight off the dataset the tracker already holds — the
+      // panel derives the rate, so nothing here is a stored opinion.
+      const f = this.factsFor(key);
+      const repSum = (m.reputationGained ?? []).reduce((a, r) => a + (r.amount || 0), 0);
       out.push({
         key,
         title: m.title,
@@ -1912,6 +1946,16 @@ export class MissionTracker extends EventEmitter {
         // Where to take it. `where` is the availability list the mission-info drawer uses; a
         // suggestion you cannot act on is just a statistic.
         places: (m.where ?? []).slice(0, 2),
+        payMin: m.payout?.min ?? null,
+        payMax: m.payout?.max ?? null,
+        payoutEstimated: m.payoutCalculated === true,
+        // 🔑 Guard the zero. `dur: 0` would divide into an infinite aUEC/hr, and a contract that
+        // takes no time is not a thing the panel should ever claim.
+        durMin: f?.dur && f.dur > 0 ? f.dur : null,
+        rep: repSum > 0 ? repSum : null,
+        cooldownMin: f?.cd && f.cd > 0 ? f.cd : null,
+        giver: m.giver ?? null,
+        missionType: m.missionType ?? null,
       });
     }
     out.sort((a, b) => (a.total - a.owned) - (b.total - b.owned)
