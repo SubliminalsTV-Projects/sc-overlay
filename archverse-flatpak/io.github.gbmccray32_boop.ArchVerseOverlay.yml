@@ -93,6 +93,27 @@ modules:
     build-commands:
       - mkdir -p /app/archverse/app /app/archverse/bin /app/bin
       - cp -a payload/app/. /app/archverse/app/
+      # uiohook-napi blocks synchronously when its native addon loads in the Flatpak sandbox.
+      # hotkeys.cjs already has a try/catch fallback to Electron globalShortcut, so force only
+      # the packaged Flatpak copy down that existing fallback path. Native builds are untouched.
+      - |
+        python3 - <<'PY'
+        from pathlib import Path
+
+        p = Path('/app/archverse/app/electron/hotkeys.cjs')
+        s = p.read_text()
+        old = '  const m = require("uiohook-napi");'
+        new = '''  if (process.env.SC_TRACKER_FLATPAK === "1") {
+          console.error("[flatpak-hotkeys] skipping blocking uiohook-napi load; using existing fallback backend");
+          throw new Error("uiohook-napi disabled inside Flatpak sandbox");
+        }
+        const m = require("uiohook-napi");'''
+        count = s.count(old)
+        if count != 1:
+            raise SystemExit(f'expected exactly one uiohook require, found {count}')
+        p.write_text(s.replace(old, new, 1))
+        PY
+      - grep -Fq '[flatpak-hotkeys] skipping blocking uiohook-napi load' /app/archverse/app/electron/hotkeys.cjs
       - cp -a payload/bin/. /app/archverse/bin/
       - chmod 0755 /app/archverse/bin/sc-blueprint-tracker
       - install -Dm644 payload/LICENSE.md /app/archverse/LICENSE.md
