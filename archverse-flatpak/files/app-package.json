@@ -1,7 +1,7 @@
 {
   "name": "archverse-overlay",
-  "version": "0.1.43-r31-alpha.22-upstream043-test1",
-  "description": "Community Linux port of SubliminalsTV SC Overlay 0.1.43 — Alpha 22 Flatpak mining convergence test",
+  "version": "0.1.43-r31-alpha.22-hoverlatch-test3",
+  "description": "Community Linux port of SubliminalsTV SC Overlay 0.1.43 — Alpha 22 Flatpak hover-scoped focus test",
   "main": "electron/main.cjs",
   "type": "module",
   "dependencies": {
