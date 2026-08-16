@@ -1283,18 +1283,6 @@ const IDLEPANEL = `(async () => {
   ${PRELUDE}
   const pool = document.getElementById("pool");
 
-  // ⚠️ TEMPORARY, and it goes when the mockup switcher goes. Until Sub picks a layout there are
-  // three, the choice lives in localStorage, and this suite shares an origin with his real
-  // overlay — so without driving it to a known state first, every assertion below is really an
-  // assertion about which mockup he last clicked. That is the "a test that asserts a USER
-  // PREFERENCE fails on a clean tree" trap, and it would have gone red for him and nobody else.
-  const saved = localStorage.getItem("scIdleStandingsPick");
-  const pickLayout = async (id) => {
-    const b = pool.querySelector('.ra-mk-b[data-mk="' + id + '"]');
-    if (b) b.click();
-    await sleep(150);
-  };
-  await pickLayout("bars");
 
   // ── The picker's third state ────────────────────────────────────────────────────────────
   // 🔑 Sub, 2026-08-15: there was no way BACK to this panel once a mission was accepted. Clearing
@@ -1326,7 +1314,7 @@ const IDLEPANEL = `(async () => {
   // WIDTH, so only the missions list still competes for leftover height. Standing sits directly
   // under Closest to done, because it is the same question asked a second way.
   ok("the idle panel is in the documented order",
-     heads.join(" | ") === "Closest to done | Standing | This session | Latest blueprints | Latest missions",
+     heads.join(" | ") === "Closest to done | Next rank | This session | Latest blueprints | Latest missions",
      heads.join(" | "));
   ok("...with a rule between what to do next and what the session was worth",
      !!pool.querySelector(".ra-rule"));
@@ -1405,43 +1393,26 @@ const IDLEPANEL = `(async () => {
   // 🔴 THE REP NUMBER IS A FLOOR in every layout: the game never reports reputation anywhere the
   // app can read, so it is reconstructed from the player's own completions and cannot count what
   // happened before the app existed. Each layout must carry the circled i that says so.
-  for (const id of ["bars", "contracts", "unlock"]) {
-    await pickLayout(id);
+  {
     const h = [...pool.querySelectorAll(".ra-h")].map((e) => {
       const first = e.querySelector("span");
       return (first ? first.textContent : e.textContent).trim();
     });
-    ok(id + ": the standings segment is on screen", h.length >= 2 && h[0] === "Closest to done",
-       h.join(" | "));
-    ok(id + ": ...directly under what to go do next, above the scoreboard",
-       h.indexOf("This session") > 1, h.join(" | "));
+    ok("the standings segment is on screen", h.length >= 2 && h[0] === "Closest to done", h.join(" | "));
+    ok("...directly under what to go do next, above the scoreboard", h.indexOf("This session") > 1, h.join(" | "));
     const seg = [...pool.querySelectorAll(".ra-sec")][1];
-    ok(id + ": ...saying the rep total is an estimate", !!seg.querySelector(".mi-info"),
+    ok("...saying the rep total is an estimate", !!seg.querySelector(".mi-info"),
        seg.querySelector(".ra-h") ? seg.querySelector(".ra-h").textContent.trim() : "");
     // Max-rank givers are dropped: there is no next rank to incentivise.
-    ok(id + ": ...and never lists a giver with nothing left to earn",
+    ok("...and never lists a giver with nothing left to earn",
        seg.textContent.indexOf("Maxed Faction") < 0, seg.textContent.slice(0, 60));
   }
-  // Layout-specific claims.
-  await pickLayout("bars");
-  const bar0 = pool.querySelectorAll(".ra-sec")[1].querySelector(".cp-n");
-  ok("bars: the most-progressed giver leads, not the one with fewest rep left",
-     !!bar0 && bar0.textContent === "Recco Battaglia", bar0 ? bar0.textContent : "");
-  await pickLayout("contracts");
+  // The chosen layout's own claim.
   const st0 = pool.querySelector(".st-go");
-  ok("contracts: rep is expressed as contracts, which is the actionable number",
+  ok("rep is expressed as contracts, which is the actionable number",
      !!st0 && /contract/.test(st0.textContent), st0 ? st0.textContent.trim() : "");
   ok("...and approximate, because rep per contract varies with rank",
      !!st0 && st0.textContent.indexOf("~") === 0, st0 ? st0.textContent.trim() : "");
-  await pickLayout("unlock");
-  const su0 = pool.querySelector(".su-t");
-  ok("unlock: it leads with what the next rank hands over",
-     !!su0 && su0.textContent.indexOf("MISC Prospector") === 0, su0 ? su0.textContent.trim() : "");
-  // ⚠️ Most ranks gate nothing. A giver with no reward must fall back to the rank name rather
-  // than rendering an empty promise.
-  const suAll = [...pool.querySelectorAll(".su-t")].map((e) => e.textContent.trim());
-  ok("...and never renders an empty promise", suAll.every((t) => t.length > 0), suAll.join(" | "));
-  await pickLayout("bars");
 
   // The session half.
   const ss = [...pool.querySelectorAll(".ss > div")].map((d) => d.querySelector(".ss-l").textContent);
@@ -1591,15 +1562,10 @@ const IDLEPANEL = `(async () => {
   }
   at(560);
 
-  // ── TEMPORARY: the three idle mockups ───────────────────────────────────────
-  // Goes out with the switcher. What is worth guarding while they are up is not the styling but
-  // the two things every layout can get wrong: printing an aUEC figure without saying it is an
-  // estimate, and inventing a number for a contract that carries none. The fixture's fourth pool
-  // ("Deep space hit") has no payout and no run length precisely so that second case is exercised.
-  const mkOn = () => pool.querySelector(".ra-mk-b.on") && pool.querySelector(".ra-mk-b.on").dataset.mk;
-  ok("the mockup switcher offers three layouts", pool.querySelectorAll(".ra-mk-b").length === 3);
-  ok("...and shows which one is up", mkOn() === "bars", String(mkOn()));
-
+  // What is worth guarding here is not styling but the two things the panel can get wrong:
+  // printing an aUEC figure without saying it is an estimate, and inventing a number for a
+  // contract that carries none. The fixture's fourth pool ("Deep space hit") has no payout and
+  // no run length precisely so that second case is exercised.
   // 🔴 NO ECONOMICS IN THIS SECTION. Sub, 2026-08-15: the per-hour figure was only ever meant for
   // the session tracker, "NOT with the closest to done". A first pass hung each pool's aUEC/hr,
   // payout and run length off these rows and it was wrong about what the section is for. The
@@ -1615,25 +1581,21 @@ const IDLEPANEL = `(async () => {
   ok("...ordered closest-first, as the view already sorted them",
      sl[0].querySelector(".sl-left").textContent.trim() === "2 to go", sl[0].textContent.trim());
 
-  // Whatever the standings layout, the sections Sub asked to keep are there and in his order.
+  // The sections Sub asked to keep are there, and in his order.
   const headTitles = () => [...pool.querySelectorAll(".ra-h")].map((e) => {
     const first = e.querySelector("span");
     return (first ? first.textContent : e.textContent).trim();
   });
-  for (const id of ["bars", "contracts", "unlock"]) {
-    await pickLayout(id);
+  {
     const h = headTitles();
-    ok(id + ": the scoreboard and both Latest sections survive the layout",
+    ok("the scoreboard and both Latest sections survive",
        h.length === 5 && h[2] === "This session"
        && h[3] === "Latest blueprints" && h[4] === "Latest missions", h.join(" | "));
-    ok(id + ": ...and what to go do next still leads",
+    ok("...and what to go do next still leads",
        h[0] === "Closest to done" && !!pool.querySelector(".ss") && !!document.getElementById("raLatestArt"),
        h[0]);
   }
 
-  // Hand the user's own choice back — this suite drives the real localStorage on this origin.
-  if (saved) localStorage.setItem("scIdleStandingsPick", saved);
-  else localStorage.removeItem("scIdleStandingsPick");
   panel.style.width = "";
   return out;
 })()`;

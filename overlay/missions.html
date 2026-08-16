@@ -1303,20 +1303,6 @@
     text-decoration: underline; text-underline-offset: 2px; }
   .cp-link:hover { color: var(--cyan-bright); }
 
-  /* ── TEMPORARY: idle-panel mockup scaffolding ────────────────────────────────────────────
-     ⚠️ Everything from here to the end of the .tg- block goes out with the switcher once Sub
-     picks a layout. Kept in one run so removing it is one delete, not an archaeology exercise. */
-  /* The switcher. Deliberately plain and small — it is scaffolding sitting on top of the thing
-     being judged, so it must not read as part of the design under review. */
-  .ra-mk { display: flex; align-items: center; gap: 4px; opacity: 0.55; }
-  .ra-mk-l { font-family: var(--sans); font-size: 8px; font-weight: 700; letter-spacing: 0.16em;
-    text-transform: uppercase; color: var(--faint); margin-right: 2px; }
-  .ra-mk-b { font-family: var(--mono); font-size: 9px; line-height: 1; padding: 2px 5px;
-    color: var(--cyan-dim); background: transparent; border: 1px solid var(--border);
-    border-radius: 3px; cursor: pointer; }
-  .ra-mk-b.on { color: var(--bg, #05121a); background: var(--cyan); border-color: var(--cyan); }
-
-  /* Mockup 1 adds no chrome of its own — it IS the shipping panel. */
 
   /* Mockup 2 — the dense shortlist. Two lines per pool: the scannable row, then where to take it
      in the caption weight, so four pools fit where two used to and the eye still lands on names. */
@@ -1337,12 +1323,11 @@
     margin: 1px 0 6px; }
   .sl-r:last-of-type + .sl-sub { margin-bottom: 0; }
 
-  /* ── Standing with your mission givers ──────────────────────────────────────────────────
-     Three layouts share these; the bars layout reuses .cp-* wholesale on purpose. */
+  /* ── Standing with your mission givers ───────────────────────────────────────────────── */
   .ra-h-row { display: flex; align-items: baseline; gap: 8px; }
   .ra-h-row > span:first-child { flex: 1; min-width: 0; }
   .ra-h-note { flex: none; }
-  /* 2 — contracts-to-next-rank. The effort figure is the headline and holds the right column. */
+  /* Contracts-to-next-rank. The effort figure is the headline and holds the right column. */
   .st-r { display: flex; align-items: baseline; gap: 8px; }
   .st-n { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--cyan-bright);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1351,40 +1336,6 @@
   .st-sub { font-size: 10px; color: var(--faint); margin: 1px 0 6px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   .st-arrow { color: var(--cyan-dim); }
-  /* 3 — what the next rank unlocks. The PRIZE is the headline; who and how far are the caption. */
-  .su { margin-bottom: 8px; }
-  .su:last-child { margin-bottom: 0; }
-  .su-t { font-size: 12.5px; color: var(--gold); overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; }
-  .su-more { font-family: var(--mono); font-size: 10px; color: var(--faint); }
-  .su-s { font-size: 10px; color: var(--faint); margin: 1px 0 3px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
-
-  /* Mockup 3 — one recommendation, given the room to be one. */
-  .tg-t { font-size: 14px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; }
-  .tg-bar { height: 5px; border-radius: 3px; background: rgba(var(--accent-rgb), 0.16);
-    overflow: hidden; margin: 5px 0 7px; }
-  .tg-bar i { display: block; height: 100%; background: var(--cyan); }
-  .tg-r { display: flex; align-items: flex-start; gap: 14px; }
-  .tg-s { min-width: 0; }
-  /* 🔑 The values are DIFFERENT SIZES (the count is the headline), so their labels only line up if
-     the value box has a fixed height and the text sits on its floor. Without this the labels
-     staircase — measured, not guessed: "TO GO OF 7" sat a line below "TO FINISH". */
-  .tg-s-n { font-family: var(--mono); font-size: 13px; line-height: 1.15; color: var(--cyan-bright);
-    white-space: nowrap; height: 22px; display: flex; align-items: flex-end; }
-  /* The count is the headline of the headline — it is the number that says "close". */
-  .tg-big { font-size: 20px; }
-  .tg-s-l { font-family: var(--sans); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--faint); margin-top: 2px; white-space: nowrap; }
-  .tg-also { display: flex; align-items: baseline; gap: 7px; margin-top: 8px; font-size: 10.5px;
-    color: var(--faint); }
-  .tg-also-l { flex: none; font-family: var(--sans); font-size: 8px; font-weight: 700;
-    letter-spacing: 0.14em; text-transform: uppercase; }
-  /* ⚠️ text-overflow does nothing on the FLEX CONTAINER — it clips mid-word with no ellipsis, which
-     reads as a rendering fault rather than as "there is more". It has to be on the text child. */
-  .tg-also-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
   /* The rule between the two halves — they answer different questions. */
   .ra-rule { border-top: 1px solid var(--border); margin: 1px 0; }
   /* Session totals. */
@@ -2460,57 +2411,7 @@
   // folded into the session section on 2026-08-13 and removed with its last caller. The rates now
   // use the same stat treatment as the totals, one section, one shape.)
 
-  // ── TEMPORARY: three idle-panel mockups, switchable live ──────────────────────────────────
-  // ⚠️ THE SWITCHER IS SCAFFOLDING. It exists so Sub can look at three designs in the real widget
-  // instead of reading three descriptions of them. Once he picks one, the other two renderers and
-  // this whole block come OUT — do not build anything on `idleLayout()`.
-  //
-  // All three keep Sub's 2026-08-13 order (what to go do next leads, the scoreboard follows) and
-  // all three keep every section that is there today. They differ only in how much they say about
-  // the pools, and how hard they push you at one of them.
-  // The switcher chooses the closest-to-done LAYOUT. It briefly chose how many blueprint pictures
-  // fit across instead — that question answered itself on 2026-08-15 when Sub asked for the row to
-  // be width-driven ("the wider the widget is, the more blueprints show up"), which is a
-  // measurement, not a preference. Default is the shortlist, the one he is focusing on.
-  const IDLE_LAYOUTS = [
-    { id: "bars",      n: "1", t: "Standing — a progress row per giver, same shape as Closest to done" },
-    { id: "contracts", n: "2", t: "Next rank — how many contracts away, not how much rep" },
-    { id: "unlock",    n: "3", t: "Worth going back for — what the next rank actually hands over" },
-  ];
-  // ⚠️ A FRESH KEY each time this control's MEANING changes. It has been repurposed twice, and
-  // reusing the old name meant whatever was last clicked under the previous meaning silently kept
-  // choosing — the panel came up on "target" for exactly that reason, which reads as the default
-  // not working. A repurposed control inherits a stale answer unless you rename its storage.
-  const IDLE_LAYOUT_KEY = "scIdleStandingsPick";
-  function idleLayout() {
-    try {
-      const s = localStorage.getItem(IDLE_LAYOUT_KEY);
-      if (IDLE_LAYOUTS.some((l) => l.id === s)) return s;
-    } catch { /* private mode — fall through to the default */ }
-    return "bars";
-  }
-  function idleSwitcherHtml() {
-    const cur = idleLayout();
-    return '<div class="ra-mk"><span class="ra-mk-l">mockup</span>'
-      + IDLE_LAYOUTS.map((l) =>
-          '<button type="button" class="ra-mk-b' + (l.id === cur ? " on" : "") + '"'
-          + ' data-mk="' + l.id + '" title="' + escapeAttr(l.t) + '">' + l.n + "</button>").join("")
-      + "</div>";
-  }
-  // Re-render in place rather than waiting for the next SSE frame — a switcher that takes a second
-  // to answer reads as broken, and this panel only repaints on a view push.
-  document.addEventListener("click", (e) => {
-    const b = e.target.closest && e.target.closest(".ra-mk-b");
-    if (!b) return;
-    try { localStorage.setItem(IDLE_LAYOUT_KEY, b.dataset.mk); } catch { /* no storage — session only */ }
-    const el = $("pool");
-    if (!el || !el.classList.contains("idle") || !current) return;
-    el.innerHTML = recentActivityHtml(current);
-    latestShown = latestMisShown = bpShown = -1;
-    observeLatest();
-  });
-
-  // ── Closest to done, three ways ───────────────────────────────────────────────────────────
+  // ── Closest to done ───────────────────────────────────────────────────────────
   // 🔴 NO ECONOMICS HERE. A first pass hung each pool's aUEC/hr, payout and run length off these
   // rows; Sub, 2026-08-15: the per-hour figure "just meant a tracker that basically tracks how
   // much money they've been making per hour with the missions that they've done, NOT with the
@@ -2621,7 +2522,11 @@
   // Until then this link 404s — which is why it is rendered ONLY when the shell can open a real
   // browser (overlayApi.openUrl), never as a bare href a standalone/OBS view would follow, and
   // why it is one small labelled control rather than the row itself being clickable.
-  const POOL_PAGE_BASE = "https://subliminal.gg/pools/";
+  // 🔑 This must match where the SITE actually serves the pool page. It was `/pools/<uuid>` while
+  // the widget was built, and the site landed it at `/missions/pool/<uuid>` — the button 404'd for
+  // nobody to notice, because the app never fetches this URL, it just opens a browser. Sub's call
+  // 2026-08-16: the site keeps its path, the app follows it.
+  const POOL_PAGE_BASE = "https://subliminal.gg/missions/pool/";
   function poolLink(p) {
     if (!p.poolUuid) return "";
     return '<button type="button" class="cp-link" data-pool="' + escapeAttr(p.poolUuid) + '">'
@@ -2653,44 +2558,27 @@
   /** Faction name, trimmed of the tail that makes a 380px row truncate for nothing. */
   const facName = (f) => String(f || "").replace(/\s+(Incorporated|Interstellar|Independent Contractors)$/i, "");
 
-  function standingsHtml(v, layout) {
-    // 🔑 A giver at MAX RANK is dropped, in every layout: there is no next rank to work toward, so
-    // listing them is an invitation to nothing. That is what `toGo == null` means.
+  function standingsHtml(v) {
+    // 🔑 A giver at MAX RANK is dropped: there is no next rank to work toward, so listing them is
+    // an invitation to nothing. That is what `toGo == null` means.
     const st = (v.standings || []).filter((s) => s.toGo != null);
     if (!st.length) return "";
-    if (layout === "contracts") return standingsContracts(st);
-    if (layout === "unlock") return standingsUnlock(st);
-    return standingsBars(st);
+    return standingsContracts(st);
   }
 
-  // ── STANDINGS 1 · "Bars" ──────────────────────────────────────────────────────────────────
-  // The same shape as Closest to done, one rank at a time: who, where you stand, how far through,
-  // what is left. The argument is CONSISTENCY — the panel already teaches this row, so a second
-  // progress list reads instantly and costs no new vocabulary.
-  function standingsBars(st) {
-    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Standing</span>'
-      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div>';
-    for (const s of st.slice(0, 4)) {
-      html += '<div class="cp">'
-        + '<div class="cp-r"><span class="cp-n">' + escapeHtml(facName(s.faction)) + '</span>'
-        + '<span class="cp-c">' + escapeHtml(s.standing) + '</span>'
-        + '<span class="cp-l">' + s.pct + '%</span></div>'
-        + '<div class="cp-bar"><i style="width:' + s.pct + '%"></i></div>'
-        + '<div class="cp-w"><span class="cp-w-p">'
-        + escapeHtml(compactNum(s.toGo) + ' rep to ' + (s.nextName || 'the next rank'))
-        + '</span></div></div>';
-    }
-    return html + '</div>';
-  }
-
-  // ── STANDINGS 2 · "Contracts" ─────────────────────────────────────────────────────────────
+  // ── STANDINGS · "Next rank" ───────────────────────────────────────────────────────────────
+  // Sub picked this over a progress-bar row and a "what it unlocks" row on 2026-08-16.
   // 🔑 REP IS AN ABSTRACTION; CONTRACTS ARE AN ACTION. "5,300 rep to Prestige 2" does not tell you
   // whether that is an evening or a month — "~27 contracts" does, and that is the number that
   // decides whether you go. Derived from the MEDIAN rep this giver's missions award, so it is
   // approximate by construction and says so with a tilde.
   function standingsContracts(st) {
     let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Next rank</span>'
-      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div><div class="sl">';
+      // ⚠️ Its OWN container class, not `.sl`. Closest-to-done uses `.sl`, and while this section
+      // shared it a test scoped to `.sl` silently read both — so "closest-to-done shows no rate"
+      // started failing on this block's "~27 contracts". Neither class carries styling; the class
+      // is here to keep the two sections tellable apart.
+      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div><div class="stl">';
     for (const s of st.slice(0, 4)) {
       const eff = s.contractsToGo
         ? '~' + s.contractsToGo + (s.contractsToGo === 1 ? ' contract' : ' contracts')
@@ -2704,63 +2592,9 @@
     return html + '</div></div>';
   }
 
-  // ── STANDINGS 3 · "What it unlocks" ───────────────────────────────────────────────────────
-  // 🔑 THE REASON TO CARE, NOT THE DISTANCE TO IT. A rank is only worth grinding for what it hands
-  // over, and several givers gate SHIPS this way — the tracked mission's rep bar had exactly this
-  // problem before `nextRewards` existed: "a number with no stated reason to care".
-  // ⚠️ Most ranks gate nothing, so this layout MUST degrade: a giver with no reward at the next
-  // rank falls back to the rank name itself rather than rendering an empty promise.
-  function standingsUnlock(st) {
-    const withRewards = st.filter((s) => (s.nextRewards || []).length);
-    const rows = (withRewards.length ? withRewards : st).slice(0, 4);
-    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Worth going back for</span>'
-      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div>';
-    for (const s of rows) {
-      const prize = (s.nextRewards || [])[0];
-      const more = (s.nextRewards || []).length - 1;
-      html += '<div class="su">'
-        + '<div class="su-t">' + escapeHtml(prize || (s.nextName || 'The next rank'))
-        + (prize && more > 0 ? ' <span class="su-more">+' + more + '</span>' : '') + '</div>'
-        + '<div class="su-s">' + escapeHtml(facName(s.faction))
-        + ' · ' + escapeHtml(s.nextName || 'next rank')
-        + (s.contractsToGo ? ' · ~' + s.contractsToGo + (s.contractsToGo === 1 ? ' contract' : ' contracts') : '')
-        + '</div>'
-        + '<div class="cp-bar"><i style="width:' + s.pct + '%"></i></div></div>';
-    }
-    return html + '</div>';
-  }
-
-  function closestHtml(closest, layout) {
-    if (layout === "shortlist") return closestShortlist(closest);
-    if (layout === "target") return closestTarget(closest);
-    return closestLedger(closest);
-  }
-
-  // ── MOCKUP 1 · "Ledger" ───────────────────────────────────────────────────────────────────
-  // Exactly the panel that is already shipping: the top two pools, each with its count, its bar
-  // and where to take it. The baseline the other two have to beat, and the option that risks
-  // nothing.
-  function closestLedger(closest) {
-    let html = '<div class="ra-sec"><div class="ra-h">Closest to done</div>';
-    for (const p of closest.slice(0, 2)) {
-      const { left, pct } = poolLeft(p);
-      html += '<div class="cp">'
-        + '<div class="cp-r"><span class="cp-n">' + escapeHtml(poolTitle(p)) + "</span>" + poolMoreInfo(p)
-        + '<span class="cp-c">' + p.owned + " of " + p.total + "</span>"
-        + '<span class="cp-l">' + left + " to go</span></div>"
-        + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
-        + '<div class="cp-w">'
-        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
-        + poolLink(p) + "</div>"
-        + "</div>";
-    }
-    return html + "</div>";
-  }
-
-  // ── MOCKUP 2 · "Shortlist" ────────────────────────────────────────────────────────────────
-  // The same information, denser, and ALL of it: every pool the view carries rather than the top
-  // two, one compact row each. The argument is that "closest to done" is a shortlist you scan,
-  // not a headline — four pools in the space the ledger spends on two.
+  // ── Closest to done ───────────────────────────────────────────────────────────────────────
+  // Every pool the view carries rather than a top-two headline, one compact row each: "closest to
+  // done" is a shortlist you scan, and four pools fit in the space two spent.
   //
   // Order is the view's own: fewest blueprints left first, which is what "closest" means.
   function closestShortlist(closest) {
@@ -2778,49 +2612,6 @@
         + poolLink(p) + "</div>";
     }
     return html + "</div></div>";
-  }
-
-  // ── MOCKUP 3 · "Target" ───────────────────────────────────────────────────────────────────
-  // The opinionated one: pick ONE and say so. The panel exists to make finishing a pool feel close
-  // and worth chasing, and a list of four defers that decision back to the player at exactly the
-  // moment they opened the panel to have it made.
-  //
-  // 🔑 The hero is the pool with the FEWEST left, tie-broken by how far through it is — the view is
-  // already sorted that way, so this is the first entry and the sort is not second-guessed here.
-  function closestTarget(closest) {
-    const p = closest[0];
-    const { left, pct } = poolLeft(p);
-    let html = '<div class="ra-sec"><div class="ra-h">Go finish this</div>'
-      + '<div class="tg">'
-      + '<div class="tg-t">' + escapeHtml(poolTitle(p)) + "</div>"
-      + '<div class="tg-bar"><i style="width:' + pct + '%"></i></div>'
-      + '<div class="tg-r">'
-      + '<div class="tg-s"><div class="tg-s-n"><span class="tg-big">' + left + "</span></div>"
-      + '<div class="tg-s-l">to go of ' + p.total + "</div></div>"
-      + '<div class="tg-s"><div class="tg-s-n">' + pct + "%</div>"
-      + '<div class="tg-s-l">complete</div></div>'
-      + "</div>"
-      + '<div class="cp-w">'
-      + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
-      + poolLink(p) + "</div>"
-      + "</div>";
-    // The runners-up are not gone, just demoted to the one thing you would use them for: knowing
-    // they exist. Dropping them would make the panel forget pools you have started.
-    const rest = closest.slice(1, 4);
-    if (rest.length) {
-      html += '<div class="tg-also"><span class="tg-also-l">also close</span>'
-        + '<span class="tg-also-n">'
-        // ⚠️ Two runners-up can share a name here for the same reason two rows can — so the label
-        // picks up its first missing blueprint ONLY when the name would otherwise repeat inside
-        // this one line. Unqualified names stay short, which is the whole point of this line.
-        + escapeHtml(rest.map((r) => {
-            const dupe = rest.filter((o) => poolTitle(o) === poolTitle(r)).length > 1;
-            const tag = dupe && r.missing && r.missing.length ? " (" + r.missing[0] + ")" : "";
-            return poolTitle(r) + tag + " " + r.owned + "/" + r.total;
-          }).join(" · "))
-        + "</span></div>";
-    }
-    return html + "</div>";
   }
 
   // The idle panel — what fills the tracker when NOTHING is tracked. Two halves, in this order
@@ -2841,16 +2632,16 @@
       const label = PREFS.timeRelative ? w.rel : w.date;
       return '<span class="ra-when"><span class="ra-date">' + label + "</span></span>";
     }
-    let html = '<div class="recent">' + idleSwitcherHtml();
+    let html = '<div class="recent">';
 
     // ── Closest to done ────────────────────────────────────────────────────────────────────
-    if (closest.length) html += closestHtml(closest, "shortlist");
+    if (closest.length) html += closestShortlist(closest);
 
     // ── Standing with your mission givers ──────────────────────────────────────────────────
     // Directly under "what to go do next", because it IS that question asked a second way: the
     // pools say what to finish, this says who to finish it for. Above the rule, so the scoreboard
     // half still reads as the separate thing it is.
-    html += standingsHtml(v, idleLayout());
+    html += standingsHtml(v);
 
     // ── This session ───────────────────────────────────────────────────────────────────────
     // Behind a rule, because it answers a different question from everything above it.
