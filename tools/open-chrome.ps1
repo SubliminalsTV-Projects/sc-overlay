@@ -39,14 +39,27 @@ If ($null -eq $chrome) {
             if ($chrome -and (Test-Path $chrome)) {break}
         }
     }
+    # Discard a stale/invalid registry value so the drive-search and
+    # not-found checks below still trigger instead of being skipped.
+    if ($chrome -and -not (Test-Path $chrome)) {
+        $chrome = $null
+    }
 }
 
-# Search the drive if still not found
+# Search likely install locations if still not found. Bounded to a handful of
+# roots with a depth limit (rather than a full drive recurse) so a custom
+# install location can still be found without scanning the entire disk.
 if ($null -eq $chrome) {
-    Write-Host "Chrome not found in standard paths or registry. Searching drives..." -ForegroundColor Yellow
-    $drives = Get-PSDrive -PSProvider FileSystem | Select-Object -ExpandProperty Root
-    foreach ($drive in $drives) {
-        $found = Get-ChildItem -Path $drive -Filter "chrome.exe" -Recurse --ErrorAction SilentlyContinue -Force | Select-Object -First 1
+    Write-Host "Chrome not found in standard paths or registry. Searching common install locations..." -ForegroundColor Yellow
+    $searchRoots = @(
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)},
+        $env:LOCALAPPDATA,
+        $env:ProgramData
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+
+    foreach ($root in $searchRoots) {
+        $found = Get-ChildItem -Path $root -Filter "chrome.exe" -Recurse -Depth 5 -ErrorAction SilentlyContinue -Force | Select-Object -First 1
         if ($found) {
             $chrome = $found.FullName
             break
