@@ -117,19 +117,8 @@
   .mrow.linked:hover .t { color: var(--cyan-bright); }
 
   /* Rank picker */
-  /* ── TEMPORARY: mockup scaffolding (goes with the switcher) ─────────────────────────── */
-  .mockbar { display: flex; align-items: center; gap: 4px; padding: 4px 10px 0; opacity: 0.55; }
-  .mk-l { font-size: 8px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
-    color: var(--faint); margin-right: 2px; }
-  .mk-b { font-family: var(--mono); font-size: 9px; line-height: 1; padding: 2px 5px;
-    color: var(--cyan-dim); background: transparent; border: 1px solid var(--border);
-    border-radius: 3px; cursor: pointer; }
-  .mk-b.on { color: var(--bg, #05121a); background: var(--cyan); border-color: var(--cyan); }
-
-  /* 1 — the costed route under a locked rank. Caption weight: it qualifies the row above it. */
-  .route { font-size: 10px; color: var(--cyan-dim); padding: 0 10px 6px 44px; margin-top: -4px; }
-
-  /* 2 — the rep-per-hour table. The rate holds the right column so the ranking is scannable. */
+  /* The rep-per-hour rows appended under the ladder. The rate holds the right column so the
+     ranking is scannable without reading the captions. */
   .grow { display: flex; align-items: center; gap: 8px; padding: 5px 10px; }
   .grow.linked { cursor: pointer; }
   .grow.linked:hover { background: rgba(var(--accent-rgb), 0.08); }
@@ -143,19 +132,6 @@
   .rate { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 500;
     color: var(--gold); }
 
-  /* 3 — the next ship, given the room to be the point of the widget. */
-  .hero { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); }
-  .hero-n { font-size: 15px; color: var(--gold); overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; }
-  .hero-s { font-size: 10px; color: var(--faint); margin-top: 2px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
-  .hero-m { font-size: 10px; color: var(--cyan-dim); margin-top: 5px; }
-  .hero-c { font-size: 12px; color: var(--cyan-bright); margin-top: 6px; }
-  .hero-c.go { color: var(--gold); font-weight: 700; }
-  .after { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; font-size: 11px; }
-  .an { flex: 1 1 auto; min-width: 0; color: var(--cyan-text); overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
-  .aw { flex: none; font-family: var(--mono); font-size: 10px; color: var(--faint); }
   .tabs { flex: none; display: flex; gap: 4px; flex-wrap: wrap; padding: 7px 12px;
     border-bottom: 1px solid var(--divider); position: relative; z-index: 4; }
   .tab { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: var(--cyan-dim);
@@ -192,7 +168,6 @@
       <div class="est" id="stEst"></div>
     </div>
 
-    <div class="mockbar" id="mockbar"></div>
     <div class="tabs" id="tabs" style="display:none"></div>
     <div id="body"><div class="empty" id="emptyState">Loading Battaglia track…</div></div>
   </div>
@@ -331,11 +306,6 @@
           : "Rank not reached yet.";
         row.append(tier, who, st);
         body.appendChild(row);
-        // TEMPORARY (mockup 1): what closing this gap actually costs, in runs, time and aUEC.
-        if (battMock() === "route" && st8 === "locked" && rank) {
-          const rl = routeLineFor(rank.minRep);
-          if (rl) body.appendChild(rl);
-        }
       }
     }
     // Sub's ask: don't just hide what's done — tuck it into a closed "Completed" section so it's
@@ -438,53 +408,19 @@
     }
   }
 
-  // ── TEMPORARY: three Event Tracker mockups, switchable live ───────────────────────────────
-  // ⚠️ SCAFFOLDING. Sub asked (2026-08-15) for three ways the widget could use the data that has
-  // landed since it was built — per-contract payout, run length and difficulty. Once he picks one
-  // the switcher and the two losers come out; nothing else should build on `mock`.
+  // ── What one run of each mission is worth ─────────────────────────────────────────────────
+  // Sub, 2026-08-15: keep the reward ladder exactly as it is and APPEND the fastest way to the
+  // next rank underneath it. So this is not a second view — it is one screen that answers both
+  // "what am I chasing" and "what do I run to get there".
   //
-  // 🔑 WHAT THE NEW DATA ACTUALLY BUYS. Measured over Recco Battaglia's 33 contracts: 33 carry a
-  // payout, 32 a run length, 32 a difficulty. The useful part is not any single number, it is that
-  // REP PER HOUR VARIES FOUR-FOLD across her own board — 4,800/hr on "Extra Special Job" against
-  // 1,200/hr on most rank 0-2 work. The widget could show you where you stood but never which
-  // mission to run, and that is the question a grind tracker exists to answer.
+  // 🔑 WHY IT IS WORTH THE SPACE. Measured over Recco Battaglia’s 33 contracts: 33 carry a
+  // payout, 32 a run length, 32 a difficulty. The useful part is not any single figure — it is
+  // that REP PER HOUR VARIES FOUR-FOLD across her own board (4,800/hr on "Extra Special Job"
+  // against 1,200/hr on most rank 0-2 work). The widget could always show where you stood; it
+  // could never say which mission to run, which is the question a grind tracker exists for.
   //
-  // 🔴 EVERY aUEC FIGURE HERE IS MODELLED, not read from the game (payoutEstimated is true for all
-  // 33), so it carries a tilde exactly as the mission panel's does. Never print one bare.
-  const BATT_MOCKS = [
-    { id: "route",  n: "1", t: "Route — the ladder you have, plus what each locked rank costs from here" },
-    { id: "grind",  n: "2", t: "Best grind — every mission you can take, ranked by rep per hour" },
-    { id: "ship",   n: "3", t: "Next ship — the one you are actually grinding for, given the room" },
-  ];
-  const BATT_MOCK_KEY = "scBattMock";
-  function battMock() {
-    try {
-      const s = localStorage.getItem(BATT_MOCK_KEY);
-      if (BATT_MOCKS.some((m) => m.id === s)) return s;
-    } catch { /* private mode */ }
-    return "route";
-  }
-  function renderMockSwitcher() {
-    const el = $("mockbar");
-    if (!el) return;
-    const cur = battMock();
-    el.textContent = "";
-    const lab = document.createElement("span");
-    lab.className = "mk-l"; lab.textContent = "mockup";
-    el.appendChild(lab);
-    for (const m of BATT_MOCKS) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "mk-b" + (m.id === cur ? " on" : "");
-      b.textContent = m.n; b.title = m.t;
-      b.addEventListener("click", () => {
-        try { localStorage.setItem(BATT_MOCK_KEY, m.id); } catch { /* session only */ }
-        render();
-      });
-      el.appendChild(b);
-    }
-  }
-
+  // 🔴 EVERY aUEC FIGURE IS MODELLED, not read from the game (payoutEstimated is true for all 33),
+  // so it carries a tilde exactly as the mission panel’s does. Never print one bare.
   /** Minutes → "10m" / "1h 10m". */
   function fmtMins(min) {
     const m = Math.max(1, Math.round(min));
@@ -527,155 +463,49 @@
       .map((m) => ({ ...m, repHr: (m.rep / m.durMin) * 60, auecHr: m.payMax ? (m.payMax / m.durMin) * 60 : null }))
       .sort((a, b) => b.repHr - a.repHr);
   }
-  /** What it costs to get from where you are to `minRep`, running the best mission available.
-   *  Returns null when there is no scoreable mission or nothing left to earn. */
-  function routeTo(minRep) {
+  /** The fastest way to the next rank, appended under the reward ladder.
+   *
+   *  🔑 SCOPED TO THE NEXT RANK, not to the whole track. "Best rep per hour" in the abstract is
+   *  trivia; "best rep per hour toward Prestige 2, and that is 7 runs" is a plan. The runs column
+   *  is what makes each row a decision rather than a statistic.
+   *  ⚠️ Self-hides at max standing and when nothing on the track carries a run length — there is
+   *  no route to show, and a heading over an empty list is worse than no heading. */
+  function renderBestRate() {
     const bar = track.bar;
-    if (!bar || minRep == null) return null;
-    const gap = Math.max(0, minRep - bar.estimate);
-    if (gap <= 0) return null;
-    const best = takeableByRate()[0];
-    if (!best) return { gap, best: null };
-    const runs = Math.ceil(gap / best.rep);
-    return {
-      gap, best, runs,
-      mins: runs * best.durMin,
-      auec: best.payMax ? runs * best.payMax : null,
-      estimated: best.payoutEstimated !== false,
-    };
-  }
-
-  // ── MOCKUP 1 · "Route" ────────────────────────────────────────────────────────────────────
-  // The ladder that already works, with one line added under each rank you have not reached: what
-  // closing that gap costs in RUNS, TIME and aUEC. The conservative option — it changes nothing
-  // that is already earning its place and answers "how far is that really" in situ.
-  function routeLineFor(minRep) {
-    const r = routeTo(minRep);
-    if (!r) return null;
-    const d = document.createElement("div");
-    d.className = "route";
-    if (!r.best) {
-      d.textContent = num(r.gap) + " rep to go";
-      return d;
-    }
-    const bits = [r.runs + " × " + r.best.title, "~" + fmtMins(r.mins)];
-    if (r.auec != null) bits.push((r.estimated ? "~" : "") + fmtK(r.auec) + " aUEC");
-    d.textContent = bits.join(" · ");
-    d.title = "Running the best mission she currently offers you ("
-      + Math.round(r.best.repHr) + " rep/hr). Run lengths are the game's own estimate;"
-      + " the aUEC figure is modelled, not read from the game.";
-    return d;
-  }
-
-  // ── MOCKUP 2 · "Best grind" ───────────────────────────────────────────────────────────────
-  // 🔑 The whole board at once, ranked by rep per hour, instead of per-rank tabs you have to page
-  // through. This is the layout the four-fold spread argues for: the top row IS the answer, and
-  // the rows below it are the evidence that it is the answer.
-  function renderGrind() {
-    const body = $("body");
-    body.textContent = "";
+    if (!bar || bar.max || bar.nextMin == null) return;
+    const gap = Math.max(0, bar.nextMin - bar.estimate);
+    if (gap <= 0) return;
     const list = takeableByRate();
-    if (!list.length) {
-      const d = document.createElement("div"); d.className = "empty";
-      d.textContent = "No mission on this track carries a run length yet.";
-      body.appendChild(d); return;
-    }
-    const bar = track.bar;
-    const gap = bar && !bar.max && bar.nextMin != null ? Math.max(0, bar.nextMin - bar.estimate) : 0;
-    const sec = document.createElement("div"); sec.className = "sec";
-    sec.textContent = gap ? "Best rep per hour · " + num(gap) + " to " + bar.nextName : "Best rep per hour";
+    if (!list.length) return;
+    const body = $("body");
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    sec.textContent = "Best rep per hour → " + (bar.nextName || "next rank");
     body.appendChild(sec);
-    for (const m of list.slice(0, 8)) {
+    // Three. The top row is the answer and the two under it are the evidence that it is the
+    // answer — a longer list turns a recommendation back into a table to read.
+    for (const m of list.slice(0, 3)) {
       const row = document.createElement("div");
       row.className = "grow" + (m === list[0] ? " best" : "");
+      const left = document.createElement("div"); left.className = "gleft";
       const t = document.createElement("div"); t.className = "t";
       t.textContent = (m.completed > 0 ? "✓ " : "") + m.title + (m.items.length ? "  ★" : "");
       const meta = document.createElement("div"); meta.className = "gmeta";
       const bits = ["+" + num(m.rep), fmtMins(m.durMin)];
       if (m.payMax) bits.push((m.payoutEstimated ? "~" : "") + fmtK(m.payMax));
-      // 🔑 Runs to the NEXT RANK, per mission — the column that makes the table a decision rather
-      // than a statistic. Omitted at max standing, where there is nothing to count toward.
-      if (gap) bits.push(Math.ceil(gap / m.rep) + " runs");
+      bits.push(Math.ceil(gap / m.rep) + " runs · ~" + fmtMins(Math.ceil(gap / m.rep) * m.durMin));
       meta.textContent = bits.join(" · ");
+      left.append(t, meta);
       const rate = document.createElement("div"); rate.className = "rate";
       rate.textContent = num(Math.round(m.repHr)) + "/hr";
-      const left = document.createElement("div"); left.className = "gleft";
-      left.append(t, meta);
       row.append(left, rate);
+      row.title = "Rep per hour from this contract's own award and the game's expected run length."
+        + " The aUEC figure is modelled, not read from the game.";
       if (m.key) {
         row.classList.add("linked");
-        row.title = "Open this mission on subliminal.gg";
         row.addEventListener("click", () => openSite("/missions/" + encodeURIComponent(m.key)));
       }
       body.appendChild(row);
-    }
-  }
-
-  // ── MOCKUP 3 · "Next ship" ────────────────────────────────────────────────────────────────
-  // The opinionated one. Nobody grinds Battaglia for the standing — they grind her for the Golem,
-  // the Prospector and the MOLE, so the widget leads with the next one you have not got and says
-  // exactly what stands between you and it. Everything else drops to one line.
-  // ⚠️ REACHING THE RANK IS NOT HAVING THE SHIP. The mission still has to be COMPLETED — proven
-  // from Sub's own log, where the rank-3 Golem mission was accepted and abandoned. So an
-  // in-reach ship says "go do it", never "unlocked".
-  function renderNextShip() {
-    const body = $("body");
-    body.textContent = "";
-    const cur = currentRank();
-    const gated = (track.rewards || []).filter((r) => r.rank != null && !r.received)
-      .sort((a, b) => a.rank - b.rank);
-    if (!gated.length) {
-      const d = document.createElement("div"); d.className = "empty";
-      d.textContent = "Every rank-gated reward on this track is received.";
-      body.appendChild(d); return;
-    }
-    const next = gated[0];
-    const rank = (track.ranks || []).find((x) => x.rank === next.rank);
-    const inReach = cur >= next.rank;
-
-    const hero = document.createElement("div");
-    hero.className = "hero" + (inReach ? " open" : "");
-    const nm = document.createElement("div"); nm.className = "hero-n"; nm.textContent = next.name;
-    const sub = document.createElement("div"); sub.className = "hero-s";
-    sub.textContent = (rank ? rank.name : "Rank " + next.rank) + " · " + next.mission;
-    hero.append(nm, sub);
-
-    const call = document.createElement("div"); call.className = "hero-c";
-    if (inReach) {
-      // She already offers it — the only thing left is to run it, so say how long that takes.
-      const mission = allTrackMissions().find((m) => m.title === next.mission);
-      call.textContent = mission && mission.durMin
-        ? "Go do it · ~" + fmtMins(mission.durMin)
-        : "Go do it";
-      call.classList.add("go");
-    } else {
-      const r = routeTo(rank ? rank.minRep : null);
-      call.textContent = r && r.best
-        ? r.runs + " × " + r.best.title + " · ~" + fmtMins(r.mins)
-        : (r ? num(r.gap) + " rep to go" : "");
-      if (r && r.auec != null) {
-        const money = document.createElement("div"); money.className = "hero-m";
-        money.textContent = "earns " + (r.estimated ? "~" : "") + fmtK(r.auec) + " aUEC on the way";
-        hero.appendChild(money);
-      }
-    }
-    hero.appendChild(call);
-    body.appendChild(hero);
-
-    if (gated.length > 1) {
-      const sec = document.createElement("div"); sec.className = "sec"; sec.textContent = "After that";
-      body.appendChild(sec);
-      for (const r of gated.slice(1)) {
-        const rk = (track.ranks || []).find((x) => x.rank === r.rank);
-        const row = document.createElement("div"); row.className = "after";
-        const a = document.createElement("div"); a.className = "an"; a.textContent = r.name;
-        const b = document.createElement("div"); b.className = "aw";
-        b.textContent = track.bar && rk
-          ? num(Math.max(0, rk.minRep - track.bar.estimate)) + " to go"
-          : (rk ? rk.name : "rank " + r.rank);
-        row.append(a, b);
-        body.appendChild(row);
-      }
     }
   }
 
@@ -691,15 +521,12 @@
     $("doneBtn").style.display = mode === "rewards" ? "" : "none";
     if (tab === null) tab = currentRank() >= 0 ? currentRank() : (track.intro.length ? "intro" : 0);
     renderStanding();
-    renderMockSwitcher();
     renderTabs();
-    // TEMPORARY: while Sub is choosing, the mockup switcher stands in for the rewards view. The
-    // Missions mode (the header toggle) is untouched and still reachable.
-    const mk = battMock();
-    if (mode === "missions") renderMissions();
-    else if (mk === "grind") renderGrind();
-    else if (mk === "ship") renderNextShip();
-    else renderRewards();
+    if (mode === "missions") { renderMissions(); return; }
+    renderRewards();
+    // 🔑 APPENDED, not a separate view (Sub, 2026-08-15). The ladder says what you are chasing;
+    // this says what to run to get there. One screen, both questions.
+    renderBestRate();
   }
 
   $("modeBtn").addEventListener("click", () => { mode = mode === "rewards" ? "missions" : "rewards"; render(); });
