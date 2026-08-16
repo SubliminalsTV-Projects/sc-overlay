@@ -856,6 +856,11 @@ const REP_SCOPE_DENY = /^(ShipCombat_|FPS_Combat|Racing|Worker|Theft|Assassinati
  *  doesn't prove rank 4 — so it is deliberately NOT used here.) Ranks are placed by
  *  minRep, so a best-first ladder (Wikelo) works too. `noData` flags "no completions
  *  witnessed yet" (run Verify from logs). Pure + exported so it's unit-testable. */
+/** The picker's "show me the idle screen" choice. NOT a mission id and never matches one — it is
+ *  a third state beside a pinned mission and null (= auto-follow), which is why it needs a value
+ *  of its own rather than being expressible as "no selection". */
+export const IDLE_PICK = "__idle__";
+
 export function repLadderPosition(
   scope: RepScope | undefined,
   witnessed: number,
@@ -2432,7 +2437,11 @@ export class MissionTracker extends EventEmitter {
    *  auto-follow. The log can't tell us which mission you've selected to track, so
    *  this is the manual escape hatch. */
   selectMission(missionId: string | null): void {
-    this.selectedMissionId = missionId && this.missions.has(missionId) ? missionId : null;
+    // IDLE_PICK is not a mission, so it deliberately skips the has() check that keeps a stale id
+    // from being pinned. Everything else still has to name a mission the tracker knows about.
+    this.selectedMissionId = missionId === IDLE_PICK
+      ? IDLE_PICK
+      : (missionId && this.missions.has(missionId) ? missionId : null);
     this.emit("change");
   }
 
@@ -2985,6 +2994,15 @@ export class MissionTracker extends EventEmitter {
    *  accepted mission that has a pool (so a cargo haul accepted after a blueprint
    *  mission doesn't hide it); falling back to the newest of all. */
   private effectiveMissionId(): string | null {
+    // 🔑 A THIRD PICKER STATE, because null already means AUTO. Sub, 2026-08-15: he wanted a way
+    // back to the idle screen while missions are accepted, and "deselect" could not be expressed —
+    // clearing the pick just handed the panel back to auto-follow, which immediately re-picked a
+    // mission. The sentinel is checked FIRST and returns null, which is the one thing the whole
+    // view already knows how to render.
+    // 🔑 It STICKS, like a pinned mission does. An explicit choice that a later accept silently
+    // undid would not be a choice; accepting something new while parked on idle is exactly when
+    // you would be annoyed to be yanked away from the panel you asked for.
+    if (this.selectedMissionId === IDLE_PICK) return null;
     const active = (id: string) => !this.endedMissionIds.has(id);
     if (this.selectedMissionId && this.missions.has(this.selectedMissionId) && active(this.selectedMissionId)) {
       return this.selectedMissionId;

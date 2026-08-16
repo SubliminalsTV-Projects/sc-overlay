@@ -4496,7 +4496,15 @@
     // Disambiguate duplicate mission titles with a (1)/(2) suffix.
     const counts = {}; list.forEach((m) => (counts[m.title] = (counts[m.title] || 0) + 1));
     const seen = {};
-    const rows = ['<div class="opt' + (v.selectedId ? "" : " active") + '" data-id="">Auto — newest with blueprints</div>'];
+    // 🔑 THREE STATES, not two. Auto (no pick) follows the newest pooled mission; a mission pins
+    // that one; and "None" parks the panel on the idle screen. Sub, 2026-08-15: there was no way
+    // back to the idle screen once anything was accepted, because clearing the pick means AUTO and
+    // auto immediately re-picks. It sits directly under Auto, since both are answers to "don't
+    // show me a specific mission".
+    const rows = [
+      '<div class="opt' + (v.selectedId ? "" : " active") + '" data-id="">Auto — newest with blueprints</div>',
+      '<div class="opt' + (v.selectedId === "__idle__" ? " active" : "") + '" data-id="__idle__">None — back to the idle screen</div>',
+    ];
     for (const m of list) {
       let label = (m.hasPool ? "◆ " : "○ ") + m.title;
       if (counts[m.title] > 1) { seen[m.title] = (seen[m.title] || 0) + 1; label += " (" + seen[m.title] + ")"; }

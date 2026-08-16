@@ -1264,6 +1264,24 @@ const IDLEPANEL = `(async () => {
   };
   await pickLayout("bars");
 
+  // ── The picker's third state ────────────────────────────────────────────────────────────
+  // 🔑 Sub, 2026-08-15: there was no way BACK to this panel once a mission was accepted. Clearing
+  // the pick means AUTO, and auto immediately re-picks — so "deselect" was not expressible and
+  // needed a state of its own. Driven through renderPicker with a stubbed view rather than the
+  // live tracker, so the suite never changes what Sub's own app is tracking.
+  renderPicker({ missions: [{ id: "m1", title: "Turf War", hasPool: true }], selectedId: null, title: "Turf War" });
+  const opts = () => [...document.querySelectorAll("#missionMenu .opt")].map((o) => o.dataset.id);
+  ok("the picker offers a way back to the idle screen", opts().indexOf("__idle__") >= 0, opts().join(" | "));
+  ok("...as a third choice beside auto and a pinned mission", opts().length === 3, opts().join(" | "));
+  ok("...listed under Auto, since both mean 'not a specific mission'",
+     opts()[0] === "" && opts()[1] === "__idle__", opts().join(" | "));
+  renderPicker({ missions: [{ id: "m1", title: "Turf War", hasPool: true }], selectedId: "__idle__", title: null });
+  const active = [...document.querySelectorAll("#missionMenu .opt.active")].map((o) => o.dataset.id);
+  ok("...and shows as the live choice when it is the one selected",
+     active.join(",") === "__idle__", active.join(",") || "(none active)");
+  ok("...while Auto stops claiming to be active",
+     !document.querySelector('#missionMenu .opt[data-id=""]').classList.contains("active"));
+
   // ⚠️ Read the heading's TITLE CELL, not its whole text: two headings now carry a circled-i
   // button inside them, so raw textContent reads "Standingi" and the assertion would be about
   // punctuation rather than order.
