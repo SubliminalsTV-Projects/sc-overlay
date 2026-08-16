@@ -49,7 +49,11 @@ function describe(c: HaulContract): string {
 }
 
 const arg = process.argv[2];
-if (arg) {
+// A FILE prints that session in full; a DIRECTORY sweeps it the same way as the default channel.
+// Sweeping an arbitrary folder is what lets another player's logs be checked — validating the
+// parser against someone whose habits we did not design around is worth more than any fixture.
+const argIsDir = arg ? (() => { try { return statSync(arg).isDirectory(); } catch { return false; } })() : false;
+if (arg && !argIsDir) {
   const contracts = replay(arg);
   console.log(`${arg}\n${contracts.length} hauling contracts\n`);
   for (const c of contracts) console.log(describe(c));
@@ -57,10 +61,11 @@ if (arg) {
 }
 
 // ── Corpus sweep ───────────────────────────────────────────────────────────────────────────
-const paths = collectLogPaths(DEFAULT_LOG).filter((p) => {
+const root = argIsDir ? join(arg!, "Game.log") : DEFAULT_LOG;
+const paths = collectLogPaths(root).filter((p) => {
   try { return statSync(p).isFile(); } catch { return false; }
 });
-console.log(`sweeping ${paths.length} logs under ${dirname(DEFAULT_LOG)}\n`);
+console.log(`sweeping ${paths.length} logs under ${dirname(root)}\n`);
 
 let total = 0, tracked = 0, ended = 0, completed = 0, paid = 0, withItems = 0, withPos = 0, dropsDone = 0, dropsAll = 0;
 const generators = new Map<string, number>();

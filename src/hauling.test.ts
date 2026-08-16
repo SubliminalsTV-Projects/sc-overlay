@@ -252,4 +252,52 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
     "delivered is monotonic");
 }
 
+// 🔑 A PARTIAL delivery, from a shared log (mission 922ce48a, 2026-06-28). Line shapes and
+// timings are verbatim; the Player/PlayerId fields are placeholders because these logs came to us
+// UNSCRUBBED, straight from the player, and nothing here asserts on his identity.
+// The contract was accepted UNTRACKED — no Deliver line at accept. Then at the drop-off he handed
+// over 48 of 81 SCU: the objective went INPROGRESS and the game re-announced it 3ms later with
+// the running total. Three minutes later he finished the rest and was paid in full.
+// This is the sequence that disproves "the counter never ticks", and it shows progress arrives
+// WITHOUT the player tracking anything.
+{
+  const t = new HaulingTracker();
+  const MID = "922ce48a-7164-434e-bd77-53fbe6967830";
+  const OBJ = "4f92fe34-356e-4f6a-bb65-d317d4ab93fa";
+  feed(t, [
+    `<2026-06-28T22:12:53.858Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${MID}], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Waste_Scrap_Stanton3_SupplyGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [dropoff_${OBJ}_0], markerEntityId [1], zoneHostId [742554712000], position [x: 1.0, y: 2.0, z: 3.0] [Team_MissionFeatures][Missions]`,
+    `<2026-06-28T22:12:53.858Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${MID}], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Waste_Scrap_Stanton3_SupplyGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [pickup_${OBJ}_0], markerEntityId [2], zoneHostId [742554712000], position [x: 9.0, y: 8.0, z: 7.0] [Team_MissionFeatures][Missions]`,
+    `<2026-06-28T22:12:53.862Z> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Accepted:  Junior Rank - Direct Medium Cargo Haul: " [4] to queue. New queue size: 1, MissionId: [${MID}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
+  ]);
+  assert.equal(t.view().contracts[0].tracked, false, "accepted untracked — no Deliver line yet");
+  assert.deepEqual(t.view().untracked, [MID]);
+
+  feed(t, [
+    `<2026-06-28T22:26:49.719Z> [Notice] <ObjectiveUpserted> Received ObjectiveUpserted push message for: mission_id ${MID} - objective_id pickup_${OBJ}_0 - state MISSION_OBJECTIVE_STATE_COMPLETED - created 0 - flags=ShowInLog| [Team_GameServices][Missions]`,
+    `<2026-06-28T23:07:34.277Z> [Notice] <ObjectiveUpserted> Received ObjectiveUpserted push message for: mission_id ${MID} - objective_id dropoff_${OBJ}_0 - state MISSION_OBJECTIVE_STATE_INPROGRESS - created 0 - flags=ShowInLog| [Team_GameServices][Missions]`,
+    `<2026-06-28T23:07:34.280Z> [Notice] <SHUDEvent_OnNotification> Added notification "New Objective: Deliver 48/81 SCU of Scrap to a Salvage Yard on Wala: " [41] to queue. New queue size: 1, MissionId: [${MID}], ObjectiveId: [dropoff_${OBJ}_0] [Team_CoreGameplayFeatures][Missions][Comms]`,
+  ]);
+  const mid = t.view().contracts[0];
+  const drop = mid.stops.find((s) => s.role === "dropoff")!;
+  assert.equal(mid.tracked, true, "a mid-run Deliver line still counts as tracked");
+  assert.equal(drop.need, 81);
+  assert.equal(drop.delivered, 48, "a partial delivery reports its running total");
+  assert.equal(drop.state, "inprogress", "INPROGRESS on a drop-off means boxes moved but the leg is unfinished");
+  assert.equal(mid.totalScu, 81, "totalScu is the CONTRACT size, not what is left to carry");
+
+  feed(t, [
+    `<2026-06-28T23:10:59.529Z> [Notice] <ObjectiveUpserted> Received ObjectiveUpserted push message for: mission_id ${MID} - objective_id dropoff_${OBJ}_0 - state MISSION_OBJECTIVE_STATE_COMPLETED - created 0 - flags=ShowInLog| [Team_GameServices][Missions]`,
+    `<2026-06-28T23:10:59.595Z> [Notice] <MissionEnded> Received MissionEnded push message for: mission_id ${MID} - mission_state MISSION_STATE_COMPLETED [Team_GameServices][Missions]`,
+    `<2026-06-28T23:10:59.595Z> [Notice] <EndMission> Ending mission for player. MissionId[${MID}] Player[SharedLogPlayer] PlayerId[200000000000] CompletionType[Complete] Reason[Mission Ended] [Team_MissionFeatures][Missions]`,
+    `<2026-06-28T23:10:59.733Z> [Notice] <SHUDEvent_OnNotification> Added notification "Awarded 73000 aUEC: " [43] to queue. New queue size: 1, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
+  ]);
+  const done = t.view().contracts[0];
+  assert.equal(done.stops.find((s) => s.role === "dropoff")!.state, "completed");
+  assert.equal(done.completion, "Complete");
+  // ⛔ Note what is NOT asserted: that `delivered` reaches 81. The game never says so — it just
+  // completes the leg. Inferring a final delivered figure would be exactly the partial-turn-in
+  // modelling Sub ruled out. A completed leg is delivered in full as far as we are concerned.
+  assert.equal(done.payout, 73000, "paid in full 138ms after the end — he finished the remaining 33 SCU");
+}
+
 console.log("hauling tests passed");
