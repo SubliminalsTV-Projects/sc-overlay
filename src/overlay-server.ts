@@ -15,6 +15,7 @@ import { MiningTracker } from "./mining.js";
 import { HaulingTracker } from "./hauling.js";
 import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
+import { HaulingDataStore } from "./hauling-data.js";
 import { MissionFeedbackStore } from "./mission-feedback.js";
 import { FabClaims } from "./fab-claim.js";
 import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLines } from "./dev-replay.js";
@@ -1005,6 +1006,16 @@ const economy = new MiningEconomyStore(dataDir);
   const c = economy.counts();
   console.log(`[economy] commodities: ${c.commodities}, mining resources: ${c.resources}` +
     (c.compositionSource ? ` (composition from ${c.compositionSource})` : ""));
+}
+
+// ── Hauling datasets (ship cargo grids + contract cargo + locations) ────────
+// Bundled reference data for the hauling optimiser (see HaulingDataStore). Served via
+// /api/ships, /api/hauling-orders and /api/locations; the widget is not built yet.
+const haulingData = new HaulingDataStore(dataDir);
+{
+  const c = haulingData.counts();
+  console.log(`[hauling] ships: ${c.ships}, contracts: ${c.contracts}, locations: ${c.locations}` +
+    (c.version ? ` (${c.version})` : ""));
 }
 
 // ── Mining Assistant (signature scanner + refinery timer) ────────────────────
@@ -2109,6 +2120,73 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const body = key ? economy.composition(key) : { resources: economy.resources() };
     res.writeHead(key && !body ? 404 : 200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(body ?? { error: "not found" }));
+    return;
+  }
+
+  // ── Hauling reference data ────────────────────────────────────────────────
+  // Ship cargo grids: ?ship=<class or display name> for one hull, else the whole map.
+  // `?names=1` returns just class+name+SCU — the map is ~80 KB of grid geometry and a
+  // ship picker only wants a list to spell, the same reasoning as /api/commodities?names.
+  if (url === "/api/ships" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://x").searchParams;
+    const ship = q.get("ship")?.trim();
+    if (ship) {
+      const found = haulingData.ship(ship);
+      res.writeHead(found ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(found ?? { error: "not found" }));
+      return;
+    }
+    if (q.get("names")) {
+      // Cargo-carrying spaceships only, biggest first — a ground vehicle with a 1 SCU
+      // cubby is not a hauling ship and only makes the list harder to get through.
+      const list = Object.values(haulingData.ships())
+        .filter((s) => s.isSpaceship && s.totalScu > 0)
+        .sort((a, b) => b.totalScu - a.totalScu)
+        .map((s) => ({ className: s.className, displayName: s.displayName, totalScu: s.totalScu }));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ships: list }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ cellMetres: haulingData.cellMetres(), ships: haulingData.ships() }));
+    return;
+  }
+
+  // Contract cargo requirements: ?key=<contract key from CreateMarker> for one, else all.
+  // The box table always rides along — it is small and every consumer needs it.
+  if (url === "/api/hauling-orders" && req.method === "GET") {
+    const key = new URL(req.url ?? "", "http://x").searchParams.get("key")?.trim();
+    if (key) {
+      const found = haulingData.contract(key);
+      res.writeHead(found ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(found ? { ...found, maxBoxScu: haulingData.maxBoxScu(key), boxes: haulingData.boxes() } : { error: "not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ boxes: haulingData.boxes(), contracts: haulingData.contracts() }));
+    return;
+  }
+
+  // Locations: ?code=<internal code as game.log writes it> resolves an alias (may match
+  // more than one place), ?uuid=<id> fetches one, else the whole map.
+  if (url === "/api/locations" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://x").searchParams;
+    const code = q.get("code")?.trim();
+    if (code) {
+      const hits = haulingData.byCode(code);
+      res.writeHead(hits.length ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(hits.length ? { code, matches: hits } : { error: "not found" }));
+      return;
+    }
+    const uuid = q.get("uuid")?.trim();
+    if (uuid) {
+      const found = haulingData.location(uuid);
+      res.writeHead(found ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(found ?? { error: "not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ locations: haulingData.locations() }));
     return;
   }
 
