@@ -166,6 +166,43 @@ const pinnedTracked = buildHaulingPlan(viewOf(byId("haul-tracked")), data, {
 });
 check("🔑 a pin never overrides the game's own number", pinnedTracked.contracts[0]?.scu === 81);
 
+// ── cargo already in the hold ──────────────────────────────────────────────
+// Its pickup objective has COMPLETED, so there is nothing left to fly to for it — but the drop-off
+// still has to happen. An earlier cut dropped the whole leg from the route the moment its pickup
+// ticked, which quietly deleted a delivery the player still owed.
+{
+  const v = viewOf(byId("haul-multi"));
+  const open = v.contracts[0].stops.filter((s) => s.state !== "completed");
+  const drop = open.find((s) => s.role === "dropoff")!;
+  const pick = open.find((s) => s.role === "pickup" && s.key === drop.key)!;
+  pick.state = "completed";
+  const p = buildHaulingPlan(v, data, { ship: "CRUS_Starlifter_C2" });
+  check("cargo aboard is counted as aboard", p.aboardScu === 6, String(p.aboardScu));
+  check("its pickup is not routed again but its drop-off still is",
+    p.trips.length === 1 && p.trips[0].stops.length === 1 && p.trips[0].stops[0].kind === "dropoff",
+    JSON.stringify(p.trips[0]?.stops.map((s) => s.kind)));
+  check("🔑 the hold reading still counts what is already aboard",
+    p.trips[0]?.stops[0].loadAfterScu === 0, String(p.trips[0]?.stops[0].loadAfterScu));
+  check("it is still packed — it is cargo either way", p.pack?.loadedScu === 6, String(p.pack?.loadedScu));
+  check("nothing is reported unrouted", p.unrouted.length === 0, JSON.stringify(p.unrouted));
+}
+
+// ── a drop-off the log never gave a pickup marker for ──────────────────────
+// 🔴 Real: one of Sub's live contracts on 2026-08-16 carries a drop-off marker with no matching
+// pickup. It cannot be routed — but the widget must SAY so, not quietly leave it out of a route
+// that still claims to be the route.
+{
+  const v = viewOf(byId("haul-multi"));
+  const drop = v.contracts[0].stops.filter((s) => s.state !== "completed").find((s) => s.role === "dropoff")!;
+  v.contracts[0].stops = v.contracts[0].stops.filter((s) => !(s.role === "pickup" && s.key === drop.key));
+  const p = buildHaulingPlan(v, data, { ship: "CRUS_Starlifter_C2" });
+  check("an unroutable leg is reported rather than dropped",
+    p.unrouted.length === 1 && /pickup marker/.test(p.unrouted[0].reason),
+    JSON.stringify(p.unrouted));
+  check("it is still carried in the totals and the layout",
+    p.totals.scu === 6 && p.pack?.loadedScu === 6);
+}
+
 // ── 🔑 a mission-item haul: the ONE family with an exact manifest ──────────
 // "Deliver 0/9 Cargo Boxes" is a COUNT, not a tonnage. The nine boxes the log enumerates are
 // eight 8 SCU and one 1 SCU = 65 SCU, so reading that 9 as SCU under-reports by a factor of seven.

@@ -30,7 +30,7 @@
  */
 import { partitionScu, DEFAULT_BOX_SET, type BoxSpec, type Partition } from "./cargo-boxes.js";
 import { packCargo, shipCapacityScu, type GridSpec, type PackItem, type PackResult } from "./cargo-pack.js";
-import { buildStops, planRun, type HaulLeg, type RouteContract, type RoutePlan, type Vec3 } from "./hauling-route.js";
+import { planRun, type RouteContract, type RoutePlan, type RouteStop, type Vec3 } from "./hauling-route.js";
 import type { HaulingView, HaulContract, HaulStopState } from "./hauling.js";
 import type { BoxSize, HaulingDataStore, Ship } from "./hauling-data.js";
 
@@ -158,6 +158,9 @@ export interface HaulingPlan {
   trips: PlanTrip[];
   /** Contracts no single trip can carry — over capacity even alone. */
   stranded: string[];
+  /** Legs that have to be carried but could not be put in a route, each with the reason. Never
+   *  silently dropped: a route missing legs would look complete and be wrong. */
+  unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; reason: string }[];
   /** Placements are only produced when a ship is known. */
   pack: PackResult | null;
   /** SCU already aboard: legs whose pickup completed but whose drop-off has not. */
@@ -402,16 +405,6 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     .filter(({ leg }) => leg.pickupState === "completed")
     .reduce((s, { leg }) => s + (leg.scu ?? 0), 0);
 
-  const routeLegs: HaulLeg[] = openLegs
-    .filter(({ leg }) => leg.pickupState !== "completed" && leg.fromLocation && leg.toLocation)
-    .map(({ leg }) => ({
-      contractId: leg.group,
-      scu: leg.scu ?? 0,
-      fromLocation: leg.fromLocation!,
-      toLocation: leg.toLocation!,
-      commodity: leg.commodity ?? undefined,
-    }));
-
   // Positions come from the marker that named the location, so the map is built from the legs
   // rather than a dataset — locations.json has no coordinates and its markerXyz table is empty.
   const posByLoc = new Map<string, Vec3>();
@@ -422,8 +415,52 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     }
   }
 
-  const routeContracts: RouteContract[] = routeLegs.map((l) => ({ id: l.contractId, payout: 0 }));
-  const stops = buildStops(routeLegs, (id) => posByLoc.get(id) ?? null);
+  /**
+   * Build the visits by hand rather than through `buildStops`, because that helper assumes every
+   * leg is a pickup AND a drop-off — and two real cases are not:
+   *
+   *  • **Cargo already in the hold.** Its pickup objective has COMPLETED, so there is nothing left
+   *    to fly to for it; the drop-off still has to happen. Emitting the pickup visit anyway would
+   *    route the player back to a warehouse they have already emptied.
+   *  • **A leg the log gave no pickup marker for.** It happens — one of Sub's own live contracts
+   *    has a drop-off marker with no matching pickup. Its drop-off is still a place you must go.
+   *
+   * A drop-off with no pickup simply has no precedence constraint, which is correct: the optimiser
+   * is free to put it anywhere. Its load goes NEGATIVE in the raw model, and that is deliberate —
+   * see `freeCapacity` and `loadAfterScu`, where `aboardScu` is added back to make both exact.
+   */
+  const stopById = new Map<string, RouteStop>();
+  const visit = (locationId: string, kind: "pickup" | "dropoff"): RouteStop => {
+    const id = `${locationId}:${kind}`;
+    let s = stopById.get(id);
+    if (!s) {
+      s = { id, locationId, name: locationId, pos: posByLoc.get(locationId) ?? null, actions: [] };
+      stopById.set(id, s);
+    }
+    return s;
+  };
+  /** Legs that must be carried but cannot be put in a route — reported, never dropped. */
+  const unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; reason: string }[] = [];
+  const routeGroups = new Set<string>();
+  for (const { c, leg } of openLegs) {
+    if (!leg.toLocation) {
+      unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, reason: "the log has not placed this drop-off yet" });
+      continue;
+    }
+    const stillToLoad = leg.pickupState !== "completed";
+    if (stillToLoad && !leg.fromLocation) {
+      unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, reason: "the log carries no pickup marker for this leg — check mobiGlas for where to load it" });
+      continue;
+    }
+    if (stillToLoad) {
+      visit(leg.fromLocation!, "pickup").actions.push({ contractId: leg.group, kind: "pickup", scu: leg.scu ?? 0, commodity: leg.commodity ?? undefined });
+    }
+    visit(leg.toLocation, "dropoff").actions.push({ contractId: leg.group, kind: "dropoff", scu: leg.scu ?? 0, commodity: leg.commodity ?? undefined });
+    routeGroups.add(leg.group);
+  }
+
+  const routeContracts: RouteContract[] = [...routeGroups].map((id) => ({ id, payout: 0 }));
+  const stops = [...stopById.values()];
   // 🔑 The hold that is still FREE. Cargo already aboard cannot be unloaded to make room for a
   // pickup, so planning against the full rating would happily overfill a part-loaded ship.
   const freeCapacity = capacityScu != null ? Math.max(0, capacityScu - aboardScu) : undefined;
@@ -454,6 +491,19 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   };
 
   const trips: PlanTrip[] = run.trips.map((trip) => toTrip(trip, stops, legByGroup, nameOf, aboardScu));
+
+  // 🔑 `planRun` gives up quietly: when no trip can be formed for what is left in the pool it
+  // breaks out of its loop, and those contracts appear in neither `trips` nor `stranded`. A route
+  // that is missing legs while claiming to be the route is the worst thing this widget could do,
+  // so anything that went in and did not come out is reported.
+  const routed = new Set(trips.flatMap((t) => t.stops.flatMap((s) => s.actions.map((a) => a.group))));
+  for (const { c, leg } of openLegs) {
+    if (!routeGroups.has(leg.group) || routed.has(leg.group)) continue;
+    unrouted.push({
+      group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination,
+      reason: "no trip could be planned that carries this leg",
+    });
+  }
 
   // ── layout ──────────────────────────────────────────────────────────────
   // Everything not yet delivered gets packed, INCLUDING what is already aboard — the question the
@@ -511,6 +561,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       .map((c) => ({ missionId: c.missionId, title: c.title, minScu: c.minScu, maxScu: c.maxScu })),
     trips,
     stranded: run.stranded,
+    unrouted,
     pack,
     aboardScu,
     totals: {
@@ -528,7 +579,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
 /** One RoutePlan -> the stop list the widget draws, with names and per-stop actions. */
 function toTrip(
   trip: RoutePlan,
-  stops: ReturnType<typeof buildStops>,
+  stops: readonly RouteStop[],
   legByGroup: Map<string, { c: HaulContract; leg: PlannedLeg }>,
   nameOf: (locationId: string) => string,
   aboardScu: number,
