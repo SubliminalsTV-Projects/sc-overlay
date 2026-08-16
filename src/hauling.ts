@@ -22,9 +22,15 @@
  *
  * ── What it does NOT give us ───────────────────────────────────────────────────────────────
  *
- * • The delivered counter never moves. In all 479 logs the numerator is 0, every time. Progress
- *   comes only from `ObjectiveUpserted … MISSION_OBJECTIVE_STATE_COMPLETED`, which is
- *   per-destination, not per-box.
+ * • Live progress is per-DESTINATION, not per-box: `ObjectiveUpserted …
+ *   MISSION_OBJECTIVE_STATE_COMPLETED` fires when a whole drop-off is satisfied, and nothing
+ *   fires per box in between.
+ *   ⚠️ Earlier research said "the delivery counter NEVER ticks" because all 480 of Sub's logs
+ *   showed `0/N`. **That is wrong** — it was an artifact of him always tracking a contract at
+ *   accept, when the progress really is zero. A shared log from another player carries
+ *   `Deliver 3/5 SCU …`, emitted 5ms after its CreateMarker on a spawn-in re-emission. The
+ *   numerator is real; see `HaulStop.delivered`. It is only ever observed at a (re)track, so it
+ *   is a checkpoint, not a live feed.
  * • Box breakdowns for SCU hauls are not logged at all. `SMarkerHandler_Hauling::OnItemRegistered`
  *   enumerates every box, but only for mission-ITEM hauls (Hockrow delve, Battaglia, HeadHunters
  *   recover-cargo). Covalex, RedWind and GoblinG emit nothing — verified across the whole corpus.
@@ -72,6 +78,20 @@ export interface HaulStop {
   commodity: string | null;
   /** SCU when `unit === "scu"`, otherwise a box or item count. */
   need: number | null;
+  /**
+   * How much of `need` the game says is already delivered.
+   *
+   * 🔑 Earlier research concluded "the delivery counter NEVER ticks" — every `N/M` in Sub's 480
+   * logs had N=0. That was an artifact of Sub always tracking a contract at accept, when the
+   * progress genuinely IS zero. A shared log from punk_hiji (2026-08-05) carries
+   * `Deliver 3/5 SCU of Recycled Material Composite to Levski` emitted 5ms after its CreateMarker
+   * — a spawn-in re-emission of an already-part-delivered contract. So the number is real, and
+   * throwing it away loses the one signal that says how much is still in the hold.
+   *
+   * ⛔ This is NOT partial-turn-in modelling, which Sub ruled out: that is about a contract handed
+   * in short at the END. This is in-flight progress on an open contract.
+   */
+  delivered: number | null;
   unit: "scu" | "boxes" | "items" | null;
   state: HaulStopState;
   completedAt: number | null;
@@ -255,7 +275,7 @@ export class HaulingTracker extends EventEmitter {
         key, objectiveId: ev.objectiveId, role,
         index: parseInt(key.split("#")[1] ?? "0", 10) || 0,
         pos: ev.pos, markerEntityId: ev.markerEntityId,
-        destination: null, commodity: null, need: null, unit: null,
+        destination: null, commodity: null, need: null, delivered: null, unit: null,
         state: "pending", completedAt: null,
       });
       c.stops.sort((a, b) => a.index - b.index || a.role.localeCompare(b.role));
@@ -280,6 +300,10 @@ export class HaulingTracker extends EventEmitter {
       stop.commodity = ev.commodity;
       stop.need = ev.need;
       stop.unit = ev.unit;
+      // Monotonic: a spawn-in re-emission reports live progress, but a fresh accept of a
+      // repeat contract reports 0 — and a stop that has already been delivered against must
+      // not be walked backwards by a later notification for a different instance.
+      stop.delivered = Math.max(stop.delivered ?? 0, ev.have);
     }
     this.recomputeTotal(c);
     this.touch(ev.ts);

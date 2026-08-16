@@ -75,6 +75,7 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
   assert.equal(drop.commodity, "Stims");
   assert.equal(drop.destination, "Baijini Point", "the destination must not swallow the trailing colon");
   assert.equal(drop.unit, "scu");
+  assert.equal(drop.delivered, 0, "tracked at accept — nothing delivered yet");
   assert.equal(drop.state, "pending");
   assert.deepEqual(drop.pos, { x: -771960.5625, y: -321347.21875, z: -359509.34375 });
   // The pickup carries a DIFFERENT position — that pair is the leg the router measures.
@@ -226,6 +227,29 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
   // Node 0 is the engine's "nobody" sentinel and appears alongside the real id.
   const zero = parseMissionEvent(parseLine(`<2026-08-16T14:39:00.000Z> [Notice] <Vehicle Control Flow> CVehicleMovementBase::ClearDriver: Local client node [0] releasing control token for 'CRUS_Starlifter_C2_766969713219' [766969713219] [Team_CGP4][Vehicle]`));
   assert.equal(zero, null, "node 0 is not a player");
+}
+
+// 🔑 A spawn-in re-emission reports LIVE progress, not 0. Real line from a shared log
+// (punk_hiji, 2026-08-05): the Deliver notification landed 5ms after the CreateMarker and read
+// "3/5", because the contract was already part-delivered when the player logged back in.
+// This is what disproves the old "the counter never ticks" conclusion — that was an artifact of
+// only ever tracking a contract at accept time.
+{
+  const t = new HaulingTracker();
+  const MID = "5e8b8c9c-b313-47a1-9955-a63f1095aa51";
+  feed(t, [
+    `<2026-08-05T02:59:42.181Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${MID}], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Salvage_RMC_Stanton1], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [dropoff_246aa48e-a4d0-4669-be1f-8d4d029b34ef_0], markerEntityId [1], zoneHostId [2], position [x: 1.0, y: 2.0, z: 3.0] [Team_MissionFeatures][Missions]`,
+    `<2026-08-05T02:59:42.186Z> [Notice] <SHUDEvent_OnNotification> Added notification "New Objective: Deliver 3/5 SCU of Recycled Material Composite to Levski: " [86] to queue. New queue size: 2, MissionId: [${MID}], ObjectiveId: [dropoff_246aa48e-a4d0-4669-be1f-8d4d029b34ef_0] [Team_CoreGameplayFeatures][Missions][Comms]`,
+  ]);
+  const drop = t.view().contracts[0].stops.find((s) => s.role === "dropoff")!;
+  assert.equal(drop.need, 5);
+  assert.equal(drop.delivered, 3, "the numerator is real progress — do not discard it");
+
+  // A later notification for a fresh instance of the same repeat contract reports 0. Progress
+  // must not walk backwards.
+  feed(t, [`<2026-08-05T03:10:00.000Z> [Notice] <SHUDEvent_OnNotification> Added notification "New Objective: Deliver 0/5 SCU of Recycled Material Composite to Levski: " [90] to queue. New queue size: 1, MissionId: [${MID}], ObjectiveId: [dropoff_246aa48e-a4d0-4669-be1f-8d4d029b34ef_0] [Team_CoreGameplayFeatures][Missions][Comms]`]);
+  assert.equal(t.view().contracts[0].stops.find((s) => s.role === "dropoff")!.delivered, 3,
+    "delivered is monotonic");
 }
 
 console.log("hauling tests passed");
