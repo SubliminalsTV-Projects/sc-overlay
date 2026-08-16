@@ -44,6 +44,7 @@
     "check:dataset": "node tools/check-dataset-fresh.mjs --strict",
     "audit:scmdb": "node tools/scmdb-audit.mjs",
     "test:contracts": "tsx src/contract-list.test.ts && tsx src/contract-match.test.ts && tsx src/payout-scan.test.ts && tsx src/payout-mode.test.ts",
+    "test:solver": "tsx src/cargo-boxes.test.ts && tsx src/cargo-pack.test.ts && tsx src/hauling-route.test.ts",
     "session": "node tools/new-session.mjs"
   },
   "dependencies": {
