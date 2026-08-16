@@ -89,6 +89,9 @@ contextBridge.exposeInMainWorld("overlayApi", {
   // Battaglia grind tracker: shell-owned visibility, same as the widgets above.
   setBattaglia: (on) => ipcRenderer.send("app:set-battaglia", !!on),
   onBattagliaVisible: (cb) => ipcRenderer.on("overlay:battaglia-visible", (_e, s) => cb(s)),
+  // Hauling optimiser: shell-owned visibility, same as the widgets above.
+  setHauling: (on) => ipcRenderer.send("app:set-hauling", !!on),
+  onHaulingVisible: (cb) => ipcRenderer.on("overlay:hauling-visible", (_e, s) => cb(s)),
   // Social chat: shell-owned visibility; its send field reuses the keyboard-grab above.
   setChat: (on) => ipcRenderer.send("app:set-chat", !!on),
   // Fade-when-idle is per-widget CSS in the canvas; the shell only ever says "force everything

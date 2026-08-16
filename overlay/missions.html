@@ -2124,6 +2124,7 @@
     <div class="hub-row tog"><label><input type="checkbox" id="wgUnlockAlert" /> Unlock Alerts</label><button type="button" class="hub-reset" data-w="unlockAlert" title="Recentre this widget on screen">↺</button></div>
     <div class="hub-row tog"><label><input type="checkbox" id="wgParty" /> Loot Split</label><button type="button" class="hub-reset" data-w="party" title="Recentre this widget on screen">↺</button></div>
     <div class="hub-row tog"><label><input type="checkbox" id="wgBattaglia" /> Event Tracker</label><button type="button" class="hub-reset" data-w="battaglia" title="Recentre this widget on screen">↺</button></div>
+    <div class="hub-row tog"><label><input type="checkbox" id="wgHauling" /> Hauling</label><button type="button" class="hub-reset" data-w="hauling" title="Recentre this widget on screen">↺</button></div>
     <div class="hub-row tog"><label><input type="checkbox" id="wgChat" /> Chat</label><button type="button" class="hub-reset" data-w="chat" title="Recentre this widget on screen">↺</button></div>
     <div class="hub-row tog"><label><input type="checkbox" id="wgWebView" /> Web Page</label><button type="button" class="hub-reset" data-w="webView" title="Recentre this widget on screen">↺</button></div>
     <div class="hub-row tog"><label><input type="checkbox" id="wgBindingChart" /> Infographic Viewer</label><button type="button" class="hub-reset" data-w="bindingChart" title="Recentre this widget on screen">↺</button></div>
@@ -4733,6 +4734,19 @@
       def: { x: 40, y: 560 }, size: { w: 360, h: 470, minW: 300, maxW: 760, minH: 240, maxH: 900 },
     },
     {
+      // Hauling optimiser: what order to run the accepted contracts, and where the boxes go.
+      // Wider and taller than its neighbours by default because it draws a to-scale cell map of a
+      // cargo grid — a C2's main hold is 8 cells across and 15 deep, and squeezing that into a
+      // 360px column makes the one thing the widget exists to show unreadable.
+      key: "hauling", page: "hauling.html", title: "Hauling",
+      def: { x: 420, y: 200 }, size: { w: 440, h: 620, minW: 320, maxW: 1200, minH: 260, maxH: 1400 },
+      focusFn: "__haulingFocus", // the SCU pin box needs the shared keyboard grab
+      // Don't strand the keyboard grab: hiding mid-edit would leave the interact key suspended,
+      // and hide UNLOADS the iframe so the page can never release it after the fact. Same rule as
+      // notepad/party/chat.
+      onHide: (w) => { try { frameWin(w)?.__haulingExitTyping?.(); } catch { /* iframe gone */ } },
+    },
+    {
       // Player-to-player chat (Global / Server / Shard tabs). The SIDECAR owns the connection
       // and history (src/chat.ts) — this page only renders and posts, so closing or regrouping
       // it drops nothing. No socket exists unless this widget is open (chatOpen is the gate).
@@ -6632,7 +6646,7 @@
         $("hubTheme").value = c.theme || "mobiglas";
       }).catch(() => { /* fall back to whatever's in the inputs */ });
       $("wgBlueprint").checked = WBY.blueprint.s.visible !== false;
-      window.overlayApi.widgetStates?.().then((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
+      window.overlayApi.widgetStates?.().then((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
       syncModal(); window.overlayApi.hover?.(true);
     }
     gc.addEventListener("click", (e) => { e.stopPropagation(); armGameHide(); setHub(!hub.classList.contains("open")); });
@@ -6707,11 +6721,12 @@
     $("wgUnlockAlert").addEventListener("change", () => window.overlayApi.setUnlockAlert($("wgUnlockAlert").checked));
     $("wgParty").addEventListener("change", () => window.overlayApi.setParty($("wgParty").checked));
     $("wgBattaglia").addEventListener("change", () => window.overlayApi.setBattaglia($("wgBattaglia").checked));
+    $("wgHauling").addEventListener("change", () => window.overlayApi.setHauling($("wgHauling").checked));
     $("wgChat").addEventListener("change", () => window.overlayApi.setChat($("wgChat").checked));
     $("wgWebView").addEventListener("change", () => window.overlayApi.setWebView($("wgWebView").checked));
     $("wgBindingChart").addEventListener("change", () => window.overlayApi.setBindingChart($("wgBindingChart").checked));
     // Stay in sync if a widget is toggled elsewhere (tray) while the hub is open.
-    window.overlayApi.onWidgetStates?.((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
+    window.overlayApi.onWidgetStates?.((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
     // Global appearance — persisted config (also broadcasts to OBS sources).
     $("hubTheme").addEventListener("change", () => setPref({ theme: $("hubTheme").value }));
     // Layout

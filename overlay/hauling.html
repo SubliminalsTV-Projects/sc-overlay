@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hauling</title>
+<script>/* AMD compatibility: apply the lite skin BEFORE first paint (no flash) when the shell asks for it. */
+  if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
+  /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
+  { const q = new URLSearchParams(location.search); const r = document.documentElement;
+    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
+    /* ?bg=RRGGBB paints an opaque backdrop, for embedding in a THIRD-PARTY host (GameGlass
+       and friends). Hex digits only, and applied through CSSOM — a value that is not a colour
+       is rejected by the engine rather than landing anywhere it could be read as markup. */
+    const b = q.get("bg"); if (b && /^[0-9a-f]{3,8}$/i.test(b)) { r.style.setProperty("--wbg", "#" + b); r.dataset.bg = ""; } }</script>
+<link rel="stylesheet" href="/widget-theme.css" />
+<style>
+  /* Hauling optimiser: what order to fly the accepted contracts, and where the boxes go on the
+     ship. Data comes from /api/hauling/plan (see src/hauling-plan.ts), driven by the /hauling/events
+     SSE channel. Theme tokens come from the shared /widget-theme.css. */
+  * { box-sizing: border-box; }
+  * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb), 0.28) transparent; }
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
+
+  #panel {
+    display: flex; flex-direction: column;
+    width: 420px; height: 560px; margin: 20px auto;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    position: relative;
+  }
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  body.embedded { overflow: visible; background: transparent; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+
+  .head { min-height: 40px; }
+  .hbtn { font-family: var(--sans); font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.14); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 7px; cursor: pointer; white-space: nowrap; }
+  .hbtn:hover { background: rgba(var(--accent-rgb), 0.24); border-color: var(--cyan); }
+  .hbtn.on { background: rgba(var(--accent-rgb), 0.3); border-color: var(--cyan); }
+  .tabs { display: flex; gap: 4px; margin-left: auto; }
+
+  /* ── The ship, and how much of it is used ─────────────────────────────────
+     The capacity bar is per GRID, not one pool: a C2 is 8x15x4 plus 6x9x4, and a box that fits
+     the first may not fit the second. Segments are sized by each grid's share of the hull. */
+  .summary { flex: none; padding: 8px 12px 9px; border-bottom: 1px solid var(--divider);
+    position: relative; z-index: 4; }
+  .shiprow { display: flex; align-items: center; gap: 6px; }
+  #shipPick { flex: 1; min-width: 0; font-family: var(--sans); font-size: 11px; color: var(--cyan-bright);
+    background: var(--menu-bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; }
+  .src { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--faint); }
+  .caps { display: flex; gap: 3px; margin-top: 7px; height: 13px; }
+  .cap { position: relative; border-radius: 4px; background: rgba(0, 0, 0, 0.34);
+    border: 1px solid var(--divider); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45); overflow: hidden; }
+  .cap i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--cyan), var(--gold)); }
+  .cap.over i { background: var(--red); }
+  .cap b { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--mono);
+    font-size: 8.5px; font-weight: 700; color: var(--cyan-text); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9); }
+  .facts { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px;
+    font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); }
+  .facts .v { color: var(--gold); font-weight: 600; }
+  .facts .bad { color: var(--red); }
+
+  /* ── 🔴 The track prompt ──────────────────────────────────────────────────
+     Deliberately the loudest thing on the panel. 57% of contracts in the shipped data give a SCU
+     RANGE rather than a number, and the only thing that pins the real figure is the game's own
+     Deliver line — which it emits ONLY for a contract tracked in mobiGlas. So this is not a hint,
+     it is the step that makes the rest of the widget true. */
+  .track { flex: none; border-bottom: 1px solid var(--divider); position: relative; z-index: 4;
+    background: rgba(var(--value-rgb), 0.07); }
+  .track .th { display: flex; align-items: baseline; gap: 6px; padding: 8px 12px 3px; }
+  .track .th .k { font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--gold); }
+  .track .th .n { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); }
+  .track .why { padding: 0 12px 6px; font-size: 10px; line-height: 1.5; color: var(--cyan-dim); }
+  .track .list { max-height: 132px; overflow-y: auto; }
+  .trow { display: flex; align-items: center; gap: 7px; padding: 4px 12px; }
+  .trow .t { flex: 1; min-width: 0; font-size: 11px; color: var(--cyan-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trow .rng { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--gold); }
+  .trow input { width: 52px; font-family: var(--mono); font-size: 10.5px; text-align: right;
+    color: var(--cyan-bright); background: var(--menu-bg); border: 1px solid var(--divider);
+    border-radius: 5px; padding: 2px 4px; }
+  .trow input:focus { outline: none; border-color: var(--cyan); }
+
+  #body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; z-index: 4; }
+  .sec { display: flex; align-items: baseline; gap: 6px; padding: 9px 12px 5px;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+  .sec .n { font-weight: 500; letter-spacing: 0.04em; text-transform: none; font-family: var(--mono); }
+  .empty { padding: 26px 16px; text-align: center; color: var(--faint); font-size: 12px; line-height: 1.7; }
+  .note { padding: 5px 12px; font-size: 10px; line-height: 1.5; color: var(--amber); }
+
+  /* ── Route ───────────────────────────────────────────────────────────────── */
+  .stop { display: flex; gap: 8px; padding: 6px 12px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  .stop .num { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px;
+    font-family: var(--mono); font-size: 10px; font-weight: 700; border: 1px solid var(--divider);
+    color: var(--cyan-dim); background: rgba(0, 0, 0, 0.22); }
+  .stop.pickup .num { border-color: var(--cyan); color: var(--cyan-bright); }
+  .stop.dropoff .num { border-color: var(--gold); color: var(--gold); }
+  .stop.same .num { border-style: dashed; }
+  .stop .mid { flex: 1; min-width: 0; }
+  .stop .nm { font-size: 12px; font-weight: 600; color: var(--cyan-bright);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stop .acts { font-size: 10px; color: var(--cyan-dim); line-height: 1.5; margin-top: 1px; }
+  .stop .acts .c { color: var(--cyan-text); }
+  .stop .rt { flex: none; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  .stop .rt .ld { color: var(--gold); }
+
+  /* ── Contract cards ──────────────────────────────────────────────────────── */
+  .card { padding: 6px 12px 7px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  .card.done { opacity: 0.6; }
+  .card .top { display: flex; align-items: baseline; gap: 6px; }
+  .card .t { flex: 1; min-width: 0; font-size: 11.5px; color: var(--cyan-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .amt { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--gold); }
+  .card .sub { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px;
+    font-size: 9.5px; color: var(--faint); }
+  .card .chips { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); margin-top: 2px; }
+  /* The provenance badge. Every load figure carries one — a number with no badge would be a
+     claim this widget cannot make. */
+  .badge { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    border-radius: 4px; padding: 1px 4px; border: 1px solid var(--divider); color: var(--faint); }
+  .badge.manifest, .badge.log { color: var(--green); border-color: rgba(46, 230, 160, 0.4); }
+  .badge.pinned { color: var(--cyan-bright); border-color: var(--border); }
+  .badge.dataset { color: var(--cyan-dim); }
+  .badge.range { color: var(--gold); border-color: rgba(var(--value-rgb), 0.45); }
+  .badge.unknown { color: var(--red); border-color: rgba(255, 132, 120, 0.4); }
+  .tick { flex: none; font-size: 10px; color: var(--green); }
+
+  /* ── Layout ──────────────────────────────────────────────────────────────── */
+  /* A top-down cell map per grid LEVEL. One cell = 1.25 m = 1 SCU, so the drawing is to scale and
+     the cell count IS the SCU rating. Height never exceeds 2 cells anywhere in the game, so a
+     4-cell-high grid is exactly two levels — not an arbitrary slicing. */
+  .gridwrap { padding: 4px 12px 10px; }
+  .glabel { display: flex; align-items: baseline; gap: 6px; font-size: 9.5px; color: var(--faint);
+    font-family: var(--mono); margin: 6px 0 3px; }
+  .glabel .gn { font-family: var(--sans); font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--cyan-dim); font-size: 9px; }
+  .gmap { position: relative; display: grid; gap: 1px; padding: 2px; width: max-content;
+    background: rgba(0, 0, 0, 0.3); border: 1px solid var(--divider); border-radius: 5px; }
+  .gcell { background: rgba(var(--accent-rgb), 0.05); border-radius: 1px; }
+  .gbox { border-radius: 2px; display: grid; place-items: center; overflow: hidden;
+    font-family: var(--mono); font-size: 9px; font-weight: 700; color: #04121a;
+    border: 1px solid rgba(0, 0, 0, 0.45); }
+  .legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 7px; font-size: 9.5px; color: var(--cyan-dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+</style>
+</head>
+<body>
+  <div id="panel" class="wpanel">
+    <div class="head">
+      <span class="dia"></span>
+      <span class="h-title">Hauling</span>
+      <span class="tabs">
+        <button id="tabRoute" class="hbtn on" type="button" title="What order to fly the stops">Route</button>
+        <button id="tabLayout" class="hbtn" type="button" title="Where to put the boxes on your ship">Layout</button>
+      </span>
+    </div>
+
+    <div class="summary">
+      <div class="shiprow">
+        <select id="shipPick" title="The ship you are flying. The log names it when it can; pick it here when it cannot."></select>
+        <span class="src" id="shipSrc"></span>
+      </div>
+      <div class="caps" id="caps"></div>
+      <div class="facts" id="facts"></div>
+    </div>
+
+    <div class="track" id="track" style="display:none">
+      <div class="th"><span class="k">Track these in mobiGlas</span><span class="n" id="trackN"></span></div>
+      <div class="why">The game only writes a contract's real tonnage to the log once you TRACK it.
+        Until then all we have is the dataset's range — or type the figure in yourself.</div>
+      <div class="list" id="trackList"></div>
+    </div>
+
+    <div id="body"><div class="empty" id="emptyState">Waiting for a hauling contract…</div></div>
+
+    <div id="wsettings" class="wsettings">
+      <div class="ws-sec">Plan for</div>
+      <div class="ws-row">
+        <button id="objBtn" class="hbtn" type="button" title="Both order a trip by time. This only decides which contracts share a trip when the load needs splitting.">Fastest run</button>
+      </div>
+      <div class="ws-sec">Contracts</div>
+      <div class="ws-row">
+        <button id="doneBtn" class="hbtn" type="button" title="Show contracts that have already ended">Show finished</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const EMBEDDED = new URLSearchParams(location.search).has("embedded");
+  if (EMBEDDED) document.body.classList.add("embedded");
+  // Same-origin bridge to the parent canvas (present only when embedded on the overlay).
+  const host = () => (EMBEDDED && window.parent) ? window.parent.__haulingHost : null;
+
+  let plan = null;
+  let ships = [];
+  let view = "route";
+  let objective = "auec-per-hour";
+  let showDone = false;
+  let shipPick = "";          // "" = trust the log
+
+  /* 🔑 Pins are the player's own reading of a contract they have NOT tracked, so they must survive
+     the widget being closed — hiding a widget UNLOADS its iframe (see missions.html unloadFrame),
+     which would otherwise throw away typing the player did seconds ago. Keyed by missionId and
+     pruned to what is still live, so an old shard's contracts can never accumulate. */
+  const PIN_KEY = "sc-hauling-pins";
+  const readPins = () => { try { return JSON.parse(localStorage.getItem(PIN_KEY) || "{}"); } catch { return {}; } };
+  let pins = readPins();
+  function savePins() { try { localStorage.setItem(PIN_KEY, JSON.stringify(pins)); } catch { /* private mode */ } }
+  function prunePins(liveIds) {
+    let changed = false;
+    for (const id of Object.keys(pins)) if (!liveIds.has(id)) { delete pins[id]; changed = true; }
+    if (changed) savePins();
+  }
+
+  const num = (n) => Number(n || 0).toLocaleString();
+  function fmtMins(min) {
+    const m = Math.max(1, Math.round(min || 0));
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60), r = m % 60;
+    return r ? h + "h " + String(r).padStart(2, "0") + "m" : h + "h";
+  }
+  /** How a load figure is written. 🔴 A RANGE IS NEVER PRINTED AS A NUMBER — that is the whole
+   *  reason the plan tags every figure with a source. */
+  function fmtScu(c) {
+    if (c.scu == null) return "? SCU";
+    if (c.source === "range") return c.minScu + "–" + c.maxScu + " SCU";
+    return num(c.scu) + " SCU";
+  }
+  const BADGE = {
+    manifest: ["exact", "The game listed every box for this contract."],
+    log: ["tracked", "The tonnage came from the game's own objective line, because you tracked it."],
+    pinned: ["yours", "You typed this figure in."],
+    dataset: ["data", "The game files state one figure for this contract."],
+    range: ["range", "The game files only bound this contract. Track it in mobiGlas to pin the real load."],
+    unknown: ["unknown", "Neither the log nor the dataset says how much this contract carries."],
+  };
+
+  /** A stable colour per contract leg, so a box in the layout can be matched to its stop. */
+  function hueOf(group) {
+    let h = 0;
+    for (let i = 0; i < group.length; i++) h = (h * 31 + group.charCodeAt(i)) >>> 0;
+    return h % 360;
+  }
+  const colourOf = (group) => "hsl(" + hueOf(group) + " 62% 62%)";
+
+  // ── loading ───────────────────────────────────────────────────────────────
+  let pending = null;
+  function refresh() {
+    // Coalesce: an accept burst emits a dozen CreateMarker lines and therefore a dozen SSE
+    // pushes, and re-solving on each one is pure waste.
+    clearTimeout(pending);
+    pending = setTimeout(load, 120);
+  }
+  async function load() {
+    try {
+      const r = await fetch("/api/hauling/plan", {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ ship: shipPick, objective, pins }),
+      });
+      if (!r.ok) return;
+      plan = await r.json();
+      prunePins(new Set(plan.contracts.filter((c) => !c.ended).map((c) => c.missionId)));
+    } catch { /* sidecar down — keep the last good plan on screen */ }
+    render();
+  }
+
+  async function loadShips() {
+    try {
+      const r = await fetch("/api/ships?names=1", { cache: "no-store" });
+      if (r.ok) {
+        // 🔑 Dedupe by display name. The dataset carries every AI and event variant of a hull as
+        // its own class with the SAME name — four "Aegis Idris-P", five "RSI Apollo Triage" — and
+        // an unfiltered list is 155 rows most of which are decoys. The store emits the base class
+        // first, so keeping the first of each name keeps the hull you can actually fly.
+        const seen = new Set();
+        ships = ((await r.json()).ships || []).filter((s) => {
+          const k = (s.displayName || s.className).toLowerCase();
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
+    } catch { /* the picker just stays empty; the log's ship still works */ }
+    renderShipPicker();
+  }
+
+  /** The saved override, so a fresh widget opens on the hull the player last chose. */
+  async function loadConfig() {
+    try {
+      const r = await fetch("/api/config", { cache: "no-store" });
+      if (r.ok) shipPick = (await r.json()).haulingShip || "";
+    } catch { /* no sidecar config — the log's ship is the only source */ }
+  }
+  function saveShip(v) {
+    fetch("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ haulingShip: v }),
+    }).catch(() => { /* the pick still applies to this session */ });
+  }
+
+  // ── render ────────────────────────────────────────────────────────────────
+  function renderShipPicker() {
+    const el = $("shipPick");
+    el.textContent = "";
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "Auto — whatever the log sees";
+    el.appendChild(auto);
+    for (const s of ships) {
+      const o = document.createElement("option");
+      o.value = s.className;
+      o.textContent = (s.displayName || s.className) + "  ·  " + num(s.totalScu) + " SCU";
+      el.appendChild(o);
+    }
+    el.value = shipPick;
+  }
+
+  function renderSummary() {
+    const ship = plan && plan.ship;
+    $("shipPick").value = shipPick;
+    $("shipSrc").textContent = !ship ? "no ship" : ship.source === "manual" ? "your pick" : "from log";
+    $("shipSrc").title = !ship
+      ? "Nothing in the log named a ship, and nothing is picked."
+      : ship.source === "manual" ? "You chose this hull." : "The game's vehicle-control lines named this hull.";
+
+    const caps = $("caps");
+    caps.textContent = "";
+    if (ship) {
+      for (const g of ship.grids) {
+        const d = document.createElement("div");
+        d.className = "cap" + (g.usedScu > g.capacityScu ? " over" : "");
+        d.style.flex = g.capacityScu;
+        d.title = g.name + " — " + g.w + "x" + g.l + "x" + g.h + " cells, " + num(g.usedScu) + " of " + num(g.capacityScu) + " SCU";
+        const fill = document.createElement("i");
+        fill.style.width = Math.min(100, (g.usedScu / Math.max(1, g.capacityScu)) * 100) + "%";
+        const lbl = document.createElement("b");
+        lbl.textContent = num(g.usedScu) + " / " + num(g.capacityScu);
+        d.append(fill, lbl);
+        caps.appendChild(d);
+      }
+    }
+
+    const facts = $("facts");
+    facts.textContent = "";
+    if (!plan) return;
+    const t = plan.totals;
+    const bits = [];
+    bits.push(["to move", num(t.scu) + " SCU", false]);
+    if (plan.aboardScu > 0) bits.push(["aboard", num(plan.aboardScu) + " SCU", false]);
+    bits.push(["contracts", String(t.liveContracts), false]);
+    if (plan.trips.length) {
+      const landings = plan.trips.reduce((s, x) => s + x.landings, 0);
+      bits.push(["stops", String(landings), false]);
+      bits.push(["est. run", fmtMins(t.totalMinutes), false]);
+    }
+    if (plan.trips.length > 1) bits.push(["trips", String(plan.trips.length), true]);
+    if (plan.pack && !plan.pack.fits) bits.push(["won't fit", plan.pack.unplaced.length + " boxes", true]);
+    if (t.recentPayout) bits.push(["paid", num(t.recentPayout) + " aUEC", false]);
+    for (const [k, v, bad] of bits) {
+      const s = document.createElement("span");
+      s.textContent = k + " ";
+      const b = document.createElement("span");
+      b.className = "v" + (bad ? " bad" : "");
+      b.textContent = v;
+      s.appendChild(b);
+      facts.appendChild(s);
+    }
+  }
+
+  /** 🔴 The please-track list. It is a checklist, not a warning: each row names a contract whose
+   *  load the game has not told us, shows the bounds we do have, and offers a box to type the real
+   *  figure into. */
+  function renderTrack() {
+    const el = $("track");
+    const live = plan ? plan.contracts.filter((c) => !c.ended && (!c.tracked || c.source === "range" || c.source === "unknown")) : [];
+    if (!live.length) { el.style.display = "none"; return; }
+    el.style.display = "";
+    $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
+    const list = $("trackList");
+    list.textContent = "";
+    for (const c of live) {
+      const row = document.createElement("div");
+      row.className = "trow";
+      const t = document.createElement("div");
+      t.className = "t";
+      t.textContent = c.title || c.contractKey;
+      t.title = (c.giver ? c.giver + " · " : "") + (c.missionType || c.generator);
+      const rng = document.createElement("div");
+      rng.className = "rng";
+      rng.textContent = c.minScu != null && c.maxScu != null
+        ? (c.minScu === c.maxScu ? num(c.minScu) + " SCU" : c.minScu + "–" + c.maxScu + " SCU")
+        : "unknown";
+      rng.title = c.minScu != null
+        ? "What the game files allow for this contract. The real figure is somewhere in here."
+        : "The game files carry nothing for this contract key.";
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.min = "1"; inp.step = "1";
+      inp.placeholder = "SCU";
+      inp.title = "Type the SCU total from your mobiGlas to pin it.";
+      inp.value = pins[c.missionId] != null ? pins[c.missionId] : "";
+      // Editing takes the canvas keyboard grab; the shell suspends the interact key while it is on.
+      inp.addEventListener("focus", () => { try { host()?.editStart?.(); } catch { /* standalone */ } });
+      inp.addEventListener("blur", () => { try { host()?.editEnd?.(); } catch { /* standalone */ } });
+      inp.addEventListener("change", () => {
+        const v = parseInt(inp.value, 10);
+        if (Number.isFinite(v) && v > 0) pins[c.missionId] = v; else delete pins[c.missionId];
+        savePins();
+        load();
+      });
+      row.append(t, rng, inp);
+      list.appendChild(row);
+    }
+  }
+
+  function badge(source) {
+    const [label, why] = BADGE[source] || BADGE.unknown;
+    const b = document.createElement("span");
+    b.className = "badge " + source;
+    b.textContent = label;
+    b.title = why;
+    return b;
+  }
+
+  function renderRoute() {
+    const body = $("body");
+    body.textContent = "";
+    for (const n of plan.notes) {
+      const d = document.createElement("div"); d.className = "note"; d.textContent = n;
+      body.appendChild(d);
+    }
+    if (!plan.trips.length) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = plan.contracts.length
+        ? "Nothing left to fly — every accepted leg is delivered."
+        : "Accept a hauling contract and it shows up here.";
+      body.appendChild(d);
+    }
+    plan.trips.forEach((trip, ti) => {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      const h = document.createElement("span");
+      h.textContent = plan.trips.length > 1 ? "Trip " + (ti + 1) : "Route";
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = trip.landings + " stops · " + fmtMins(trip.totalMinutes) + " · peak " + num(trip.peakScu) + " SCU";
+      // The optimiser falls back to a heuristic past 14 visits — say so rather than imply optimal.
+      if (trip.method === "heuristic") n.textContent += " · approx.";
+      sec.append(h, n);
+      body.appendChild(sec);
+      trip.stops.forEach((s, i) => {
+        const row = document.createElement("div");
+        row.className = "stop " + s.kind + (s.sameSpot && i > 0 ? " same" : "");
+        const numEl = document.createElement("div");
+        numEl.className = "num";
+        numEl.textContent = s.kind === "pickup" ? "↑" : "↓";
+        numEl.title = s.kind === "pickup" ? "Load here" : "Unload here";
+        const mid = document.createElement("div");
+        mid.className = "mid";
+        const nm = document.createElement("div");
+        nm.className = "nm";
+        nm.textContent = (i + 1) + ". " + s.name;
+        if (s.sameSpot && i > 0) nm.textContent += "  (same landing)";
+        const acts = document.createElement("div");
+        acts.className = "acts";
+        for (const a of s.actions) {
+          const chip = document.createElement("span");
+          const dot = document.createElement("i");
+          dot.style.cssText = "display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px;background:" + colourOf(a.group);
+          chip.appendChild(dot);
+          const c = document.createElement("span");
+          c.className = "c";
+          // An untracked contract does not name its commodity, so the tonnage carries the row and
+          // the contract's title goes in the tooltip rather than swamping the line.
+          c.textContent = (a.commodity ? a.commodity + " " : "") + num(a.scu) + " SCU";
+          chip.title = a.title || "";
+          chip.appendChild(c);
+          acts.appendChild(chip);
+          acts.appendChild(document.createTextNode("   "));
+        }
+        const rt = document.createElement("div");
+        rt.className = "rt";
+        // A second visit to the place you are already standing costs nothing — showing "1m"
+        // (fmtMins floors at a minute) made a free stop look like a leg.
+        rt.textContent = s.sameSpot && i > 0 ? "—" : fmtMins(s.minutes);
+        const ld = document.createElement("div");
+        ld.className = "ld";
+        ld.textContent = num(s.loadAfterScu) + " SCU";
+        ld.title = "In the hold when you leave this stop.";
+        rt.appendChild(ld);
+        mid.append(nm, acts);
+        row.append(numEl, mid, rt);
+        body.appendChild(row);
+      });
+    });
+    if (plan.stranded.length) {
+      const d = document.createElement("div");
+      d.className = "note";
+      d.textContent = plan.stranded.length + " contract(s) will not fit this ship even on their own.";
+      body.appendChild(d);
+    }
+    /* 🔴 Legs that must be carried but could not be routed. Never folded away: a route that is
+       missing legs while presenting itself as THE route is the one failure that would make this
+       widget worse than no widget. */
+    if (plan.unrouted.length) {
+      const names = locNames();
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      const h = document.createElement("span"); h.textContent = "Not in the route";
+      const n = document.createElement("span"); n.className = "n"; n.textContent = plan.unrouted.length + " leg(s)";
+      sec.append(h, n);
+      body.appendChild(sec);
+      for (const u of plan.unrouted) {
+        const d = document.createElement("div");
+        d.className = "note";
+        const leg = legOf(u.group);
+        d.textContent = (u.destination || destOf(leg, names)) + " · " + num(u.scu) + " SCU — " + u.reason + ".";
+        body.appendChild(d);
+      }
+    }
+    renderContracts(body);
+  }
+
+  /** The board itself: what is accepted, how much it is, and how sure we are. */
+  function renderContracts(body) {
+    const list = plan.contracts.filter((c) => showDone || !c.ended);
+    if (!list.length) return;
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    const h = document.createElement("span"); h.textContent = "Contracts";
+    const n = document.createElement("span"); n.className = "n"; n.textContent = list.length + " on the board";
+    sec.append(h, n);
+    body.appendChild(sec);
+    for (const c of list) {
+      const card = document.createElement("div");
+      card.className = "card" + (c.ended ? " done" : "");
+      const top = document.createElement("div");
+      top.className = "top";
+      const t = document.createElement("div"); t.className = "t"; t.textContent = c.title || c.contractKey;
+      const amt = document.createElement("div"); amt.className = "amt"; amt.textContent = fmtScu(c);
+      top.append(t, amt, badge(c.source));
+      const sub = document.createElement("div");
+      sub.className = "sub";
+      const where = [];
+      if (c.giver) where.push(c.giver);
+      if (c.missionType) where.push(c.missionType);
+      const done = c.legs.filter((l) => l.dropoffState === "completed").length;
+      where.push(done + "/" + c.legs.length + " delivered");
+      if (c.ended) where.push(c.completion || "ended");
+      if (c.payout != null) where.push(num(c.payout) + " aUEC");
+      for (const w of where) { const s = document.createElement("span"); s.textContent = w; sub.appendChild(s); }
+      card.append(top, sub);
+      // Box chips per leg. ⚠️ A partitioned split is a MODEL of what the game will hand you, not a
+      // reading of it — the engine partitions server-side and logs nothing for SCU hauls.
+      for (const l of c.legs) {
+        if (!l.boxLabel && !l.boxCount) continue;
+        const chips = document.createElement("div");
+        chips.className = "chips";
+        const dot = document.createElement("i");
+        dot.style.cssText = "display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;background:" + colourOf(l.group);
+        chips.appendChild(dot);
+        const txt = document.createElement("span");
+        const parts = [];
+        if (l.destination) parts.push("→ " + l.destination);
+        if (l.commodity) parts.push(l.commodity);
+        parts.push(l.boxLabel || l.boxCount + " boxes");
+        if (l.maxContainerScu != null) parts.push("max " + l.maxContainerScu + " SCU/box" + (l.capSource === "assumed" ? "?" : ""));
+        txt.textContent = parts.join("  ·  ");
+        chips.appendChild(txt);
+        if (l.boxSource === "partition") {
+          chips.title = "Provisional: the game never logs the box split for a cargo haul, so this is the"
+            + " largest-box-first model against this contract's own container cap.";
+          const q = document.createElement("span");
+          q.className = "badge range"; q.textContent = "modelled"; q.style.marginLeft = "6px";
+          chips.appendChild(q);
+        } else if (l.boxSource === "manifest") {
+          chips.title = "Read from the log — the game enumerated every box for this contract.";
+        }
+        if (l.dropoffState === "completed") {
+          const tick = document.createElement("span"); tick.className = "tick"; tick.textContent = "  ✓";
+          chips.appendChild(tick);
+        }
+        card.appendChild(chips);
+      }
+      body.appendChild(card);
+    }
+  }
+
+  /** Top-down cell maps, one per grid LEVEL. See the CSS note — 2 cells is the hard height cap
+   *  everywhere in the game, so a 4-high grid is exactly two levels. */
+  function renderLayout() {
+    const body = $("body");
+    body.textContent = "";
+    if (!plan.ship || !plan.pack) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = "Pick the ship you are flying and the layout appears here.";
+      body.appendChild(d);
+      return;
+    }
+    if (!plan.pack.placements.length) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = "Nothing to load — no accepted contract has a known load yet.";
+      body.appendChild(d);
+      return;
+    }
+    const names = locNames();
+    const wrap = document.createElement("div");
+    wrap.className = "gridwrap";
+    // Sized to the panel so a wide grid still fits without a horizontal scrollbar.
+    const widest = Math.max(...plan.ship.grids.map((g) => g.w));
+    const cell = Math.max(9, Math.min(22, Math.floor((($("body").clientWidth || 400) - 40) / widest) - 1));
+    for (const g of plan.ship.grids) {
+      const here = plan.pack.placements.filter((p) => p.grid === g.name);
+      if (!here.length) continue;
+      const zs = [...new Set(here.map((p) => p.z))].sort((a, b) => a - b);
+      const floors = new Set(zs.map(floorOf)).size;
+      for (const z of zs) {
+        const lbl = document.createElement("div");
+        lbl.className = "glabel";
+        const gn = document.createElement("span"); gn.className = "gn";
+        gn.textContent = g.name.replace(/^hardpoint_/, "").replace(/_/g, " ");
+        const meta = document.createElement("span");
+        const onLevel = here.filter((p) => p.z === z);
+        meta.textContent = g.w + "x" + g.l + " · " + sliceLabel(z, zs.filter((v) => floorOf(v) === floorOf(z)), floors)
+          + " · " + onLevel.length + " boxes";
+        lbl.append(gn, meta);
+        wrap.appendChild(lbl);
+
+        const map = document.createElement("div");
+        map.className = "gmap";
+        map.style.gridTemplateColumns = "repeat(" + g.w + ", " + cell + "px)";
+        map.style.gridAutoRows = cell + "px";
+        // The empty floor first, so gaps read as space rather than as nothing.
+        for (let i = 0; i < g.w * g.l; i++) {
+          const c = document.createElement("div");
+          c.className = "gcell";
+          c.style.gridColumn = ((i % g.w) + 1) + " / span 1";
+          c.style.gridRow = (Math.floor(i / g.w) + 1) + " / span 1";
+          map.appendChild(c);
+        }
+        for (const p of onLevel) {
+          const b = document.createElement("div");
+          b.className = "gbox";
+          b.style.gridColumn = (p.x + 1) + " / span " + p.dx;
+          b.style.gridRow = (p.y + 1) + " / span " + p.dy;
+          b.style.background = colourOf(p.group || "");
+          b.textContent = p.dx * p.dy >= 4 ? String(p.scu) : "";
+          const leg = legOf(p.group);
+          b.title = p.scu + " SCU · " + cargoOf(leg) + " → " + destOf(leg, names);
+          map.appendChild(b);
+        }
+        wrap.appendChild(map);
+      }
+    }
+    // Which colour is which stop — without it the map is pretty and unreadable.
+    const legend = document.createElement("div");
+    legend.className = "legend";
+    const seen = new Set();
+    for (const p of plan.pack.placements) {
+      if (!p.group || seen.has(p.group)) continue;
+      seen.add(p.group);
+      const leg = legOf(p.group);
+      const s = document.createElement("span");
+      const i = document.createElement("i");
+      i.style.background = colourOf(p.group);
+      s.appendChild(i);
+      s.appendChild(document.createTextNode(cargoOf(leg) + " → " + destOf(leg, names)));
+      legend.appendChild(s);
+    }
+    wrap.appendChild(legend);
+    if (plan.pack.unplaced.length) {
+      const d = document.createElement("div");
+      d.className = "note";
+      d.textContent = plan.pack.unplaced.length + " boxes ("
+        + num(plan.pack.unplaced.reduce((s, u) => s + u.scu, 0)) + " SCU) do not fit — this is more than one trip.";
+      wrap.appendChild(d);
+    }
+    body.appendChild(wrap);
+  }
+
+  /** Find the leg a packed box belongs to, for its label. */
+  function legOf(group) {
+    if (!group || !plan) return null;
+    for (const c of plan.contracts) for (const l of c.legs) if (l.group === group) return l;
+    return null;
+  }
+  /** locationId -> the name the plan settled on, so the route, the layout legend and the unrouted
+   *  list all call a place the same thing — including places the route deliberately never visits. */
+  const locNames = () => (plan && plan.locationNames) || {};
+  /** Where a leg is going, in the same words the route uses. */
+  function destOf(leg, names) {
+    if (!leg) return "drop-off";
+    return leg.destination || names[leg.toLocation] || "drop-off";
+  }
+  /** What a leg is carrying. Untracked contracts do not name their commodity, so fall back to the
+   *  tonnage rather than printing "cargo" five times in a row. */
+  const cargoOf = (leg) => leg && leg.commodity ? leg.commodity : leg && leg.scu != null ? num(leg.scu) + " SCU" : "cargo";
+
+  /* 🔑 A "floor" is a 2-cell height band, which is not an arbitrary slicing: every cargo grid in
+     the game caps box height at 2 cells (maxPermittedItemSize.z = 2.5 m), so nothing ever stands
+     taller and a 4-high grid is exactly two floors. Each floor can hold two layers of flat boxes,
+     and they are drawn separately because you physically stack one on the other. */
+  const floorOf = (z) => Math.floor(z / 2);
+  function sliceLabel(z, zsOnFloor, floors) {
+    const f = floorOf(z) + 1;
+    const base = floors > 1 ? "floor " + f + " of " + floors : "floor " + f;
+    return zsOnFloor.length > 1 ? base + " · " + (z % 2 ? "upper" : "lower") : base;
+  }
+
+  function render() {
+    $("tabRoute").classList.toggle("on", view === "route");
+    $("tabLayout").classList.toggle("on", view === "layout");
+    $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
+    $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
+    $("doneBtn").classList.toggle("on", showDone);
+    if (!plan) return;
+    renderSummary();
+    renderTrack();
+    if (view === "layout") renderLayout(); else renderRoute();
+  }
+
+  // ── wiring ────────────────────────────────────────────────────────────────
+  $("tabRoute").addEventListener("click", () => { view = "route"; render(); });
+  $("tabLayout").addEventListener("click", () => { view = "layout"; render(); });
+  $("objBtn").addEventListener("click", () => {
+    objective = objective === "fewest-stops" ? "auec-per-hour" : "fewest-stops";
+    load();
+  });
+  $("doneBtn").addEventListener("click", () => { showDone = !showDone; render(); });
+  $("shipPick").addEventListener("change", () => {
+    shipPick = $("shipPick").value;
+    saveShip(shipPick);
+    load();
+  });
+  // A resize changes how big a cell can be, so the map has to be re-laid out.
+  window.addEventListener("resize", () => { if (view === "layout" && plan) renderLayout(); });
+  // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
+  document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
+
+  /* Live contract state. The SSE channel is a CHANGE SIGNAL, not the payload — the plan is
+     re-solved server-side on every push because it depends on the player's overrides too. */
+  let es = null;
+  function connect() {
+    try { es?.close(); } catch { /* already gone */ }
+    es = new EventSource("/hauling/events");
+    es.onmessage = () => refresh();
+    // EventSource retries on its own, but a sidecar restart can leave a dead stream — re-arm.
+    es.onerror = () => { try { es.close(); } catch { /* ignore */ } setTimeout(connect, 4000); };
+  }
+
+  (async () => {
+    await loadConfig();
+    await loadShips();
+    await load();
+    connect();
+  })();
+
+  try { host()?.ready?.(); } catch { /* not embedded */ }
+  // Per-widget settings, opened by the bar's cog. The parent injects its Text size row here too.
+  window.__widgetSettings = () => $("wsettings").classList.add("open");
+  window.__widgetSettingsRoot = () => $("wsettings");
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#wsettings")) $("wsettings").classList.remove("open");
+  });
+  /* 🔴 Hiding the widget mid-edit would strand the canvas-wide keyboard grab: the panel goes away,
+     the interact key stays suspended, and every click on every display stops reaching the game with
+     nothing on screen to explain it. Same rule as notepad/party/chat. */
+  window.__haulingExitTyping = () => {
+    try { document.activeElement?.blur?.(); } catch { /* nothing focused */ }
+    try { host()?.editEnd?.(); } catch { /* not embedded */ }
+  };
+  window.__haulingFocus = () => { try { $("trackList").querySelector("input")?.focus(); } catch { /* none */ } };
+</script>
+</body>
+</html>

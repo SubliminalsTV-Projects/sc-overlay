@@ -16,6 +16,7 @@ import { HaulingTracker } from "./hauling.js";
 import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
+import { buildHaulingPlan } from "./hauling-plan.js";
 import { MissionFeedbackStore } from "./mission-feedback.js";
 import { FabClaims } from "./fab-claim.js";
 import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLines } from "./dev-replay.js";
@@ -199,6 +200,12 @@ interface Config {
   partyOpen: boolean;
   /** Remembers whether the Battaglia grind widget was left open, so it's restored on launch. */
   battagliaOpen: boolean;
+  /** Remembers whether the Hauling widget was left open, so it's restored on launch. */
+  haulingOpen: boolean;
+  /** Ship class the player picked in the Hauling widget, overriding what the log saw. Empty =
+   *  trust the log. Persisted because the log's ship signal is not guaranteed — a relog, or
+   *  taking off in a ship the vehicle-control lines never named, leaves it blank. */
+  haulingShip: string;
   /** Remembers whether the Web Page widget was left open, so it's restored on launch. */
   webViewOpen: boolean;
   /** URL shown by the Web Page widget (http/https only). Empty = it shows its address picker. */
@@ -393,6 +400,8 @@ const DEFAULTS: Config = {
   scFeedTone: "",
   partyOpen: false,
   battagliaOpen: false,
+  haulingOpen: false,
+  haulingShip: "",
   webViewOpen: false,
   // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
   // it's the page most likely to be wanted beside the game, and it shows what the widget does.
@@ -2598,6 +2607,29 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.end(JSON.stringify({ ok: true, ...hauling.view() }));
     return;
   }
+  // The solved plan: route order, box layout, and every load figure tagged with where it came
+  // from. Computed HERE rather than in the widget because the solver and the datasets are both
+  // server-side — the page only draws what this returns.
+  //
+  // 🔑 It takes the player's OVERRIDES (ship, objective, pinned tonnages), so it cannot ride on
+  // the SSE payload. The widget re-POSTs on every state change, which at this size is trivial.
+  if (url === "/api/hauling/plan" && (req.method === "GET" || req.method === "POST")) {
+    const body = req.method === "POST" ? ((await readBody(req)) as Record<string, unknown>) : {};
+    const pins: Record<string, number> = {};
+    for (const [id, v] of Object.entries((body.pins ?? {}) as Record<string, unknown>)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) pins[id] = Math.round(n);
+    }
+    const plan = buildHaulingPlan(hauling.view(), haulingData, {
+      // An absent `ship` falls back to the saved pick; an explicit "" clears it back to the log.
+      ship: typeof body.ship === "string" ? body.ship : config.haulingShip,
+      objective: body.objective === "fewest-stops" ? "fewest-stops" : "auec-per-hour",
+      pins,
+    });
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, ...plan }));
+    return;
+  }
 
   // Mining Assistant: live state stream + snapshot + controls.
   if (url === "/mining/events") {
@@ -2961,6 +2993,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.scFeedTone === "string") config.scFeedTone = body.scFeedTone;
     if (typeof body.partyOpen === "boolean") config.partyOpen = body.partyOpen;
     if (typeof body.battagliaOpen === "boolean") config.battagliaOpen = body.battagliaOpen;
+    if (typeof body.haulingOpen === "boolean") config.haulingOpen = body.haulingOpen;
+    if (typeof body.haulingShip === "string") config.haulingShip = body.haulingShip.trim();
     if (typeof body.webViewOpen === "boolean") config.webViewOpen = body.webViewOpen;
     // http/https only — this string ends up as an iframe src.
     if (typeof body.webViewUrl === "string") {

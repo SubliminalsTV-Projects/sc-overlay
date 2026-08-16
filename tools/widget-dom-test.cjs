@@ -57,10 +57,10 @@ const GROUPING = `(async () => {
     saveWidget: (id, l) => saved.push([id, JSON.parse(JSON.stringify(l))]),
   });
 
-  // 11 = the 9 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
+  // 13 = the 11 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
   // Bump this deliberately when a widget is added — it is the one assertion that notices a
   // registry entry going missing, which would otherwise just look like a widget quietly absent.
-  ok("registry has 12 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 12, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
+  ok("registry has 13 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 13, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
   ok("starts ungrouped", GROUPS.length === 0, GROUPS.length);
   const party = WBY.party, mining = WBY.mining, notepad = WBY.notepad;
   ok("test widgets shown", shown(party) && shown(mining) && shown(notepad));
@@ -4395,6 +4395,146 @@ async function writeScanRegion(region) {
   } catch { /* the sidecar went away; nothing we can do from here */ }
 }
 
+// 🔴 The Hauling widget's honesty rules, which are the reason it exists.
+//
+// 57% of the orders in the shipped dataset give an SCU RANGE rather than a number, and the only
+// thing that pins the real figure is the game's `Deliver 0/N SCU` line — which it emits ONLY for a
+// contract the player has TRACKED in mobiGlas. So the two failures that would make this widget
+// worse than nothing are printing a range as if it were a number, and quietly leaving a leg out of
+// a route that still presents itself as the route. Both are asserted here.
+//
+// Driven by ASSIGNING the page's own `plan` binding rather than by seeding the sidecar: these are
+// rendering rules, and a fabricated plan makes them deterministic on any machine, with or without
+// a game running. (`plan` is a top-level `let` in a classic script, so it is reachable by name.)
+const HAULING = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500); // let the page's own first load settle before overwriting it
+
+  ok("the ship picker is populated from ships.json", document.getElementById("shipPick").options.length > 20,
+     document.getElementById("shipPick").options.length);
+  ok("...and offers the log as the default", document.getElementById("shipPick").options[0].value === "");
+
+  const leg = (group, over) => Object.assign({
+    key: "k", index: 0, group, commodity: null, destination: null, unit: "scu",
+    scu: 56, min: 40, max: 56, source: "range", exact: false, maxContainerScu: 8, capSource: "dataset",
+    boxes: [{ scu: 8, count: 7 }], boxLabel: "7x8", boxCount: 7, boxSource: "partition",
+    pickupState: "pending", dropoffState: "pending", delivered: null,
+    fromLocation: "@1,1,1", toLocation: "@2,2,2",
+  }, over || {});
+
+  plan = {
+    updatedAt: Date.now(),
+    ship: { className: "CRUS_Starlifter_C2", displayName: "Crusader C2 Hercules Starlifter", totalScu: 696,
+      source: "log",
+      grids: [{ name: "hardpoint_cargo_large", w: 8, l: 15, h: 4, capacityScu: 480, usedScu: 24 },
+              { name: "hardpoint_cargo_small", w: 6, l: 9, h: 4, capacityScu: 216, usedScu: 0 }] },
+    contracts: [
+      { missionId: "m-tracked", title: "Tracked Haul", contractKey: "K1", generator: "Covalex_Hauling",
+        giver: "Covalex", missionType: "Hauling - Planetary", tracked: true, ended: false, completion: null,
+        payout: null, scu: 81, minScu: 81, maxScu: 81, source: "log", exact: true, plannable: true,
+        legs: [leg("g-tracked", { scu: 81, min: 81, max: 81, source: "log", exact: true,
+          commodity: "Stims", destination: "Baijini Point", boxes: [{ scu: 8, count: 10 }, { scu: 1, count: 1 }],
+          boxLabel: "10x8 · 1x1", boxCount: 11 })] },
+      { missionId: "m-range", title: "Untracked Haul", contractKey: "K2", generator: "Covalex_Hauling",
+        giver: "Covalex", missionType: "Hauling - Planetary", tracked: false, ended: false, completion: null,
+        payout: null, scu: 56, minScu: 40, maxScu: 56, source: "range", exact: false, plannable: true,
+        legs: [leg("g-range")] },
+      { missionId: "m-orphan", title: "Orphan Haul", contractKey: "K3", generator: "Covalex_Hauling",
+        giver: "Covalex", missionType: "Hauling - Planetary", tracked: true, ended: false, completion: null,
+        payout: null, scu: 16, minScu: 16, maxScu: 16, source: "log", exact: true, plannable: true,
+        legs: [leg("g-orphan", { scu: 16, min: 16, max: 16, source: "log", exact: true,
+          commodity: "Waste", destination: "Riker Memorial Spaceport", fromLocation: null,
+          boxes: [{ scu: 8, count: 2 }], boxLabel: "2x8", boxCount: 2 })] },
+    ],
+    untracked: [{ missionId: "m-range", title: "Untracked Haul", minScu: 40, maxScu: 56 }],
+    trips: [{ landings: 2, totalMinutes: 12, peakScu: 137, method: "exact", stops: [
+      { id: "@1,1,1:pickup", name: "Baijini Point", kind: "pickup", minutes: 4, loadAfterScu: 137, sameSpot: false,
+        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" },
+                  { missionId: "m-range", title: "Untracked Haul", commodity: null, scu: 56, group: "g-range" }] },
+      { id: "@1,1,1:dropoff", name: "Baijini Point", kind: "dropoff", minutes: 0, loadAfterScu: 0, sameSpot: true,
+        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" }] },
+    ] }],
+    stranded: [],
+    locationNames: { "@1,1,1": "Baijini Point", "@2,2,2": "Site 1" },
+    unrouted: [{ group: "g-orphan", missionId: "m-orphan", title: "Orphan Haul", scu: 16,
+      destination: "Riker Memorial Spaceport", toLocation: "@2,2,2",
+      reason: "the log carries no pickup marker for this leg" }],
+    pack: { fits: true, loadedScu: 24, capacityScu: 696, unplaced: [], byGrid: [],
+      placements: [
+        { grid: "hardpoint_cargo_large", item: "a", group: "g-tracked", scu: 8, x: 0, y: 0, z: 0, dx: 2, dy: 2, dz: 2 },
+        { grid: "hardpoint_cargo_large", item: "b", group: "g-range", scu: 8, x: 2, y: 0, z: 0, dx: 2, dy: 2, dz: 2 },
+        { grid: "hardpoint_cargo_large", item: "c", group: "g-range", scu: 8, x: 0, y: 2, z: 2, dx: 2, dy: 2, dz: 2 },
+      ] },
+    aboardScu: 0,
+    totals: { scu: 153, capacityScu: 696, liveContracts: 3, unknownContracts: 0, recentPayout: 0, totalMinutes: 12 },
+    notes: ["1 contract planned at the TOP of the dataset's range."],
+  };
+  render();
+  await sleep(60);
+
+  // ── 🔴 a range is never printed as a number ──────────────────────────────
+  const cards = [...document.querySelectorAll(".card")];
+  const byTitle = (t) => cards.find((c) => c.querySelector(".t").textContent === t);
+  ok("three contracts on the board", cards.length === 3, cards.length);
+  ok("🔴 a RANGED contract prints both ends, never the worst case alone",
+     byTitle("Untracked Haul").querySelector(".amt").textContent === "40–56 SCU",
+     byTitle("Untracked Haul").querySelector(".amt").textContent);
+  ok("...and says where that came from", byTitle("Untracked Haul").querySelector(".badge").textContent === "range");
+  ok("a TRACKED contract prints the game's own figure",
+     byTitle("Tracked Haul").querySelector(".amt").textContent === "81 SCU",
+     byTitle("Tracked Haul").querySelector(".amt").textContent);
+  ok("...badged as coming from the log", byTitle("Tracked Haul").querySelector(".badge").textContent === "tracked");
+  ok("every contract carries a provenance badge", cards.every((c) => c.querySelector(".badge")));
+  ok("a modelled box split is labelled modelled",
+     [...byTitle("Tracked Haul").querySelectorAll(".chips .badge")].some((b) => b.textContent === "modelled"));
+
+  // ── 🔴 the please-track prompt ───────────────────────────────────────────
+  const track = document.getElementById("track");
+  const rows = [...document.querySelectorAll(".trow")];
+  ok("the track prompt is up while anything is unpinned", track.style.display !== "none");
+  ok("...listing only what is not pinned", rows.length === 1 && /Untracked Haul/.test(rows[0].textContent),
+     rows.map((r) => r.textContent).join(" | "));
+  ok("...showing the bounds we do have", /40–56 SCU/.test(rows[0].textContent), rows[0].textContent);
+  ok("...with somewhere to type the real figure", !!rows[0].querySelector("input"));
+
+  // ── 🔴 nothing is dropped from the route in silence ──────────────────────
+  const notes = [...document.querySelectorAll(".note")].map((n) => n.textContent).join(" | ");
+  ok("🔴 an unroutable leg is reported, not omitted",
+     /Riker Memorial Spaceport/.test(notes) && /no pickup marker/.test(notes), notes);
+
+  // ── the route ────────────────────────────────────────────────────────────
+  const stops = [...document.querySelectorAll(".stop")];
+  ok("both visits are drawn", stops.length === 2, stops.length);
+  ok("a second visit to the same place is marked as one landing", /same landing/.test(stops[1].textContent));
+  ok("...and is not charged a minute it does not cost",
+     stops[1].querySelector(".rt").textContent.startsWith("—"),
+     stops[1].querySelector(".rt").textContent);
+
+  // ── the layout ───────────────────────────────────────────────────────────
+  document.getElementById("tabLayout").click();
+  await sleep(80);
+  const maps = [...document.querySelectorAll(".gmap")];
+  ok("one map per occupied floor of the loaded grid", maps.length === 2, maps.length);
+  ok("the map is drawn to the grid's real size (8x15 cells)",
+     maps[0].querySelectorAll(".gcell").length === 120, maps[0].querySelectorAll(".gcell").length);
+  ok("every placement is drawn", document.querySelectorAll(".gbox").length === 3,
+     document.querySelectorAll(".gbox").length);
+  ok("a box sits where the packer put it",
+     getComputedStyle(maps[0].querySelectorAll(".gbox")[1]).gridColumnStart === "3",
+     getComputedStyle(maps[0].querySelectorAll(".gbox")[1]).gridColumnStart);
+  ok("the empty grid is not drawn at all", !document.body.textContent.includes("cargo small"));
+  const body = document.getElementById("body");
+  ok("the map never scrolls the panel sideways", body.scrollWidth <= body.clientWidth,
+     body.scrollWidth + " vs " + body.clientWidth);
+  ok("the legend says which colour is which drop", document.querySelectorAll(".legend span").length === 2,
+     document.querySelectorAll(".legend span").length);
+
+  return out;
+})()`;
+
+
 app.whenReady().then(async () => {
   let fails = 0;
   const region0 = await readScanRegion();
@@ -4451,6 +4591,7 @@ app.whenReady().then(async () => {
     fails += await run("chrome over the native view", VIEWMASK, null);
     fails += await run("mining call-outs by verdict", MININGSAY, null, null, "mining.html");
     fails += await run("chat links + slash menu", CHATLINKS, null, null, "chat.html");
+    fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");
     fails += await run("completion card holds while you use it", REPORTHOLD, null);
   } catch (e) {
     // The message alone ("Cannot read properties of null") doesn't say WHICH suite or line, and
