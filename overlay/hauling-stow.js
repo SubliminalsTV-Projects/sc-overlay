@@ -45,8 +45,14 @@
   const KX = Math.cos(Math.PI / 6);   // 0.8660…
   const KY = Math.sin(Math.PI / 6);   // 0.5
 
-  /** Cell coordinate -> screen point, in cell units. +x goes right-and-down, +y left-and-down,
-   *  +z straight up. The near corner of a grid is therefore (w, l, 0). */
+  /**
+   * Cell coordinate -> screen point, in cell units. +x goes right-and-down, +y left-and-down,
+   * +z straight up, so the near corner of the drawing is (w, y_max, 0).
+   *
+   * ⚠️ The two screen axes must not be parallel, which rules out the obvious way to turn the hold
+   * around: negating y here makes the x and y basis vectors anti-parallel and the whole drawing
+   * collapses to a flat ribbon. `iso()` mirrors the COORDINATES instead — see `flip` there.
+   */
   function project(x, y, z) {
     return [(x - y) * KX, (x + y) * KY - z];
   }
@@ -378,8 +384,17 @@
       return el;
     };
 
-    // The two FAR walls (the x=0 and y=0 planes) plus the floor: an open box seen from its near
-    // corner. Without them a stack of boxes floats in nothing and the grid's real size is invisible.
+    /* 🔴 THE CAMERA STANDS AT THE RAMP. `y = 0` is the grid entrance — the packer lays the first
+       drop-off's boxes there so they come off first — so y=0 must be the edge NEAREST the viewer.
+       The projection puts high y nearest, so the hold is mirrored end-for-end on the way in: a
+       box spanning [y, y+dy] is drawn at [l-y-dy, l-y]. Drawn from the other end the picture is a
+       mirror of the hold the player is about to walk into, which is worse than no picture — it
+       would put the boxes they unload first at the back. */
+    const flip = (y, d) => l - y - (d || 0);
+
+    // The two FAR walls (the back of the hold, seen from the entrance) plus the floor: an open box
+    // seen from the ramp. Without them a stack of boxes floats in nothing and the grid's real size
+    // is invisible.
     poly([pt(0, 0, 0), pt(w, 0, 0), pt(w, l, 0), pt(0, l, 0)].join(" "), "iso-floor");
     poly([pt(0, 0, 0), pt(w, 0, 0), pt(w, 0, h), pt(0, 0, h)].join(" "), "iso-wall");
     poly([pt(0, 0, 0), pt(0, l, 0), pt(0, l, h), pt(0, 0, h)].join(" "), "iso-wall iso-wall-b");
@@ -393,8 +408,12 @@
       line([0, 0, z], [0, l, z], "iso-rule");
     }
 
+    /* Painter's algorithm, in MIRRORED space: the viewer is along (+x, +y', +z), so the away-most
+       corner is the min corner and ascending `x + y' + z` puts the back of the hold down first.
+       Exact for the axis-aligned, non-overlapping, grid-snapped boxes this packer emits. */
+    const depthKey = (b) => b.x + flip(b.y, b.dy) + b.z;
     const order = boxes.slice().sort((a, b) =>
-      (a.x + a.y + a.z) - (b.x + b.y + b.z) || a.z - b.z || a.y - b.y || a.x - b.x);
+      depthKey(a) - depthKey(b) || a.z - b.z || flip(a.y, a.dy) - flip(b.y, b.dy) || a.x - b.x);
 
     for (const b of order) {
       const ghost = !!(opts.focus && b.missionId !== opts.focus);
@@ -405,9 +424,12 @@
       g.setAttribute("data-mission", b.missionId || "");
       g.setAttribute("data-group", b.group || "");
       svg.appendChild(g);
-      const x0 = b.x, y0 = b.y, z0 = b.z, x1 = b.x + b.dx, y1 = b.y + b.dy, z1 = b.z + b.dz;
+      // y0/y1 are in MIRRORED space, so y1 is the box's ramp-facing side.
+      const x0 = b.x, z0 = b.z, x1 = b.x + b.dx, z1 = b.z + b.dz;
+      const y0 = flip(b.y, b.dy), y1 = flip(b.y);
+      // The two walls that face the ramp — the near wall (falling away to the lower left) and the
+      // right-hand wall (x = x1) — then the lit top.
       const faces = [
-        // left wall (+y, falls away to the lower-left), right wall (+x), then the lit top
         [[pt(x0, y1, z0), pt(x1, y1, z0), pt(x1, y1, z1), pt(x0, y1, z1)].join(" "), FACE.left],
         [[pt(x1, y0, z0), pt(x1, y1, z0), pt(x1, y1, z1), pt(x1, y0, z1)].join(" "), FACE.right],
         [[pt(x0, y0, z1), pt(x1, y0, z1), pt(x1, y1, z1), pt(x0, y1, z1)].join(" "), FACE.top],
@@ -421,7 +443,7 @@
       }
       // The SCU figure, on the top face, only where it will actually fit.
       if (b.dx * b.dy >= 4 && !ghost) {
-        const c = project(x0 + b.dx / 2, y0 + b.dy / 2, z1);
+        const c = project(x0 + b.dx / 2, y0 + b.dy / 2, z1);   // y0 is already mirrored
         const t = document.createElementNS(NS, "text");
         t.setAttribute("x", c[0]); t.setAttribute("y", c[1]);
         t.setAttribute("class", "iso-num");
