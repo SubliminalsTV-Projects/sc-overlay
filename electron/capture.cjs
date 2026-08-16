@@ -286,13 +286,15 @@ function hasRender(image) {
 // brightness, because the reference it was being compared against was never its own colour to
 // begin with. And the colour still can't be hardcoded — it demonstrably varies ship to ship.
 //
-// The invariant that actually holds: THE PIN IS THE ONLY COLOURFUL THING IN THIS BOX. Measured off
-// that same real capture — the translucent pill background and the (apparently always neutral)
-// number text both sit under 0.1 saturation; real pin ink measured 0.3–0.7 regardless of its hue.
-// So instead of matching a specific colour, ask whether a pixel is colourful AT ALL (its
-// saturation — how far its RGB sits from grey/white/black) rather than which colour it is. That
-// works for a yellow HUD, a blue one, a gold one, a white one, and any future one, without ever
-// needing to know in advance what "the pin's colour" is.
+// Saturation was the attempt after that — ask whether a pixel is colourful AT ALL rather than which
+// colour it is — and it broke the same way: it cannot see a WHITE pin, and Sub's HUD renders the pin
+// near-white. Manufacturer skins recolour this freely, so every colour constant is a constant that
+// isn't.
+//
+// The invariant that actually holds: THE PIN IS A SOLID BRIGHT MARK BESIDE A NUMBER OF KNOWN
+// BRIGHTNESS. So threshold on brightness alone — no colour term of any kind — and settle what is
+// and isn't a pin by SHAPE (minFill / maxAspect below). That works for a yellow HUD, a blue one, a
+// gold one, a white one, and any future one, without ever needing to know "the pin's colour".
 const GLYPH = {
   /** Fraction of the search box that must be pin-coloured ink. The pin is ~15×22 in a ~34×29
    *  box (~33%), so this stays generous for a heavily blended one. */
@@ -316,15 +318,6 @@ const GLYPH = {
    *  probably not in the box we were handed) — see the fallback in findScanGlyph. */
   minInkLum: 40,
 };
-
-/** How far a pixel sits from the grey/white/black axis — 0 for any shade of grey, up toward 1 for
- *  a fully saturated colour. Colour-FAMILY agnostic on purpose: this asks "is it colourful" rather
- *  than "which colour is it", which is what lets one threshold cover a gold pin, a cyan one, a red
- *  one, whatever a given ship's HUD happens to use. */
-function saturation(r, g, b) {
-  const mx = Math.max(r, g, b);
-  return mx > 0 ? (mx - Math.min(r, g, b)) / mx : 0;
-}
 
 /** Sample a rect and derive its INK: the colour of the bright minority (glyph strokes) rather
  *  than the dark majority (background). Percentile, not a fixed threshold, so it self-scales to
@@ -379,9 +372,9 @@ function findScanGlyph(image, rect, textRect) {
     return { seen: false, fraction: 0, total, mean: null, ref: null,
              why: ink ? `text ink too dim to calibrate (lum ${Math.round(ink.lum)})` : "no text rect to calibrate from" };
   }
-  // A hit must be COLOURFUL (unlike the achromatic pill and the neutral number text) and bright
-  // relative to the number's own luminance — saturation alone would accept near-black compression
-  // noise, whose colour ratio is unstable at tiny RGB values.
+  // A hit must be bright RELATIVE TO THE NUMBER'S OWN INK, not against an absolute floor (which
+  // fails on a dim HUD) and not against the background gap (which fails on a tight bbox that is
+  // nearly all ink — see minLumRatio above).
   const lumFloor = ink.lum * GLYPH.minLumRatio;
   const bw = x1 - x0, bh = y1 - y0;
   const on = new Uint8Array(bw * bh);
