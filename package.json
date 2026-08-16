@@ -50,7 +50,8 @@
     "test:solver": "tsx src/cargo-boxes.test.ts && tsx src/cargo-pack.test.ts && tsx src/hauling-route.test.ts && tsx src/cargo-stow.test.ts",
     "test:stow": "tsx src/cargo-stow.test.ts",
     "test:haulplan": "tsx src/hauling-plan.test.ts",
-    "hauling-demo": "node tools/hauling-demo.mjs"
+    "hauling-demo": "node tools/hauling-demo.mjs",
+    "test:advisor": "tsx src/hauling-advisor.test.ts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
