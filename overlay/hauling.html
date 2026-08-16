@@ -129,24 +129,77 @@
   .badge.unknown { color: var(--red); border-color: rgba(255, 132, 120, 0.4); }
   .tick { flex: none; font-size: 10px; color: var(--green); }
 
-  /* ── Layout ──────────────────────────────────────────────────────────────── */
-  /* A top-down cell map per grid LEVEL. One cell = 1.25 m = 1 SCU, so the drawing is to scale and
-     the cell count IS the SCU rating. Height never exceeds 2 cells anywhere in the game, so a
-     4-cell-high grid is exactly two levels — not an arbitrary slicing. */
-  .gridwrap { padding: 4px 12px 10px; }
+  /* ── Stow ─────────────────────────────────────────────────────────────────
+     The load order first, the picture second. 🔴 The freight elevator UI does not name missions,
+     so "load this one first" is only actionable if it comes with a BOX SIGNATURE — the commodity
+     plus the exact split — which is how the player finds the right lift among four. */
+  .gridwrap { padding: 4px 12px 12px; }
+
+  .steps { padding: 0 12px 4px; }
+  .step { display: flex; gap: 8px; padding: 7px 8px; margin-bottom: 5px; border-radius: 8px;
+    border: 1px solid var(--divider); background: rgba(0, 0, 0, 0.2); cursor: pointer;
+    border-left-width: 3px; }
+  .step:hover { border-color: var(--border); }
+  .step.on { background: rgba(var(--accent-rgb), 0.11); border-color: var(--cyan); }
+  .step .ord { flex: none; width: 20px; height: 20px; display: grid; place-items: center;
+    border-radius: 50%; font-family: var(--mono); font-size: 10px; font-weight: 700;
+    color: #04121a; }
+  .step .mid { flex: 1; min-width: 0; }
+  /* The signature. Deliberately the biggest text in the panel — it is the thing the player reads
+     off the elevator and matches by eye. */
+  .step .sig { font-size: 12px; font-weight: 600; color: var(--cyan-bright); line-height: 1.35; }
+  .step .sig .what { color: var(--gold); }
+  .step .meta { font-family: var(--mono); font-size: 9.5px; color: var(--faint); margin-top: 2px; }
+  .step .drops { margin-top: 4px; }
+  .drop { display: flex; align-items: baseline; gap: 6px; font-size: 10px; color: var(--cyan-dim);
+    line-height: 1.6; }
+  .drop i { flex: none; width: 8px; height: 8px; border-radius: 2px; display: inline-block;
+    transform: translateY(1px); }
+  .drop .d { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: var(--cyan-text); }
+  .drop .b { flex: none; font-family: var(--mono); color: var(--cyan-dim); }
+  .drop .deep { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--faint); }
+  /* ⚠️ Two missions with the same commodity AND the same split are indistinguishable at the
+     elevator. Saying so beats issuing an instruction the player cannot follow. */
+  .step.clash { border-left-color: var(--amber) !important; }
+  .step .clash-why { font-size: 9.5px; color: var(--amber); margin-top: 3px; line-height: 1.45; }
+
   .glabel { display: flex; align-items: baseline; gap: 6px; font-size: 9.5px; color: var(--faint);
-    font-family: var(--mono); margin: 6px 0 3px; }
+    font-family: var(--mono); margin: 8px 0 2px; }
   .glabel .gn { font-family: var(--sans); font-weight: 700; letter-spacing: 0.1em;
     text-transform: uppercase; color: var(--cyan-dim); font-size: 9px; }
-  .gmap { position: relative; display: grid; gap: 1px; padding: 2px; width: max-content;
-    background: rgba(0, 0, 0, 0.3); border: 1px solid var(--divider); border-radius: 5px; }
-  .gcell { background: rgba(var(--accent-rgb), 0.05); border-radius: 1px; }
-  .gbox { border-radius: 2px; display: grid; place-items: center; overflow: hidden;
-    font-family: var(--mono); font-size: 9px; font-weight: 700; color: #04121a;
-    border: 1px solid rgba(0, 0, 0, 0.45); }
-  .legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 7px; font-size: 9.5px; color: var(--cyan-dim); }
+  .glabel .here { color: var(--cyan-bright); }
+
+  /* The isometric drawing. Everything inside is in CELL units — the viewBox does the scaling — so
+     one cell is one SCU at every zoom and two grids on the same page are at the same true scale. */
+  .isowrap { background: rgba(0, 0, 0, 0.26); border: 1px solid var(--divider); border-radius: 6px;
+    padding: 4px; }
+  /* 🔑 No max-height. Height follows width, and the width is set per grid so every hold on the
+     ship shares one scale (see renderGrids) — a height cap would letterbox one drawing and quietly
+     break that. .isowrap centres whatever it is given. */
+  svg.iso { display: block; width: 100%; height: auto; overflow: visible; margin: 0 auto; }
+  svg.iso .iso-floor { fill: rgba(var(--accent-rgb), 0.07); stroke: rgba(var(--accent-rgb), 0.3);
+    stroke-width: 0.04; }
+  svg.iso .iso-wall { fill: rgba(var(--accent-rgb), 0.045); stroke: rgba(var(--accent-rgb), 0.22);
+    stroke-width: 0.04; }
+  svg.iso .iso-wall-b { fill: rgba(var(--accent-rgb), 0.02); }
+  svg.iso .iso-rule { stroke: rgba(var(--accent-rgb), 0.16); stroke-width: 0.025; }
+  svg.iso .iso-face { stroke: rgba(0, 0, 0, 0.55); stroke-width: 0.03; stroke-linejoin: round; }
+  /* A ghosted lift must still read as CARGO IS HERE — the hold is not empty just because you are
+     looking at a different lift — while never competing with the one you are being told to load. */
+  svg.iso .iso-box.ghost { opacity: 0.45; }
+  svg.iso .iso-num { fill: #04121a; font-family: var(--mono); font-weight: 700;
+    text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 8px; font-size: 9.5px; color: var(--cyan-dim); }
   .legend span { display: inline-flex; align-items: center; gap: 4px; }
   .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+  /* ⛔ Open haulers load themselves. The panel that replaces the whole view for them. */
+  .noplan { padding: 30px 20px; text-align: center; }
+  .noplan .k { font-size: 13px; font-weight: 600; color: var(--gold); }
+  .noplan .why { margin-top: 8px; font-size: 11px; line-height: 1.65; color: var(--cyan-dim); }
 </style>
 </head>
 <body>
@@ -156,7 +209,7 @@
       <span class="h-title">Hauling</span>
       <span class="tabs">
         <button id="tabRoute" class="hbtn on" type="button" title="What order to fly the stops">Route</button>
-        <button id="tabLayout" class="hbtn" type="button" title="Where to put the boxes on your ship">Layout</button>
+        <button id="tabLayout" class="hbtn" type="button" title="What to load first, and where it goes on your ship">Stow</button>
       </span>
     </div>
 
@@ -190,6 +243,7 @@
     </div>
   </div>
 
+<script src="/hauling-stow.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
   const EMBEDDED = new URLSearchParams(location.search).has("embedded");
@@ -203,6 +257,11 @@
   let objective = "auec-per-hour";
   let showDone = false;
   let shipPick = "";          // "" = trust the log
+  /** Which lift the stow diagram is lighting up. Defaults to the first one to load. */
+  let focusMission = null;
+  /** Hull classes whose boxes the station's arm places for you — they get no stowage plan at all.
+   *  From /api/ships, which is the only place the flag lives (see src/hauling-autoload.ts). */
+  let autoLoadClasses = new Set();
 
   /* 🔑 Pins are the player's own reading of a contract they have NOT tracked, so they must survive
      the widget being closed — hiding a widget UNLOADS its iframe (see missions.html unloadFrame),
@@ -219,6 +278,9 @@
   }
 
   const num = (n) => Number(n || 0).toLocaleString();
+  /** "3", "3 and 4", "3, 4 and 7" — a list a person reads rather than an array printed. */
+  const list = (xs) => xs.length < 2 ? String(xs[0] ?? "")
+    : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
   function fmtMins(min) {
     const m = Math.max(1, Math.round(min || 0));
     if (m < 60) return m + "m";
@@ -241,13 +303,13 @@
     unknown: ["unknown", "Neither the log nor the dataset says how much this contract carries."],
   };
 
-  /** A stable colour per contract leg, so a box in the layout can be matched to its stop. */
-  function hueOf(group) {
-    let h = 0;
-    for (let i = 0; i < group.length; i++) h = (h * 31 + group.charCodeAt(i)) >>> 0;
-    return h % 360;
-  }
-  const colourOf = (group) => "hsl(" + hueOf(group) + " 62% 62%)";
+  /* 🔑 One MISSION, one hue — and a mission's separate drop-offs shift lightness inside it.
+     That is the unit the player thinks in and the unit the freight elevator lifts in, so it has to
+     be the unit the eye groups by. Keyed off a leg's group so every call site (route chips,
+     contract cards, the stow diagram) lands on the same colour for the same cargo. */
+  const colourOf = (group) => StowView.shade(StowView.missionOf(plan, group), depthOf(group));
+  /** A leg's index within its own contract — the lightness step inside the mission's hue. */
+  const depthOf = (group) => StowView.depthOf(plan, group);
 
   // ── loading ───────────────────────────────────────────────────────────────
   let pending = null;
@@ -278,8 +340,12 @@
         // its own class with the SAME name — four "Aegis Idris-P", five "RSI Apollo Triage" — and
         // an unfiltered list is 155 rows most of which are decoys. The store emits the base class
         // first, so keeping the first of each name keeps the hull you can actually fly.
+        const all = (await r.json()).ships || [];
+        // The auto-load set is built from EVERY row, before the dedupe throws variants away — the
+        // log can name a variant class the picker never shows, and that hull still auto-loads.
+        autoLoadClasses = new Set(all.filter((s) => s.autoLoad).map((s) => s.className));
         const seen = new Set();
-        ships = ((await r.json()).ships || []).filter((s) => {
+        ships = all.filter((s) => {
           const k = (s.displayName || s.className).toLowerCase();
           if (seen.has(k)) return false;
           seen.add(k);
@@ -591,96 +657,237 @@
     }
   }
 
-  /** Top-down cell maps, one per grid LEVEL. See the CSS note — 2 cells is the hard height cap
-   *  everywhere in the game, so a 4-high grid is exactly two levels. */
-  function renderLayout() {
+  /**
+   * 🔴 THE STOWAGE VIEW — what to load first, and where every box goes.
+   *
+   * The order comes first and the picture second, because the picture is not the instruction. The
+   * instruction is "go to the elevator and lift THIS mission", and the freight elevator UI does not
+   * name missions — it lists cargo. So each step leads with its BOX SIGNATURE (commodity + the
+   * exact split) which is the only handle the player has on which lift is which.
+   *
+   * Focus is the answer to the many-grid problem. A Caterpillar has 14 grids, a Carrack 9, an Idris
+   * 25; drawing every box on every grid at once is wallpaper. Step 1 is focused on open, so the
+   * first thing on screen is the first thing to do, and everything else is still visible behind it.
+   */
+  function renderStow() {
     const body = $("body");
     body.textContent = "";
-    if (!plan.ship || !plan.pack) {
+    if (!plan.ship) {
       const d = document.createElement("div"); d.className = "empty";
-      d.textContent = "Pick the ship you are flying and the layout appears here.";
+      d.textContent = "Pick the ship you are flying and the stowage plan appears here.";
       body.appendChild(d);
       return;
     }
-    if (!plan.pack.placements.length) {
-      const d = document.createElement("div"); d.className = "empty";
-      d.textContent = "Nothing to load — no accepted contract has a known load yet.";
+    const m = StowView.model(plan, { autoLoadClasses: autoLoadClasses });
+
+    /* ⛔ Open haulers load themselves — the station's arm places every box and the player never
+       touches one. A stowage diagram for a Hull C describes work that does not exist, so it is not
+       drawn at all rather than drawn and ignored. */
+    if (m.autoLoad) {
+      const d = document.createElement("div");
+      d.className = "noplan";
+      const k = document.createElement("div"); k.className = "k";
+      k.textContent = (plan.ship.displayName || plan.ship.className) + " loads itself.";
+      const why = document.createElement("div"); why.className = "why";
+      why.textContent = "It is an open hauler, so the station's loading arm places every box for you"
+        + " — there is nothing to stow by hand and no order to load in. Use the Route tab for where"
+        + " to fly.";
+      d.append(k, why);
       body.appendChild(d);
       return;
     }
+
+    if (!m.boxes.length) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = plan.pack
+        ? "Nothing to load — no accepted contract has a known load yet."
+        : "Waiting for the packer.";
+      body.appendChild(d);
+      return;
+    }
+
+    // Focus survives a re-render, but only while its mission is still on the board.
+    if (!m.steps.some((s) => s.missionId === focusMission)) focusMission = m.steps[0].missionId;
+
+    body.appendChild(renderSteps(m));
+    body.appendChild(renderGrids(m));
+  }
+
+  /** The ordered load list. Step 1 is what to lift first — its boxes end up deepest in the hold. */
+  function renderSteps(m) {
+    const wrap = document.createElement("div");
+    wrap.className = "steps";
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    const h = document.createElement("span"); h.textContent = "Load in this order";
+    const n = document.createElement("span"); n.className = "n";
+    n.textContent = m.steps.length + " lift" + (m.steps.length > 1 ? "s" : "") + " · "
+      + m.boxes.length + " boxes";
+    n.title = m.derivedOrder
+      ? "Read off the packer's own placement order — the last drop-off sits deepest, so it is lifted first."
+      : "Stated by the stowage planner.";
+    sec.append(h, n);
+    wrap.appendChild(sec);
+
+    m.steps.forEach((s, i) => {
+      const row = document.createElement("div");
+      row.className = "step" + (s.missionId === focusMission ? " on" : "") + (s.ambiguous ? " clash" : "");
+      row.style.borderLeftColor = StowView.shade(s.missionId, 0);
+      row.title = "Show only this lift in the diagram.";
+      const ord = document.createElement("div");
+      ord.className = "ord";
+      ord.style.background = StowView.shade(s.missionId, 0);
+      ord.textContent = String(s.n);
+      const mid = document.createElement("div");
+      mid.className = "mid";
+
+      /* 🔴 The signature. Commodity first, because that is the column the elevator shows, then the
+         exact box split, because two Processed Food hauls are told apart by 10x8+1x1 vs 4x16. */
+      const sig = document.createElement("div");
+      sig.className = "sig";
+      const what = document.createElement("span"); what.className = "what";
+      const parts = s.signature.split(" — ");
+      what.textContent = parts[0];
+      sig.append(what);
+      if (parts[1]) sig.appendChild(document.createTextNode("  " + parts[1]));
+      sig.title = "Find this at the freight elevator — it does not name missions, so its contents"
+        + " are how you identify it." + (s.title ? "  (" + s.title + ")" : "");
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const bits = [num(s.scu) + " SCU"];
+      if (i === 0 && m.steps.length > 1) bits.push("deepest in the hold");
+      if (i === m.steps.length - 1 && m.steps.length > 1) bits.push("last on, first off");
+      if (s.grids.length) bits.push(s.grids.map(StowView.gridLabel).join(" + "));
+      meta.textContent = bits.join("  ·  ");
+      mid.append(sig, meta);
+
+      /* Within one mission, which destination's boxes go in first. Same rule one level down: the
+         last drop-off is loaded first, so the drops are listed in load order too. */
+      if (s.drops.length > 1) {
+        const drops = document.createElement("div");
+        drops.className = "drops";
+        s.drops.forEach((d, di) => {
+          const r = document.createElement("div");
+          r.className = "drop";
+          const dot = document.createElement("i"); dot.style.background = d.colour;
+          const nm = document.createElement("span"); nm.className = "d";
+          nm.textContent = "→ " + (d.destination || "drop-off");
+          const bx = document.createElement("span"); bx.className = "b";
+          bx.textContent = d.boxes.map((b) => b.count + "×" + b.scu).join(" · ");
+          r.append(dot, nm, bx);
+          if (di === 0) {
+            const dp = document.createElement("span"); dp.className = "deep"; dp.textContent = "first in";
+            dp.title = "This destination is delivered last, so its boxes are loaded deepest.";
+            r.appendChild(dp);
+          }
+          drops.appendChild(r);
+        });
+        mid.appendChild(drops);
+      }
+
+      /* ⚠️ An instruction the player cannot act on is worse than no instruction — but so is the
+         same paragraph six times. One line, naming the lifts it collides with, and the reasoning
+         in the tooltip. */
+      if (s.ambiguous) {
+        const c = document.createElement("div");
+        c.className = "clash-why";
+        c.textContent = "Same signature as lift " + list(s.clashWith) + " — any order between them"
+          + (s.clashFixable ? ", or track them to learn the commodity." : ".");
+        c.title = "The freight elevator lists cargo, not missions, so two lifts with the same"
+          + " commodity and the same box split are indistinguishable there.";
+        mid.appendChild(c);
+      }
+
+      row.append(ord, mid);
+      row.addEventListener("click", () => { focusMission = s.missionId; render(); });
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  /** The isometric holds. Only grids that received cargo are drawn; the rest are counted. */
+  function renderGrids(m) {
     const names = locNames();
     const wrap = document.createElement("div");
     wrap.className = "gridwrap";
-    // Sized to the panel so a wide grid still fits without a horizontal scrollbar.
-    const widest = Math.max(...plan.ship.grids.map((g) => g.w));
-    const cell = Math.max(9, Math.min(22, Math.floor((($("body").clientWidth || 400) - 40) / widest) - 1));
-    for (const g of plan.ship.grids) {
-      const here = plan.pack.placements.filter((p) => p.grid === g.name);
-      if (!here.length) continue;
-      const zs = [...new Set(here.map((p) => p.z))].sort((a, b) => a - b);
-      const floors = new Set(zs.map(floorOf)).size;
-      for (const z of zs) {
-        const lbl = document.createElement("div");
-        lbl.className = "glabel";
-        const gn = document.createElement("span"); gn.className = "gn";
-        gn.textContent = g.name.replace(/^hardpoint_/, "").replace(/_/g, " ");
-        const meta = document.createElement("span");
-        const onLevel = here.filter((p) => p.z === z);
-        meta.textContent = g.w + "x" + g.l + " · " + sliceLabel(z, zs.filter((v) => floorOf(v) === floorOf(z)), floors)
-          + " · " + onLevel.length + " boxes";
-        lbl.append(gn, meta);
-        wrap.appendChild(lbl);
+    const svgs = [];
+    const focused = m.steps.find((s) => s.missionId === focusMission);
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    const h = document.createElement("span"); h.textContent = "Where it goes";
+    const n = document.createElement("span"); n.className = "n";
+    n.textContent = focused ? "lift " + focused.n + " lit up" : "";
+    sec.append(h, n);
+    wrap.appendChild(sec);
 
-        const map = document.createElement("div");
-        map.className = "gmap";
-        map.style.gridTemplateColumns = "repeat(" + g.w + ", " + cell + "px)";
-        map.style.gridAutoRows = cell + "px";
-        // The empty floor first, so gaps read as space rather than as nothing.
-        for (let i = 0; i < g.w * g.l; i++) {
-          const c = document.createElement("div");
-          c.className = "gcell";
-          c.style.gridColumn = ((i % g.w) + 1) + " / span 1";
-          c.style.gridRow = (Math.floor(i / g.w) + 1) + " / span 1";
-          map.appendChild(c);
-        }
-        for (const p of onLevel) {
-          const b = document.createElement("div");
-          b.className = "gbox";
-          b.style.gridColumn = (p.x + 1) + " / span " + p.dx;
-          b.style.gridRow = (p.y + 1) + " / span " + p.dy;
-          b.style.background = colourOf(p.group || "");
-          b.textContent = p.dx * p.dy >= 4 ? String(p.scu) : "";
-          const leg = legOf(p.group);
-          b.title = p.scu + " SCU · " + cargoOf(leg) + " → " + destOf(leg, names);
-          map.appendChild(b);
-        }
-        wrap.appendChild(map);
+    for (const g of m.grids) {
+      const mine = focused ? g.boxes.filter((b) => b.missionId === focusMission).length : 0;
+      const lbl = document.createElement("div");
+      lbl.className = "glabel";
+      const gn = document.createElement("span"); gn.className = "gn";
+      gn.textContent = g.label;
+      const meta = document.createElement("span");
+      meta.textContent = g.spec.w + "×" + g.spec.l + "×" + g.spec.h + " · "
+        + num(g.spec.usedScu) + "/" + num(g.spec.capacityScu) + " SCU · " + g.boxes.length + " boxes";
+      lbl.append(gn, meta);
+      if (mine) {
+        const here = document.createElement("span");
+        here.className = "here";
+        here.textContent = "· " + mine + " from this lift";
+        lbl.appendChild(here);
       }
+      wrap.appendChild(lbl);
+
+      const box = document.createElement("div");
+      box.className = "isowrap";
+      const svg = StowView.iso(g.spec, g.boxes, { focus: focusMission, depthOf: depthOf });
+      box.appendChild(svg);
+      svgs.push(svg);
+      wrap.appendChild(box);
     }
-    // Which colour is which stop — without it the map is pretty and unreadable.
+    /* 🔑 ONE SCALE ACROSS THE PAGE. Each drawing takes the share of the panel width its own footprint
+       deserves against the biggest hold on the ship, so a cell is a cell everywhere and the C2's
+       6x9 cubby visibly IS the smaller hold. Sized by ratio rather than by measuring the panel, so
+       it survives a resize with no relayout. */
+    const widest = Math.max.apply(null, svgs.map((s) => Number(s.dataset.vbw)));
+    for (const s of svgs) s.style.width = (Number(s.dataset.vbw) / widest * 100) + "%";
+
+    // Which colour is which drop — without it the diagram is pretty and unreadable.
     const legend = document.createElement("div");
     legend.className = "legend";
-    const seen = new Set();
-    for (const p of plan.pack.placements) {
-      if (!p.group || seen.has(p.group)) continue;
-      seen.add(p.group);
-      const leg = legOf(p.group);
-      const s = document.createElement("span");
-      const i = document.createElement("i");
-      i.style.background = colourOf(p.group);
-      s.appendChild(i);
-      s.appendChild(document.createTextNode(cargoOf(leg) + " → " + destOf(leg, names)));
-      legend.appendChild(s);
+    for (const s of m.steps) {
+      for (const d of s.drops) {
+        const leg = legOf(d.group);
+        const el = document.createElement("span");
+        const i = document.createElement("i"); i.style.background = d.colour;
+        el.appendChild(i);
+        el.appendChild(document.createTextNode(cargoOf(leg) + " → " + destOf(leg, names)));
+        legend.appendChild(el);
+      }
     }
     wrap.appendChild(legend);
-    if (plan.pack.unplaced.length) {
+
+    if (m.emptyGrids > 0) {
       const d = document.createElement("div");
       d.className = "note";
-      d.textContent = plan.pack.unplaced.length + " boxes ("
-        + num(plan.pack.unplaced.reduce((s, u) => s + u.scu, 0)) + " SCU) do not fit — this is more than one trip.";
+      d.style.color = "var(--faint)";
+      d.textContent = m.emptyGrids + " more grid" + (m.emptyGrids > 1 ? "s" : "")
+        + " on this hull got nothing, so " + (m.emptyGrids > 1 ? "they are" : "it is") + " not drawn.";
       wrap.appendChild(d);
     }
-    body.appendChild(wrap);
+    for (const w of m.warnings) {
+      const d = document.createElement("div"); d.className = "note"; d.textContent = w;
+      wrap.appendChild(d);
+    }
+    if (m.unplaced.length) {
+      const d = document.createElement("div");
+      d.className = "note";
+      d.textContent = m.unplaced.length + " boxes ("
+        + num(m.unplaced.reduce((s, u) => s + u.scu, 0)) + " SCU) do not fit — this is more than one trip.";
+      wrap.appendChild(d);
+    }
+    return wrap;
   }
 
   /** Find the leg a packed box belongs to, for its label. */
@@ -701,17 +908,6 @@
    *  tonnage rather than printing "cargo" five times in a row. */
   const cargoOf = (leg) => leg && leg.commodity ? leg.commodity : leg && leg.scu != null ? num(leg.scu) + " SCU" : "cargo";
 
-  /* 🔑 A "floor" is a 2-cell height band, which is not an arbitrary slicing: every cargo grid in
-     the game caps box height at 2 cells (maxPermittedItemSize.z = 2.5 m), so nothing ever stands
-     taller and a 4-high grid is exactly two floors. Each floor can hold two layers of flat boxes,
-     and they are drawn separately because you physically stack one on the other. */
-  const floorOf = (z) => Math.floor(z / 2);
-  function sliceLabel(z, zsOnFloor, floors) {
-    const f = floorOf(z) + 1;
-    const base = floors > 1 ? "floor " + f + " of " + floors : "floor " + f;
-    return zsOnFloor.length > 1 ? base + " · " + (z % 2 ? "upper" : "lower") : base;
-  }
-
   function render() {
     $("tabRoute").classList.toggle("on", view === "route");
     $("tabLayout").classList.toggle("on", view === "layout");
@@ -721,7 +917,7 @@
     if (!plan) return;
     renderSummary();
     renderTrack();
-    if (view === "layout") renderLayout(); else renderRoute();
+    if (view === "layout") renderStow(); else renderRoute();
   }
 
   // ── wiring ────────────────────────────────────────────────────────────────
@@ -737,8 +933,6 @@
     saveShip(shipPick);
     load();
   });
-  // A resize changes how big a cell can be, so the map has to be re-laid out.
-  window.addEventListener("resize", () => { if (view === "layout" && plan) renderLayout(); });
   // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
   document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
 

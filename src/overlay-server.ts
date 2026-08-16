@@ -16,6 +16,7 @@ import { HaulingTracker } from "./hauling.js";
 import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
+import { canAutoLoad } from "./hauling-autoload.js";
 import { buildHaulingPlan } from "./hauling-plan.js";
 import { MissionFeedbackStore } from "./mission-feedback.js";
 import { FabClaims } from "./fab-claim.js";
@@ -2151,7 +2152,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       const list = Object.values(haulingData.ships())
         .filter((s) => s.isSpaceship && s.totalScu > 0)
         .sort((a, b) => b.totalScu - a.totalScu)
-        .map((s) => ({ className: s.className, displayName: s.displayName, totalScu: s.totalScu }));
+        // `autoLoad` rides along because the stowage view has to know BEFORE it draws anything:
+        // an open hauler's boxes are placed by the station's arm, so a stowage diagram for one
+        // describes work that does not exist. It is a property of the hull, so it belongs on the
+        // hull list rather than being re-derived per plan.
+        .map((s) => ({ className: s.className, displayName: s.displayName, totalScu: s.totalScu,
+                       autoLoad: canAutoLoad(s.className) }));
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ships: list }));
       return;
