@@ -1,0 +1,566 @@
+/**
+ * HAULING PLAN — the join that turns live contract state into something a widget can draw.
+ *
+ * Three landed pieces have to meet here and nowhere else:
+ *   `HaulingTracker`  what the LOG knows (contracts, legs, positions, progress, ship)
+ *   `HaulingDataStore` what the DATACORE knows (ship grids, per-contract SCU bounds + box caps)
+ *   the solver         `partitionScu` -> `packCargo` -> `planRun`, all pure and set-agnostic
+ *
+ * ── 🔴 THE RULE THIS MODULE EXISTS TO ENFORCE ──────────────────────────────────────────────
+ *
+ * **The dataset BOUNDS a contract's load. It does not tell you it.** Measured across all 4,769
+ * orders in the shipped `hauling-orders.json`: 2,062 have `minScu == maxScu` and **2,707 (57%)
+ * have `minScu < maxScu`**. Sub's own 2026-08-16 contract reads `maxContainerSize: 4, minScu: 7,
+ * maxScu: 16` — a 9 SCU spread on a 16 SCU haul.
+ *
+ * The ONE thing that pins the real number is the log's `New Objective: Deliver 0/N SCU …` line,
+ * and that line is **TRACKING-GATED** — the game emits it only for a contract the player has
+ * TRACKED in mobiGlas. So tracking is not a nicety, it is the primary source of truth for most
+ * contracts, and `ScuSource` below is the whole point of this file: every number the widget draws
+ * carries where it came from, and a range never collapses into a fake exact figure.
+ *
+ * ── ⚠️ AND THE SOLVER GETS THE REAL BOX TABLE ─────────────────────────────────────────────
+ *
+ * `cargo-boxes.ts` was written before the box set was settled, so its DEFAULT_BOX_SET still flags
+ * 24 and 32 as "contested" and hardcodes x-major footprints. Both were answered by the shipped
+ * data: `hauling-orders.json` carries the canonical `boxes` table (1·2·4·8·16·24·32, y-major),
+ * and `maxContainerSize` is **per contract** — 24 appears ONLY in `Hauling - Interstellar`, while
+ * `Hauling - Planetary` uses 1, 4, 8, 16, 32. So the set comes off the dataset and the cap comes
+ * off the contract; nothing here hardcodes a size.
+ */
+import { partitionScu, DEFAULT_BOX_SET, type BoxSpec, type Partition } from "./cargo-boxes.js";
+import { packCargo, shipCapacityScu, type GridSpec, type PackItem, type PackResult } from "./cargo-pack.js";
+import { buildStops, planRun, type HaulLeg, type RouteContract, type RoutePlan, type Vec3 } from "./hauling-route.js";
+import type { HaulingView, HaulContract, HaulStopState } from "./hauling.js";
+import type { BoxSize, HaulingDataStore, Ship } from "./hauling-data.js";
+
+/** Where a load figure came from. Rendered as a badge — never dropped. */
+export type ScuSource =
+  /** The game enumerated every box (`OnItemRegistered`). Exact, and the ONLY exact manifest
+   *  that exists — mission-item hauls only; Covalex SCU hauls log nothing. */
+  | "manifest"
+  /** The tracked contract's own Deliver line. Exact, from the game. */
+  | "log"
+  /** The player typed it in, because they can see it in mobiGlas and we cannot. */
+  | "pinned"
+  /** The dataset states one figure (`minScu == maxScu`). Exact, but from the datacore. */
+  | "dataset"
+  /** The dataset states a SPAN. 🔴 NOT a number — `scu` is the worst case, for fit checking. */
+  | "range"
+  /** Neither source says anything. `scu` is null and this contract cannot be planned. */
+  | "unknown";
+
+export interface PlanOptions {
+  /** Ship class or display name chosen by the player; overrides whatever the log saw. */
+  ship?: string | null;
+  objective?: "auec-per-hour" | "fewest-stops";
+  /** missionId -> total SCU the player pinned by hand. Splits evenly across that contract's legs. */
+  pins?: Record<string, number>;
+  travelSpeedMps?: number;
+  stopMinutes?: number;
+}
+
+export interface PlannedLeg {
+  /** `objectiveKeyOf()` — pickup and drop-off of the same leg SHARE this and differ by role. */
+  key: string;
+  index: number;
+  /** Globally unique across contracts; the packer's group id and the layout's colour key. */
+  group: string;
+  commodity: string | null;
+  destination: string | null;
+  unit: "scu" | "boxes" | "items" | null;
+  /** The figure to plan with. Null only when `source === "unknown"`. */
+  scu: number | null;
+  min: number | null;
+  max: number | null;
+  source: ScuSource;
+  /** False for `range` — the widget must print `min–max`, never `scu`. */
+  exact: boolean;
+  maxContainerScu: number | null;
+  /** "dataset" = the contract declares a cap · "assumed" = no cap known, largest box used. */
+  capSource: "dataset" | "assumed";
+  /** Boxes to carry. ⚠️ PROVISIONAL when `boxSource === "partition"` — see partitionScu. */
+  boxes: { scu: number; count: number }[];
+  boxLabel: string;
+  boxCount: number;
+  /** "manifest" = the game listed the boxes · "partition" = we split the SCU total ourselves ·
+   *  "none" = neither, so there is nothing to lay out. */
+  boxSource: "manifest" | "partition" | "none";
+  pickupState: HaulStopState;
+  dropoffState: HaulStopState;
+  delivered: number | null;
+  fromLocation: string | null;
+  toLocation: string | null;
+}
+
+export interface PlannedContract {
+  missionId: string;
+  title: string | null;
+  contractKey: string;
+  generator: string;
+  /** From the dataset — the log never names the org or the family. */
+  giver: string | null;
+  missionType: string | null;
+  tracked: boolean;
+  ended: boolean;
+  completion: string | null;
+  payout: number | null;
+  legs: PlannedLeg[];
+  /** Contract totals, rolled up from the legs. `source` is the WEAKEST of them. */
+  scu: number | null;
+  minScu: number | null;
+  maxScu: number | null;
+  source: ScuSource;
+  exact: boolean;
+  /** Enough is known to route and pack this one. */
+  plannable: boolean;
+}
+
+export interface PlanStop {
+  id: string;
+  name: string;
+  kind: "pickup" | "dropoff";
+  /** Minutes to get here from the previous stop, including the flat per-stop overhead. */
+  minutes: number;
+  /** SCU aboard on leaving. Includes cargo already loaded before the plan was made. */
+  loadAfterScu: number;
+  /** True when the previous stop is the same place — one landing, two jobs. */
+  sameSpot: boolean;
+  actions: { missionId: string; title: string | null; commodity: string | null; scu: number | null; group: string }[];
+}
+
+export interface PlanTrip {
+  stops: PlanStop[];
+  landings: number;
+  totalMinutes: number;
+  peakScu: number;
+  method: "exact" | "heuristic";
+}
+
+export interface PlanGrid extends GridSpec {
+  capacityScu: number;
+  usedScu: number;
+}
+
+export interface HaulingPlan {
+  updatedAt: number;
+  ship: {
+    className: string;
+    displayName: string | null;
+    totalScu: number;
+    grids: PlanGrid[];
+    /** "log" = the game told us · "manual" = the player picked · "none" = no ship known. */
+    source: "log" | "manual" | "none";
+  } | null;
+  contracts: PlannedContract[];
+  /** Live contracts with no Deliver line yet — the "TRACK THESE" list, in mission order. */
+  untracked: { missionId: string; title: string | null; minScu: number | null; maxScu: number | null }[];
+  trips: PlanTrip[];
+  /** Contracts no single trip can carry — over capacity even alone. */
+  stranded: string[];
+  /** Placements are only produced when a ship is known. */
+  pack: PackResult | null;
+  /** SCU already aboard: legs whose pickup completed but whose drop-off has not. */
+  aboardScu: number;
+  totals: {
+    /** SCU still to move across every live, plannable contract. */
+    scu: number;
+    capacityScu: number | null;
+    liveContracts: number;
+    /** Contracts excluded from the plan because their load is unknown. */
+    unknownContracts: number;
+    /** Sum of the payouts of contracts that completed in the last ten minutes. Real, from the log. */
+    recentPayout: number;
+    totalMinutes: number;
+  };
+  /** Non-fatal reasons the plan is thinner than it could be, for the widget to surface verbatim. */
+  notes: string[];
+}
+
+// ── inputs ─────────────────────────────────────────────────────────────────
+
+/**
+ * The canonical box table, straight off `hauling-orders.json`.
+ *
+ * 🔑 The dataset's footprints are Y-MAJOR (`32 → {x:2, y:8}`) while `DEFAULT_BOX_SET` wrote them
+ * X-major. That is not cosmetic: `ships.json` grids carry ASYMMETRIC `maxBox` caps — the C2's
+ * small grid is `{x:6, y:8}` — so a box's axes decide whether it is legal there. The packer yaws
+ * boxes itself (`orientations`), so feeding it the dataset's own orientation is both correct and
+ * the only version that matches the caps it is checked against.
+ */
+export function boxSetFrom(boxes: Record<string, BoxSize>): readonly BoxSpec[] {
+  const set = Object.values(boxes ?? {})
+    .filter((b) => b && b.scu > 0)
+    .map((b): BoxSpec => ({ scu: b.scu, dims: [b.x, b.y, b.z], confidence: "confirmed" }))
+    .sort((a, b) => b.scu - a.scu);
+  // An app running without the dataset still packs — with the pre-verdict table, which is right
+  // for every size below 16 and only guesses the footprints of the two big ones.
+  return set.length ? set : DEFAULT_BOX_SET;
+}
+
+/** ships.json grids -> the packer's shape. Identical fields; the name is the hardpoint. */
+function gridsOf(ship: Ship): GridSpec[] {
+  return ship.grids.map((g, i) => ({
+    name: g.port ?? `grid ${i + 1}`,
+    w: g.w,
+    l: g.l,
+    h: g.h,
+    maxBox: g.maxBox ?? undefined,
+  }));
+}
+
+/** Position -> a stable location id. Rounded to the kilometre so a marker re-emitted on spawn-in
+ *  with a few metres of drift is still the same place. */
+function posKey(p: Vec3 | null | undefined): string | null {
+  if (!p) return null;
+  return `@${Math.round(p.x / 1000)},${Math.round(p.y / 1000)},${Math.round(p.z / 1000)}`;
+}
+
+// ── resolving what a contract actually weighs ──────────────────────────────
+
+interface Bounds {
+  min: number | null;
+  max: number | null;
+  cap: number | null;
+}
+
+/**
+ * Per-leg bounds from the dataset.
+ *
+ * 🔑 A contract's `orders` array is PER DESTINATION — `SingleToMulti2` carries two orders, one per
+ * drop-off — so order[i] lines up with leg i whenever the counts match. When they do not (a
+ * re-used template, or legs the log has not all emitted yet) fall back to the whole contract's
+ * span and its widest cap, which over-states rather than invents.
+ */
+function boundsFor(data: HaulingDataStore, contractKey: string, index: number, legCount: number): Bounds {
+  const contract = data.contract(contractKey);
+  const orders = contract?.orders ?? [];
+  if (!orders.length) return { min: null, max: null, cap: null };
+  const o = orders.length === legCount ? orders[index] : null;
+  if (o) {
+    const min = o.minScu ?? o.minAmount ?? null;
+    const max = o.maxScu ?? o.maxAmount ?? min;
+    return { min, max, cap: o.maxContainerSize ?? null };
+  }
+  const mins = orders.map((x) => x.minScu ?? x.minAmount).filter((n): n is number => n != null);
+  const maxs = orders.map((x) => x.maxScu ?? x.maxAmount ?? x.minScu).filter((n): n is number => n != null);
+  return {
+    min: mins.length ? Math.min(...mins) : null,
+    max: maxs.length ? Math.max(...maxs) : null,
+    cap: data.maxBoxScu(contractKey),
+  };
+}
+
+/** The load to plan with, and where it came from. The precedence IS the honesty policy. */
+function resolveScu(logNeed: number | null, pinned: number | null, b: Bounds): {
+  scu: number | null; min: number | null; max: number | null; source: ScuSource; exact: boolean;
+} {
+  // The game's own number for a tracked contract beats everything. (A manifest beats even this,
+  // but it is resolved before we get here — it is a box list, not a total.)
+  if (logNeed != null) return { scu: logNeed, min: logNeed, max: logNeed, source: "log", exact: true };
+  // Then what the player read off their own mobiGlas.
+  if (pinned != null) return { scu: pinned, min: pinned, max: pinned, source: "pinned", exact: true };
+  if (b.min == null && b.max == null) return { scu: null, min: null, max: null, source: "unknown", exact: false };
+  const min = b.min ?? b.max!;
+  const max = b.max ?? b.min!;
+  if (min === max) return { scu: min, min, max, source: "dataset", exact: true };
+  // 🔴 A RANGE. `scu` is the WORST CASE, so "does it fit" is answered safely — but `exact` is
+  // false and the widget must print `min–max`. Never let this number stand alone.
+  return { scu: max, min, max, source: "range", exact: false };
+}
+
+/** The weakest claim among a contract's legs decides how the contract as a whole is labelled. */
+const WEAKNESS: Record<ScuSource, number> = { manifest: 0, log: 1, pinned: 2, dataset: 3, range: 4, unknown: 5 };
+function weakest(sources: ScuSource[]): ScuSource {
+  // No seed — seeding with a source that is not in the list floors the result at that source's
+  // strength, which is how a contract with an exact manifest came back labelled "log".
+  return sources.length ? sources.reduce((a, b) => (WEAKNESS[b] > WEAKNESS[a] ? b : a)) : "unknown";
+}
+
+// ── the build ──────────────────────────────────────────────────────────────
+
+export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts: PlanOptions = {}): HaulingPlan {
+  const notes: string[] = [];
+  const boxSet = boxSetFrom(data.boxes());
+  const largestBox = boxSet.reduce((m, b) => Math.max(m, b.scu), 0);
+
+  // ── ship ────────────────────────────────────────────────────────────────
+  const picked = opts.ship?.trim() ? data.ship(opts.ship.trim()) : null;
+  const fromLog = !picked && view.ship ? data.ship(view.ship.model) : null;
+  const hull = picked ?? fromLog;
+  if (opts.ship?.trim() && !picked) notes.push(`"${opts.ship.trim()}" is not a hull in ships.json.`);
+  if (!hull && view.ship) notes.push(`The log says you are flying ${view.ship.model}, which ships.json does not carry.`);
+  const grids = hull ? gridsOf(hull) : [];
+  const capacityScu = hull ? shipCapacityScu(grids) : null;
+
+  // ── contracts ───────────────────────────────────────────────────────────
+  const contracts: PlannedContract[] = [];
+  const legByGroup = new Map<string, { c: HaulContract; leg: PlannedLeg }>();
+  /** locationId -> the best name we have for it, learned from tracked drop-offs. */
+  const nameByLoc = new Map<string, string>();
+
+  for (const c of view.contracts) {
+    const info = data.contract(c.contractKey);
+    const dropoffs = c.stops.filter((s) => s.role === "dropoff").sort((a, b) => a.index - b.index);
+    const pinTotal = opts.pins?.[c.missionId];
+    // A pin is a CONTRACT total (it is what the mobiGlas shows), so spread it across the legs.
+    // Integer split with the remainder on the first leg, so the parts still sum to the pin.
+    const pinPer = pinTotal != null && dropoffs.length
+      ? dropoffs.map((_, i) => Math.floor(pinTotal / dropoffs.length) + (i < pinTotal % dropoffs.length ? 1 : 0))
+      : null;
+
+    const legs: PlannedLeg[] = dropoffs.map((drop, i) => {
+      const pickup = c.stops.find((s) => s.key === drop.key && s.role === "pickup") ?? null;
+      const b = boundsFor(data, c.contractKey, i, dropoffs.length);
+      // 🔑 AN EXACT MANIFEST BEATS EVERY ESTIMATE. Mission-item hauls (recover-cargo and friends)
+      // enumerate every box in the log with its SCU in the class name, so for those there is
+      // nothing to model: count the boxes and sum them. This is also the only place a `boxes`-unit
+      // objective becomes an SCU figure — "Deliver 0/9 Cargo Boxes" is a COUNT, and treating that
+      // 9 as 9 SCU would under-report a 65 SCU load by a factor of seven.
+      const manifest = c.items.filter((it) => it.dropoffKey === drop.key && it.present && it.scu != null);
+      const r = manifest.length
+        ? (() => {
+            const total = manifest.reduce((s, it) => s + (it.scu ?? 0), 0);
+            return { scu: total, min: total, max: total, source: "manifest" as ScuSource, exact: true };
+          })()
+        // A boxes/items objective states a COUNT, not a tonnage — so it is not an SCU input.
+        : resolveScu(drop.unit === "scu" ? drop.need : null, pinPer ? pinPer[i] : null, b);
+      // No declared cap means the game may hand you any size, so plan for the largest that exists
+      // — an over-large box is the case that fails to fit, which is the safe direction to guess in.
+      const cap = b.cap ?? (r.scu != null ? largestBox : null);
+      const partition: Partition | null = !manifest.length && r.scu != null && cap != null
+        ? partitionScu(r.scu, cap, boxSet)
+        : null;
+      const counted = new Map<number, number>();
+      for (const it of manifest) counted.set(it.scu!, (counted.get(it.scu!) ?? 0) + 1);
+      const boxes = manifest.length
+        ? [...counted].sort((x, y) => y[0] - x[0]).map(([scu, count]) => ({ scu, count }))
+        : partition ? partition.boxes.map((x) => ({ scu: x.scu, count: x.count })) : [];
+      const group = `${c.missionId}#${drop.key}`;
+      const from = posKey(pickup?.pos) ?? (pickup ? `${group}:from` : null);
+      const to = posKey(drop.pos) ?? `${group}:to`;
+      if (drop.destination && to) nameByLoc.set(to, drop.destination);
+      return {
+        key: drop.key,
+        index: drop.index,
+        group,
+        commodity: drop.commodity,
+        destination: drop.destination,
+        unit: drop.unit,
+        ...r,
+        maxContainerScu: cap,
+        capSource: b.cap != null ? "dataset" : "assumed",
+        boxes,
+        boxLabel: boxes.map((x) => `${x.count}x${x.scu}`).join(" · "),
+        // The game's own box count when it stated one ("Deliver 0/9 Cargo Boxes"), so an
+        // un-manifested item haul still shows how many boxes are coming.
+        boxCount: boxes.length ? boxes.reduce((s, x) => s + x.count, 0)
+          : drop.unit === "boxes" || drop.unit === "items" ? drop.need ?? 0 : 0,
+        boxSource: manifest.length ? "manifest" : partition ? "partition" : "none",
+        pickupState: pickup?.state ?? "pending",
+        dropoffState: drop.state,
+        delivered: drop.delivered,
+        fromLocation: from,
+        toLocation: to,
+      };
+    });
+
+    const sources = legs.map((l) => l.source);
+    const total = legs.every((l) => l.scu != null) ? legs.reduce((s, l) => s + (l.scu ?? 0), 0) : null;
+    const src = legs.length ? weakest(sources) : "unknown";
+    const planned: PlannedContract = {
+      missionId: c.missionId,
+      title: c.title,
+      contractKey: c.contractKey,
+      generator: c.generator,
+      giver: info?.giver ?? null,
+      missionType: info?.missionType ?? null,
+      tracked: c.tracked,
+      ended: c.endedAt != null,
+      completion: c.completion,
+      payout: c.payout,
+      legs,
+      scu: total,
+      minScu: legs.every((l) => l.min != null) ? legs.reduce((s, l) => s + (l.min ?? 0), 0) : null,
+      maxScu: legs.every((l) => l.max != null) ? legs.reduce((s, l) => s + (l.max ?? 0), 0) : null,
+      source: src,
+      exact: src === "manifest" || src === "log" || src === "pinned" || src === "dataset",
+      plannable: total != null && c.endedAt == null,
+    };
+    contracts.push(planned);
+    for (const leg of legs) legByGroup.set(leg.group, { c, leg });
+  }
+
+  // ── what is still to be flown ───────────────────────────────────────────
+  // A leg whose drop-off has completed is done and gone. A leg whose PICKUP completed is already
+  // in the hold: it still has to be packed and delivered, but there is nothing left to fly TO for
+  // its pickup, so it contributes no visit — only load. That is `aboardScu`.
+  const openLegs = contracts
+    .filter((c) => c.plannable)
+    .flatMap((c) => c.legs.filter((l) => l.dropoffState !== "completed" && l.scu != null).map((leg) => ({ c, leg })));
+  const aboardScu = openLegs
+    .filter(({ leg }) => leg.pickupState === "completed")
+    .reduce((s, { leg }) => s + (leg.scu ?? 0), 0);
+
+  const routeLegs: HaulLeg[] = openLegs
+    .filter(({ leg }) => leg.pickupState !== "completed" && leg.fromLocation && leg.toLocation)
+    .map(({ leg }) => ({
+      contractId: leg.group,
+      scu: leg.scu ?? 0,
+      fromLocation: leg.fromLocation!,
+      toLocation: leg.toLocation!,
+      commodity: leg.commodity ?? undefined,
+    }));
+
+  // Positions come from the marker that named the location, so the map is built from the legs
+  // rather than a dataset — locations.json has no coordinates and its markerXyz table is empty.
+  const posByLoc = new Map<string, Vec3>();
+  for (const c of view.contracts) {
+    for (const s of c.stops) {
+      const k = posKey(s.pos);
+      if (k && s.pos && !posByLoc.has(k)) posByLoc.set(k, s.pos);
+    }
+  }
+
+  const routeContracts: RouteContract[] = routeLegs.map((l) => ({ id: l.contractId, payout: 0 }));
+  const stops = buildStops(routeLegs, (id) => posByLoc.get(id) ?? null);
+  // 🔑 The hold that is still FREE. Cargo already aboard cannot be unloaded to make room for a
+  // pickup, so planning against the full rating would happily overfill a part-loaded ship.
+  const freeCapacity = capacityScu != null ? Math.max(0, capacityScu - aboardScu) : undefined;
+  const run = stops.length
+    ? planRun(stops, routeContracts, {
+        objective: opts.objective ?? "auec-per-hour",
+        capacityScu: freeCapacity,
+        travelSpeedMps: opts.travelSpeedMps,
+        stopMinutes: opts.stopMinutes,
+      })
+    : { trips: [], stranded: [], totalMinutes: 0, payout: 0, auecPerHour: 0 };
+
+  // ── name the visits ─────────────────────────────────────────────────────
+  // Only tracked drop-offs carry a real place name, so everything else is numbered in the order
+  // it first appears. Honest and stable; a made-up name would be worse than "Pickup 2".
+  const fallback = new Map<string, string>();
+  const nameOf = (locationId: string, kind: "pickup" | "dropoff"): string => {
+    const known = nameByLoc.get(locationId);
+    if (known) return known;
+    const cached = fallback.get(locationId);
+    if (cached) return cached;
+    const label = `${kind === "pickup" ? "Pickup" : "Drop-off"} ${fallback.size + 1}`;
+    fallback.set(locationId, label);
+    return label;
+  };
+
+  const trips: PlanTrip[] = run.trips.map((trip) => toTrip(trip, stops, legByGroup, nameOf, aboardScu));
+
+  // ── layout ──────────────────────────────────────────────────────────────
+  // Everything not yet delivered gets packed, INCLUDING what is already aboard — the question the
+  // layout answers is "where does it all go", and the boxes in the hold are part of that.
+  const items: PackItem[] = [];
+  let undrawable = 0;
+  for (const { leg } of openLegs) {
+    let n = 0;
+    for (const b of leg.boxes) {
+      // A manifest can name a size the box table does not carry (the fractional 1/8, 1/4 and 1/2
+      // SCU classes in the engine's enum, for one). It cannot be drawn without a footprint, so it
+      // is counted and reported rather than quietly missing from the layout.
+      const spec = boxSet.find((s) => s.scu === b.scu);
+      if (!spec) { undrawable += b.count; continue; }
+      for (let i = 0; i < b.count; i++) items.push({ id: `${leg.group}#${n++}`, scu: spec.scu, dims: spec.dims, group: leg.group });
+    }
+  }
+  if (undrawable) notes.push(`${undrawable} boxes are a size the box table has no footprint for, so they are missing from the layout.`);
+  // Unload order = the route's drop-off order, so the first stop's boxes sit nearest the ramp.
+  const groupOrder: string[] = [];
+  for (const trip of trips) {
+    for (const s of trip.stops) {
+      if (s.kind !== "dropoff") continue;
+      for (const a of s.actions) if (!groupOrder.includes(a.group)) groupOrder.push(a.group);
+    }
+  }
+  const pack = hull ? packCargo(grids, items, { groupOrder }) : null;
+
+  if (!hull) notes.push("Pick the ship you are flying to see where the boxes go.");
+  if (pack && !pack.fits) notes.push(`${pack.unplaced.length} boxes do not fit — this is more than one trip.`);
+  const rangeCount = contracts.filter((c) => !c.ended && c.source === "range").length;
+  if (rangeCount) {
+    notes.push(`${rangeCount} contract${rangeCount > 1 ? "s" : ""} planned at the TOP of the dataset's range. Track ${rangeCount > 1 ? "them" : "it"} in mobiGlas to pin the real load.`);
+  }
+
+  const liveContracts = contracts.filter((c) => !c.ended);
+  return {
+    updatedAt: view.updatedAt,
+    ship: hull
+      ? {
+          className: hull.className,
+          displayName: hull.displayName,
+          totalScu: hull.totalScu,
+          grids: grids.map((g) => ({
+            ...g,
+            capacityScu: g.w * g.l * g.h,
+            usedScu: pack?.byGrid.find((u) => u.grid === g.name)?.usedScu ?? 0,
+          })),
+          source: picked ? "manual" : "log",
+        }
+      : null,
+    contracts,
+    untracked: liveContracts
+      .filter((c) => !c.tracked)
+      .map((c) => ({ missionId: c.missionId, title: c.title, minScu: c.minScu, maxScu: c.maxScu })),
+    trips,
+    stranded: run.stranded,
+    pack,
+    aboardScu,
+    totals: {
+      scu: openLegs.reduce((s, { leg }) => s + (leg.scu ?? 0), 0),
+      capacityScu,
+      liveContracts: liveContracts.length,
+      unknownContracts: liveContracts.filter((c) => c.scu == null).length,
+      recentPayout: contracts.reduce((s, c) => s + (c.payout ?? 0), 0),
+      totalMinutes: run.totalMinutes,
+    },
+    notes,
+  };
+}
+
+/** One RoutePlan -> the stop list the widget draws, with names and per-stop actions. */
+function toTrip(
+  trip: RoutePlan,
+  stops: ReturnType<typeof buildStops>,
+  legByGroup: Map<string, { c: HaulContract; leg: PlannedLeg }>,
+  nameOf: (locationId: string, kind: "pickup" | "dropoff") => string,
+  aboardScu: number,
+): PlanTrip {
+  const byId = new Map(stops.map((s) => [s.id, s]));
+  const out: PlanStop[] = trip.order.map((id, i) => {
+    const stop = byId.get(id);
+    const leg = trip.legs[i];
+    const kind: "pickup" | "dropoff" = id.endsWith(":pickup") ? "pickup" : "dropoff";
+    const locationId = stop?.locationId ?? id;
+    return {
+      id,
+      name: nameOf(locationId, kind),
+      kind,
+      minutes: leg?.minutes ?? 0,
+      // Cargo already in the hold rides along the whole trip, so it belongs in every reading.
+      loadAfterScu: (leg?.loadAfterScu ?? 0) + aboardScu,
+      sameSpot: (leg?.minutes ?? 1) === 0,
+      actions: (stop?.actions ?? []).map((a) => {
+        const found = legByGroup.get(a.contractId);
+        return {
+          missionId: found?.c.missionId ?? a.contractId,
+          title: found?.c.title ?? null,
+          commodity: a.commodity ?? null,
+          scu: a.scu,
+          group: a.contractId,
+        };
+      }),
+    };
+  });
+  return {
+    stops: out,
+    landings: trip.stops,
+    totalMinutes: trip.totalMinutes,
+    peakScu: trip.peakScu + aboardScu,
+    method: trip.method,
+  };
+}
