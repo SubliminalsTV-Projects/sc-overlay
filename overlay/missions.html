@@ -3437,11 +3437,24 @@
     // WHY, which is the part that stops it looking like a bug. The reason is specific and worth
     // stating: the game never reports your reputation anywhere the app can read, so this is
     // reconstructed from your own logs and is a floor, not a reading.
-    const why = rb.noData
+    let why = rb.noData
       ? "Star Citizen never reports your reputation in any form the app can read, so standing is worked out from the missions in your own logs. None have been counted for " + rb.faction + " yet — run Verify from logs to read your history."
       : "Star Citizen never reports your exact reputation in any form the app can read, so this is worked out from the missions in your own logs since the 4.8 wipe. It is a lower bound: anything earned before you installed the app, or since deleted, cannot be counted.";
+    // 🔴 SAY THAT THIS CONTRACT WILL NOT MOVE IT. The bar used to VANISH on these contracts —
+    // Sub accepted a Headhunters mission and his Headhunters standing disappeared, because the
+    // contract pays into a combat sub-track the app does not rank (384 of 4,075 do; 88 of them
+    // Headhunters). Showing his real standing is the right answer to "where do I stand with these
+    // people". Showing it SILENTLY next to that mission's own "+500 reputation" pill would be a
+    // different lie, so the caption is marked and the reason is in the same affordance.
+    if (rb.offTrack) {
+      why += "\n\nThis contract's reputation goes to a separate track that has no rank ladder the"
+        + " app can read, so finishing it will not move this bar. The standing shown is what you"
+        + " have earned from " + rb.faction + "'s other work.";
+    }
     return '<div class="mi-row"><span class="mi-k">Standing</span><span class="mi-v">' + standing +
-      (rb.noData ? ' <span class="mi-hint">no data</span>' : "") + info(why) + '</span></div>' +
+      (rb.noData ? ' <span class="mi-hint">no data</span>' : "") +
+      (rb.offTrack && !rb.noData ? ' <span class="mi-hint">not from this one</span>' : "") +
+      info(why) + '</span></div>' +
       '<div class="rb' + (empty ? " floor" : "") + '"><div class="rb-track"><div class="rb-fill" style="width:' +
       pct.toFixed(1) + '%"></div></div><div class="rb-cap">' + cap + "</div></div>";
   }

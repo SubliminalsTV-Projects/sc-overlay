@@ -181,6 +181,13 @@ export interface RepBar {
   nextRewards: string[];
   /** True at the top of the ladder (no next rank). */
   max: boolean;
+  /** 🔑 THIS CONTRACT WILL NOT MOVE THIS BAR. True when the contract pays its reputation into a
+   *  track the app does not rank — REP_SCOPE_DENY excludes ShipCombat_*, FPS_Combat, Racing and
+   *  friends, and 384 of 4,075 contracts pay ONLY those — so the standing shown is the giver's
+   *  own, earned from their other work. The bar is still the right answer to "where do I stand
+   *  with these people", but the panel must say that finishing THIS one will not advance it, or
+   *  the number is a lie by implication sitting next to a +500 reputation pill. */
+  offTrack?: boolean;
   /** No completions witnessed yet for this giver (run Verify from logs) — the UI shows an
    *  empty "estimate unavailable" state instead of a misleading zero-progress bar. */
   noData: boolean;
@@ -2751,13 +2758,29 @@ export class MissionTracker extends EventEmitter {
     const giver = m?.giver;
     if (!giver) return null;
     const primary = this.primaryRep(m);
-    if (!primary) return null;
-    const pos = repLadderPosition(this.repScopes[primary.scope], this.repWitnessed.get(giver)?.sum ?? 0);
+    const witnessed = this.repWitnessed.get(giver);
+    // 🔴 FALL BACK TO THE GIVER'S OWN TRACKED STANDING when this contract's reputation goes
+    // somewhere we do not rank. Reported by Sub 2026-08-15: he accepted "Eliminate Annoyance" for
+    // Headhunters and the standing bar vanished, though his Headhunters standing is real and
+    // tracked (7,825 on FactionReputation). The contract awards rep ONLY on
+    // `ShipCombat_HeadHunters`, which REP_SCOPE_DENY excludes, so primaryRep returned null and the
+    // whole bar with it. Measured across the dataset: **384 of 4,075 contracts pay only denied
+    // scopes**, and Headhunters is the worst-hit giver at 88 of them — so this was not an edge
+    // case, it was most of a faction's board.
+    // 🔑 The bar answers "where do I stand with these people", which is true regardless of which
+    // internal track a particular contract happens to credit. What it must NOT do is imply this
+    // contract will move it — see `offTrack`, which the panel says out loud.
+    const scope = primary?.scope ?? witnessed?.scope;
+    if (!scope) return null;
+    const pos = repLadderPosition(this.repScopes[scope], witnessed?.sum ?? 0);
     if (!pos) return null;
+    // True when the contract pays into a track that is not the one this bar measures, so
+    // completing it will not advance what is shown. Both halves of that are worth saying.
+    const offTrack = !primary || (!!witnessed && witnessed.scope !== scope);
     // What reaching the next rank actually hands over. Battaglia gates SHIPS this way and the
     // panel never mentioned them, so the bar was a number with no stated reason to care.
     const nextRewards = pos.nextRank == null ? [] : (this.rewardsByRank(giver).get(pos.nextRank) ?? []);
-    return { scope: primary.scope, faction: giver, ...pos, nextRewards };
+    return { scope, faction: giver, ...pos, nextRewards, offTrack };
   }
 
   /** Rank index -> item names for one giver, built once and cached. Mirrors how giverTrack()

@@ -1235,6 +1235,38 @@ const MIDRAWERS = `(async () => {
   ok("faction reputation is labelled as such", rep && /\\+200/.test(value(rep)), rep && value(rep));
   ok("...and AFFINITY is named rather than shown as a second mystery number",
      aff && /\\+50/.test(value(aff)), aff && value(aff));
+
+  // ── The standing bar on a contract that pays a track we do not rank ──────────────────────
+  // 🔴 THE BAR USED TO VANISH. Sub accepted a Headhunters contract and his Headhunters standing
+  // disappeared: that contract awards reputation only on ShipCombat_HeadHunters, which
+  // REP_SCOPE_DENY excludes, so primaryRep returned null and took the whole bar with it. 384 of
+  // 4,075 contracts pay only denied scopes and 88 of those are Headhunters, so it was most of a
+  // faction's board. It now falls back to the giver's own tracked standing.
+  // Driven through repBarHtml directly — the shape is the contract, and building a whole mission
+  // fixture to reach it would test the fixture.
+  const barOff = document.createElement("div");
+  barOff.innerHTML = repBarHtml({ scope: "FactionReputation", faction: "Headhunters",
+    standing: "Sr. Contractor", estimate: 7825, curMin: 5000, nextMin: 15000,
+    nextName: "Veteran Contractor", nextRank: 4, nextRewards: [], max: false, noData: false,
+    offTrack: true });
+  ok("a contract paying an unranked track still shows the giver's standing",
+     /Sr. Contractor/.test(barOff.textContent), barOff.textContent.slice(0, 60));
+  // 🔑 ...and says so, because the bar sits beside that mission's own reputation pill. Silence
+  // there would read as "finishing this advances it", which is exactly what it will not do.
+  ok("...marked as not coming from THIS contract",
+     /not from this one/.test(barOff.textContent), barOff.textContent.slice(0, 90));
+  const offTip = barOff.querySelector(".mi-info");
+  ok("...with the reason in the same affordance as the rest of the caveats",
+     !!offTip && /will not move this bar/.test(offTip.getAttribute("data-tip") || ""),
+     (offTip && offTip.getAttribute("data-tip") || "").slice(-80));
+
+  // The ordinary case must NOT carry the marker, or it stops meaning anything.
+  const barOn = document.createElement("div");
+  barOn.innerHTML = repBarHtml({ scope: "FactionReputation", faction: "Headhunters",
+    standing: "Sr. Contractor", estimate: 7825, curMin: 5000, nextMin: 15000,
+    nextName: "Veteran Contractor", nextRank: 4, nextRewards: [], max: false, noData: false });
+  ok("...and a contract that DOES advance the bar is not marked",
+     !/not from this one/.test(barOn.textContent), barOn.textContent.slice(0, 60));
   return out;
 })()`;
 
