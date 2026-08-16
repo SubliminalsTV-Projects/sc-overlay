@@ -17,7 +17,7 @@ import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
 import { MissionFeedbackStore } from "./mission-feedback.js";
 import { FabClaims } from "./fab-claim.js";
-import { SCENARIOS, replayLines, replayMissionId } from "./dev-replay.js";
+import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLines } from "./dev-replay.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
 import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, contractRegionOrDefault, DEFAULT_CONTRACT_REGION, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
@@ -3573,6 +3573,48 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         outcome: s.outcome,
         note: s.drop && !blueprint ? "you own nothing in this mission's pool, so it ran without a drop" : null,
       }));
+      return;
+    }
+  }
+
+  // Hauling scenarios — the same idea as /api/dev/replay, but feeding the hauling tracker
+  // instead of the report card, so the widget can be built and reviewed without flying a
+  // contract. Separate route because it takes a different scenario shape entirely (legs,
+  // positions, manifests) and returns the resulting view rather than a completion.
+  if (url === "/api/dev/hauling-replay") {
+    if (process.env.SC_DEV !== "1" || !fromThisMachine(req)) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "not available" }));
+      return;
+    }
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ scenarios: HAUL_SCENARIOS }));
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readBody(req);
+      const wanted = (body as { scenario?: string })?.scenario;
+      // No scenario named = run the whole set, which is the useful default: a real player holds
+      // several contracts at once, and every layout question (do the cards stack, does the
+      // please-track prompt crowd out the route list) only appears with more than one.
+      const chosen = wanted ? HAUL_SCENARIOS.filter((x) => x.id === wanted) : HAUL_SCENARIOS;
+      if (!chosen.length) {
+        res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: "unknown scenario", known: HAUL_SCENARIOS.map((x) => x.id) }));
+        return;
+      }
+      const now = Date.now();
+      let count = 0;
+      for (const s of chosen) {
+        for (const line of haulReplayLines(s, replayMissionId(++replaySeq), now)) {
+          const ev = parseMissionEvent(parseLine(line));
+          if (ev) { hauling.apply(ev); count++; }
+        }
+      }
+      console.log(`[dev-replay] hauling: ${chosen.map((s) => s.id).join(", ")} — ${count} events`);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: true, scenarios: chosen.map((s) => s.id), events: count, view: hauling.view() }));
       return;
     }
   }
