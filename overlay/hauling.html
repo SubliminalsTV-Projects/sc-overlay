@@ -689,13 +689,9 @@
     for (const c of plan.contracts) for (const l of c.legs) if (l.group === group) return l;
     return null;
   }
-  /** locationId -> the name the route settled on, so the layout and the route agree on what a
-   *  place is called. A visit id is "<locationId>:pickup|dropoff". */
-  function locNames() {
-    const m = {};
-    for (const t of (plan?.trips || [])) for (const s of t.stops) m[s.id.replace(/:(pickup|dropoff)$/, "")] = s.name;
-    return m;
-  }
+  /** locationId -> the name the plan settled on, so the route, the layout legend and the unrouted
+   *  list all call a place the same thing — including places the route deliberately never visits. */
+  const locNames = () => (plan && plan.locationNames) || {};
   /** Where a leg is going, in the same words the route uses. */
   function destOf(leg, names) {
     if (!leg) return "drop-off";

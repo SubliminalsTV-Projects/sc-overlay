@@ -158,9 +158,12 @@ export interface HaulingPlan {
   trips: PlanTrip[];
   /** Contracts no single trip can carry — over capacity even alone. */
   stranded: string[];
+  /** Every place any leg touches, keyed by location id — the route's own names, plus the places
+   *  it deliberately does not visit, so the layout legend and the unrouted list can say where. */
+  locationNames: Record<string, string>;
   /** Legs that have to be carried but could not be put in a route, each with the reason. Never
    *  silently dropped: a route missing legs would look complete and be wrong. */
-  unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; reason: string }[];
+  unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; toLocation: string | null; reason: string }[];
   /** Placements are only produced when a ship is known. */
   pack: PackResult | null;
   /** SCU already aboard: legs whose pickup completed but whose drop-off has not. */
@@ -440,16 +443,16 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     return s;
   };
   /** Legs that must be carried but cannot be put in a route — reported, never dropped. */
-  const unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; reason: string }[] = [];
+  const unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; toLocation: string | null; reason: string }[] = [];
   const routeGroups = new Set<string>();
   for (const { c, leg } of openLegs) {
     if (!leg.toLocation) {
-      unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, reason: "the log has not placed this drop-off yet" });
+      unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, toLocation: leg.toLocation, reason: "the log has not placed this drop-off yet" });
       continue;
     }
     const stillToLoad = leg.pickupState !== "completed";
     if (stillToLoad && !leg.fromLocation) {
-      unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, reason: "the log carries no pickup marker for this leg — check mobiGlas for where to load it" });
+      unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, toLocation: leg.toLocation, reason: "the log carries no pickup marker for this leg — check mobiGlas for where to load it" });
       continue;
     }
     if (stillToLoad) {
@@ -491,6 +494,17 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   };
 
   const trips: PlanTrip[] = run.trips.map((trip) => toTrip(trip, stops, legByGroup, nameOf, aboardScu));
+  // Name every place any leg touches, not only the ones a trip visits — the layout legend and the
+  // unrouted list both point at places that are deliberately absent from the route, and "drop-off"
+  // is not a place. Named AFTER the trips so the route gets the low numbers, in flying order.
+  for (const { leg } of openLegs) {
+    if (leg.fromLocation) nameOf(leg.fromLocation);
+    if (leg.toLocation) nameOf(leg.toLocation);
+  }
+  const locationNames: Record<string, string> = {};
+  for (const [id, name] of nameByLoc) locationNames[id] = name;
+  for (const [id, name] of fallback) locationNames[id] ??= name;
+  for (const u of unrouted) u.destination ??= u.toLocation ? locationNames[u.toLocation] ?? null : null;
 
   // 🔑 `planRun` gives up quietly: when no trip can be formed for what is left in the pool it
   // breaks out of its loop, and those contracts appear in neither `trips` nor `stranded`. A route
@@ -501,7 +515,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     if (!routeGroups.has(leg.group) || routed.has(leg.group)) continue;
     unrouted.push({
       group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination,
-      reason: "no trip could be planned that carries this leg",
+      toLocation: leg.toLocation, reason: "no trip could be planned that carries this leg",
     });
   }
 
@@ -561,6 +575,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       .map((c) => ({ missionId: c.missionId, title: c.title, minScu: c.minScu, maxScu: c.maxScu })),
     trips,
     stranded: run.stranded,
+    locationNames,
     unrouted,
     pack,
     aboardScu,

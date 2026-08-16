@@ -4457,8 +4457,10 @@ const HAULING = `(async () => {
         actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" }] },
     ] }],
     stranded: [],
+    locationNames: { "@1,1,1": "Baijini Point", "@2,2,2": "Site 1" },
     unrouted: [{ group: "g-orphan", missionId: "m-orphan", title: "Orphan Haul", scu: 16,
-      destination: "Riker Memorial Spaceport", reason: "the log carries no pickup marker for this leg" }],
+      destination: "Riker Memorial Spaceport", toLocation: "@2,2,2",
+      reason: "the log carries no pickup marker for this leg" }],
     pack: { fits: true, loadedScu: 24, capacityScu: 696, unplaced: [], byGrid: [],
       placements: [
         { grid: "hardpoint_cargo_large", item: "a", group: "g-tracked", scu: 8, x: 0, y: 0, z: 0, dx: 2, dy: 2, dz: 2 },
