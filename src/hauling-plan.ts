@@ -437,16 +437,19 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     : { trips: [], stranded: [], totalMinutes: 0, payout: 0, auecPerHour: 0 };
 
   // ── name the visits ─────────────────────────────────────────────────────
-  // Only tracked drop-offs carry a real place name, so everything else is numbered in the order
-  // it first appears. Honest and stable; a made-up name would be worse than "Pickup 2".
+  // Only a TRACKED drop-off carries a real place name (the Deliver line's "… to <D>"), and marker
+  // XYZ resolves to nothing — locations.json ships no coordinates and its markerXyz table is
+  // empty. So an unnamed place is numbered in the order it first appears.
+  //
+  // 🔑 The number is per LOCATION and the label is neutral. Labelling it by the visit's role gave
+  // "Drop-off at Pickup 1" the moment a place was used for both, which is the normal case: Sub's
+  // board runs Baijini -> Riker and Riker -> Baijini at the same time.
   const fallback = new Map<string, string>();
-  const nameOf = (locationId: string, kind: "pickup" | "dropoff"): string => {
+  const nameOf = (locationId: string): string => {
     const known = nameByLoc.get(locationId);
     if (known) return known;
-    const cached = fallback.get(locationId);
-    if (cached) return cached;
-    const label = `${kind === "pickup" ? "Pickup" : "Drop-off"} ${fallback.size + 1}`;
-    fallback.set(locationId, label);
+    let label = fallback.get(locationId);
+    if (!label) { label = `Site ${fallback.size + 1}`; fallback.set(locationId, label); }
     return label;
   };
 
@@ -527,7 +530,7 @@ function toTrip(
   trip: RoutePlan,
   stops: ReturnType<typeof buildStops>,
   legByGroup: Map<string, { c: HaulContract; leg: PlannedLeg }>,
-  nameOf: (locationId: string, kind: "pickup" | "dropoff") => string,
+  nameOf: (locationId: string) => string,
   aboardScu: number,
 ): PlanTrip {
   const byId = new Map(stops.map((s) => [s.id, s]));
@@ -538,7 +541,7 @@ function toTrip(
     const locationId = stop?.locationId ?? id;
     return {
       id,
-      name: nameOf(locationId, kind),
+      name: nameOf(locationId),
       kind,
       minutes: leg?.minutes ?? 0,
       // Cargo already in the hold rides along the whole trip, so it belongs in every reading.

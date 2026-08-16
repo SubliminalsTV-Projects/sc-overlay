@@ -115,8 +115,8 @@ check("the remaining leg produces a pickup and a drop-off",
   multi.trips.length === 1 && multi.trips[0].stops.length === 2, JSON.stringify(multi.trips[0]?.stops.map((s) => s.kind)));
 check("the pickup comes before the drop-off",
   multi.trips[0]?.stops[0].kind === "pickup" && multi.trips[0].stops[1].kind === "dropoff");
-check("a tracked drop-off is named from the log, a pickup is numbered honestly",
-  multi.trips[0]?.stops[1].name === "Levski" && /^Pickup \d+$/.test(multi.trips[0].stops[0].name),
+check("a tracked drop-off is named from the log, an unnamed place is numbered honestly",
+  multi.trips[0]?.stops[1].name === "Levski" && /^Site \d+$/.test(multi.trips[0].stops[0].name),
   multi.trips[0]?.stops.map((s) => s.name).join(" -> "));
 
 // ── the whole board at once ────────────────────────────────────────────────
