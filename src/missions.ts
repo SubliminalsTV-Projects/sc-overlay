@@ -211,6 +211,18 @@ export interface GrindMission {
   /** Guaranteed physical items — ships and gear the log NEVER reports, so they're the reason
    *  to chase a specific rank. */
   items: { name: string; amount: number }[];
+  /** What ONE run costs and pays. Measured over Recco Battaglia's 33 contracts on 2026-08-15:
+   *  33 carry a payout, 32 a run length, 32 a difficulty, and only ONE a re-accept cooldown.
+   *  🔑 This is what turns a grind tracker from a scoreboard into a route: rep per hour varies
+   *  FOUR-FOLD across Battaglia's own missions (4,800/hr on "Extra Special Job" against 1,200/hr
+   *  on most of the rank 0-2 work), so "which one do I run" has a real answer the widget could
+   *  not previously give. Every field is optional and the UI must omit rather than invent. */
+  payMax: number | null;
+  /** 🔴 Always true in practice for these — the payout is MODELLED, not read from the game. */
+  payoutEstimated: boolean;
+  durMin: number | null;
+  /** CIG's own blended difficulty, 1-7. */
+  diff: number | null;
 }
 
 /** A mission giver's whole reputation track: the standing ladder, where you are on it, and
@@ -2847,6 +2859,11 @@ export class MissionTracker extends EventEmitter {
       byTitleOnly: !this.completedKeys.has(key) && (this.completedTitles.get(normScreenTitle(m.title)) ?? 0) > 0,
       poolCount: Object.values(m.pools ?? {}).reduce((s, p) => s + p.length, 0),
       items: (m.items ?? []).map((i) => ({ name: i.name, amount: i.amount ?? 1 })),
+      payMax: m.payout?.max ?? null,
+      payoutEstimated: m.payoutCalculated === true,
+      // Guard the zero: a contract that takes no time would divide into an infinite rate.
+      durMin: this.factsFor(key)?.dur && this.factsFor(key)!.dur! > 0 ? this.factsFor(key)!.dur! : null,
+      diff: this.factsFor(key)?.diff ?? null,
     });
     const missions = entries.map(toMission);
 
