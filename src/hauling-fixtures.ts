@@ -29,6 +29,13 @@ export const C2_GRIDS: GridSpec[] = [
   { name: "small", w: 6, l: 9, h: 4, maxBox: { x: 6, y: 9, z: 2 } },
 ];
 
+/**
+ * 🔑 The A2 is ONE grid, 6x18x2 — same 216 SCU as the C2's small grid, completely different shape,
+ * and only 2 cells high so there is exactly ONE level to fill. Proof that a ship is a set of grids
+ * with dimensions, not a pool of SCU.
+ */
+export const A2_GRIDS: GridSpec[] = [{ name: "main", w: 6, l: 18, h: 2, maxBox: { x: 6, y: 18, z: 2 } }];
+
 /** Published totals the datacore agrees with. UEX says A2 = 234; the datacore's 216 wins. */
 export const KNOWN_SHIP_SCU = { C2: 696, M2: 522, A2: 216 } as const;
 

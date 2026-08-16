@@ -13,7 +13,7 @@ import {
   type PackResult,
   type Placement,
 } from "./cargo-pack.js";
-import { C2_GRIDS, KNOWN_SHIP_SCU, SIX_CONTRACTS } from "./hauling-fixtures.js";
+import { A2_GRIDS, C2_GRIDS, KNOWN_SHIP_SCU, SIX_CONTRACTS } from "./hauling-fixtures.js";
 
 let failures = 0;
 const check = (name: string, ok: boolean, extra = "") => {
@@ -82,6 +82,22 @@ check("...by pairing them two high", alu.placements.filter((p) => p.z === 1).len
 const flat4 = packCargo(C2_GRIDS, itemsFor("ice", 24, 4));
 check("4 SCU boxes pair vertically too", flat4.fits
   && new Set(flat4.placements.map((p) => `${p.x},${p.y}`)).size === 3);
+
+// ── a one-level ship ───────────────────────────────────────────────────────
+// The A2 holds the same 216 SCU as the C2's small grid in a completely different shape: 6x18x2.
+// Only 2 cells high, so there is a single level and no stacking above it — the case where the
+// level logic has nowhere to go when a shelf fills up.
+check("A2 = one 6x18x2 grid = 216 SCU", shipCapacityScu(A2_GRIDS) === KNOWN_SHIP_SCU.A2);
+// 170 SCU is the most the six contracts ever have aboard at once (see hauling-route.test.ts), so
+// this is the pack that decides whether Sub could actually fly that board in an A2.
+const a2Peak = packCargo(A2_GRIDS, [
+  ...itemsFor("waste", 44, 8, "BAIJINI"),
+  ...itemsFor("scrap", 45, 8, "BAIJINI"),
+  ...itemsFor("stims", 81, 8, "BAIJINI"),
+]);
+check("the six contracts' 170 SCU peak load fits an A2", a2Peak.fits, `${a2Peak.unplaced.length} unplaced`);
+check("...legally", conflicts(A2_GRIDS, a2Peak).length === 0, conflicts(A2_GRIDS, a2Peak).slice(0, 3).join(" | "));
+check("...within the single level", a2Peak.placements.every((p) => p.z + p.dz <= 2));
 
 // ── per-grid dimensions are real constraints, not a pool of SCU ────────────
 // The C2's small grid is 6 wide and 9 long. A 32 SCU box is 8x2x2, so it can only go in along Y.
