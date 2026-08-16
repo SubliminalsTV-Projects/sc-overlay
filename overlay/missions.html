@@ -1258,7 +1258,133 @@
   .cp-bar { height: 4px; border-radius: 2px; background: rgba(var(--accent-rgb), 0.16);
     overflow: hidden; margin-top: 3px; }
   .cp-bar i { display: block; height: 100%; background: var(--cyan); }
-  .cp-w { font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+  /* Where to pick it up, and the way out to the pool's own page. A flex row so the link sits at
+     the far edge instead of running on from the place list as if it were another place. */
+  .cp-w { display: flex; align-items: baseline; gap: 8px; font-size: 10.5px; color: var(--faint);
+    margin-top: 2px; }
+  /* 🔴 EVERY TEXT CHILD OF THE SUB-LINE MUST BE ABLE TO SHRINK. Sub got a HORIZONTAL SCROLLBAR
+     across the bottom of the tracker, because the pool box is overflow:auto and this row pushed
+     past the panel. The cause was TWO flex:none children carrying percentage max-widths — the
+     tell at 46% and this at 62% — which come to 108% before the fixed-width link is even placed,
+     and flex:none forbids the shrink that would have absorbed the excess.
+     ⚠️ Removing the tell is what actually fixed it; measured afterwards, flex:none here alone no
+     longer overflows at any width down to the 300px minimum. This shrink is DEFENCE, not the fix
+     — it is what stops a third element being added to this row and quietly bringing the scrollbar
+     back. Only the link stays fixed, because a truncated control is a broken control. */
+  .cp-need { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--cyan-dim); }
+  .cp-need-n { color: var(--faint); }
+  /* The row itself must not become a scroll source either — belt to the shrinking braces above. */
+  .cp-w, .sl-sub { min-width: 0; overflow: hidden; }
+
+  /* ── Latest blueprints as pictures ──────────────────────────────────────────────────────
+     Sized by the widget's WIDTH, not its height: a fixed slice of the panel, one row of art. */
+  .ra-bp-sec { flex: none; }
+  .bt-row { display: grid; grid-template-columns: repeat(var(--bt-across, 3), minmax(0, 1fr));
+    gap: 8px; }
+  .bt { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  /* An absolute height, and the image contained inside it — see the note at the call site. */
+  .bt-art { height: var(--bt-h, 78px); display: flex; align-items: center; justify-content: center;
+    background: rgba(var(--accent-rgb), 0.1); border: 1px solid var(--border); border-radius: 4px;
+    overflow: hidden; }
+  .bt-i { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  /* A capture that 404s with no render behind it leaves the box empty rather than broken. */
+  .bt-i.bt-dead { display: none; }
+  .bt-none { font-size: 15px; color: var(--cyan-dim); opacity: 0.5; }
+  .bt-n { font-size: 9.5px; line-height: 1.2; color: var(--cyan-text); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .bt-w { font-family: var(--mono); font-size: 8.5px; color: var(--faint); }
+  .cp-w-p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* A quiet control, not a call to action — it competes with the pool name directly above it and
+     must lose. Underlined rather than boxed, because a button shape here would read as the row's
+     primary action when the row's job is to be read. */
+  .cp-link { flex: none; padding: 0; border: 0; background: none; cursor: pointer;
+    font-family: var(--sans); font-size: 10px; color: var(--cyan-dim);
+    text-decoration: underline; text-underline-offset: 2px; }
+  .cp-link:hover { color: var(--cyan-bright); }
+
+  /* ── TEMPORARY: idle-panel mockup scaffolding ────────────────────────────────────────────
+     ⚠️ Everything from here to the end of the .tg- block goes out with the switcher once Sub
+     picks a layout. Kept in one run so removing it is one delete, not an archaeology exercise. */
+  /* The switcher. Deliberately plain and small — it is scaffolding sitting on top of the thing
+     being judged, so it must not read as part of the design under review. */
+  .ra-mk { display: flex; align-items: center; gap: 4px; opacity: 0.55; }
+  .ra-mk-l { font-family: var(--sans); font-size: 8px; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+  .ra-mk-b { font-family: var(--mono); font-size: 9px; line-height: 1; padding: 2px 5px;
+    color: var(--cyan-dim); background: transparent; border: 1px solid var(--border);
+    border-radius: 3px; cursor: pointer; }
+  .ra-mk-b.on { color: var(--bg, #05121a); background: var(--cyan); border-color: var(--cyan); }
+
+  /* Mockup 1 adds no chrome of its own — it IS the shipping panel. */
+
+  /* Mockup 2 — the dense shortlist. Two lines per pool: the scannable row, then where to take it
+     in the caption weight, so four pools fit where two used to and the eye still lands on names. */
+  .sl-r { display: flex; align-items: center; gap: 7px; }
+  .sl-n { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--cyan-bright);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sl-c { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--faint);
+    font-variant-numeric: tabular-nums; }
+  /* A fixed-width bar so the rates align: a percentage-width bar would make every row a
+     different length and the column it is holding open would wander. */
+  .sl-bar { flex: none; width: 44px; height: 4px; border-radius: 2px; overflow: hidden;
+    background: rgba(var(--accent-rgb), 0.16); }
+  .sl-bar i { display: block; height: 100%; background: var(--cyan); }
+  /* "N to go" holds the right-hand column, in the same gold the ledger gives it. */
+  .sl-left { flex: none; min-width: 48px; text-align: right; font-family: var(--sans);
+    font-size: 10.5px; font-weight: 700; color: var(--gold); }
+  .sl-sub { display: flex; align-items: baseline; gap: 8px; font-size: 10px; color: var(--faint);
+    margin: 1px 0 6px; }
+  .sl-r:last-of-type + .sl-sub { margin-bottom: 0; }
+
+  /* ── Standing with your mission givers ──────────────────────────────────────────────────
+     Three layouts share these; the bars layout reuses .cp-* wholesale on purpose. */
+  .ra-h-row { display: flex; align-items: baseline; gap: 8px; }
+  .ra-h-row > span:first-child { flex: 1; min-width: 0; }
+  .ra-h-note { flex: none; }
+  /* 2 — contracts-to-next-rank. The effort figure is the headline and holds the right column. */
+  .st-r { display: flex; align-items: baseline; gap: 8px; }
+  .st-n { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--cyan-bright);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st-go { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 500;
+    color: var(--gold); }
+  .st-sub { font-size: 10px; color: var(--faint); margin: 1px 0 6px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .st-arrow { color: var(--cyan-dim); }
+  /* 3 — what the next rank unlocks. The PRIZE is the headline; who and how far are the caption. */
+  .su { margin-bottom: 8px; }
+  .su:last-child { margin-bottom: 0; }
+  .su-t { font-size: 12.5px; color: var(--gold); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .su-more { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  .su-s { font-size: 10px; color: var(--faint); margin: 1px 0 3px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Mockup 3 — one recommendation, given the room to be one. */
+  .tg-t { font-size: 14px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .tg-bar { height: 5px; border-radius: 3px; background: rgba(var(--accent-rgb), 0.16);
+    overflow: hidden; margin: 5px 0 7px; }
+  .tg-bar i { display: block; height: 100%; background: var(--cyan); }
+  .tg-r { display: flex; align-items: flex-start; gap: 14px; }
+  .tg-s { min-width: 0; }
+  /* 🔑 The values are DIFFERENT SIZES (the count is the headline), so their labels only line up if
+     the value box has a fixed height and the text sits on its floor. Without this the labels
+     staircase — measured, not guessed: "TO GO OF 7" sat a line below "TO FINISH". */
+  .tg-s-n { font-family: var(--mono); font-size: 13px; line-height: 1.15; color: var(--cyan-bright);
+    white-space: nowrap; height: 22px; display: flex; align-items: flex-end; }
+  /* The count is the headline of the headline — it is the number that says "close". */
+  .tg-big { font-size: 20px; }
+  .tg-s-l { font-family: var(--sans); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--faint); margin-top: 2px; white-space: nowrap; }
+  .tg-also { display: flex; align-items: baseline; gap: 7px; margin-top: 8px; font-size: 10.5px;
+    color: var(--faint); }
+  .tg-also-l { flex: none; font-family: var(--sans); font-size: 8px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase; }
+  /* ⚠️ text-overflow does nothing on the FLEX CONTAINER — it clips mid-word with no ellipsis, which
+     reads as a rendering fault rather than as "there is more". It has to be on the text child. */
+  .tg-also-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* The rule between the two halves — they answer different questions. */
   .ra-rule { border-top: 1px solid var(--border); margin: 1px 0; }
   /* Session totals. */
@@ -1275,6 +1401,10 @@
   .ss.ss-rates .ss-n { font-size: 14px; }
   .ss-n { font-family: var(--mono); font-size: 17px; line-height: 1.15; color: var(--cyan-bright); }
   .ss-n.gold { color: var(--gold); }
+  /* The trend suffix. Smaller and dimmer than the figure it hangs off — it is an extrapolation
+     sitting beside a measurement, and identical type would claim they are the same kind of fact.
+     Inherits the gold on the aUEC stat, so the pair still reads as one number. */
+  .ss-pace { font-size: 0.62em; opacity: 0.62; margin-left: 4px; letter-spacing: -0.02em; }
   .ss-n.green { color: var(--green, #7fd6a8); }
   .ss-l { font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
     text-transform: uppercase; color: var(--faint); margin-top: 1px; }
@@ -2330,6 +2460,369 @@
   // folded into the session section on 2026-08-13 and removed with its last caller. The rates now
   // use the same stat treatment as the totals, one section, one shape.)
 
+  // ── TEMPORARY: three idle-panel mockups, switchable live ──────────────────────────────────
+  // ⚠️ THE SWITCHER IS SCAFFOLDING. It exists so Sub can look at three designs in the real widget
+  // instead of reading three descriptions of them. Once he picks one, the other two renderers and
+  // this whole block come OUT — do not build anything on `idleLayout()`.
+  //
+  // All three keep Sub's 2026-08-13 order (what to go do next leads, the scoreboard follows) and
+  // all three keep every section that is there today. They differ only in how much they say about
+  // the pools, and how hard they push you at one of them.
+  // The switcher chooses the closest-to-done LAYOUT. It briefly chose how many blueprint pictures
+  // fit across instead — that question answered itself on 2026-08-15 when Sub asked for the row to
+  // be width-driven ("the wider the widget is, the more blueprints show up"), which is a
+  // measurement, not a preference. Default is the shortlist, the one he is focusing on.
+  const IDLE_LAYOUTS = [
+    { id: "bars",      n: "1", t: "Standing — a progress row per giver, same shape as Closest to done" },
+    { id: "contracts", n: "2", t: "Next rank — how many contracts away, not how much rep" },
+    { id: "unlock",    n: "3", t: "Worth going back for — what the next rank actually hands over" },
+  ];
+  // ⚠️ A FRESH KEY each time this control's MEANING changes. It has been repurposed twice, and
+  // reusing the old name meant whatever was last clicked under the previous meaning silently kept
+  // choosing — the panel came up on "target" for exactly that reason, which reads as the default
+  // not working. A repurposed control inherits a stale answer unless you rename its storage.
+  const IDLE_LAYOUT_KEY = "scIdleStandingsPick";
+  function idleLayout() {
+    try {
+      const s = localStorage.getItem(IDLE_LAYOUT_KEY);
+      if (IDLE_LAYOUTS.some((l) => l.id === s)) return s;
+    } catch { /* private mode — fall through to the default */ }
+    return "bars";
+  }
+  function idleSwitcherHtml() {
+    const cur = idleLayout();
+    return '<div class="ra-mk"><span class="ra-mk-l">mockup</span>'
+      + IDLE_LAYOUTS.map((l) =>
+          '<button type="button" class="ra-mk-b' + (l.id === cur ? " on" : "") + '"'
+          + ' data-mk="' + l.id + '" title="' + escapeAttr(l.t) + '">' + l.n + "</button>").join("")
+      + "</div>";
+  }
+  // Re-render in place rather than waiting for the next SSE frame — a switcher that takes a second
+  // to answer reads as broken, and this panel only repaints on a view push.
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest(".ra-mk-b");
+    if (!b) return;
+    try { localStorage.setItem(IDLE_LAYOUT_KEY, b.dataset.mk); } catch { /* no storage — session only */ }
+    const el = $("pool");
+    if (!el || !el.classList.contains("idle") || !current) return;
+    el.innerHTML = recentActivityHtml(current);
+    latestShown = latestMisShown = bpShown = -1;
+    observeLatest();
+  });
+
+  // ── Closest to done, three ways ───────────────────────────────────────────────────────────
+  // 🔴 NO ECONOMICS HERE. A first pass hung each pool's aUEC/hr, payout and run length off these
+  // rows; Sub, 2026-08-15: the per-hour figure "just meant a tracker that basically tracks how
+  // much money they've been making per hour with the missions that they've done, NOT with the
+  // closest to done". That number belongs to the session block and lives there. This section
+  // answers one question — how close am I — and every layout below answers it with the title, the
+  // count, the bar and where to pick it up, exactly as it always did.
+  //
+  // The pool facts are still on the view model (payMin/payMax/durMin/rep/cooldownMin/…) and are
+  // deliberately left there un-rendered: they are cheap, they are measured, and the moment
+  // anything wants them they are one field access away rather than a round trip through the
+  // dataset. Do not "tidy" them out of src/missions.ts.
+  const poolLeft = (p) => ({ left: p.total - p.owned, pct: Math.round((p.owned / p.total) * 100) });
+
+  // ── A pool's name, and the way out to its page ────────────────────────────────────────────
+  // 🔑 THE HEADLINE IS THE POOL, NOT A CONTRACT. `poolName` is giver + type ("United Wayfarers
+  // Club · Refueling"), which says what the collection IS where a contract title only ever named
+  // one of the (up to 79) ways to farm it.
+  const poolTitle = (p) => p.poolName || p.title;
+
+  /** How many contracts feed this pool, and what they are called — the "there is more here than
+   *  the one name you can see" affordance. Sub asked for an eye; the panel's settled idiom for
+   *  "there is more to know" is the circled i (an eye glyph was tried on 2026-08-12 and "read as
+   *  something else entirely"), so it is that. Self-hides for a single-contract pool. */
+  function poolMoreInfo(p) {
+    const titles = p.missionTitles || [];
+    const missing = p.missing || [];
+    const places = p.places || [];
+    if (titles.length < 2 && !missing.length) return "";
+    const shown = titles.slice(0, 6);
+    const parts = [];
+    if (missing.length) {
+      parts.push("Still missing: " + missing.slice(0, 10).join(", ")
+        + (missing.length > 10 ? ", +" + (missing.length - 10) + " more" : ""));
+    }
+    if (titles.length > 1) {
+      parts.push(titles.length + " different contracts fill this pool, so you are never stuck"
+        + " waiting for one to come back:\n• " + shown.join("\n• ")
+        + (titles.length > shown.length ? "\n• …and " + (titles.length - shown.length) + " more" : "")
+        + (p.variants > titles.length
+            ? "\n\n" + p.variants + " variants of them are on the boards you can reach."
+            : ""));
+    } else if (titles.length === 1) {
+      parts.push("One contract fills this pool: " + titles[0] + ".");
+    }
+    // 🔑 The places live in here as well as on the row. The row's copy is the first thing
+    // truncation eats on a narrow widget, and a pickup point you cannot read is not a pickup point.
+    if (places.length) parts.push("Pick it up at: " + places.join(", ") + ".");
+    return info(parts.join("\n\n"));
+  }
+
+  /** What you still need, leading the sub-line. This is the row's most useful fact AND the thing
+   *  that tells two same-named pools apart — Sub has two "Shubin Interstellar · Ship Mining" pools
+   *  open at once and nothing in the taxonomy separates them. First name plus a count, because the
+   *  full list is in the info popover and a row cannot hold five blueprint names. */
+  function poolNeed(p) {
+    const m = p.missing || [];
+    if (!m.length) return "";
+    return '<span class="cp-need">need ' + escapeHtml(m[0])
+      + (m.length > 1 ? ' <span class="cp-need-n">+' + (m.length - 1) + "</span>" : "")
+      + "</span>";
+  }
+
+  // (poolTell — a contract title only ONE of two same-named pools offers, so you could tell
+  //  them apart at the board — was removed 2026-08-15. Sub: the second row carried too much, and
+  //  the pool NAME already gets you there: pick the category, then find a mission from that
+  //  giver. Two measurements are worth keeping. For the titles two same-named pools SHARE they
+  //  are byte-identical on rank, locations and payout, so for those there was no tell to give.
+  //  And its own max-width was half of a HORIZONTAL SCROLLBAR: two flex:none children at 46% and
+  //  62% come to 108% before the fixed-width link is placed.)
+
+  // ── Latest blueprints, as pictures ────────────────────────────────────────────────────────
+  // 🔑 TWO IMAGE SOURCES AND THE CAPTURE WINS. `image` is the crowdsourced fabricator capture —
+  // what a player recognises. `imageFallback` is a generated clay render: grey, untextured, and
+  // SHARED between items that reuse a model, so it shows a shape rather than an identity. The
+  // capture 404s for anything nobody has captured, so we chain.
+  // ⚠️ Chain with a FLAG, never by comparing img.src to the fallback URL — `.src` reads back as
+  // the resolved ABSOLUTE url, so a relative fallback never compares equal and the handler
+  // re-sets the same broken source forever.
+  // 🔑 Item art is PORTRAIT (measured: capture 373x746, render 168x273). A square tile is the
+  // worst of both — it crops the width away AND makes the row taller than it needs to be.
+  function blueprintTile(b) {
+    const label = escapeHtml(b.name);
+    const art = b.image
+      ? '<img class="bt-i" alt="" loading="lazy" src="' + escapeAttr(b.image) + '"'
+        + (b.imageFallback ? ' data-fb="' + escapeAttr(b.imageFallback) + '"' : "") + ">"
+      : (b.imageFallback
+          ? '<img class="bt-i" alt="" loading="lazy" src="' + escapeAttr(b.imageFallback) + '">'
+          : '<span class="bt-none">◆</span>');
+    const w = fmtWhen(b.at);
+    const when = w ? (PREFS.timeRelative ? w.rel : w.date) : "";
+    return '<figure class="bt" title="' + escapeAttr(b.name) + '">'
+      + '<span class="bt-art">' + art + "</span>"
+      + '<figcaption class="bt-n">' + label + "</figcaption>"
+      + '<span class="bt-w">' + escapeHtml(when) + "</span></figure>";
+  }
+  // One delegated handler for the whole page: a capture that 404s swaps to the render ONCE.
+  document.addEventListener("error", (e) => {
+    const img = e.target;
+    if (!img || img.tagName !== "IMG" || !img.classList.contains("bt-i")) return;
+    const fb = img.getAttribute("data-fb");
+    if (!fb) { img.classList.add("bt-dead"); return; }
+    img.removeAttribute("data-fb");   // the flag: one swap, never a loop
+    img.src = fb;
+  }, true);   // capture phase — error does not bubble
+
+  // ⚠️ THE POOL PAGE DOES NOT EXIST YET. Sub is coordinating it with the website flight
+  // (2026-08-15); the uuid is the whole address, so nothing here needs to change when it lands.
+  // Until then this link 404s — which is why it is rendered ONLY when the shell can open a real
+  // browser (overlayApi.openUrl), never as a bare href a standalone/OBS view would follow, and
+  // why it is one small labelled control rather than the row itself being clickable.
+  const POOL_PAGE_BASE = "https://subliminal.gg/pools/";
+  function poolLink(p) {
+    if (!p.poolUuid) return "";
+    return '<button type="button" class="cp-link" data-pool="' + escapeAttr(p.poolUuid) + '">'
+      + "see all contracts</button>";
+  }
+  // 🔑 openUrl(), never target=_blank — a second always-on-top window over the game is exactly
+  // what this app exists to avoid. https only, enforced shell-side.
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest && e.target.closest(".cp-link");
+    if (!b) return;
+    const url = POOL_PAGE_BASE + encodeURIComponent(b.dataset.pool);
+    if (window.overlayApi && window.overlayApi.openUrl) window.overlayApi.openUrl(url);
+  });
+
+  // ── Standing with your mission givers ─────────────────────────────────────────────────────
+  // Sub, 2026-08-15: a segment that auto-picks up to four givers and shows where you stand, to
+  // make going back for the next rank feel worth it. Three ways of arguing that, switchable.
+  //
+  // 🔴 THE REP NUMBER IS A FLOOR, IN ALL THREE. The game never reports reputation anywhere the app
+  // can read, so it is reconstructed from the player's own completions and cannot count anything
+  // earned before the app was installed or in a log since rotated away. That is why the tracked
+  // mission's rep bar already carries a circled i, and why every layout here carries one too.
+  const REP_TIP =
+    "Reconstructed from your own completion history, so it is a FLOOR: anything you earned before"
+    + " installing the app, or in a log that has since rotated away, cannot be counted."
+    + "\n\nThe game does not report reputation anywhere the app can read, so there is no way to"
+    + " check it against the real number. Treat the rank you are shown as the worst case — you may"
+    + " already be further along.";
+  /** Faction name, trimmed of the tail that makes a 380px row truncate for nothing. */
+  const facName = (f) => String(f || "").replace(/\s+(Incorporated|Interstellar|Independent Contractors)$/i, "");
+
+  function standingsHtml(v, layout) {
+    // 🔑 A giver at MAX RANK is dropped, in every layout: there is no next rank to work toward, so
+    // listing them is an invitation to nothing. That is what `toGo == null` means.
+    const st = (v.standings || []).filter((s) => s.toGo != null);
+    if (!st.length) return "";
+    if (layout === "contracts") return standingsContracts(st);
+    if (layout === "unlock") return standingsUnlock(st);
+    return standingsBars(st);
+  }
+
+  // ── STANDINGS 1 · "Bars" ──────────────────────────────────────────────────────────────────
+  // The same shape as Closest to done, one rank at a time: who, where you stand, how far through,
+  // what is left. The argument is CONSISTENCY — the panel already teaches this row, so a second
+  // progress list reads instantly and costs no new vocabulary.
+  function standingsBars(st) {
+    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Standing</span>'
+      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div>';
+    for (const s of st.slice(0, 4)) {
+      html += '<div class="cp">'
+        + '<div class="cp-r"><span class="cp-n">' + escapeHtml(facName(s.faction)) + '</span>'
+        + '<span class="cp-c">' + escapeHtml(s.standing) + '</span>'
+        + '<span class="cp-l">' + s.pct + '%</span></div>'
+        + '<div class="cp-bar"><i style="width:' + s.pct + '%"></i></div>'
+        + '<div class="cp-w"><span class="cp-w-p">'
+        + escapeHtml(compactNum(s.toGo) + ' rep to ' + (s.nextName || 'the next rank'))
+        + '</span></div></div>';
+    }
+    return html + '</div>';
+  }
+
+  // ── STANDINGS 2 · "Contracts" ─────────────────────────────────────────────────────────────
+  // 🔑 REP IS AN ABSTRACTION; CONTRACTS ARE AN ACTION. "5,300 rep to Prestige 2" does not tell you
+  // whether that is an evening or a month — "~27 contracts" does, and that is the number that
+  // decides whether you go. Derived from the MEDIAN rep this giver's missions award, so it is
+  // approximate by construction and says so with a tilde.
+  function standingsContracts(st) {
+    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Next rank</span>'
+      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div><div class="sl">';
+    for (const s of st.slice(0, 4)) {
+      const eff = s.contractsToGo
+        ? '~' + s.contractsToGo + (s.contractsToGo === 1 ? ' contract' : ' contracts')
+        : compactNum(s.toGo) + ' rep';
+      html += '<div class="st-r">'
+        + '<span class="st-n">' + escapeHtml(facName(s.faction)) + '</span>'
+        + '<span class="st-go">' + escapeHtml(eff) + '</span></div>'
+        + '<div class="st-sub">' + escapeHtml(s.standing) + ' <span class="st-arrow">&rsaquo;</span> '
+        + escapeHtml(s.nextName || 'next') + '</div>';
+    }
+    return html + '</div></div>';
+  }
+
+  // ── STANDINGS 3 · "What it unlocks" ───────────────────────────────────────────────────────
+  // 🔑 THE REASON TO CARE, NOT THE DISTANCE TO IT. A rank is only worth grinding for what it hands
+  // over, and several givers gate SHIPS this way — the tracked mission's rep bar had exactly this
+  // problem before `nextRewards` existed: "a number with no stated reason to care".
+  // ⚠️ Most ranks gate nothing, so this layout MUST degrade: a giver with no reward at the next
+  // rank falls back to the rank name itself rather than rendering an empty promise.
+  function standingsUnlock(st) {
+    const withRewards = st.filter((s) => (s.nextRewards || []).length);
+    const rows = (withRewards.length ? withRewards : st).slice(0, 4);
+    let html = '<div class="ra-sec"><div class="ra-h ra-h-row"><span>Worth going back for</span>'
+      + '<span class="ra-h-note">' + info(REP_TIP) + '</span></div>';
+    for (const s of rows) {
+      const prize = (s.nextRewards || [])[0];
+      const more = (s.nextRewards || []).length - 1;
+      html += '<div class="su">'
+        + '<div class="su-t">' + escapeHtml(prize || (s.nextName || 'The next rank'))
+        + (prize && more > 0 ? ' <span class="su-more">+' + more + '</span>' : '') + '</div>'
+        + '<div class="su-s">' + escapeHtml(facName(s.faction))
+        + ' · ' + escapeHtml(s.nextName || 'next rank')
+        + (s.contractsToGo ? ' · ~' + s.contractsToGo + (s.contractsToGo === 1 ? ' contract' : ' contracts') : '')
+        + '</div>'
+        + '<div class="cp-bar"><i style="width:' + s.pct + '%"></i></div></div>';
+    }
+    return html + '</div>';
+  }
+
+  function closestHtml(closest, layout) {
+    if (layout === "shortlist") return closestShortlist(closest);
+    if (layout === "target") return closestTarget(closest);
+    return closestLedger(closest);
+  }
+
+  // ── MOCKUP 1 · "Ledger" ───────────────────────────────────────────────────────────────────
+  // Exactly the panel that is already shipping: the top two pools, each with its count, its bar
+  // and where to take it. The baseline the other two have to beat, and the option that risks
+  // nothing.
+  function closestLedger(closest) {
+    let html = '<div class="ra-sec"><div class="ra-h">Closest to done</div>';
+    for (const p of closest.slice(0, 2)) {
+      const { left, pct } = poolLeft(p);
+      html += '<div class="cp">'
+        + '<div class="cp-r"><span class="cp-n">' + escapeHtml(poolTitle(p)) + "</span>" + poolMoreInfo(p)
+        + '<span class="cp-c">' + p.owned + " of " + p.total + "</span>"
+        + '<span class="cp-l">' + left + " to go</span></div>"
+        + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
+        + '<div class="cp-w">'
+        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+        + poolLink(p) + "</div>"
+        + "</div>";
+    }
+    return html + "</div>";
+  }
+
+  // ── MOCKUP 2 · "Shortlist" ────────────────────────────────────────────────────────────────
+  // The same information, denser, and ALL of it: every pool the view carries rather than the top
+  // two, one compact row each. The argument is that "closest to done" is a shortlist you scan,
+  // not a headline — four pools in the space the ledger spends on two.
+  //
+  // Order is the view's own: fewest blueprints left first, which is what "closest" means.
+  function closestShortlist(closest) {
+    let html = '<div class="ra-sec"><div class="ra-h">Closest to done</div><div class="sl">';
+    for (const p of closest) {
+      const { left, pct } = poolLeft(p);
+      html += '<div class="sl-r">'
+        + '<span class="sl-n">' + escapeHtml(poolTitle(p)) + "</span>" + poolMoreInfo(p)
+        + '<span class="sl-c">' + p.owned + "/" + p.total + "</span>"
+        + '<span class="sl-bar"><i style="width:' + pct + '%"></i></span>'
+        + '<span class="sl-left">' + left + " to go</span>"
+        + "</div>"
+        + '<div class="sl-sub">'
+        + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+        + poolLink(p) + "</div>";
+    }
+    return html + "</div></div>";
+  }
+
+  // ── MOCKUP 3 · "Target" ───────────────────────────────────────────────────────────────────
+  // The opinionated one: pick ONE and say so. The panel exists to make finishing a pool feel close
+  // and worth chasing, and a list of four defers that decision back to the player at exactly the
+  // moment they opened the panel to have it made.
+  //
+  // 🔑 The hero is the pool with the FEWEST left, tie-broken by how far through it is — the view is
+  // already sorted that way, so this is the first entry and the sort is not second-guessed here.
+  function closestTarget(closest) {
+    const p = closest[0];
+    const { left, pct } = poolLeft(p);
+    let html = '<div class="ra-sec"><div class="ra-h">Go finish this</div>'
+      + '<div class="tg">'
+      + '<div class="tg-t">' + escapeHtml(poolTitle(p)) + "</div>"
+      + '<div class="tg-bar"><i style="width:' + pct + '%"></i></div>'
+      + '<div class="tg-r">'
+      + '<div class="tg-s"><div class="tg-s-n"><span class="tg-big">' + left + "</span></div>"
+      + '<div class="tg-s-l">to go of ' + p.total + "</div></div>"
+      + '<div class="tg-s"><div class="tg-s-n">' + pct + "%</div>"
+      + '<div class="tg-s-l">complete</div></div>'
+      + "</div>"
+      + '<div class="cp-w">'
+      + poolNeed(p) + (p.places.length ? '<span class="cp-w-p">' + escapeHtml(p.places.join(" · ")) + "</span>" : "<span></span>")
+      + poolLink(p) + "</div>"
+      + "</div>";
+    // The runners-up are not gone, just demoted to the one thing you would use them for: knowing
+    // they exist. Dropping them would make the panel forget pools you have started.
+    const rest = closest.slice(1, 4);
+    if (rest.length) {
+      html += '<div class="tg-also"><span class="tg-also-l">also close</span>'
+        + '<span class="tg-also-n">'
+        // ⚠️ Two runners-up can share a name here for the same reason two rows can — so the label
+        // picks up its first missing blueprint ONLY when the name would otherwise repeat inside
+        // this one line. Unqualified names stay short, which is the whole point of this line.
+        + escapeHtml(rest.map((r) => {
+            const dupe = rest.filter((o) => poolTitle(o) === poolTitle(r)).length > 1;
+            const tag = dupe && r.missing && r.missing.length ? " (" + r.missing[0] + ")" : "";
+            return poolTitle(r) + tag + " " + r.owned + "/" + r.total;
+          }).join(" · "))
+        + "</span></div>";
+    }
+    return html + "</div>";
+  }
+
   // The idle panel — what fills the tracker when NOTHING is tracked. Two halves, in this order
   // (Sub, 2026-08-13): what you are closest to finishing, then what this session has been worth.
   //
@@ -2348,26 +2841,16 @@
       const label = PREFS.timeRelative ? w.rel : w.date;
       return '<span class="ra-when"><span class="ra-date">' + label + "</span></span>";
     }
-    let html = '<div class="recent">';
+    let html = '<div class="recent">' + idleSwitcherHtml();
 
     // ── Closest to done ────────────────────────────────────────────────────────────────────
-    if (closest.length) {
-      html += '<div class="ra-sec"><div class="ra-h">Closest to done</div>';
-      for (const p of closest) {
-        const left = p.total - p.owned;
-        const pct = Math.round((p.owned / p.total) * 100);
-        html += '<div class="cp">'
-          + '<div class="cp-r"><span class="cp-n">' + escapeHtml(p.title) + "</span>"
-          + '<span class="cp-c">' + p.owned + " of " + p.total + "</span>"
-          + '<span class="cp-l">' + left + " to go</span></div>"
-          + '<div class="cp-bar"><i style="width:' + pct + '%"></i></div>'
-          + (p.places.length
-            ? '<div class="cp-w">' + escapeHtml(p.places.join(" · ")) + "</div>"
-            : "")
-          + "</div>";
-      }
-      html += "</div>";
-    }
+    if (closest.length) html += closestHtml(closest, "shortlist");
+
+    // ── Standing with your mission givers ──────────────────────────────────────────────────
+    // Directly under "what to go do next", because it IS that question asked a second way: the
+    // pools say what to finish, this says who to finish it for. Above the rule, so the scoreboard
+    // half still reads as the separate thing it is.
+    html += standingsHtml(v, idleLayout());
 
     // ── This session ───────────────────────────────────────────────────────────────────────
     // Behind a rule, because it answers a different question from everything above it.
@@ -2394,25 +2877,73 @@
           + stat(blueprints.length, "Blueprints", "green")
           + "</div>"
           // Second row, same shape: what that works out to per hour.
+          //
+          // 🔑 THE PACE IS ON SCREEN, NOT IN THE TOOLTIP (Sub, 2026-08-15). The old separate
+          // "Per hour · this grind" block was a two-column table — last 60m AND pace — and when it
+          // was folded into this section on 2026-08-13 the pace was demoted into a `title`. Sub
+          // asked for it back in the words "what you're trending at at the rate that you're
+          // going", which is precisely the number that went missing; what he did NOT ask for is
+          // the old block's second shape. So it returns as a suffix on the figure it qualifies,
+          // inside the stat treatment that is already here — one section, one shape, both numbers.
+          //
+          // ⚠️ The arrow is a plain ASCII-safe glyph rendered from a text node, not an emoji:
+          // missions.html links no emoji face, so anything outside the base fonts is at the mercy
+          // of the OS. Same trap that turned o7 into a box.
           + '<div class="ss ss-rates">'
-          + stat(e.repLastHr != null ? compactNum(e.repLastHr) : na, "Rep / hr", null,
-              "Reputation earned in the last 60 minutes."
-              + (e.repPace != null ? " Session pace: " + e.repPace.toLocaleString() + "/hr." : ""))
-          + stat(e.aUECLastHr != null ? compactNum(e.aUECLastHr) : na, "aUEC / hr", "gold",
-              "aUEC in the last 60 minutes, from missions with a known payout."
-              + (e.aUECPace != null ? " Session pace: " + e.aUECPace.toLocaleString() + "/hr." : ""))
+          + stat(rateWithPace(e.repLastHr, e.repPace, na), "Rep / hr", null,
+              "Reputation earned in the last 60 minutes"
+              + (e.repPace != null
+                  ? ", and the pace this whole grind is trending at (" + e.repPace.toLocaleString() + "/hr)."
+                  : "."))
+          + stat(rateWithPace(e.aUECLastHr, e.aUECPace, na), "aUEC / hr", "gold",
+              "aUEC in the last 60 minutes, from missions with a known payout"
+              + (e.aUECPace != null
+                  ? ", and the pace this whole grind is trending at (" + e.aUECPace.toLocaleString() + "/hr)."
+                  : "."))
           + "</div></div>";
       }
     }
 
-    // ── Latest ─────────────────────────────────────────────────────────────────────────────
-    // 🔑 Rendered EMPTY here and filled by fitLatest() once the box has been measured — how many
-    // rows fit is a function of the widget's height, which this string knows nothing about.
+    // ── Latest blueprints, then Latest missions ────────────────────────────────────────────
+    // 🔑 Both rendered EMPTY here and filled by fitLists() once the boxes have been measured —
+    // how many rows fit is a function of the widget's height, which this string knows nothing
+    // about. The two SHARE what is left of the panel, half each, 1–10 rows apiece (Sub,
+    // 2026-08-15: "have it split that space that latest currently occupies").
     if (blueprints.length) {
-      html += '<div class="ra-sec ra-latest-sec"><div class="ra-h">Latest</div>'
-        + '<ul class="ra-list ra-latest" id="raLatest"></ul></div>';
+      // 🔑 The blueprint half is a PICTURE ROW now (Sub, 2026-08-15). It sizes itself from the
+      // widget's WIDTH, not its height, so unlike the missions list below it takes a fixed slice
+      // of the panel rather than competing for the leftover — one row of art, truncated to
+      // whatever fits across.
+      html += '<div class="ra-sec ra-bp-sec"><div class="ra-h">Latest blueprints</div>'
+        // 🔑 The art box needs an ABSOLUTE height. A percentage height on a centred grid item
+        // resolves against an auto row, i.e. to `auto`, and `object-fit` then has nothing to do —
+        // that is exactly how the completion card rendered a 169x338 image inside a 92px box with
+        // overflow chopping it. Fewer across means a bigger tile, so the height rides the count.
+        // Rendered EMPTY and filled by fitBlueprintArt() once the row has a measured WIDTH —
+        // how many fit across is a property of the widget's size, which this string cannot know.
+        + '<div class="bt-row" id="raLatestArt"></div></div>';
+    }
+    if (missions.length) {
+      html += '<div class="ra-sec ra-latest-sec ra-latest-mis-sec"><div class="ra-h">Latest missions</div>'
+        + '<ul class="ra-list ra-latest" id="raLatestMissions"></ul></div>';
     }
     return html + "</div>";
+  }
+
+  /** "1.2k ↗1.5k" — what the last hour actually paid, and what the grind is trending at.
+   *
+   *  🔑 The pace is DIMMER AND SMALLER on purpose. The two are not equally solid: the last-60m
+   *  figure is measured, the pace is an extrapolation that is noisy until a session has some
+   *  length to it. Same type and weight would present them as two readings of the same kind.
+   *  🔑 Omitted entirely when the pace is null (the first minute of a grind) or when it matches
+   *  the hour figure — an arrow pointing at the number it came from is noise, not information. */
+  function rateWithPace(lastHr, pace, na) {
+    if (lastHr == null) return na;
+    const now = compactNum(lastHr);
+    if (pace == null) return now;
+    const then = compactNum(pace);
+    if (then === now) return now;
+    return now + '<span class="ss-pace">↗' + then + "</span>";
   }
 
   /** Compact aUEC — a session total is a big number in a narrow column. */
@@ -2436,12 +2967,29 @@
   // one row — so the floor is one, enforced by the CSS min-height as well as here, and the section
   // overflows rather than rendering empty. Nobody sizes the widget that small on purpose, but the
   // state has to be coherent when they do.
-  const LATEST_MIN = 1, LATEST_MAX = 10, LATEST_ROW_PX = 22;
-  let latestShown = -1;
+  //
+  // 🔑 TWO lists now share that space, half each (Sub, 2026-08-15). The split is measured ONCE
+  // over the room both of them have together, rather than letting flexbox hand each section a box
+  // and reading it back — a list whose height is an output of the count cannot also be the input
+  // to it, which is the same feedback loop the observer note below is about.
+  // 🔑 MEASURED, not estimated (2026-08-15): a row is 21.0px and the "+N more" line is ALSO 21.0px
+  // — it is an `li` in the same list, so it inherits the same 3px padding, and its smaller type
+  // buys nothing. It was guessed at 15px, which under-reserved by 6px and left the line clipped by
+  // the section's overflow. So a truncated list costs exactly one extra ROW; there is no separate
+  // constant to keep in sync.
+  const LATEST_MIN = 1, LATEST_MAX = 10, LATEST_ROW_PX = 21;
+  let latestShown = -1, latestMisShown = -1;
   // One observer for the life of the page, re-pointed at whatever list is currently on screen.
   // Watching the PANEL rather than the list itself: the list's own height is an output of this
   // computation, so observing it is a feedback loop waiting to happen.
   let latestRO = null;
+  // Coalesced deferred re-check. One pending pair at a time, so a drag that fires the observer on
+  // every pixel schedules one follow-up, not hundreds.
+  let reFitT = null;
+  function reFit() {
+    if (reFitT) return;
+    reFitT = setTimeout(() => { reFitT = null; fitLatest(); setTimeout(fitLatest, 90); }, 0);
+  }
   function observeLatest() {
     // 🔴 NOT requestAnimationFrame. It does not fire in a window the compositor considers hidden,
     // and this overlay is hidden all the time — toggled off in the hub, behind the game, or a
@@ -2454,41 +3002,141 @@
     if (!window.ResizeObserver) return;
     // Measuring inside the observer callback is already post-layout, so there is nothing to defer
     // to and nothing to wait for.
-    if (!latestRO) latestRO = new ResizeObserver(() => fitLatest());
+    // 🔴 THE OBSERVER ALONE IS NOT ENOUGH, and the failure is a SILENT OFF-BY-ONE rather than a
+    // dead panel. Measured 2026-08-15 across seven widget widths: the fit was right at 380, 640,
+    // 720 and 900 but one step low at 540 — and re-running it by hand at that same width gave the
+    // right answer, so the arithmetic was never wrong. This overlay is hidden constantly (toggled
+    // off, behind the game, a background page in the harness) and a window the compositor
+    // considers hidden delivers resize callbacks late, once, or not at all.
+    // So the callback ALSO re-checks on a timer, the same defence observeLatest() already uses for
+    // the first layout pass. Both fits early-return unless the ANSWER changed, so a redundant run
+    // costs nothing and cannot loop.
+    // 🔴 THE CALLBACK ONLY SCHEDULES — it must not touch the DOM. Fitting inline made the picture
+    // row's height change cascade into the missions section, which IS observed, so the observer
+    // re-fired during its own delivery: "ResizeObserver loop completed with undelivered
+    // notifications", caught by the suite's console check in an unrelated suite. Deferring the
+    // work out of the delivery breaks the cycle, and reFit coalesces so a drag schedules one
+    // follow-up rather than one per pixel.
+    if (!latestRO) latestRO = new ResizeObserver(() => reFit());
     latestRO.disconnect();
     // Observe the SECTION, not the panel: in the canvas the panel is a widget whose box can be
     // replaced, and an observer pointed at a detached node silently never fires again.
-    const sec = document.querySelector(".ra-latest-sec");
-    if (sec) latestRO.observe(sec);
+    // BOTH list sections — observing only the first meant resizing never re-fitted the second.
+    // 🔴 NOT `.ra-bp-sec`. Observing the picture row's own section made the fit rewrite the very
+    // box it was watching — Chromium reported "ResizeObserver loop completed with undelivered
+    // notifications" and the widget suite's console check caught it in a DIFFERENT suite entirely.
+    // The comment above already said observing the list is a feedback loop waiting to happen; the
+    // picture row is the same trap wearing different clothes. `#panel` below is what changes WIDTH
+    // and is never written to by the fit, so it is the safe thing to watch for this.
+    for (const sec of document.querySelectorAll(".ra-latest-sec")) latestRO.observe(sec);
     const panel = document.getElementById("panel");
     if (panel) latestRO.observe(panel);
   }
-  function fitLatest() {
-    const ul = document.getElementById("raLatest");
-    if (!ul || !current) { latestShown = -1; return; }
+  /** One row of either list. `val` is the optional gold figure — only missions carry one. */
+  function latestRow(name, at, val) {
+    const w = fmtWhen(at);
+    const label = w ? (PREFS.timeRelative ? w.rel : w.date) : "";
+    return '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(name) + "</span>"
+      + (val ? '<span class="ra-val">' + escapeHtml(val) + "</span>" : "")
+      + '<span class="ra-when"><span class="ra-date">' + escapeHtml(label) + "</span></span></li>";
+  }
+  function fillList(ul, rows, n) {
+    let h = "";
+    for (const r of rows.slice(0, n)) h += latestRow(r.name, r.at, r.val);
+    const rest = rows.length - n;
+    // 🔴 THE "NEVER EMPTY" FLOOR CAN OUTVOTE THE RESERVATION, and then the +N line has nowhere to
+    // go. At the widget's smallest the box holds less than two rows, so `rowsFor` clamps up to one
+    // — correct, a heading over a void is worse — but that one row already fills the box and the
+    // more-line gets sliced by the overflow, which is the very fault the reservation exists to
+    // prevent. When it cannot fit, it is DROPPED: the count is a nicety, a half-cut line is a bug.
+    const room = ul.getBoundingClientRect().height;
+    if (rest > 0 && (n + 1) * LATEST_ROW_PX <= room + 1) h += '<li class="ra-more">+' + rest + " more</li>";
+    ul.innerHTML = h;
+  }
+  // ── How many blueprint pictures fit ACROSS ────────────────────────────────────────────────
+  // The mirror of fitLatest: that one divides leftover HEIGHT into rows, this one divides the
+  // row's WIDTH into tiles. Sub, 2026-08-15: "the wider the widget is, the more blueprints show
+  // up" — so it is measured, not chosen, and the switcher went back to picking layouts.
+  //
+  // 🔑 THE NUMBERS COME FROM THE WIDGET'S OWN REGISTRY ENTRY, not from taste. The tracker is
+  // `{ w: 380, minW: 300 }`, and Sub put his own widget at "about the smallest size that someone
+  // will reasonably set it to" and asked for TWO there. A 160px minimum tile lands 2 at the 380
+  // default, 3 at ~540 and 4 at ~720 — checked against those three widths rather than eyeballed.
+  // 🔑 The floor is 2 for the same reason the Latest list's floor is 1: below it the tiles just
+  // shrink (the grid track is `minmax(0, 1fr)`), which is better than a heading over one lonely
+  // picture at a size nobody uses on purpose.
+  const BP_MIN = 2, BP_MAX = 10, BP_TILE_PX = 160, BP_GAP_PX = 8;
+  // Fewer across means a bigger tile. Item art is PORTRAIT (measured: capture 373x746, render
+  // 168x273), so height rides the count rather than being one fixed number that suits neither.
+  const BP_ART_H = { 2: 104, 3: 78, 4: 60 };
+  let bpShown = -1;
+  function fitBlueprintArt() {
+    const row = document.getElementById("raLatestArt");
+    if (!row || !current) { bpShown = -1; return; }
     const all = current.recentBlueprints || [];
     if (!all.length) return;
-    // Measure the room LEFT for the list: from its own top to the bottom of the scroll area.
-    const box = ul.parentElement.parentElement;   // .recent
-    const avail = box.getBoundingClientRect().bottom - ul.getBoundingClientRect().top;
-    let n = Math.floor(avail / LATEST_ROW_PX);
-    if (!Number.isFinite(n) || n < LATEST_MIN) n = LATEST_MIN;
-    if (n > LATEST_MAX) n = LATEST_MAX;
+    const w = row.getBoundingClientRect().width;
+    let n = Math.floor((w + BP_GAP_PX) / (BP_TILE_PX + BP_GAP_PX));
+    if (!Number.isFinite(n) || n < BP_MIN) n = BP_MIN;
+    if (n > BP_MAX) n = BP_MAX;
     if (n > all.length) n = all.length;
+    // Only touch the DOM when the ANSWER changes — this runs off a ResizeObserver, and rebuilding
+    // the row on every pixel of a drag would re-request every image.
+    if (n === bpShown) return;
+    bpShown = n;
+    row.style.setProperty("--bt-across", String(n));
+    row.style.setProperty("--bt-h", (BP_ART_H[n] || 56) + "px");
+    row.innerHTML = all.slice(0, n).map(blueprintTile).join("");
+  }
+
+  function fitLatest() {
+    fitBlueprintArt();
+    if (!current) { latestShown = latestMisShown = -1; return; }
+    const bpUl = document.getElementById("raLatest");
+    const msUl = document.getElementById("raLatestMissions");
+    if (!bpUl && !msUl) { latestShown = latestMisShown = -1; return; }
+    const bps = (current.recentBlueprints || []).map((b) => ({ name: b.name, at: b.at, val: null }));
+    // 🔑 aUEC is COMPACT here, not toLocaleString as the original list had it. "54.5k" beside a
+    // contract title and a timestamp fits a 380px panel; "54,500 aUEC" pushed the title into an
+    // ellipsis. It is also a REAL logged award, so it takes no estimate tilde — unlike everything
+    // in the closest-to-done section, which is modelled.
+    const mss = (current.recentMissions || []).map((m) => ({
+      name: m.title || "Mission", at: m.at,
+      val: m.aUEC != null ? compactNum(m.aUEC) : null,
+    }));
+
+    // 🔑 MEASURE EACH LIST'S OWN BOX; do not compute a share. Deriving it as "panel bottom minus
+    // list top, less a heading and a gap" was off by whatever margins the headings carry, so the
+    // reserved space and the box flexbox actually handed over disagreed and the "+N more" line
+    // still got clipped. The uls are `flex:1` inside `flex:1` sections with overflow:hidden, so
+    // their height is a pure function of the CONTAINER — content cannot grow them, and there is
+    // therefore no feedback loop in reading them back. That is what makes this exact.
+    //
+    // 🔑 The halves are weighted by how much DATA each list has, not by what is rendered — so
+    // twelve blueprints beside one mission does not leave half the panel blank, and ten beside
+    // ten is the even split Sub asked for. Data-driven, so this cannot feed back either.
+    if (bpUl && msUl) {
+      bpUl.parentElement.style.flexGrow = String(Math.min(bps.length, LATEST_MAX));
+      msUl.parentElement.style.flexGrow = String(Math.min(mss.length, LATEST_MAX));
+    }
+    // A truncated list has to pay for its own "+N more" line — one row's worth. Nothing reserved
+    // it before, so the last thing in the list was sliced in half by the section's overflow and
+    // read as a rendering fault rather than as "there is more".
+    const rowsFor = (px, len) => {
+      let n = Math.floor(px / LATEST_ROW_PX);
+      if (n < len) n -= 1;
+      if (!Number.isFinite(n)) n = LATEST_MIN;
+      return Math.max(LATEST_MIN, Math.min(LATEST_MAX, len, n));
+    };
+    const nBp = bpUl ? rowsFor(bpUl.getBoundingClientRect().height, bps.length) : -1;
+    const nMs = msUl ? rowsFor(msUl.getBoundingClientRect().height, mss.length) : -1;
+
     // Only touch the DOM when the ANSWER changes — this runs off a ResizeObserver, and rewriting
     // the same list on every pixel of a drag is the idle-repaint mistake again.
-    if (n === latestShown) return;
-    latestShown = n;
-    let h = "";
-    for (const b of all.slice(0, n)) {
-      const w = fmtWhen(b.at);
-      const label = w ? (PREFS.timeRelative ? w.rel : w.date) : "";
-      h += '<li><span class="ra-glyph">◆</span><span class="ra-name">' + escapeHtml(b.name) + "</span>"
-        + '<span class="ra-when"><span class="ra-date">' + escapeHtml(label) + "</span></span></li>";
-    }
-    const rest = all.length - n;
-    if (rest > 0) h += '<li class="ra-more">+' + rest + " more</li>";
-    ul.innerHTML = h;
+    if (bpUl && nBp !== latestShown) { latestShown = nBp; fillList(bpUl, bps, nBp); }
+    if (msUl && nMs !== latestMisShown) { latestMisShown = nMs; fillList(msUl, mss, nMs); }
+    if (!bpUl) latestShown = -1;
+    if (!msUl) latestMisShown = -1;
   }
 
   // The "Blueprint Received" toast moved OUT of this panel into its own placeable notifier widget
@@ -2532,7 +3180,7 @@
         // The list is written EMPTY above; how many rows it holds depends on the height it ends
         // up with, which only exists after layout. Reset first so a re-render with different data
         // recomputes instead of trusting the previous answer.
-        latestShown = -1;
+        latestShown = latestMisShown = bpShown = -1;
         observeLatest();
       } else {
         panel.classList.add("empty");
@@ -2789,11 +3437,24 @@
     // WHY, which is the part that stops it looking like a bug. The reason is specific and worth
     // stating: the game never reports your reputation anywhere the app can read, so this is
     // reconstructed from your own logs and is a floor, not a reading.
-    const why = rb.noData
+    let why = rb.noData
       ? "Star Citizen never reports your reputation in any form the app can read, so standing is worked out from the missions in your own logs. None have been counted for " + rb.faction + " yet — run Verify from logs to read your history."
       : "Star Citizen never reports your exact reputation in any form the app can read, so this is worked out from the missions in your own logs since the 4.8 wipe. It is a lower bound: anything earned before you installed the app, or since deleted, cannot be counted.";
+    // 🔴 SAY THAT THIS CONTRACT WILL NOT MOVE IT. The bar used to VANISH on these contracts —
+    // Sub accepted a Headhunters mission and his Headhunters standing disappeared, because the
+    // contract pays into a combat sub-track the app does not rank (384 of 4,075 do; 88 of them
+    // Headhunters). Showing his real standing is the right answer to "where do I stand with these
+    // people". Showing it SILENTLY next to that mission's own "+500 reputation" pill would be a
+    // different lie, so the caption is marked and the reason is in the same affordance.
+    if (rb.offTrack) {
+      why += "\n\nThis contract's reputation goes to a separate track that has no rank ladder the"
+        + " app can read, so finishing it will not move this bar. The standing shown is what you"
+        + " have earned from " + rb.faction + "'s other work.";
+    }
     return '<div class="mi-row"><span class="mi-k">Standing</span><span class="mi-v">' + standing +
-      (rb.noData ? ' <span class="mi-hint">no data</span>' : "") + info(why) + '</span></div>' +
+      (rb.noData ? ' <span class="mi-hint">no data</span>' : "") +
+      (rb.offTrack && !rb.noData ? ' <span class="mi-hint">not from this one</span>' : "") +
+      info(why) + '</span></div>' +
       '<div class="rb' + (empty ? " floor" : "") + '"><div class="rb-track"><div class="rb-fill" style="width:' +
       pct.toFixed(1) + '%"></div></div><div class="rb-cap">' + cap + "</div></div>";
   }
@@ -3848,7 +4509,15 @@
     // Disambiguate duplicate mission titles with a (1)/(2) suffix.
     const counts = {}; list.forEach((m) => (counts[m.title] = (counts[m.title] || 0) + 1));
     const seen = {};
-    const rows = ['<div class="opt' + (v.selectedId ? "" : " active") + '" data-id="">Auto — newest with blueprints</div>'];
+    // 🔑 THREE STATES, not two. Auto (no pick) follows the newest pooled mission; a mission pins
+    // that one; and "None" parks the panel on the idle screen. Sub, 2026-08-15: there was no way
+    // back to the idle screen once anything was accepted, because clearing the pick means AUTO and
+    // auto immediately re-picks. It sits directly under Auto, since both are answers to "don't
+    // show me a specific mission".
+    const rows = [
+      '<div class="opt' + (v.selectedId ? "" : " active") + '" data-id="">Auto — newest with blueprints</div>',
+      '<div class="opt' + (v.selectedId === "__idle__" ? " active" : "") + '" data-id="__idle__">None — back to the idle screen</div>',
+    ];
     for (const m of list) {
       let label = (m.hasPool ? "◆ " : "○ ") + m.title;
       if (counts[m.title] > 1) { seen[m.title] = (seen[m.title] || 0) + 1; label += " (" + seen[m.title] + ")"; }
@@ -6016,22 +6685,103 @@
       if (q.has("rates")) {
         $("panel").classList.remove("empty"); document.body.classList.remove("empty");
         const now = Date.now();
+        // Two distinguishable 1x1 GIFs standing in for the two image sources. Inline, so the
+        // fixture costs no network and cannot 404 the suite's console/network check.
+        const FIXTURE_CAPTURE = "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+        const FIXTURE_RENDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
         const bps = ["Atzkav Sniper Rifle", "Calico Arms Tactical", "Atzkav \"Igniter\" Sniper Rifle",
           "Custodian SMG", "Karna Rifle", "Yubarev Pistol", "Salvo Frag Pistol", "Behring P8-AR",
           "Lumin V SMG", "Arclight II", "Devastator-12", "Gallant Rifle"]
-          .map((name, i) => ({ name, at: new Date(now - (i + 1) * 18 * 60000).toISOString() }));
+          // 🔑 A real-shaped mix of image coverage, because the tile has three code paths and the
+          // measured split is roughly 27% capture / 70% render-only / 3% neither. Every third
+          // entry carries only a render and every fourth carries nothing, so a fixture render
+          // exercises the fallback chain AND the no-art glyph rather than only the happy path.
+          //
+          // ⚠️ INLINE DATA URIs, NOT URL-SHAPED FAKES. Pointing these at
+          // `/api/fab-img/<made-up-uuid>` made every fixture tile fetch something that does not
+          // exist, and `test:widgets` correctly failed the run on four 404s — a fixture must not
+          // put the suite's own network check in the red. Two DISTINCT one-pixel images so the
+          // assertions can still tell which source a tile chose.
+          .map((name, i) => ({
+            name,
+            at: new Date(now - (i + 1) * 18 * 60000).toISOString(),
+            item: i % 4 === 3 ? null : "fixture-item-" + i,
+            image: i % 4 === 3 || i % 3 === 2 ? null : FIXTURE_CAPTURE,
+            imageFallback: i % 4 === 3 ? null : FIXTURE_RENDER,
+          }));
         current = {
           earnings: { repLastHr: 1240, repPace: 1480, aUECLastHr: null, aUECPace: null,
             aUECTotal: 148250, repTotal: 2860, missions: 6 },
-          recentMissions: [{ title: "Blackbox Retrieval Very Dangerous", aUEC: null, at: new Date(now).toISOString() }],
+          // TEN, like the blueprint list — the two share the leftover space and a one-entry
+          // fixture cannot exercise the split, the ten-row cap, or the "+N more" reservation.
+          // Half carry no aUEC on purpose: calculated-reward contracts log no payout, and the row
+          // must simply omit the figure rather than print a zero.
+          recentMissions: ["Blackbox Retrieval Very Dangerous", "Deep space hit", "Moraine Data Retrieval",
+            "Need a death at Asteroid Base", "Turf War", "Critical Fleet Refuel", "Cargo Run: Bloom",
+            "Salvager Needed", "Wanted: Dead or Alive", "Urgent Convoy Refuel"]
+            .map((title, i) => ({ title, aUEC: i % 2 ? null : 9000 + i * 1500,
+              at: new Date(now - (i + 1) * 11 * 60000).toISOString() })),
           recentBlueprints: bps,
+          // POOLS, not contracts — one row per poolUuid. Shaped like the real thing: a pool fed by
+          // many contracts (the common case, 65 of 89), a single-contract pool that must show no
+          // "more contracts" affordance, and a PAIR that collide on giver+type exactly as Sub's
+          // two Shubin mining pools do, so the disambiguation has something to disambiguate.
+          // Payouts are always modelled on pool contracts; they are carried but not rendered.
+          // Standing with four givers, shaped like the real thing (measured on Sub’s collection:
+          // 9 givers carry witnessed rep, Battaglia furthest through its rank at 72%).
+          // 🔑 The LAST entry is at max rank — toGo null — and must be dropped by every layout:
+          // there is no next rank to incentivise, so listing it is an invitation to nothing.
+          // Only ONE giver gates a reward at its next rank, which is the honest ratio and is what
+          // forces the "unlock" layout to degrade rather than render an empty promise.
+          standings: [
+            { faction: "Recco Battaglia", scope: "MissionProviderReputation_Battaglia",
+              standing: "Prestige 1", nextName: "Prestige 2", estimate: 24700, curMin: 20000,
+              nextMin: 30000, pct: 72, toGo: 5300, contractsToGo: 27,
+              nextRewards: ["MISC Prospector Alliance", "Drake Golem Alliance"] },
+            { faction: "Covalex Independent Contractors", scope: "Hauling",
+              standing: "Junior", nextName: "Member", estimate: 1800, curMin: 750,
+              nextMin: 5250, pct: 31, toGo: 3450, contractsToGo: 7, nextRewards: [] },
+            { faction: "United Wayfarers Club", scope: "FactionReputation",
+              standing: "Neutral", nextName: "Jr. Contractor", estimate: 200, curMin: 0,
+              nextMin: 800, pct: 25, toGo: 600, contractsToGo: 3, nextRewards: [] },
+            { faction: "Maxed Faction", scope: "FactionReputation",
+              standing: "Head Contractor", nextName: null, estimate: 99000, curMin: 90000,
+              nextMin: null, pct: 100, toGo: null, contractsToGo: null, nextRewards: [] },
+          ],
           closestPools: [
-            { key: "a", title: "Turf War", owned: 5, total: 7, places: ["Rat's Nest", "Starlight Service Station"] },
-            { key: "b", title: "Cargo Run: Bloom", owned: 8, total: 11, places: ["Orbituary"] },
+            { poolUuid: "819a9851-9c2e-4a24-872b-b860331d32d0", key: "a", title: "Turf War",
+              poolName: "Mercenary · Headhunters", variants: 26,
+              missionTitles: ["Turf War", "Turf War: Escalation", "Clear the Nest"],
+              missing: ["Karna Rifle", "Salvo Frag Pistol"],
+              owned: 5, total: 7, places: ["Rat's Nest", "Starlight Service Station"],
+              payMin: 54500, payMax: 54500, payoutEstimated: true, durMin: 15.12, rep: 100,
+              cooldownMin: 30, giver: "Headhunters", missionType: "Mercenary" },
+            { poolUuid: "32463294-45d5-4e92-a773-dce1f28a2a2b", key: "b", title: "Cargo Run: Bloom",
+              poolName: "Ship Mining · Shubin Interstellar", variants: 36,
+              missionTitles: ["XL Purchase Order: Ship Mined Ore", "Purchase Order: Ship Mined Ore"],
+              missing: ["Arbor MH1 Mining Laser", "Helix I Mining Laser", "Pitman Mining Laser"],
+              owned: 8, total: 11, places: ["Orbituary"],
+              payMin: 96000, payMax: 96000, payoutEstimated: true, durMin: 40.24, rep: 250,
+              cooldownMin: null, giver: "Shubin Interstellar", missionType: "Ship Mining" },
+            { poolUuid: "7c495074-f31a-4f52-bde2-c912b183ac81", key: "c",
+              title: "Salvager Needed (Med. Supply of RMC)",
+              poolName: "Salvage · Adagio Holdings", variants: 1,
+              missionTitles: ["Salvager Needed (Med. Supply of RMC)"],
+              missing: ["Cinch Scraper Module", "Trawler Scraper Module"],
+              owned: 3, total: 5, places: ["Checkmate"],
+              payMin: 108250, payMax: 108250, payoutEstimated: true, durMin: 30, rep: 100,
+              cooldownMin: 30, giver: "Adagio Holdings", missionType: "Salvage" },
+            { poolUuid: "253e9697-5605-4732-b4fa-56af7a3dc140", key: "d", title: "Deep space hit",
+              poolName: "Ship Mining · Shubin Interstellar", variants: 19,
+              missionTitles: ["XL Purchase Order: Ship Mined Ore", "Deep space hit"],
+              missing: ["Lawson Mining Laser", "Surveyor-Go"],
+              owned: 6, total: 8, places: [],
+              payMin: null, payMax: null, payoutEstimated: false, durMin: null, rep: null,
+              cooldownMin: null, giver: "Shubin Interstellar", missionType: "Ship Mining" },
           ],
         };
         const el = $("pool");
-        if (el) { el.innerHTML = recentActivityHtml(current); el.classList.add("idle"); latestShown = -1; observeLatest(); }
+        if (el) { el.innerHTML = recentActivityHtml(current); el.classList.add("idle"); latestShown = latestMisShown = bpShown = -1; observeLatest(); }
         // The suite drives the fit directly: how many rows fit is the behaviour under test, and
         // waiting on a ResizeObserver to maybe fire is how a size test becomes flaky.
         window.__fitLatest = fitLatest;

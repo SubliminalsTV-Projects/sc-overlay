@@ -1235,6 +1235,38 @@ const MIDRAWERS = `(async () => {
   ok("faction reputation is labelled as such", rep && /\\+200/.test(value(rep)), rep && value(rep));
   ok("...and AFFINITY is named rather than shown as a second mystery number",
      aff && /\\+50/.test(value(aff)), aff && value(aff));
+
+  // ── The standing bar on a contract that pays a track we do not rank ──────────────────────
+  // 🔴 THE BAR USED TO VANISH. Sub accepted a Headhunters contract and his Headhunters standing
+  // disappeared: that contract awards reputation only on ShipCombat_HeadHunters, which
+  // REP_SCOPE_DENY excludes, so primaryRep returned null and took the whole bar with it. 384 of
+  // 4,075 contracts pay only denied scopes and 88 of those are Headhunters, so it was most of a
+  // faction's board. It now falls back to the giver's own tracked standing.
+  // Driven through repBarHtml directly — the shape is the contract, and building a whole mission
+  // fixture to reach it would test the fixture.
+  const barOff = document.createElement("div");
+  barOff.innerHTML = repBarHtml({ scope: "FactionReputation", faction: "Headhunters",
+    standing: "Sr. Contractor", estimate: 7825, curMin: 5000, nextMin: 15000,
+    nextName: "Veteran Contractor", nextRank: 4, nextRewards: [], max: false, noData: false,
+    offTrack: true });
+  ok("a contract paying an unranked track still shows the giver's standing",
+     /Sr. Contractor/.test(barOff.textContent), barOff.textContent.slice(0, 60));
+  // 🔑 ...and says so, because the bar sits beside that mission's own reputation pill. Silence
+  // there would read as "finishing this advances it", which is exactly what it will not do.
+  ok("...marked as not coming from THIS contract",
+     /not from this one/.test(barOff.textContent), barOff.textContent.slice(0, 90));
+  const offTip = barOff.querySelector(".mi-info");
+  ok("...with the reason in the same affordance as the rest of the caveats",
+     !!offTip && /will not move this bar/.test(offTip.getAttribute("data-tip") || ""),
+     (offTip && offTip.getAttribute("data-tip") || "").slice(-80));
+
+  // The ordinary case must NOT carry the marker, or it stops meaning anything.
+  const barOn = document.createElement("div");
+  barOn.innerHTML = repBarHtml({ scope: "FactionReputation", faction: "Headhunters",
+    standing: "Sr. Contractor", estimate: 7825, curMin: 5000, nextMin: 15000,
+    nextName: "Veteran Contractor", nextRank: 4, nextRewards: [], max: false, noData: false });
+  ok("...and a contract that DOES advance the bar is not marked",
+     !/not from this one/.test(barOn.textContent), barOn.textContent.slice(0, 60));
   return out;
 })()`;
 
@@ -1250,27 +1282,166 @@ const MIDRAWERS = `(async () => {
 const IDLEPANEL = `(async () => {
   ${PRELUDE}
   const pool = document.getElementById("pool");
-  const heads = [...pool.querySelectorAll(".ra-h")].map((e) => e.textContent);
-  // Three sections, not four: the per-hour rates were folded INTO "This session" on 2026-08-13.
+
+  // ⚠️ TEMPORARY, and it goes when the mockup switcher goes. Until Sub picks a layout there are
+  // three, the choice lives in localStorage, and this suite shares an origin with his real
+  // overlay — so without driving it to a known state first, every assertion below is really an
+  // assertion about which mockup he last clicked. That is the "a test that asserts a USER
+  // PREFERENCE fails on a clean tree" trap, and it would have gone red for him and nobody else.
+  const saved = localStorage.getItem("scIdleStandingsPick");
+  const pickLayout = async (id) => {
+    const b = pool.querySelector('.ra-mk-b[data-mk="' + id + '"]');
+    if (b) b.click();
+    await sleep(150);
+  };
+  await pickLayout("bars");
+
+  // ── The picker's third state ────────────────────────────────────────────────────────────
+  // 🔑 Sub, 2026-08-15: there was no way BACK to this panel once a mission was accepted. Clearing
+  // the pick means AUTO, and auto immediately re-picks — so "deselect" was not expressible and
+  // needed a state of its own. Driven through renderPicker with a stubbed view rather than the
+  // live tracker, so the suite never changes what Sub's own app is tracking.
+  renderPicker({ missions: [{ id: "m1", title: "Turf War", hasPool: true }], selectedId: null, title: "Turf War" });
+  const opts = () => [...document.querySelectorAll("#missionMenu .opt")].map((o) => o.dataset.id);
+  ok("the picker offers a way back to the idle screen", opts().indexOf("__idle__") >= 0, opts().join(" | "));
+  ok("...as a third choice beside auto and a pinned mission", opts().length === 3, opts().join(" | "));
+  ok("...listed under Auto, since both mean 'not a specific mission'",
+     opts()[0] === "" && opts()[1] === "__idle__", opts().join(" | "));
+  renderPicker({ missions: [{ id: "m1", title: "Turf War", hasPool: true }], selectedId: "__idle__", title: null });
+  const active = [...document.querySelectorAll("#missionMenu .opt.active")].map((o) => o.dataset.id);
+  ok("...and shows as the live choice when it is the one selected",
+     active.join(",") === "__idle__", active.join(",") || "(none active)");
+  ok("...while Auto stops claiming to be active",
+     !document.querySelector('#missionMenu .opt[data-id=""]').classList.contains("active"));
+
+  // ⚠️ Read the heading's TITLE CELL, not its whole text: two headings now carry a circled-i
+  // button inside them, so raw textContent reads "Standingi" and the assertion would be about
+  // punctuation rather than order.
+  const heads = [...pool.querySelectorAll(".ra-h")].map((e) => {
+    const first = e.querySelector("span");
+    return (first ? first.textContent : e.textContent).trim();
+  });
+  // The per-hour rates are folded INTO "This session" (2026-08-13). "Latest" split in two
+  // (2026-08-15) and the blueprint half then became a row of PICTURES sized by the widget's
+  // WIDTH, so only the missions list still competes for leftover height. Standing sits directly
+  // under Closest to done, because it is the same question asked a second way.
   ok("the idle panel is in the documented order",
-     heads.join(" | ") === "Closest to done | This session | Latest",
+     heads.join(" | ") === "Closest to done | Standing | This session | Latest blueprints | Latest missions",
      heads.join(" | "));
   ok("...with a rule between what to do next and what the session was worth",
      !!pool.querySelector(".ra-rule"));
 
-  // Closest to done: the half that answers "what should I go do".
-  const cp = [...pool.querySelectorAll(".cp")];
-  ok("it lists what you are closest to finishing", cp.length === 2, String(cp.length));
-  ok("...naming the pool, the count and what is left",
-     cp[0].querySelector(".cp-n").textContent === "Turf War" &&
-     cp[0].querySelector(".cp-c").textContent === "5 of 7" &&
-     /2/.test(cp[0].querySelector(".cp-l").textContent),
-     cp[0].textContent.trim().slice(0, 60));
+  // Closest to done: the half that answers "what should I go do". Pinned to the SHORTLIST layout
+  // (Sub settled on it 2026-08-15), so the switcher no longer touches this section at all.
+  const sl = [...pool.querySelectorAll(".sl-r")];
+  ok("it lists what you are closest to finishing", sl.length === 4, String(sl.length));
+  // 🔴 THE ROW NAMES THE POOL, NOT ONE OF ITS CONTRACTS. This list used to iterate contracts, so
+  // one pool fed by many of them filled the panel with itself — Sub saw four rows that were four
+  // titles of the SAME pool, all reading 5/8. 65 of the 89 pools span more than one title, so it
+  // was the normal case. The fixture's first pool is 26 variants across 3 titles.
+  ok("...naming the POOL rather than one of its contracts",
+     sl[0].querySelector(".sl-n").textContent === "Mercenary · Headhunters" &&
+     sl[0].querySelector(".sl-c").textContent === "5/7",
+     sl[0].querySelector(".sl-n").textContent);
+  // 🔑 TYPE FIRST, GIVER SECOND (Sub): what kind of work it is, is what you decide on.
+  ok("...type first, giver second",
+     sl[0].querySelector(".sl-n").textContent.indexOf("Mercenary ·") === 0,
+     sl[0].querySelector(".sl-n").textContent);
   ok("...with a bar that matches the fraction, not a guess",
-     cp[0].querySelector(".cp-bar i").style.width === "71%",
-     cp[0].querySelector(".cp-bar i").style.width);
+     sl[0].querySelector(".sl-bar i").style.width === "71%",
+     sl[0].querySelector(".sl-bar i").style.width);
+  const sub0 = sl[0].nextElementSibling;
   ok("...and where to pick it up, because a suggestion you cannot act on is a statistic",
-     /Rat's Nest/.test(cp[0].querySelector(".cp-w").textContent));
+     /Rat's Nest/.test(sub0.textContent), sub0.textContent.trim());
+  // What you still need leads the sub-line: the row's most useful fact, and the only thing that
+  // separates two pools sharing a giver and a type.
+  const need0 = sub0.querySelector(".cp-need");
+  ok("...and what you still need to finish it",
+     !!need0 && need0.textContent.indexOf("need Karna Rifle") === 0,
+     need0 ? need0.textContent.trim() : "(no .cp-need)");
+  ok("...with a count rather than the whole list, which the popover carries",
+     !!need0 && need0.textContent.indexOf("+1") > 0, need0 ? need0.textContent.trim() : "");
+  // 🔴 NO HORIZONTAL SCROLLBAR. The pool box is overflow:auto, so a sub-line that cannot shrink pushes
+  // the panel wider than the widget and grows one across the bottom. Sub hit exactly that with a
+  // third element on this row. Asserted at the widget's NARROWEST, which is where it shows first.
+  const scroller = document.querySelector("#panel .pool") || pool;
+  // ⚠️ Its own handle: the shared panel const is declared further down, in the picture-row
+  // section, and a suite body is one scope — reaching for it here is a temporal-dead-zone throw,
+  // which the harness reports as a bare error naming no feature.
+  const panelEl = document.getElementById("panel");
+  panelEl.style.width = "300px";
+  await sleep(120);
+  ok("...and the row never grows a horizontal scrollbar, even at the narrowest width",
+     scroller.scrollWidth - scroller.clientWidth === 0,
+     (scroller.scrollWidth - scroller.clientWidth) + "px over");
+  panelEl.style.width = "380px";
+  await sleep(120);
+  // A pool fed by several contracts says so — Sub asked for an indicator that the one name on
+  // screen is not the only way to farm it. The circled i, not an eye: an eye was tried on
+  // 2026-08-12 and "read as something else entirely".
+  const cpInfo = sl[0].querySelector(".mi-info");
+  ok("...and flags that other contracts fill the same pool", !!cpInfo, sl[0].textContent.trim());
+  ok("...naming them in the popover rather than on the row",
+     !!cpInfo && /3 different contracts/.test(cpInfo.getAttribute("data-tip") || ""),
+     (cpInfo && cpInfo.getAttribute("data-tip") || "").slice(0, 70));
+  // The way out to the pool's own page. The uuid IS the address.
+  const cpLink = sub0.querySelector(".cp-link");
+  ok("...and offers the pool's own page", !!cpLink && cpLink.dataset.pool.length === 36,
+     cpLink ? cpLink.dataset.pool : "(no link)");
+
+  // 🔴 TWO POOLS CAN SHARE A NAME. Sub has two "Ship Mining · Shubin Interstellar" pools open at
+  // once — same giver, same type, overlapping contract titles, both mining lasers and radars.
+  // Appending the missing blueprint to the NAME was tried and measured useless: the combined
+  // string does not fit a 380px row, so both ellipsised to the same thing and the disambiguator
+  // was exactly the part that got cut. The sub-line is where it has room.
+  const slNames = [...pool.querySelectorAll(".sl-n")].map((e) => e.textContent);
+  const dupe = slNames.filter((x) => x === "Ship Mining · Shubin Interstellar");
+  ok("two pools sharing a giver and a type both still appear", dupe.length === 2, slNames.join(" | "));
+  const slNeeds = [...pool.querySelectorAll(".sl-sub .cp-need")].map((e) => e.textContent.trim());
+  ok("...told apart by what you still need, not by a truncated name",
+     slNeeds[1] !== slNeeds[3] && slNeeds[1].length > 0, slNeeds.join(" | "));
+
+  // ── Standing with your mission givers ──────────────────────────────────────────────────
+  // 🔴 THE REP NUMBER IS A FLOOR in every layout: the game never reports reputation anywhere the
+  // app can read, so it is reconstructed from the player's own completions and cannot count what
+  // happened before the app existed. Each layout must carry the circled i that says so.
+  for (const id of ["bars", "contracts", "unlock"]) {
+    await pickLayout(id);
+    const h = [...pool.querySelectorAll(".ra-h")].map((e) => {
+      const first = e.querySelector("span");
+      return (first ? first.textContent : e.textContent).trim();
+    });
+    ok(id + ": the standings segment is on screen", h.length >= 2 && h[0] === "Closest to done",
+       h.join(" | "));
+    ok(id + ": ...directly under what to go do next, above the scoreboard",
+       h.indexOf("This session") > 1, h.join(" | "));
+    const seg = [...pool.querySelectorAll(".ra-sec")][1];
+    ok(id + ": ...saying the rep total is an estimate", !!seg.querySelector(".mi-info"),
+       seg.querySelector(".ra-h") ? seg.querySelector(".ra-h").textContent.trim() : "");
+    // Max-rank givers are dropped: there is no next rank to incentivise.
+    ok(id + ": ...and never lists a giver with nothing left to earn",
+       seg.textContent.indexOf("Maxed Faction") < 0, seg.textContent.slice(0, 60));
+  }
+  // Layout-specific claims.
+  await pickLayout("bars");
+  const bar0 = pool.querySelectorAll(".ra-sec")[1].querySelector(".cp-n");
+  ok("bars: the most-progressed giver leads, not the one with fewest rep left",
+     !!bar0 && bar0.textContent === "Recco Battaglia", bar0 ? bar0.textContent : "");
+  await pickLayout("contracts");
+  const st0 = pool.querySelector(".st-go");
+  ok("contracts: rep is expressed as contracts, which is the actionable number",
+     !!st0 && /contract/.test(st0.textContent), st0 ? st0.textContent.trim() : "");
+  ok("...and approximate, because rep per contract varies with rank",
+     !!st0 && st0.textContent.indexOf("~") === 0, st0 ? st0.textContent.trim() : "");
+  await pickLayout("unlock");
+  const su0 = pool.querySelector(".su-t");
+  ok("unlock: it leads with what the next rank hands over",
+     !!su0 && su0.textContent.indexOf("MISC Prospector") === 0, su0 ? su0.textContent.trim() : "");
+  // ⚠️ Most ranks gate nothing. A giver with no reward must fall back to the rank name rather
+  // than rendering an empty promise.
+  const suAll = [...pool.querySelectorAll(".su-t")].map((e) => e.textContent.trim());
+  ok("...and never renders an empty promise", suAll.every((t) => t.length > 0), suAll.join(" | "));
+  await pickLayout("bars");
 
   // The session half.
   const ss = [...pool.querySelectorAll(".ss > div")].map((d) => d.querySelector(".ss-l").textContent);
@@ -1286,11 +1457,110 @@ const IDLEPANEL = `(async () => {
      && getComputedStyle(ssRows[0]).gridTemplateColumns === getComputedStyle(ssRows[1]).gridTemplateColumns,
      ssRows.length + " rows");
 
-  // The size-driven list.
+  // 🔑 THE PACE IS ON SCREEN, not only in a tooltip. It was demoted into a title attribute when
+  // the old two-column "Per hour · this grind" block was folded in on 2026-08-13, and Sub
+  // asked for exactly that number back on 2026-08-15 ("what you're trending at at the rate that
+  // you're going"). The fixture's rep pace is 1480 against 1240 in the last hour.
+  const repStat = ssRows[1].children[0];
+  const pace = repStat.querySelector(".ss-pace");
+  ok("the rate shows what the grind is TRENDING at, not just the last hour",
+     !!pace, repStat.textContent.trim());
+  ok("...as a suffix on the figure it qualifies, inside the same stat",
+     !!pace && repStat.querySelector(".ss-n").contains(pace)
+     && repStat.querySelector(".ss-n").textContent.trim().indexOf("1.2k") === 0,
+     repStat.querySelector(".ss-n").textContent.trim());
+  ok("...set smaller than the measured figure it hangs off, being an extrapolation",
+     !!pace && parseFloat(getComputedStyle(pace).fontSize)
+        < parseFloat(getComputedStyle(repStat.querySelector(".ss-n")).fontSize),
+     pace ? getComputedStyle(pace).fontSize : "");
+  // A rate the game never reported must stay a dash — a pace suffix on nothing would invent one.
+  ok("...and a rate with no data is still a plain dash",
+     !!ssRows[1].children[1].querySelector(".rt-na"),
+     ssRows[1].children[1].textContent.trim());
+
+  // ── Latest blueprints, as pictures ──────────────────────────────────────────────────────
+  // Sized by the widget's WIDTH (how many fit across), not its height, so unlike the missions
+  // list it takes a fixed slice of the panel.
   const panel = document.getElementById("panel");
-  const ul = document.getElementById("raLatest");
-  const rows = () => ul.querySelectorAll("li:not(.ra-more)").length;
-  const at = (h) => { panel.style.height = h + "px"; window.__fitLatest(); return rows(); };
+  const artRow = document.getElementById("raLatestArt");
+  const tiles = () => artRow.querySelectorAll(".bt").length;
+  // 🔑 DRIVE THE FIT, do not resize and hope. Same reasoning as the row-count assertions below:
+  // layout callbacks are unreliable in a window the compositor considers hidden, so a suite that
+  // waits on a ResizeObserver is measuring the harness. (A real drag WAS verified separately, in
+  // both directions.) The panel width is set, the fit is called, then it is measured.
+  const across = (w) => { panel.style.width = w + "px"; window.__fitLatest(); return tiles(); };
+  ok("recent blueprints are shown as pictures", !!artRow && tiles() >= 2, String(artRow && tiles()));
+  // The tracker's registry entry is { w: 380, minW: 300 }. Sub put his widget at "about the
+  // smallest size that someone will reasonably set it to" and asked for TWO there, so 380 => 2
+  // is the anchor the 160px minimum tile was solved for — not a taste call.
+  ok("...two across at the widget's default width", across(380) === 2, String(across(380)));
+  ok("...still two at the narrowest the widget can go", across(300) === 2, String(across(300)));
+  ok("...more as it gets wider", across(640) > 2 && across(900) > across(640),
+     across(380) + " -> " + across(640) + " -> " + across(900));
+  ok("...capped at ten however wide it gets", across(3000) <= 10, String(across(3000)));
+  across(380);
+  ok("...with a bigger tile when there are fewer of them",
+     parseFloat(getComputedStyle(artRow.querySelector(".bt-art")).height) > 90,
+     getComputedStyle(artRow.querySelector(".bt-art")).height);
+  across(900);
+  ok("...and a smaller one when there are more",
+     parseFloat(getComputedStyle(artRow.querySelector(".bt-art")).height) < 90,
+     getComputedStyle(artRow.querySelector(".bt-art")).height);
+  across(380);
+  // 🔑 The capture is tried FIRST and the clay render is the fallback — the render is grey,
+  // untextured and shared between items that reuse a model, so it shows a shape, not an identity.
+  const CAP = "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+  const REN = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  const firstImg = artRow.querySelector(".bt-i");
+  ok("...leading with the crowdsourced fabricator capture",
+     !!firstImg && firstImg.getAttribute("src") === CAP,
+     firstImg ? firstImg.getAttribute("src") : "(no img)");
+  ok("...carrying the render as a fallback for when that 404s",
+     !!firstImg && !!firstImg.getAttribute("data-fb"),
+     firstImg ? String(firstImg.getAttribute("data-fb")) : "");
+  // ⚠️ The fixture's every-third entry has no capture, so the row must not be all-captures.
+  across(900);   // index 2 is the render-only fixture entry, so widen until it is on screen
+  const srcs = [...artRow.querySelectorAll(".bt-i")].map((i) => i.getAttribute("src"));
+  ok("...and going straight to the render when there is no capture at all",
+     srcs.some((s) => s === REN), srcs.map((s) => (s === CAP ? "capture" : s === REN ? "render" : s)).join(" | "));
+  ok("...naming each one, because the render alone cannot identify an item",
+     artRow.querySelectorAll(".bt-n").length === tiles(), String(tiles()));
+
+  const mul = document.getElementById("raLatestMissions");
+  const mrows = () => mul.querySelectorAll("li:not(.ra-more)").length;
+  const at = (h) => { panel.style.height = h + "px"; window.__fitLatest(); return mrows(); };
+
+  // ⚠️ Size the panel FIRST. At the harness's default height this list holds one row, and that
+  // row happens to be one carrying an aUEC figure — so the "some rows have no figure" assertion
+  // below passed or failed on which mission sorted first, not on the behaviour.
+  at(900);
+  ok("the last completed missions are listed again", !!mul && mrows() >= 1, String(mul && mrows()));
+  ok("...with the aUEC the game actually logged, where it logged one",
+     !!mul.querySelector(".ra-val"), mul.textContent.slice(0, 50));
+  // 🔑 A calculated-reward contract logs no payout. Omit the figure; never print a zero, which
+  // would read as "this paid nothing" rather than "the game did not say".
+  ok("...and no figure at all on the ones it did not",
+     mrows() > mul.querySelectorAll(".ra-val").length,
+     mrows() + " rows, " + mul.querySelectorAll(".ra-val").length + " with a value");
+
+  // 🔑 The picture row is fixed-height, so the missions list is what absorbs the leftover — and
+  // it must still GROW with the widget rather than being squeezed out by the art above it.
+  // (The two lists briefly SHARED the leftover height; the blueprint half became a width-driven
+  // picture row on 2026-08-15, so only this one is height-driven now.)
+  ok("...growing as the widget gets taller", at(900) > at(420), at(420) + " -> " + at(900));
+  // 🔴 The "+N more" line is a full 21px row, not the 15px it was first guessed at — it is an li
+  // in the same list and inherits the same padding. Nothing reserved it, so a truncated list
+  // rendered its last row and had the more-line sliced in half by the section's overflow. It read
+  // as a rendering fault. Whenever a list is truncated, its rows plus that line must FIT.
+  const fits = (u) => {
+    const more = u.querySelector(".ra-more");
+    if (!more) return true;
+    return Math.round(more.getBoundingClientRect().bottom) <= Math.round(u.getBoundingClientRect().bottom) + 1;
+  };
+  at(640);
+  ok("a truncated list leaves room for its own '+N more' line", fits(mul),
+     String((mul.querySelector(".ra-more") || {}).textContent));
+
   const tall = at(900), mid = at(500), small = at(300), tiny = at(120);
   ok("a tall widget shows more rows than a short one", tall > small, tall + " vs " + small);
   ok("...capped at ten however tall it gets", tall <= 10, String(tall));
@@ -1298,9 +1568,73 @@ const IDLEPANEL = `(async () => {
   // 🔴 The bug this suite exists for. Sub, collapsing the panel to its minimum: "it doesn't show
   // anything under Latest. It's just nothing." A heading over a void is worse than one row.
   ok("NEVER empty, however small the widget gets", tiny >= 1, String(tiny));
-  ok("...and it says how many it is not showing", !!ul.querySelector(".ra-more"),
-     ul.textContent.slice(0, 60));
+  // ⚠️ A height where there is something to truncate AND room to say so. Measured: 700-800 shows
+  // one row and drops the line (correctly — it would be clipped), 900 shows 2 with the count,
+  // 1000 shows 7 with it, and by 1100 all ten fit so there is no count to show at all. Both ends
+  // are legitimate, which is exactly why this needs a measured height rather than a big number.
+  at(1000);
+  // 🔑 ASSERT THE RULE, NOT A HAND-PICKED HEIGHT. Both outcomes are legitimate here — a list that
+  // shows everything has no count to give, and one squeezed to a single row DROPS the count
+  // rather than let the overflow slice it in half — so pinning this to one pixel height made the
+  // assertion about my choice of number instead of about the behaviour. It failed twice that way
+  // at heights that were behaving perfectly. The contract is: if rows are hidden AND another row
+  // would fit, the count must be there.
+  {
+    const shown = mrows();
+    const room = mul.getBoundingClientRect().height;
+    const hidden = shown < (current.recentMissions || []).length;
+    const roomForCount = (shown + 1) * 21 <= room + 1;
+    ok("...and it says how many it is not showing, whenever there is room to say it",
+       !hidden || !roomForCount || !!mul.querySelector(".ra-more"),
+       shown + " shown, room " + Math.round(room) + "px, hidden=" + hidden
+       + ", counted=" + !!mul.querySelector(".ra-more"));
+  }
   at(560);
+
+  // ── TEMPORARY: the three idle mockups ───────────────────────────────────────
+  // Goes out with the switcher. What is worth guarding while they are up is not the styling but
+  // the two things every layout can get wrong: printing an aUEC figure without saying it is an
+  // estimate, and inventing a number for a contract that carries none. The fixture's fourth pool
+  // ("Deep space hit") has no payout and no run length precisely so that second case is exercised.
+  const mkOn = () => pool.querySelector(".ra-mk-b.on") && pool.querySelector(".ra-mk-b.on").dataset.mk;
+  ok("the mockup switcher offers three layouts", pool.querySelectorAll(".ra-mk-b").length === 3);
+  ok("...and shows which one is up", mkOn() === "bars", String(mkOn()));
+
+  // 🔴 NO ECONOMICS IN THIS SECTION. Sub, 2026-08-15: the per-hour figure was only ever meant for
+  // the session tracker, "NOT with the closest to done". A first pass hung each pool's aUEC/hr,
+  // payout and run length off these rows and it was wrong about what the section is for. The
+  // assertion is kept pointed at the ABSENCE, because the fields are still on the view model and
+  // rendering them is a one-line temptation.
+  const slText = [...pool.querySelectorAll(".sl")].map((e) => e.textContent).join(" ");
+  ok("closest-to-done carries no rate, payout or run length",
+     slText.indexOf("/hr") < 0 && slText.indexOf("aUEC") < 0 && slText.indexOf("~") < 0,
+     slText.slice(0, 80));
+  ok("...each row with its count, its bar and what is left",
+     !!sl[0].querySelector(".sl-c") && !!sl[0].querySelector(".sl-bar i") && !!sl[0].querySelector(".sl-left"),
+     sl[0].textContent.trim());
+  ok("...ordered closest-first, as the view already sorted them",
+     sl[0].querySelector(".sl-left").textContent.trim() === "2 to go", sl[0].textContent.trim());
+
+  // Whatever the standings layout, the sections Sub asked to keep are there and in his order.
+  const headTitles = () => [...pool.querySelectorAll(".ra-h")].map((e) => {
+    const first = e.querySelector("span");
+    return (first ? first.textContent : e.textContent).trim();
+  });
+  for (const id of ["bars", "contracts", "unlock"]) {
+    await pickLayout(id);
+    const h = headTitles();
+    ok(id + ": the scoreboard and both Latest sections survive the layout",
+       h.length === 5 && h[2] === "This session"
+       && h[3] === "Latest blueprints" && h[4] === "Latest missions", h.join(" | "));
+    ok(id + ": ...and what to go do next still leads",
+       h[0] === "Closest to done" && !!pool.querySelector(".ss") && !!document.getElementById("raLatestArt"),
+       h[0]);
+  }
+
+  // Hand the user's own choice back — this suite drives the real localStorage on this origin.
+  if (saved) localStorage.setItem("scIdleStandingsPick", saved);
+  else localStorage.removeItem("scIdleStandingsPick");
+  panel.style.width = "";
   return out;
 })()`;
 

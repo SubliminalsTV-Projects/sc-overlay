@@ -40,13 +40,105 @@ export interface RepEntry {
   scope: string;
   amount: number;
 }
-/** A started-but-unfinished blueprint pool, for the idle panel's "closest to done" list. */
+/** A started-but-unfinished blueprint POOL, for the idle panel's "closest to done" list.
+ *
+ *  🔴 THE UNIT IS THE POOL, NOT THE MISSION — changed 2026-08-15, and it was a real bug. This list
+ *  used to iterate contracts, so a pool fed by many contracts filled the panel with itself: Sub saw
+ *  four rows that were four TITLES of one pool (`819a9851…`, United Wayfarers Club refuelling),
+ *  all reading 5/8, where he should have seen four different pools. The old dedupe keyed on
+ *  title + progress and could not catch it, because the titles genuinely differ.
+ *  Measured over 4.9.0-LIVE.12344265: **89 distinct pools** behind 755 pool-bearing contracts, and
+ *  **65 of the 89 span more than one title** — so this is the normal case, not an edge case. That
+ *  one refuelling pool has **79 contract variants across 5 titles**.
+ *
+ *  🔑 A pool has ONE identity and it is `poolUuid`. That is also the key the website's pool page is
+ *  addressed by, so the widget can link straight out to it.
+ *
+ *  🔑 The cost/reward fields are measured and deliberately left UN-RENDERED (Sub, 2026-08-15: the
+ *  per-hour figure belongs to the session tracker, "not with the closest to done"). They are kept
+ *  because they are cheap and already computed; do not tidy them away, and do not render them
+ *  without asking. Coverage over the 755 contracts: 748 carry a payout AND a run length, 726 a
+ *  reputation award, 377 a re-accept cooldown. Where a pool's contracts disagree, the value is the
+ *  representative contract's — these describe ONE run of ONE contract, never the pool as a whole. */
 export interface ClosestPool {
+  /** The pool's own uuid — its identity, and the key the website's pool page uses. */
+  poolUuid: string;
+  /** A representative contract key, for anything that still needs to name a mission. */
   key: string;
+  /** The representative contract's title — what the pool used to be called here. */
   title: string;
+  /** A readable name for the POOL rather than for one of its contracts: giver + type, which is
+   *  unambiguous for 85 of 89 pools (one giver) and 77 (one type). Falls back to the
+   *  representative title when the pool's contracts disagree, so it is never a half-truth. */
+  poolName: string;
+  /** Every distinct contract title that feeds this pool, shortest first. The UI shows the first
+   *  and offers the rest — "there are other ways to farm this" is the useful part. */
+  missionTitles: string[];
+  /** How many contract VARIANTS feed it (79 for the refuelling pool, not 5). */
+  variants: number;
+  /** The blueprints still missing from this pool, alphabetical — what "3 to go" actually means.
+   *  🔑 Also the tie-breaker on the name: two DIFFERENT pools can share a giver and a type (Sub
+   *  has two "Shubin Interstellar · Ship Mining" pools open, both mining lasers and radars, and
+   *  even their contract titles collide), so a name alone would reintroduce the very repetition
+   *  this restructure removed. What you still need is the thing that actually tells them apart. */
+  missing: string[];
   owned: number;
   total: number;
   places: string[];
+  /** Dataset payout for ONE completion, before the 5–20% standing bonus. Null when unlisted.
+   *  min === max for the overwhelming majority; the UI shows a range only when they differ. */
+  payMin: number | null;
+  payMax: number | null;
+  /** 🔴 TRUE FOR EVERY POOL CONTRACT MEASURED — all 748 with a payout are MODELLED, not read from
+   *  the game files, because the game works these rewards out at accept time. So the idle panel's
+   *  aUEC figures are estimates WITHOUT EXCEPTION and must carry the tilde + the circled i, the
+   *  same treatment `payBlock()` gives the tracked mission. A rate built on this is a ballpark. */
+  payoutEstimated: boolean;
+  /** Expected minutes for one run (`dur` in mission-facts). Null when unlisted. */
+  durMin: number | null;
+  /** Reputation one completion awards, summed across scopes. Null when the contract lists none. */
+  rep: number | null;
+  /** Minutes before the same contract can be taken again (`cd`). Null when it has no cooldown.
+   *  🔑 NOT `boardRespawnMin` — this is "when can I run it again", which is what caps the grind. */
+  cooldownMin: number | null;
+  /** Who gives it, and what kind of work it is — context for "do I want to spend an hour here". */
+  giver: string | null;
+  missionType: string | null;
+}
+/** Where you stand with ONE mission giver, for the idle panel's standings segment.
+ *
+ *  🔑 Built from what the app ALREADY tracks: `repWitnessed` (rep accrued per giver, rebuilt from
+ *  the player's own logs) run through `repLadderPosition` against the giver's scope ladder — the
+ *  same two pieces `computeRepBar` uses for the tracked mission, just for every giver at once.
+ *  Measured on Sub's collection 2026-08-15: 9 givers carry witnessed rep, from Wikelo at 20 to
+ *  Recco Battaglia at 24,700.
+ *
+ *  🔴 THE ESTIMATE IS A FLOOR, ALWAYS. The game never reports reputation anywhere the app can
+ *  read, so this is reconstructed from completions in the logs and can only ever undercount —
+ *  anything earned before the app was installed, or in a log since rotated away, is invisible.
+ *  Every consumer must present it as an estimate, the same way the tracked mission's rep bar does. */
+export interface FactionStanding {
+  /** The giver, in the dataset's spelling. */
+  faction: string;
+  /** The rep scope driving the ladder (e.g. "FactionReputation"). */
+  scope: string;
+  /** Current rank NAME ("Sr. Contractor"), and the next one up (null at max). */
+  standing: string;
+  nextName: string | null;
+  /** Estimated rep total (a floor), the current rank's floor, and the next rank's. */
+  estimate: number;
+  curMin: number;
+  nextMin: number | null;
+  /** How far through the CURRENT rank you are, 0-100. 100 at max rank. */
+  pct: number;
+  /** Rep still needed to reach `nextName`. Null at max rank. */
+  toGo: number | null;
+  /** 🔑 The rep-to-go expressed as CONTRACTS, using the median rep this giver's missions award —
+   *  an abstract number turned into an action. Null when the giver has no scoreable missions, or
+   *  at max rank. Always approximate: rep per contract varies with rank and difficulty. */
+  contractsToGo: number | null;
+  /** What reaching the next rank hands over (rank-gated ships and items). Often empty. */
+  nextRewards: string[];
 }
 /** One rank on a reputation scope's ladder: the rep floor to reach it + its name. */
 export interface RepLadderRank {
@@ -89,6 +181,13 @@ export interface RepBar {
   nextRewards: string[];
   /** True at the top of the ladder (no next rank). */
   max: boolean;
+  /** 🔑 THIS CONTRACT WILL NOT MOVE THIS BAR. True when the contract pays its reputation into a
+   *  track the app does not rank — REP_SCOPE_DENY excludes ShipCombat_*, FPS_Combat, Racing and
+   *  friends, and 384 of 4,075 contracts pay ONLY those — so the standing shown is the giver's
+   *  own, earned from their other work. The bar is still the right answer to "where do I stand
+   *  with these people", but the panel must say that finishing THIS one will not advance it, or
+   *  the number is a lie by implication sitting next to a +500 reputation pill. */
+  offTrack?: boolean;
   /** No completions witnessed yet for this giver (run Verify from logs) — the UI shows an
    *  empty "estimate unavailable" state instead of a misleading zero-progress bar. */
   noData: boolean;
@@ -112,6 +211,18 @@ export interface GrindMission {
   /** Guaranteed physical items — ships and gear the log NEVER reports, so they're the reason
    *  to chase a specific rank. */
   items: { name: string; amount: number }[];
+  /** What ONE run costs and pays. Measured over Recco Battaglia's 33 contracts on 2026-08-15:
+   *  33 carry a payout, 32 a run length, 32 a difficulty, and only ONE a re-accept cooldown.
+   *  🔑 This is what turns a grind tracker from a scoreboard into a route: rep per hour varies
+   *  FOUR-FOLD across Battaglia's own missions (4,800/hr on "Extra Special Job" against 1,200/hr
+   *  on most of the rank 0-2 work), so "which one do I run" has a real answer the widget could
+   *  not previously give. Every field is optional and the UI must omit rather than invent. */
+  payMax: number | null;
+  /** 🔴 Always true in practice for these — the payout is MODELLED, not read from the game. */
+  payoutEstimated: boolean;
+  durMin: number | null;
+  /** CIG's own blended difficulty, 1-7. */
+  diff: number | null;
 }
 
 /** A mission giver's whole reputation track: the standing ladder, where you are on it, and
@@ -242,6 +353,14 @@ export interface RecentBlueprint {
   name: string;
   /** ISO-8601 receipt time from the log. */
   at: string | null;
+  /** Resolved item UUID, or null when the name could not be placed. */
+  item: string | null;
+  /** The crowdsourced fabricator CAPTURE — what a player actually recognises. 404s for anything
+   *  nobody has captured (coverage was 27% in 2026-07), so the client falls back. */
+  image: string | null;
+  /** The generated clay render: exists for ~70% more, but is grey, untextured and SHARED between
+   *  items that reuse a model — so it can identify a shape, not always an item. */
+  imageFallback: string | null;
 }
 /** Per-hour earning rates for the idle screen. rep is dataset-reliable; aUEC is null when the
  *  game logged no payout (calculated-reward missions) — the UI shows "—", never a false 0. */
@@ -401,6 +520,9 @@ export interface TrackedView {
   /** Pools you have started and are nearest to finishing — the idle panel leads with these,
    *  because "no mission tracked" is exactly when the useful question is what to go do next. */
   closestPools: ClosestPool[];
+  /** Where you stand with the givers you have earned rep from — the idle panel’s standings
+   *  segment. Best-progressed first; see standings(). */
+  standings: FactionStanding[];
   /** Per-hour aUEC + rep rates for the idle screen. */
   earnings: EarningRates;
   /** The most-recently received blueprint (real-time receipts only), for the global
@@ -753,6 +875,11 @@ const REP_SCOPE_DENY = /^(ShipCombat_|FPS_Combat|Racing|Worker|Theft|Assassinati
  *  doesn't prove rank 4 — so it is deliberately NOT used here.) Ranks are placed by
  *  minRep, so a best-first ladder (Wikelo) works too. `noData` flags "no completions
  *  witnessed yet" (run Verify from logs). Pure + exported so it's unit-testable. */
+/** The picker's "show me the idle screen" choice. NOT a mission id and never matches one — it is
+ *  a third state beside a pinned mission and null (= auto-follow), which is why it needs a value
+ *  of its own rather than being expressible as "no selection". */
+export const IDLE_PICK = "__idle__";
+
 export function repLadderPosition(
   scope: RepScope | undefined,
   witnessed: number,
@@ -1182,6 +1309,10 @@ export class MissionTracker extends EventEmitter {
       try {
         this.dataset = JSON.parse(readFileSync(p, "utf8")) as Dataset;
         this.patch = this.dataset.version;
+        // The name -> item/image cache is keyed to THIS dataset. Detecting a new build mid-session
+        // swaps it under us, and a stale uuid would show the wrong picture for a renamed item.
+        this.rewardCache.clear();
+        this.repPerContract.clear();
         // Follow the same changelist with the crafting-detail dataset (recipes/stats).
         this.detail.loadForChangelist(this.dataset.changelist);
         this.loadMissionFacts(this.dataset.changelist);
@@ -1885,52 +2016,212 @@ export class MissionTracker extends EventEmitter {
     return null;
   }
 
-  private closestPools(n = 2): ClosestPool[] {
-    const out: ClosestPool[] = [];
-    if (!this.dataset) return out;   // no dataset loaded yet — the idle panel just shows less
+  // 🔑 FOUR, not two — the view now carries more candidates than any one layout shows, because
+  // the idle panel's shortlist is a RENDERING decision (how many fit, how they are ranked) and the
+  // view model should not be the thing that caps it. The default layout still slices to two, so
+  // nothing on screen changed by widening this.
+  private closestPools(n = 4): ClosestPool[] {
+    if (!this.dataset) return [];   // no dataset loaded yet — the idle panel just shows less
     // 🔴 Only what you can actually reach. Sub, 2026-08-13, in Pyro and being shown Nyx pools:
     // "I don't want to see anything for Nyx." A suggestion in another system is not a suggestion,
     // it is a chore you cannot start — and the panel exists to answer "what should I go do now".
     const here = this.playingIn();
+
+    // ── Gather by POOL, not by contract ──────────────────────────────────────────────────────
+    // The old loop pushed one row per CONTRACT and then tried to dedupe on title, which cannot
+    // work: one pool is fed by up to 79 contracts across 5 different titles. Group on the pool's
+    // own uuid and the repetition is gone by construction rather than by cleanup.
+    type Acc = {
+      entries: Map<string, PoolEntry>;    // keyed to collapse pure duplication — see below
+      titles: Map<string, number>;        // title -> how many variants carry it
+      variants: number;
+      places: string[];
+      givers: Set<string>;
+      types: Set<string>;
+      repKey: string; repTitle: string;   // the representative contract
+      repRank: number;
+    };
+    const acc = new Map<string, Acc>();
     for (const [key, m] of Object.entries(this.dataset.missions)) {
-      if (here) {
+      const reachable = !here || (() => {
         const sys = this.systemOf(m.places);
         // Unknown stays IN. 2,092 of 4,075 missions carry no place list at all, and dropping
         // every one of them would quietly hide most of the dataset to enforce a guess.
-        if (sys && sys !== here) continue;
+        return !sys || sys === here;
+      })();
+      if (!reachable) continue;
+      for (const [uuid, list] of Object.entries(m.pools ?? {})) {
+        if (!Array.isArray(list) || list.length < 2) continue;   // not a collection to finish
+        let a = acc.get(uuid);
+        if (!a) {
+          a = { entries: new Map(), titles: new Map(), variants: 0, places: [], givers: new Set(),
+                types: new Set(), repKey: key, repTitle: m.title, repRank: Infinity };
+          acc.set(uuid, a);
+        }
+        a.variants++;
+        a.titles.set(m.title, (a.titles.get(m.title) ?? 0) + 1);
+        if (m.giver) a.givers.add(m.giver);
+        if (m.missionType) a.types.add(m.missionType);
+        for (const w of m.where ?? []) if (!a.places.includes(w)) a.places.push(w);
+        // 🔴 DEDUPE ON THE ITEM UUID, NOT THE NAME. Three contracts list this refuelling pool's 8
+        // blueprints TWICE — same names AND same item uuids — which would report "of 16" for a
+        // pool of 8. But a repeated NAME is usually real: dataset-wide 165 mission-pool copies
+        // repeat a name and 150 of those have all-distinct items (there are genuinely three
+        // separate "Cinch Scraper Module" items). Keying on the item collapses only the true
+        // duplication and leaves the counting semantics of everything else exactly as they were.
+        // Entries with no item uuid fall back to a per-position key so they are never merged.
+        list.forEach((e, i) => {
+          a!.entries.set(e.item ?? `${key}#${i}`, e);
+        });
+        // The representative contract is the one with the SHORTEST title, tie-broken
+        // alphabetically — deterministic, and the short title is reliably the least cluttered of
+        // a pool's variants ("REFUEL REQUEST: [Ship]" over "CRITICAL REFUEL REQUEST: [Ship]").
+        const rank = m.title.length;
+        if (rank < a.repRank || (rank === a.repRank && m.title < a.repTitle)) {
+          a.repRank = rank; a.repKey = key; a.repTitle = m.title;
+        }
       }
-      const entries = Object.values(m.pools ?? {}).flat();
-      if (entries.length < 2) continue;   // a one-item pool is not a collection to finish
+    }
+
+    // ── Score them ───────────────────────────────────────────────────────────────────────────
+    const out: ClosestPool[] = [];
+    for (const [uuid, a] of acc) {
+      const entries = [...a.entries.values()];
+      if (entries.length < 2) continue;
       let owned = 0;
-      for (const e of entries) if (this.isOwned(e.blueprint).owned) owned++;
+      const missing = new Set<string>();
+      for (const e of entries) {
+        if (this.isOwned(e.blueprint).owned) owned++;
+        else missing.add(e.blueprint);
+      }
       if (owned === 0 || owned === entries.length) continue;   // untouched, or already done
+      const m = this.dataset.missions[a.repKey];
+      const f = this.factsFor(a.repKey);
+      const repSum = (m?.reputationGained ?? []).reduce((s, r) => s + (r.amount || 0), 0);
+      // 🔑 The friendly name is giver + type, which Sub asked for ("instead of it saying critical
+      // fleet refuel it'll say Covalex refueling missions"). Stated ONLY when the pool's contracts
+      // agree on both — 85 of 89 pools have one giver and 77 one type, and a pool spanning six
+      // factions (there is one) must not be labelled with whichever we saw first. Otherwise the
+      // representative title, which is at least true of something.
+      // 🔑 TYPE FIRST, GIVER SECOND (Sub, 2026-08-15) — "Refueling · United Wayfarers Club". What
+      // kind of work it is, is what you decide on; who is paying is the qualifier.
+      const poolName = a.givers.size === 1 && a.types.size === 1
+        ? `${[...a.types][0]} · ${[...a.givers][0]}`
+        : a.repTitle;
       out.push({
-        key,
-        title: m.title,
+        poolUuid: uuid,
+        key: a.repKey,
+        title: a.repTitle,
+        poolName,
+        // Shortest first, so the one the UI shows is the least cluttered.
+        missionTitles: [...a.titles.keys()].sort((x, y) => x.length - y.length || x.localeCompare(y)),
+        variants: a.variants,
+        missing: [...missing].sort(),
         owned,
         total: entries.length,
         // Where to take it. `where` is the availability list the mission-info drawer uses; a
         // suggestion you cannot act on is just a statistic.
-        places: (m.where ?? []).slice(0, 2),
+        places: a.places.slice(0, 3),
+        payMin: m?.payout?.min ?? null,
+        payMax: m?.payout?.max ?? null,
+        payoutEstimated: m?.payoutCalculated === true,
+        // 🔑 Guard the zero. `dur: 0` would divide into an infinite rate, and a contract that
+        // takes no time is not a thing the panel should ever claim.
+        durMin: f?.dur && f.dur > 0 ? f.dur : null,
+        rep: repSum > 0 ? repSum : null,
+        cooldownMin: f?.cd && f.cd > 0 ? f.cd : null,
+        giver: a.givers.size === 1 ? [...a.givers][0] : null,
+        missionType: a.types.size === 1 ? [...a.types][0] : null,
       });
     }
     out.sort((a, b) => (a.total - a.owned) - (b.total - b.owned)
       || b.owned / b.total - a.owned / a.total
-      || a.title.localeCompare(b.title));
-    // 🔴 SAME-TITLED VARIANTS ARE SEPARATE DATASET KEYS, and 460 of the 540 multi-variant titles
-    // are the SAME pool offered in several places — so the raw list opens with the same contract
-    // twice, identical counts and all, which reads as a bug rather than a suggestion. Seen live
-    // on Sub's collection the moment this shipped: "CRITICAL FLEET REFUEL 5/8" listed twice.
-    // Collapsed on title + how far through it is, merging the places, because to someone deciding
-    // where to go those really are one errand.
-    const seen = new Map<string, ClosestPool>();
-    for (const p of out) {
-      const k = p.title + "|" + p.owned + "/" + p.total;
-      const had = seen.get(k);
-      if (!had) { seen.set(k, { ...p, places: [...p.places] }); continue; }
-      for (const place of p.places) if (!had.places.includes(place)) had.places.push(place);
+      || a.poolName.localeCompare(b.poolName));
+    // 🔑 TWO POOLS CAN SHARE A NAME AND THAT IS FINE HERE — the widget separates them on the line
+    // below, with what you still need. Appending the missing blueprint to `poolName` was tried
+    // first and MEASURED AS USELESS: "Shubin Interstellar · Ship Mining · BroadSpec" does not fit
+    // a 380px row, so both rows ellipsised to the identical "Shubin Interstellar · Ship Mining…"
+    // and the disambiguator was the part that got cut. A name is the wrong place to put the thing
+    // that tells two names apart. `missing` is on the record and the renderer leads with it.
+    const top = out.slice(0, n);
+
+    // (The in-game TELL — a contract title only one of two same-named pools offers — was built
+    //  here and removed 2026-08-15 when Sub cut it from the row. Worth keeping the measurement
+    //  that came out of it: for the titles two same-named pools SHARE, they are byte-identical on
+    //  rank, locations and payout, so there is genuinely nothing to tell a player to look for.
+    //  The pool NAME is what gets you there instead — pick the category, then the giver.)
+    return top;
+  }
+
+  /** name -> the reward record (item uuid + image URLs).
+   *  🔑 MEMOISED, and it has to be. `itemUuidsForName()` rebuilds an entry list by walking every
+   *  mission and every pool in the dataset on each call — fine for a receipt, which happens
+   *  rarely, but this list resolves ten names on EVERY view frame and a frame goes out on every
+   *  SSE tick. The dataset is immutable for the life of a load, so the answer cannot go stale;
+   *  the cache is cleared wherever the dataset is swapped. */
+  private rewardCache = new Map<string, BlueprintReward>();
+  private blueprintRewardCached(name: string): BlueprintReward {
+    let r = this.rewardCache.get(name);
+    if (!r) { r = this.blueprintReward(name); this.rewardCache.set(name, r); }
+    return r;
+  }
+
+  /** Median rep one contract from this giver awards — cached, since it walks the dataset.
+   *  MEDIAN rather than mean: a giver's ladder spans easy and hard contracts and one 5,000-rep
+   *  outlier would make the whole track look three contracts long. */
+  private repPerContract = new Map<string, number>();
+  private medianRepFor(giver: string): number | null {
+    const key = norm(giver);
+    const hit = this.repPerContract.get(key);
+    if (hit !== undefined) return hit || null;
+    const amounts: number[] = [];
+    for (const m of Object.values(this.dataset?.missions ?? {})) {
+      if (!m.giver || norm(m.giver) !== key) continue;
+      const pr = this.primaryRep(m);
+      if (pr && pr.amount > 0) amounts.push(pr.amount);
     }
-    return [...seen.values()].slice(0, n).map((p) => ({ ...p, places: p.places.slice(0, 3) }));
+    amounts.sort((a, b) => a - b);
+    const med = amounts.length ? amounts[Math.floor(amounts.length / 2)] : 0;
+    this.repPerContract.set(key, med);
+    return med || null;
+  }
+
+  /** Where the player stands with every giver they have earned rep from, best-progressed first.
+   *
+   *  🔑 SORTED BY HOW FAR THROUGH THE CURRENT RANK THEY ARE, not by rep remaining. Measured on
+   *  Sub's collection: sorting by absolute rep-to-go opens with Wikelo (320 rep) and three
+   *  factions sitting at "Neutral" that he has barely touched — technically nearest, but reaching
+   *  "Jr. Contractor" from nothing is not a milestone anyone is chasing. Sorting by PROGRESS
+   *  surfaces Recco Battaglia at 72% of the way to Prestige 2, which is the one that actually
+   *  feels close. The absolute cost rides along so the number is never flattering by omission. */
+  private standings(n = 4): FactionStanding[] {
+    const out: FactionStanding[] = [];
+    for (const [faction, w] of this.repWitnessed) {
+      const pos = repLadderPosition(this.repScopes[w.scope], w.sum);
+      if (!pos) continue;
+      const span = pos.nextMin != null ? pos.nextMin - pos.curMin : 0;
+      const into = w.sum - pos.curMin;
+      const toGo = pos.nextMin != null ? Math.max(0, pos.nextMin - w.sum) : null;
+      const med = toGo != null ? this.medianRepFor(faction) : null;
+      out.push({
+        faction,
+        scope: w.scope,
+        standing: pos.standing,
+        nextName: pos.nextName,
+        estimate: w.sum,
+        curMin: pos.curMin,
+        nextMin: pos.nextMin,
+        pct: span > 0 ? Math.max(0, Math.min(100, Math.round((into / span) * 100))) : 100,
+        toGo,
+        contractsToGo: toGo != null && med ? Math.max(1, Math.ceil(toGo / med)) : null,
+        nextRewards: pos.nextRank == null ? [] : (this.rewardsByRank(faction).get(pos.nextRank) ?? []),
+      });
+    }
+    // Max rank sinks: there is nothing to incentivise. Then most-progressed first.
+    out.sort((a, b) => (a.toGo == null ? 1 : 0) - (b.toGo == null ? 1 : 0)
+      || b.pct - a.pct
+      || a.faction.localeCompare(b.faction));
+    return out.slice(0, n);
   }
 
   private recentBlueprints(n = 10): RecentBlueprint[] {
@@ -1938,7 +2229,10 @@ export class MissionTracker extends EventEmitter {
       .filter(([, ts]) => Number.isFinite(Date.parse(ts)))
       .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
       .slice(0, n)
-      .map(([name, at]) => ({ name, at }));
+      .map(([name, at]) => {
+        const r = this.blueprintRewardCached(name);
+        return { name, at, item: r.item, image: r.image, imageFallback: r.imageFallback };
+      });
   }
 
   /** Re-scan a set of log files for `Received Blueprint` receipts and fold them into
@@ -2162,7 +2456,11 @@ export class MissionTracker extends EventEmitter {
    *  auto-follow. The log can't tell us which mission you've selected to track, so
    *  this is the manual escape hatch. */
   selectMission(missionId: string | null): void {
-    this.selectedMissionId = missionId && this.missions.has(missionId) ? missionId : null;
+    // IDLE_PICK is not a mission, so it deliberately skips the has() check that keeps a stale id
+    // from being pinned. Everything else still has to name a mission the tracker knows about.
+    this.selectedMissionId = missionId === IDLE_PICK
+      ? IDLE_PICK
+      : (missionId && this.missions.has(missionId) ? missionId : null);
     this.emit("change");
   }
 
@@ -2472,13 +2770,29 @@ export class MissionTracker extends EventEmitter {
     const giver = m?.giver;
     if (!giver) return null;
     const primary = this.primaryRep(m);
-    if (!primary) return null;
-    const pos = repLadderPosition(this.repScopes[primary.scope], this.repWitnessed.get(giver)?.sum ?? 0);
+    const witnessed = this.repWitnessed.get(giver);
+    // 🔴 FALL BACK TO THE GIVER'S OWN TRACKED STANDING when this contract's reputation goes
+    // somewhere we do not rank. Reported by Sub 2026-08-15: he accepted "Eliminate Annoyance" for
+    // Headhunters and the standing bar vanished, though his Headhunters standing is real and
+    // tracked (7,825 on FactionReputation). The contract awards rep ONLY on
+    // `ShipCombat_HeadHunters`, which REP_SCOPE_DENY excludes, so primaryRep returned null and the
+    // whole bar with it. Measured across the dataset: **384 of 4,075 contracts pay only denied
+    // scopes**, and Headhunters is the worst-hit giver at 88 of them — so this was not an edge
+    // case, it was most of a faction's board.
+    // 🔑 The bar answers "where do I stand with these people", which is true regardless of which
+    // internal track a particular contract happens to credit. What it must NOT do is imply this
+    // contract will move it — see `offTrack`, which the panel says out loud.
+    const scope = primary?.scope ?? witnessed?.scope;
+    if (!scope) return null;
+    const pos = repLadderPosition(this.repScopes[scope], witnessed?.sum ?? 0);
     if (!pos) return null;
+    // True when the contract pays into a track that is not the one this bar measures, so
+    // completing it will not advance what is shown. Both halves of that are worth saying.
+    const offTrack = !primary || (!!witnessed && witnessed.scope !== scope);
     // What reaching the next rank actually hands over. Battaglia gates SHIPS this way and the
     // panel never mentioned them, so the bar was a number with no stated reason to care.
     const nextRewards = pos.nextRank == null ? [] : (this.rewardsByRank(giver).get(pos.nextRank) ?? []);
-    return { scope: primary.scope, faction: giver, ...pos, nextRewards };
+    return { scope, faction: giver, ...pos, nextRewards, offTrack };
   }
 
   /** Rank index -> item names for one giver, built once and cached. Mirrors how giverTrack()
@@ -2545,6 +2859,11 @@ export class MissionTracker extends EventEmitter {
       byTitleOnly: !this.completedKeys.has(key) && (this.completedTitles.get(normScreenTitle(m.title)) ?? 0) > 0,
       poolCount: Object.values(m.pools ?? {}).reduce((s, p) => s + p.length, 0),
       items: (m.items ?? []).map((i) => ({ name: i.name, amount: i.amount ?? 1 })),
+      payMax: m.payout?.max ?? null,
+      payoutEstimated: m.payoutCalculated === true,
+      // Guard the zero: a contract that takes no time would divide into an infinite rate.
+      durMin: this.factsFor(key)?.dur && this.factsFor(key)!.dur! > 0 ? this.factsFor(key)!.dur! : null,
+      diff: this.factsFor(key)?.diff ?? null,
     });
     const missions = entries.map(toMission);
 
@@ -2715,6 +3034,15 @@ export class MissionTracker extends EventEmitter {
    *  accepted mission that has a pool (so a cargo haul accepted after a blueprint
    *  mission doesn't hide it); falling back to the newest of all. */
   private effectiveMissionId(): string | null {
+    // 🔑 A THIRD PICKER STATE, because null already means AUTO. Sub, 2026-08-15: he wanted a way
+    // back to the idle screen while missions are accepted, and "deselect" could not be expressed —
+    // clearing the pick just handed the panel back to auto-follow, which immediately re-picked a
+    // mission. The sentinel is checked FIRST and returns null, which is the one thing the whole
+    // view already knows how to render.
+    // 🔑 It STICKS, like a pinned mission does. An explicit choice that a later accept silently
+    // undid would not be a choice; accepting something new while parked on idle is exactly when
+    // you would be annoyed to be yanked away from the panel you asked for.
+    if (this.selectedMissionId === IDLE_PICK) return null;
     const active = (id: string) => !this.endedMissionIds.has(id);
     if (this.selectedMissionId && this.missions.has(this.selectedMissionId) && active(this.selectedMissionId)) {
       return this.selectedMissionId;
@@ -3398,6 +3726,7 @@ export class MissionTracker extends EventEmitter {
       recentMissions: this.recentMissions(),
       recentBlueprints: this.recentBlueprints(),
       closestPools: this.closestPools(),
+      standings: this.standings(),
       earnings: this.earningRates(),
       justReceived: this.justReceived,
       unrecognized: {

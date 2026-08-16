@@ -117,6 +117,21 @@
   .mrow.linked:hover .t { color: var(--cyan-bright); }
 
   /* Rank picker */
+  /* The rep-per-hour rows appended under the ladder. The rate holds the right column so the
+     ranking is scannable without reading the captions. */
+  .grow { display: flex; align-items: center; gap: 8px; padding: 5px 10px; }
+  .grow.linked { cursor: pointer; }
+  .grow.linked:hover { background: rgba(var(--accent-rgb), 0.08); }
+  .grow.best { background: rgba(var(--accent-rgb), 0.1); }
+  .gleft { flex: 1 1 auto; min-width: 0; }
+  .grow .t { font-size: 11.5px; color: var(--cyan-text); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .grow.best .t { color: var(--cyan-bright); }
+  .gmeta { font-size: 9.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .rate { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 500;
+    color: var(--gold); }
+
   .tabs { flex: none; display: flex; gap: 4px; flex-wrap: wrap; padding: 7px 12px;
     border-bottom: 1px solid var(--divider); position: relative; z-index: 4; }
   .tab { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: var(--cyan-dim);
@@ -393,6 +408,107 @@
     }
   }
 
+  // ── What one run of each mission is worth ─────────────────────────────────────────────────
+  // Sub, 2026-08-15: keep the reward ladder exactly as it is and APPEND the fastest way to the
+  // next rank underneath it. So this is not a second view — it is one screen that answers both
+  // "what am I chasing" and "what do I run to get there".
+  //
+  // 🔑 WHY IT IS WORTH THE SPACE. Measured over Recco Battaglia’s 33 contracts: 33 carry a
+  // payout, 32 a run length, 32 a difficulty. The useful part is not any single figure — it is
+  // that REP PER HOUR VARIES FOUR-FOLD across her own board (4,800/hr on "Extra Special Job"
+  // against 1,200/hr on most rank 0-2 work). The widget could always show where you stood; it
+  // could never say which mission to run, which is the question a grind tracker exists for.
+  //
+  // 🔴 EVERY aUEC FIGURE IS MODELLED, not read from the game (payoutEstimated is true for all 33),
+  // so it carries a tilde exactly as the mission panel’s does. Never print one bare.
+  /** Minutes → "10m" / "1h 10m". */
+  function fmtMins(min) {
+    const m = Math.max(1, Math.round(min));
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60), r = m % 60;
+    return r ? h + "h " + String(r).padStart(2, "0") + "m" : h + "h";
+  }
+  /** Compact aUEC. */
+  function fmtK(v) {
+    const n = Number(v) || 0;
+    if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "m";
+    if (n >= 10000) return Math.round(n / 1000) + "k";
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    return String(Math.round(n));
+  }
+  /** Every mission on the track, flattened, with its rank carried along. */
+  function allTrackMissions() {
+    const out = [];
+    for (const m of track.intro || []) out.push({ ...m, atRank: null });
+    for (const r of track.ranks || []) for (const m of r.missions) out.push({ ...m, atRank: r.rank });
+    // ⚠️ DEDUPE BY CONTRACT KEY. A mission with no rank listed appears in `intro` AND under the
+    // rank buckets, so a flat list shows it twice — "Ship In Distress" and "Minor Mining Job" both
+    // rendered twice in the first pass. Keep the RANKED copy where both exist: it is the one whose
+    // gate decides whether she will actually offer it to you.
+    const byKey = new Map();
+    for (const m of out) {
+      const k = m.key || m.title;
+      const had = byKey.get(k);
+      if (!had || (had.atRank == null && m.atRank != null)) byKey.set(k, m);
+    }
+    return [...byKey.values()];
+  }
+  /** Missions you can actually be offered right now, scored by rep per hour.
+   *  🔑 GATED BY YOUR STANDING, because a route through a mission she will not offer you is not a
+   *  route. `currentRank()` is the same reached-rank the reward ladder already trusts. */
+  function takeableByRate() {
+    const cur = currentRank();
+    return allTrackMissions()
+      .filter((m) => m.rep > 0 && m.durMin && (m.atRank == null || cur < 0 || m.atRank <= cur))
+      .map((m) => ({ ...m, repHr: (m.rep / m.durMin) * 60, auecHr: m.payMax ? (m.payMax / m.durMin) * 60 : null }))
+      .sort((a, b) => b.repHr - a.repHr);
+  }
+  /** The fastest way to the next rank, appended under the reward ladder.
+   *
+   *  🔑 SCOPED TO THE NEXT RANK, not to the whole track. "Best rep per hour" in the abstract is
+   *  trivia; "best rep per hour toward Prestige 2, and that is 7 runs" is a plan. The runs column
+   *  is what makes each row a decision rather than a statistic.
+   *  ⚠️ Self-hides at max standing and when nothing on the track carries a run length — there is
+   *  no route to show, and a heading over an empty list is worse than no heading. */
+  function renderBestRate() {
+    const bar = track.bar;
+    if (!bar || bar.max || bar.nextMin == null) return;
+    const gap = Math.max(0, bar.nextMin - bar.estimate);
+    if (gap <= 0) return;
+    const list = takeableByRate();
+    if (!list.length) return;
+    const body = $("body");
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    sec.textContent = "Best rep per hour → " + (bar.nextName || "next rank");
+    body.appendChild(sec);
+    // Three. The top row is the answer and the two under it are the evidence that it is the
+    // answer — a longer list turns a recommendation back into a table to read.
+    for (const m of list.slice(0, 3)) {
+      const row = document.createElement("div");
+      row.className = "grow" + (m === list[0] ? " best" : "");
+      const left = document.createElement("div"); left.className = "gleft";
+      const t = document.createElement("div"); t.className = "t";
+      t.textContent = (m.completed > 0 ? "✓ " : "") + m.title + (m.items.length ? "  ★" : "");
+      const meta = document.createElement("div"); meta.className = "gmeta";
+      const bits = ["+" + num(m.rep), fmtMins(m.durMin)];
+      if (m.payMax) bits.push((m.payoutEstimated ? "~" : "") + fmtK(m.payMax));
+      bits.push(Math.ceil(gap / m.rep) + " runs · ~" + fmtMins(Math.ceil(gap / m.rep) * m.durMin));
+      meta.textContent = bits.join(" · ");
+      left.append(t, meta);
+      const rate = document.createElement("div"); rate.className = "rate";
+      rate.textContent = num(Math.round(m.repHr)) + "/hr";
+      row.append(left, rate);
+      row.title = "Rep per hour from this contract's own award and the game's expected run length."
+        + " The aUEC figure is modelled, not read from the game.";
+      if (m.key) {
+        row.classList.add("linked");
+        row.addEventListener("click", () => openSite("/missions/" + encodeURIComponent(m.key)));
+      }
+      body.appendChild(row);
+    }
+  }
+
   function render() {
     if (!track) {
       $("emptyState") && ($("body").innerHTML = '<div class="empty">Battaglia missions aren\'t in the loaded dataset.<br>They arrive with the patch dataset.</div>');
@@ -406,7 +522,11 @@
     if (tab === null) tab = currentRank() >= 0 ? currentRank() : (track.intro.length ? "intro" : 0);
     renderStanding();
     renderTabs();
-    if (mode === "rewards") renderRewards(); else renderMissions();
+    if (mode === "missions") { renderMissions(); return; }
+    renderRewards();
+    // 🔑 APPENDED, not a separate view (Sub, 2026-08-15). The ladder says what you are chasing;
+    // this says what to run to get there. One screen, both questions.
+    renderBestRate();
   }
 
   $("modeBtn").addEventListener("click", () => { mode = mode === "rewards" ? "missions" : "rewards"; render(); });
