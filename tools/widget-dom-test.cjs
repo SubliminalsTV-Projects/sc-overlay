@@ -4512,24 +4512,154 @@ const HAULING = `(async () => {
      stops[1].querySelector(".rt").textContent.startsWith("—"),
      stops[1].querySelector(".rt").textContent);
 
-  // ── the layout ───────────────────────────────────────────────────────────
+  // ── the stow tab ─────────────────────────────────────────────────────────
   document.getElementById("tabLayout").click();
   await sleep(80);
-  const maps = [...document.querySelectorAll(".gmap")];
-  ok("one map per occupied floor of the loaded grid", maps.length === 2, maps.length);
-  ok("the map is drawn to the grid's real size (8x15 cells)",
-     maps[0].querySelectorAll(".gcell").length === 120, maps[0].querySelectorAll(".gcell").length);
-  ok("every placement is drawn", document.querySelectorAll(".gbox").length === 3,
-     document.querySelectorAll(".gbox").length);
-  ok("a box sits where the packer put it",
-     getComputedStyle(maps[0].querySelectorAll(".gbox")[1]).gridColumnStart === "3",
-     getComputedStyle(maps[0].querySelectorAll(".gbox")[1]).gridColumnStart);
+  ok("every placement is drawn", document.querySelectorAll(".iso-box").length === 3,
+     document.querySelectorAll(".iso-box").length);
   ok("the empty grid is not drawn at all", !document.body.textContent.includes("cargo small"));
   const body = document.getElementById("body");
-  ok("the map never scrolls the panel sideways", body.scrollWidth <= body.clientWidth,
+  ok("the diagram never scrolls the panel sideways", body.scrollWidth <= body.clientWidth,
      body.scrollWidth + " vs " + body.clientWidth);
   ok("the legend says which colour is which drop", document.querySelectorAll(".legend span").length === 2,
      document.querySelectorAll(".legend span").length);
+
+  return out;
+})()`;
+
+// 🔴 The STOWAGE view, which exists to answer one question: which mission do I lift first, and how
+// do I recognise it at the freight elevator.
+//
+// The elevator UI does NOT name missions — it lists cargo. So "load the Covalex one first" is an
+// instruction the player cannot follow, and the only usable handle is the BOX SIGNATURE: commodity
+// plus the exact split. Every assertion below is about that, about the two orderings that follow
+// from it (missions deepest-first, destinations deepest-first inside a mission), and about the one
+// case where the whole view must disappear — an open hauler, whose boxes the station's arm places.
+//
+// Same technique as HAULING above: the page's own `plan` binding is assigned directly, so these are
+// rendering rules tested deterministically with no game and no sidecar state.
+const STOW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const leg = (group, over) => Object.assign({
+    key: "k", index: 0, group, commodity: null, destination: null, unit: "scu",
+    scu: 16, min: 16, max: 16, source: "log", exact: true, maxContainerScu: 8, capSource: "dataset",
+    boxes: [{ scu: 8, count: 2 }], boxLabel: "2x8", boxCount: 2, boxSource: "partition",
+    pickupState: "pending", dropoffState: "pending", delivered: null,
+    fromLocation: "@1,1,1", toLocation: "@2,2,2",
+  }, over || {});
+  const box = (group, x, y, z, over) => Object.assign({
+    grid: "hardpoint_cargo_large", item: group + ":" + x + "," + y + "," + z, group,
+    scu: 8, x, y, z, dx: 2, dy: 2, dz: 2,
+  }, over || {});
+
+  // Two missions. FOOD has two drop-offs and is packed FIRST by the packer (so it comes off first,
+  // which means it is loaded LAST); ORE is packed last, so it is loaded first and sits deepest.
+  const grids = [{ name: "hardpoint_cargo_large", w: 8, l: 15, h: 4, capacityScu: 480, usedScu: 96 },
+                 { name: "hardpoint_cargo_small", w: 6, l: 9, h: 4, capacityScu: 216, usedScu: 0 }];
+  const basePlan = () => ({
+    updatedAt: Date.now(),
+    ship: { className: "CRUS_Starlifter_C2", displayName: "Crusader C2 Hercules Starlifter",
+            totalScu: 696, source: "log", grids: JSON.parse(JSON.stringify(grids)) },
+    contracts: [
+      { missionId: "m-food", title: "Food Haul", contractKey: "K1", generator: "G", giver: "Covalex",
+        missionType: "Hauling - Planetary", tracked: true, ended: false, completion: null, payout: null,
+        scu: 81, minScu: 81, maxScu: 81, source: "log", exact: true, plannable: true,
+        legs: [
+          leg("g-food-a", { commodity: "Processed Food", destination: "Port Tressler", scu: 65,
+            boxes: [{ scu: 8, count: 8 }, { scu: 1, count: 1 }], boxCount: 9 }),
+          leg("g-food-b", { commodity: "Processed Food", destination: "Baijini Point", scu: 16,
+            boxes: [{ scu: 8, count: 2 }], boxCount: 2 }),
+        ] },
+      { missionId: "m-ore", title: "Ore Haul", contractKey: "K2", generator: "G", giver: "Covalex",
+        missionType: "Hauling - Planetary", tracked: true, ended: false, completion: null, payout: null,
+        scu: 16, minScu: 16, maxScu: 16, source: "log", exact: true, plannable: true,
+        legs: [leg("g-ore", { commodity: "Titanium", destination: "Everus Harbour" })] },
+    ],
+    untracked: [], trips: [], stranded: [], locationNames: {}, unrouted: [],
+    // Packer output is in UNLOAD order: g-food-a comes off first, so it sits nearest the ramp.
+    pack: { fits: true, loadedScu: 96, capacityScu: 696, unplaced: [], byGrid: [], placements: [
+      box("g-food-a", 0, 0, 0), box("g-food-a", 2, 0, 0),
+      box("g-food-b", 4, 0, 0),
+      box("g-ore", 0, 2, 0), box("g-ore", 2, 2, 0),
+    ] },
+    aboardScu: 0,
+    totals: { scu: 97, capacityScu: 696, liveContracts: 2, unknownContracts: 0, recentPayout: 0, totalMinutes: 0 },
+    notes: [],
+  });
+
+  plan = basePlan();
+  render();
+  document.getElementById("tabLayout").click();
+  await sleep(100);
+
+  // ── 🔴 the load order, and the signature that makes it followable ─────────
+  const steps = [...document.querySelectorAll(".step")];
+  ok("one lift per mission, not one per drop-off", steps.length === 2, steps.length);
+  ok("🔴 the mission delivered LAST is loaded FIRST",
+     /Titanium/.test(steps[0].textContent), steps[0].textContent.replace(/\\s+/g, " ").slice(0, 60));
+  ok("...and it is numbered 1", steps[0].querySelector(".ord").textContent === "1",
+     steps[0].querySelector(".ord").textContent);
+  ok("...and said to be the deepest", /deepest in the hold/.test(steps[0].textContent));
+
+  const sig = steps[1].querySelector(".sig").textContent.replace(/\\s+/g, " ").trim();
+  ok("🔴 a lift is identified by its BOX SIGNATURE, because the elevator does not name missions",
+     sig === "Processed Food 10× 8 SCU + 1× 1 SCU", sig);
+  ok("...built from the CONTRACT's boxes, not just the ones that fit in the drawing",
+     /10× 8 SCU/.test(sig), sig);
+  ok("every lift carries a signature", steps.every((s) => s.querySelector(".sig")));
+
+  // ── 🔴 within a mission, which destination goes in first ─────────────────
+  const drops = [...steps[1].querySelectorAll(".drop")];
+  ok("a multi-stop lift lists its destinations", drops.length === 2, drops.length);
+  ok("🔴 the destination delivered LAST is loaded first",
+     /Baijini Point/.test(drops[0].textContent), drops[0].textContent);
+  ok("...and is labelled as such", /first in/.test(drops[0].textContent));
+  ok("a single-stop lift does not spell out its one destination",
+     steps[0].querySelectorAll(".drop").length === 0);
+
+  // ── the drawing ──────────────────────────────────────────────────────────
+  ok("only the grid that got cargo is drawn", document.querySelectorAll("svg.iso").length === 1,
+     document.querySelectorAll("svg.iso").length);
+  ok("the empty grid is counted rather than silently dropped",
+     /1 more grid on this hull got nothing/.test(document.getElementById("body").textContent));
+  ok("every placement is a box", document.querySelectorAll(".iso-box").length === 5,
+     document.querySelectorAll(".iso-box").length);
+  // Ghosting is per MISSION: with lift 1 (Titanium) focused, the two ore boxes stay lit.
+  ok("the focused lift is the one lit up",
+     document.querySelectorAll(".iso-box:not(.ghost)").length === 2,
+     document.querySelectorAll(".iso-box:not(.ghost)").length);
+  ok("...and the rest of the load is still drawn, not hidden",
+     document.querySelectorAll(".iso-box.ghost").length === 3,
+     document.querySelectorAll(".iso-box.ghost").length);
+  steps[1].click();
+  await sleep(80);
+  ok("clicking a lift moves the focus to it",
+     document.querySelectorAll(".iso-box:not(.ghost)").length === 3,
+     document.querySelectorAll(".iso-box:not(.ghost)").length);
+  const body = document.getElementById("body");
+  ok("the drawing never scrolls the panel sideways", body.scrollWidth <= body.clientWidth,
+     body.scrollWidth + " vs " + body.clientWidth);
+
+  // ── ⛔ an open hauler gets NO stowage plan at all ─────────────────────────
+  // Hull A/B/C, Ironclad, Railen, RAFT, Nomad, Syulen, Golem: the station's arm places every box,
+  // so a stowage diagram describes work that does not exist. autoLoadClasses comes from /api/ships,
+  // which is the live sidecar — so this also proves that plumbing is wired end to end.
+  ok("the sidecar told the widget which hulls auto-load", autoLoadClasses.size > 0, autoLoadClasses.size);
+  plan = basePlan();
+  plan.ship.className = "MISC_Hull_C";
+  plan.ship.displayName = "MISC Hull C";
+  render();
+  await sleep(80);
+  ok("⛔ an auto-loading hull is drawn NO diagram", document.querySelectorAll("svg.iso").length === 0,
+     document.querySelectorAll("svg.iso").length);
+  ok("...and is given NO load order either", document.querySelectorAll(".step").length === 0,
+     document.querySelectorAll(".step").length);
+  ok("...it is told the loader handles it", /loads itself/.test(document.getElementById("body").textContent),
+     document.getElementById("body").textContent.slice(0, 90));
 
   return out;
 })()`;
@@ -4592,6 +4722,7 @@ app.whenReady().then(async () => {
     fails += await run("mining call-outs by verdict", MININGSAY, null, null, "mining.html");
     fails += await run("chat links + slash menu", CHATLINKS, null, null, "chat.html");
     fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");
+    fails += await run("hauling: stowage order + signature", STOW, null, null, "hauling.html");
     fails += await run("completion card holds while you use it", REPORTHOLD, null);
   } catch (e) {
     // The message alone ("Cannot read properties of null") doesn't say WHICH suite or line, and
