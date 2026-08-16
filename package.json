@@ -1,6 +1,6 @@
 {
   "name": "sc-log-watcher",
-  "version": "0.1.43",
+  "version": "0.1.44",
   "description": "SubliminalsTV SC Overlay - game.log watcher + widget canvas for Star Citizen.",
   "type": "module",
   "main": "electron/main.cjs",
