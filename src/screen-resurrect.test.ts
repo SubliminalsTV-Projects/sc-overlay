@@ -47,7 +47,7 @@ function check(name: string, cond: boolean): void {
 
 const GUID = "af7e117e-102d-41b7-b826-a6bc9919e364";
 const marker = (missionId: string, contractKey: string): MissionEvent =>
-  ({ kind: "marker", ts: null, missionId, contract: contractKey, contractKey, generator: "Test", contractDefId: "", objectiveId: "" });
+  ({ kind: "marker", ts: null, missionId, contract: contractKey, contractKey, generator: "Test", contractDefId: "", objectiveId: "", markerEntityId: null, pos: null });
 
 // ---- the real mission: marker (authoritative key) + accept (title) ----
 t.apply(marker(GUID, "Kill_RegionC"));

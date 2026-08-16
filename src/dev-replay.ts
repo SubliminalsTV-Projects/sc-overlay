@@ -157,3 +157,196 @@ export function replayMissionId(seq: number): string {
   const n = seq.toString(16).padStart(12, "0");
   return `dead0000-0000-4000-8000-${n}`;
 }
+
+/* ── Hauling ────────────────────────────────────────────────────────────────────────────────
+ *
+ * Separate scenarios, separate builder. The set above drives the mission REPORT CARD and is
+ * shaped for it (one contract, one blueprint, one payout); a hauling run is a different animal —
+ * several legs, positions, per-destination progress, and a manifest.
+ *
+ * 🔑 `tracked` is the field that matters. The "New Objective: Deliver 0/N SCU …" line is emitted
+ * only for a contract the player has TRACKED in mobiGlas — measured on Sub's 2026-08-16 session,
+ * where seven accepted hauls produced seven CreateMarker bursts and two Deliver lines, matching
+ * the two he had tracked. An untracked contract is therefore a normal, expected state with a real
+ * UI to exercise ("track this to see its tonnage"), which is why `haul-untracked` exists.
+ */
+
+interface HaulLeg {
+  /** Where the boxes are picked up and dropped, as marker positions. Real Stanton/Pyro
+   *  coordinates from the corpus, so distances between legs are plausible. */
+  pickup: [number, number, number];
+  dropoff: [number, number, number];
+  destination: string;
+  commodity: string | null;
+  need: number;
+  unit: "scu" | "boxes";
+  /** Whether this leg gets an ObjectiveUpserted COMPLETED before the run ends. */
+  delivered: boolean;
+}
+
+export interface HaulScenario {
+  id: string;
+  label: string;
+  note: string;
+  contractKey: string;
+  generator: string;
+  title: string;
+  /** Did the player TRACK it in mobiGlas? False means no Deliver lines at all. */
+  tracked: boolean;
+  legs: HaulLeg[];
+  /** Entity classes of the individual boxes, for mission-item hauls. Empty for SCU hauls,
+   *  which log no manifest anywhere — see hauling.ts. */
+  items: string[];
+  /** Ship to be sitting in, at model level. Null = on foot. */
+  ship: string | null;
+  durationMin: number;
+  /** null = the run is still live when the scenario ends (nothing completes). */
+  aUEC: number | null;
+}
+
+export const HAUL_SCENARIOS: HaulScenario[] = [
+  {
+    id: "haul-tracked",
+    label: "Covalex — tracked, single leg, 81 SCU of Stims",
+    note: "The happy path. Sub's real 2026-08-16 contract: everything known, delivered, paid.",
+    contractKey: "HaulCargo_AToB_Processed_Stims_Stanton3_SupplyGrade",
+    generator: "Covalex_Hauling",
+    title: "Rookie Rank - Direct Medium Cargo Haul",
+    tracked: true,
+    legs: [{
+      pickup: [-748272.078090, -103662.326450, -263812.173494],
+      dropoff: [-771960.562500, -321347.218750, -359509.343750],
+      destination: "Baijini Point", commodity: "Stims", need: 81, unit: "scu", delivered: true,
+    }],
+    items: [], ship: "CRUS_Starlifter_C2", durationMin: 44, aUEC: 56000,
+  },
+  {
+    id: "haul-untracked",
+    label: "Covalex — accepted but NOT tracked (no tonnage)",
+    note: "🔑 The case the widget exists to handle. The contract is fully known except how much cargo it is, because the player never tracked it in mobiGlas. Must show the please-track prompt, never a guessed number.",
+    contractKey: "HaulCargo_AToB_Waste_Mixed_ScrapWaste_Stanton3_SupplyGrade",
+    generator: "Covalex_Hauling",
+    title: "Rookie Rank - Direct Medium Cargo Haul",
+    tracked: false,
+    legs: [{
+      pickup: [-748272.078090, -103662.326450, -263812.173494],
+      dropoff: [-771960.562500, -321347.218750, -359509.343750],
+      destination: "Baijini Point", commodity: "Scrap", need: 64, unit: "scu", delivered: false,
+    }],
+    items: [], ship: "CRUS_Starlifter_C2", durationMin: 3, aUEC: null,
+  },
+  {
+    id: "haul-multi",
+    label: "Two legs, two commodities, one delivered",
+    note: "Real pair from 2026-08-02 — the SAME objective uuid with indices _0 and _1. Checks that ticking one leg does not tick the other, and that the capacity bar sums both.",
+    contractKey: "HaulCargo_MultiToSingle_Stanton1",
+    generator: "Covalex_Hauling",
+    title: "Junior Rank - Multi Cargo Haul",
+    tracked: true,
+    legs: [
+      {
+        pickup: [373539.798854, -262716.041903, -269591.417313],
+        dropoff: [383115.366423, -245829.717381, -272467.223889],
+        destination: "Levski", commodity: "Recycled Material Composite", need: 10, unit: "scu", delivered: true,
+      },
+      {
+        pickup: [-748272.078090, -103662.326450, -263812.173494],
+        dropoff: [383115.366423, -245829.717381, -272467.223889],
+        destination: "Levski", commodity: "Construction Materials", need: 6, unit: "scu", delivered: false,
+      },
+    ],
+    items: [], ship: "RSI_Constellation_Taurus", durationMin: 26, aUEC: null,
+  },
+  {
+    id: "haul-items",
+    label: "Mission-item haul — EXACT manifest (9 boxes)",
+    note: "The only hauling family whose box breakdown is logged (OnItemRegistered). Sub's 2026-08-05 recover-cargo: the Deliver line said 9 Cargo Boxes and exactly 9 items registered — which is the ground truth the box-partition model gets fitted against.",
+    contractKey: "HH_Pyro_VeryEasy_RecoverCargo",
+    generator: "HeadHunters_RecoverCargo",
+    title: "Cargo Recovery",
+    tracked: true,
+    legs: [{
+      pickup: [373539.798854, -262716.041903, -269591.417313],
+      dropoff: [383115.366423, -245829.717381, -272467.223889],
+      destination: "Gaslight at the L2 Lagrange of Pyro V", commodity: null, need: 9, unit: "boxes", delivered: false,
+    }],
+    // Greedy-largest-first against an 8 SCU cap, which is Sub's partition hypothesis: this is a
+    // fixture of what he EXPECTS, so a future calibration pass that disproves it fails here first.
+    items: [
+      "Carryable_TBO_FL_8SCU_Commodity_Metal_Aluminum", "Carryable_TBO_FL_8SCU_Commodity_Metal_Aluminum",
+      "Carryable_TBO_FL_8SCU_Commodity_Metal_Aluminum", "Carryable_TBO_FL_8SCU_Commodity_Metal_Aluminum",
+      "Carryable_TBO_FL_8SCU_Commodity_Metal_Aluminum", "Carryable_TBO_FL_8SCU_Commodity_Metal_Aluminum",
+      "Carryable_TBO_FL_8SCU_Commodity_Metal_Aluminum", "Carryable_TBO_FL_8SCU_Commodity_Metal_Aluminum",
+      "Carryable_TBO_FL_1SCU_Commodity_Metal_Aluminum",
+    ],
+    ship: "DRAK_Cutlass_Black", durationMin: 18, aUEC: null,
+  },
+];
+
+/**
+ * Build the log lines for a hauling scenario. Same rule as `replayLines`: real line shapes,
+ * copied out of Game.log, so a parser regression breaks the simulation too.
+ *
+ * `objUuid` is the objective TEMPLATE id and is deliberately shared by every leg, with the leg
+ * index as the suffix — that is exactly how the game writes it, and it is the case a naive
+ * "objectiveId is unique" assumption gets wrong.
+ */
+export function haulReplayLines(s: HaulScenario, missionId: string, now = Date.now()): string[] {
+  const start = now - s.durationMin * 60_000;
+  const objUuid = `${missionId.slice(0, 8)}-0000-4000-8000-000000000001`;
+  const defId = `${missionId.slice(0, 8)}-0000-4000-8000-000000000002`;
+  const nodeId = "204772220757";
+  const lines: string[] = [];
+  const pos = ([x, y, z]: [number, number, number]) => `position [x: ${x.toFixed(6)}, y: ${y.toFixed(6)}, z: ${z.toFixed(6)}]`;
+  const marker = (at: number, objectiveId: string, entity: number, p: [number, number, number]) =>
+    `<${stamp(at)}> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${missionId}], generator name [${s.generator}], contract [${s.contractKey}], contractDefinitionId[${defId}], objectiveId [${objectiveId}], markerEntityId [${entity}], zoneHostId [742554712000], ${pos(p)} [Team_MissionFeatures][Missions]`;
+
+  // 🔑 The markers come FIRST and carry the contract key — CreateMarker is the only reliable
+  // hauling accept signal, and it fires whether or not the contract is tracked.
+  s.legs.forEach((leg, i) => {
+    lines.push(marker(start, `dropoff_${objUuid}_${i}`, 900 + i * 2, leg.dropoff));
+    lines.push(marker(start, `pickup_${objUuid}_${i}`, 901 + i * 2, leg.pickup));
+  });
+  lines.push(
+    `<${stamp(start + 3)}> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Accepted:  ${s.title}: " [900] to queue. New queue size: 1, MissionId: [${missionId}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
+  );
+  if (s.tracked) {
+    s.legs.forEach((leg, i) => {
+      const what = leg.unit === "scu" ? `SCU of ${leg.commodity}` : "Cargo Boxes";
+      lines.push(
+        `<${stamp(start + 4)}> [Notice] <SHUDEvent_OnNotification> Added notification "New Objective: Deliver 0/${leg.need} ${what} to ${leg.destination}: " [${901 + i}] to queue. New queue size: 2, MissionId: [${missionId}], ObjectiveId: [dropoff_${objUuid}_${i}] [Team_CoreGameplayFeatures][Missions][Comms]`,
+      );
+    });
+  }
+  if (s.ship) {
+    const shipEntity = "766969713219";
+    lines.push(
+      `<${stamp(start + 60_000)}> [Notice] <Vehicle Control Flow> CVehicleMovementBase::SetDriver: Local client node [${nodeId}] requesting control token for '${s.ship}_${shipEntity}' [${shipEntity}] [Team_CGP4][Vehicle]`,
+    );
+  }
+  // Mission items stream in at the pickup. The class name carries the entity id as a suffix,
+  // exactly as the game writes it.
+  s.items.forEach((cls, i) => {
+    const entity = `${6419121662056 + i}`;
+    lines.push(
+      `<${stamp(start + 120_000 + i * 40)}> [Notice] <SMarkerHandler_Hauling::OnItemRegistered> Mission Item ${cls}_${entity} (${entity}) registered with mission id ${missionId}, phase id 00000000-0000-0000-0000-000000000000, pickup objective id , drop off objective id dropoff_${objUuid}_0 [Team_MissionFeatures][Missions]`,
+    );
+  });
+  s.legs.forEach((leg, i) => {
+    if (!leg.delivered) return;
+    lines.push(
+      `<${stamp(now - 1_000)}> [Notice] <ObjectiveUpserted> Received ObjectiveUpserted push message for: mission_id ${missionId} - objective_id dropoff_${objUuid}_${i} - state MISSION_OBJECTIVE_STATE_COMPLETED - created 0 - flags=ShowInLog| [Team_GameServices][Missions]`,
+    );
+  });
+  if (s.aUEC != null) {
+    // Both end lines, in the same millisecond, exactly as the game emits them — then the award
+    // 39ms later. That ordering is the fixture: it is what proves the payout correlation joins
+    // once rather than twice (see HaulingTracker.onEnd).
+    lines.push(
+      `<${stamp(now)}> [Notice] <MissionEnded> Received MissionEnded push message for: mission_id ${missionId} - mission_state MISSION_STATE_COMPLETED [Team_GameServices][Missions]`,
+      `<${stamp(now)}> [Notice] <EndMission> Ending mission for player. MissionId[${missionId}] Player[IMC-SubliminaL] PlayerId[${nodeId}] CompletionType[Complete] Reason[Mission Ended] [Team_MissionFeatures][Missions]`,
+      `<${stamp(now + 39)}> [Notice] <SHUDEvent_OnNotification> Added notification "Awarded ${s.aUEC} aUEC: " [902] to queue. New queue size: 1, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
+    );
+  }
+  return lines;
+}

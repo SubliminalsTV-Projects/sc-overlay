@@ -12,6 +12,7 @@ import { PartyTracker, ownHandleFromLog } from "./party.js";
 import { MissionTracker } from "./missions.js";
 import { collectLogPaths } from "./log-paths.js";
 import { MiningTracker } from "./mining.js";
+import { HaulingTracker } from "./hauling.js";
 import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
 import { MissionFeedbackStore } from "./mission-feedback.js";
@@ -1013,6 +1014,11 @@ const party = new PartyTracker(join(userDir, "party.json"), join(userDir, "party
 
 const mining = new MiningTracker({ dataDir, stateDir: userDir });
 
+// Hauling contracts, off the same mission event stream. Purely in-memory and derived: the game
+// is the source of truth for which contracts you hold, so there is no state file to keep in sync
+// and nothing to migrate.
+const hauling = new HaulingTracker();
+
 // Crowdsourced mission facts (what you actually do in it, difficulty, soloable) collected by
 // the completion report. Local-only for now — this file IS the upload queue for when the
 // subliminal.gg endpoint lands.
@@ -1335,6 +1341,17 @@ function miningSend(msg: unknown): void {
 function miningAppearance(): { kind: "appearance"; theme: string; overlayTwist: number; overlayScale: number } {
   return { kind: "appearance", theme: effectiveTheme(), overlayTwist: config.overlayTwist, overlayScale: config.overlayScale };
 }
+// ── Hauling optimiser ──────────────────────────────────────────────────────
+// Its own SSE channel rather than a field on the missions payload: hauling state changes on a
+// completely different cadence (a marker burst on accept, then nothing for twenty minutes), and
+// every widget on the missions stream would otherwise re-render for a delivery it doesn't show.
+const haulingClients = new Set<ServerResponse>();
+function haulingSend(msg: unknown): void {
+  const data = `data: ${JSON.stringify(msg)}\n\n`;
+  for (const res of haulingClients) res.write(data);
+}
+hauling.on("change", () => { if (haulingClients.size) haulingSend({ kind: "state", view: hauling.view() }); });
+
 mining.on("change", () => miningSend({ kind: "state", view: miningViewWithPlace() }));
 // Transient alerts the overlay turns into TTS + sound + a flash.
 mining.on("target-hit", (hit) => miningSend({ kind: "target-hit", hit }));
@@ -1513,7 +1530,7 @@ function seedTrackerFromLog(): number | null {
       if (!line) continue;
       tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
-      if (ev) { tracker.apply(ev); party.apply(ev); applyChatSignals(ev); }
+      if (ev) { tracker.apply(ev); party.apply(ev); hauling.apply(ev); applyChatSignals(ev); }
       const chan = shipChannelEvent(line);
       if (chan) {
         if (chan.action === "enter" && chan.manufacturer) { seedMfr = chan.manufacturer; seedShip = chan.ship; }
@@ -1572,7 +1589,7 @@ function startWatcher(): void {
     // by system, and a stale answer there sends someone to another star.
     if (sysWatch.push(e.raw)) { tracker.setSystem(sysWatch.current()); broadcastMissions(); }
     const me = parseMissionEvent(e);
-    if (me) { tracker.apply(me); party.apply(me); applyChatSignals(me); }
+    if (me) { tracker.apply(me); party.apply(me); hauling.apply(me); applyChatSignals(me); }
 
     // Theme auto-switch: track the manufacturer of the ship we're in; re-broadcast so the
     // overlay retints live when theme="auto".
@@ -2486,6 +2503,21 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       : chat.leave(String(body.ch ?? ""));
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(out));
+    return;
+  }
+
+  // Hauling optimiser: live contract state + the "please track these" list.
+  if (url === "/hauling/events") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write("\n");
+    haulingClients.add(res);
+    res.write(`data: ${JSON.stringify({ kind: "state", view: hauling.view() })}\n\n`);
+    req.on("close", () => haulingClients.delete(res));
+    return;
+  }
+  if (url === "/api/hauling" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, ...hauling.view() }));
     return;
   }
 
@@ -3528,7 +3560,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       const lines = replayLines(s, replayMissionId(++replaySeq), blueprint, now);
       for (const line of lines) {
         const ev = parseMissionEvent(parseLine(line));
-        if (ev) { tracker.apply(ev); party.apply(ev); }
+        if (ev) { tracker.apply(ev); party.apply(ev); hauling.apply(ev); }
       }
       // Force the tiles for this simulated run. The receipt above genuinely happened, but it
       // cannot move an already-owned blueprint's unlock date into the window the report reads

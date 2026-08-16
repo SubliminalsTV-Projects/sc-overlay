@@ -57,6 +57,14 @@ const fmt = (e: MissionEvent): string => {
       return `PARTY    marker ${e.markerId} = «${e.name}»`;
     case "shard":
       return `SHARD    ${e.shard ?? "(left PU)"}`;
+    case "haulObjective":
+      return `HAUL     [${short(e.missionId)}] ${e.have}/${e.need} ${e.unit === "scu" ? `SCU ${e.commodity}` : e.commodity ?? "Cargo Boxes"} → ${e.destination}`;
+    case "objectiveState":
+      return `OBJSTATE [${short(e.missionId)}] ${e.objectiveId} = ${e.state}${e.created ? " (new)" : ""}`;
+    case "haulItem":
+      return `HAULITEM [${short(e.missionId)}] ${e.registered ? "+" : "-"} ${e.itemClass ?? e.entityId}`;
+    case "vehicleControl":
+      return `VEHICLE  ${e.action.padEnd(7)} ${e.model}`;
   }
 };
 
