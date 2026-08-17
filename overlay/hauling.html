@@ -137,7 +137,17 @@
   .card .amt { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--gold); }
   .card .sub { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px;
     font-size: 9.5px; color: var(--faint); }
-  .card .chips { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); margin-top: 2px; }
+  .card .chips { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); margin-top: 2px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  /* A box size, and how many. The SIZE is the identity — a box has one shape — so it reads large
+     and the count rides beside it as a multiplier. Written as a run of text ("12 × 8") it was read
+     as a dimension, and four of them in a row was the busiest thing on the card. */
+  .card .boxpill { display: inline-flex; align-items: baseline; gap: 3px; padding: 1px 5px;
+    border: 1px solid rgba(var(--accent-rgb), 0.28); border-radius: 999px;
+    background: rgba(var(--accent-rgb), 0.06); white-space: nowrap; }
+  .card .boxpill b { font-weight: 700; color: var(--cyan-bright); font-size: 10px; }
+  .card .boxpill i { font-style: normal; font-size: 9px; color: var(--faint); }
+  .card .boxcap { font-size: 9px; color: var(--faint); white-space: nowrap; }
   /* The provenance badge. Every load figure carries one — a number with no badge would be a
      claim this widget cannot make. */
   .badge { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
@@ -913,10 +923,39 @@
         const parts = [];
         if (l.destination) parts.push("→ " + l.destination);
         if (l.commodity) parts.push(l.commodity);
-        parts.push(l.boxLabel || l.boxCount + " boxes");
-        if (l.maxContainerScu != null) parts.push("max " + l.maxContainerScu + " SCU/box" + (l.capSource === "assumed" ? "?" : ""));
         txt.textContent = parts.join("  ·  ");
         chips.appendChild(txt);
+        // 🔴 ONE PILL PER BOX SIZE — the SIZE reads large, the COUNT is a small multiplier beside it.
+        // As a run of text, "12 × 8" was read as a box DIMENSION, and a row of four of them was the
+        // most cluttered thing on the card. A box has one shape, so its size is its whole identity;
+        // how many of them is secondary. Falls back to the flat label when a leg has no breakdown.
+        if (l.boxes && l.boxes.length) {
+          for (const b of l.boxes) {
+            const pill = document.createElement("span");
+            pill.className = "boxpill";
+            const size = document.createElement("b");
+            size.textContent = b.scu + " SCU";
+            const mult = document.createElement("i");
+            mult.textContent = "×" + b.count;
+            pill.append(size, mult);
+            pill.title = b.count + " box" + (b.count > 1 ? "es" : "") + " of " + b.scu + " SCU";
+            chips.appendChild(pill);
+          }
+        } else if (l.boxCount) {
+          const pill = document.createElement("span");
+          pill.className = "boxpill";
+          pill.textContent = l.boxCount + " boxes";
+          chips.appendChild(pill);
+        }
+        if (l.maxContainerScu != null) {
+          const cap = document.createElement("span");
+          cap.className = "boxcap";
+          cap.textContent = "max " + l.maxContainerScu + (l.capSource === "assumed" ? "?" : "");
+          cap.title = l.capSource === "assumed"
+            ? "No cap declared for this contract — the largest box that exists was assumed."
+            : "The largest box size this contract declares.";
+          chips.appendChild(cap);
+        }
         if (l.boxSource === "partition") {
           chips.title = "Provisional: the game never logs the box split for a cargo haul, so this is the"
             + " largest-box-first model against this contract's own container cap.";
@@ -1005,7 +1044,20 @@
     n.title = m.derivedOrder
       ? "Read off the packer's own placement order — the last drop-off sits deepest, so it is lifted first."
       : "Stated by the stowage planner.";
-    sec.append(h, n);
+    // 🔑 The turn-around lives HERE, on the page it acts on. It was only in the settings drawer and
+    // Sub never found it — he asked for rotation twice while it was already built and shipping.
+    // A control for a picture belongs next to the picture.
+    const turn = document.createElement("button");
+    turn.type = "button";
+    turn.className = "turnbtn" + (stowSpin ? " on" : "");
+    turn.textContent = stowSpin ? "↻ Door behind" : "↻ Turn around";
+    turn.title = "Walk round to the other end of the hold. A fixed camera always hides the boxes behind the front row.";
+    turn.addEventListener("click", () => {
+      stowSpin = !stowSpin;
+      try { localStorage.setItem(SPIN_KEY, stowSpin ? "1" : "0"); } catch { /* private mode */ }
+      render();
+    });
+    sec.append(h, n, turn);
     wrap.appendChild(sec);
 
     m.steps.forEach((s, i) => {
@@ -1196,6 +1248,11 @@
     $("spinBtn").classList.toggle("on", stowSpin);
     $("doneBtn").classList.toggle("on", showDone);
     if (!plan) return;
+    // 🔴 The auto option NAMES the detected hull, so it has to be redrawn when the plan changes.
+    // It was only ever built once, from the ship-list load at startup — before any plan existed —
+    // so it printed "nothing detected yet" and stayed that way for the session. Sub boarded his C2,
+    // watched the skin turn Crusader, and the picker still claimed nothing was detected.
+    renderShipPicker();
     renderSummary();
     renderStartPicker();
     renderTrack();
