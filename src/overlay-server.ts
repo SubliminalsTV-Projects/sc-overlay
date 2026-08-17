@@ -203,6 +203,8 @@ interface Config {
   battagliaOpen: boolean;
   /** Remembers whether the Hauling widget was left open, so it's restored on launch. */
   haulingOpen: boolean;
+  /** Remembers whether the Log View widget was left open, so it's restored on launch. */
+  logViewOpen: boolean;
   /** Ship class the player picked in the Hauling widget, overriding what the log saw. Empty =
    *  trust the log. Persisted because the log's ship signal is not guaranteed — a relog, or
    *  taking off in a ship the vehicle-control lines never named, leaves it blank. */
@@ -425,6 +427,7 @@ const DEFAULTS: Config = {
   partyOpen: false,
   battagliaOpen: false,
   haulingOpen: false,
+  logViewOpen: false,
   haulingShip: "",
   haulingPlaces: {},
   haulingSeenPlaces: [],
@@ -1513,6 +1516,60 @@ function haulingSend(msg: unknown): void {
 }
 hauling.on("change", () => { if (haulingClients.size) haulingSend({ kind: "state", view: hauling.view() }); });
 
+// ── Log view ────────────────────────────────────────────────────────────────
+// A live tail of game.log on screen, as a placeable widget. Sub: "I need a way to be able to read
+// the logs so I can look for things in it. So I can tell you what to look for. So you can pinpoint
+// what state I'm in." It is the standing answer to "is X even logged?" — the question that has
+// produced more wrong conclusions on this project than any other, twice reaching a user.
+//
+// 🔴 THIS IS THE ONLY CHANNEL CARRYING RAW, UNPARSED, UNFILTERED LOG TEXT, so it is also the only
+// one whose volume is set by the GAME rather than by us. Three caps, all deliberate:
+//   1. A bounded ring in memory (LOGVIEW_RING). Maintained even with nobody watching, because that
+//      ring IS the backfill — the widget is nearly always opened AFTER the interesting thing
+//      happened ("I just did X, what did it log?"). ~600 lines is well under 200 KB.
+//   2. Per-line truncation. A line is normally ~120 bytes, but the engine emits multi-KB dumps and
+//      a burst of those is what would actually hurt.
+//   3. 🔑 BATCHED FLUSHES, never a frame per line. The log is loudest exactly when the rest of the
+//      sidecar is busiest, and a frame per line would put an SSE write plus a DOM append in front
+//      of every parse. At LOGVIEW_FLUSH_MS this widget costs at most 4 frames a second whatever
+//      the game does. Anything dropped for exceeding the batch cap is COUNTED and said out loud in
+//      the widget: a diagnostic instrument that silently omits lines is worse than no instrument,
+//      because it answers "is X logged?" with a confident, wrong "no".
+const LOGVIEW_RING = 600;       // lines held for backfill
+const LOGVIEW_BACKFILL = 300;   // lines handed to a widget on connect (Sub's call)
+const LOGVIEW_LINE_MAX = 2000;  // chars per line before truncation
+const LOGVIEW_FLUSH_MS = 250;   // batch window
+const LOGVIEW_BATCH_MAX = 400;  // lines per batch before dropping (and saying so)
+
+interface LogViewLine { n: number; t: number; s: string }
+const logViewClients = new Set<ServerResponse>();
+const logViewRing: LogViewLine[] = [];
+let logViewSeq = 0;
+let logViewPending: LogViewLine[] = [];
+let logViewDropped = 0;
+let logViewTimer: NodeJS.Timeout | null = null;
+
+/** One raw line off the watcher. Runs for EVERY line the game writes — keep it cheap. */
+function noteLogLine(raw: string): void {
+  const s = raw.length > LOGVIEW_LINE_MAX ? `${raw.slice(0, LOGVIEW_LINE_MAX)} …[truncated]` : raw;
+  const entry: LogViewLine = { n: ++logViewSeq, t: Date.now(), s };
+  logViewRing.push(entry);
+  if (logViewRing.length > LOGVIEW_RING) logViewRing.splice(0, logViewRing.length - LOGVIEW_RING);
+  if (!logViewClients.size) return; // nobody watching: the ring alone is the whole cost
+  if (logViewPending.length >= LOGVIEW_BATCH_MAX) { logViewDropped++; return; }
+  logViewPending.push(entry);
+  if (!logViewTimer) logViewTimer = setTimeout(flushLogView, LOGVIEW_FLUSH_MS);
+}
+function flushLogView(): void {
+  logViewTimer = null;
+  if (!logViewPending.length && !logViewDropped) return;
+  const msg = { kind: "lines", lines: logViewPending, dropped: logViewDropped };
+  logViewPending = []; logViewDropped = 0;
+  if (!logViewClients.size) return;
+  const data = `data: ${JSON.stringify(msg)}\n\n`;
+  for (const res of logViewClients) res.write(data);
+}
+
 mining.on("change", () => miningSend({ kind: "state", view: miningViewWithPlace() }));
 // Transient alerts the overlay turns into TTS + sound + a flash.
 mining.on("target-hit", (hit) => miningSend({ kind: "target-hit", hit }));
@@ -1826,6 +1883,10 @@ function startWatcher(): void {
       }
     }
   });
+  // The Log View widget's raw feed. A SEPARATE listener rather than a branch inside the "event"
+  // handler above, so the one channel that must stay unfiltered can never be narrowed by a change
+  // made for the parser's benefit — "raw" is this widget's entire contract.
+  watcher.on("line", noteLogLine);
   watcher.start();
   console.log(`[watcher] watching ${config.logPath}`);
 }
@@ -2786,6 +2847,31 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
+  // Log View: the raw game.log tail. Opens with the backfill so the widget answers "what did that
+  // just log?" rather than only "what will it log next" — you almost always open it after the
+  // thing you wanted to see. `watching` is what tells an empty panel apart from a broken one: no
+  // log path (or the game not launched) looks identical to a quiet log otherwise.
+  if (url === "/logview/events") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write("\n");
+    logViewClients.add(res);
+    res.write(`data: ${JSON.stringify({
+      kind: "backfill",
+      watching: watcher != null, path: config.logPath || "",
+      lines: logViewRing.slice(-LOGVIEW_BACKFILL),
+    })}\n\n`);
+    req.on("close", () => logViewClients.delete(res));
+    return;
+  }
+  if (url === "/api/logview" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true, watching: watcher != null, path: config.logPath || "",
+      lines: logViewRing.slice(-LOGVIEW_BACKFILL),
+    }));
+    return;
+  }
+
   // Hauling optimiser: live contract state + the "please track these" list.
   if (url === "/hauling/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -3244,6 +3330,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.partyOpen === "boolean") config.partyOpen = body.partyOpen;
     if (typeof body.battagliaOpen === "boolean") config.battagliaOpen = body.battagliaOpen;
     if (typeof body.haulingOpen === "boolean") config.haulingOpen = body.haulingOpen;
+    if (typeof body.logViewOpen === "boolean") config.logViewOpen = body.logViewOpen;
     if (typeof body.haulingShip === "string") config.haulingShip = body.haulingShip.trim();
     if (typeof body.webViewOpen === "boolean") config.webViewOpen = body.webViewOpen;
     // http/https only — this string ends up as an iframe src.
