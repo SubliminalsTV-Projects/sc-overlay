@@ -305,6 +305,52 @@ check("without a ship there is a route but no layout",
 check("clearing the override falls back to the log's ship",
   buildHaulingPlan(viewOf(byId("haul-multi")), data, { ship: "" }).ship?.source === "log");
 
+// ── 🔴 SingleToMultiN: ONE pickup marker serves every leg ──────────────────
+// Sub, live 2026-08-17, holding two SingleToMulti4 contracts: the widget told him to collect 2 SCU
+// of Stims when the contract is 10 across four drops, and six of his eight legs were reported as
+// having no pickup marker. The game emits ONE pickup (keyed `…#0`) and N drop-offs, and the leg
+// builder was pairing them by key — so only leg #0 ever found an origin.
+{
+  const stop = (role: "pickup" | "dropoff", i: number, pos: { x: number; y: number; z: number }) => ({
+    key: `obj#${i}`, objectiveId: `${role}_obj_${i}`, role, index: i,
+    pos, markerEntityId: null, destination: role === "dropoff" ? `Drop ${i}` : null,
+    commodity: "Stims", need: role === "dropoff" ? 2 : null, delivered: 0,
+    unit: "scu" as const, state: "pending" as const, completedAt: null,
+  });
+  const c = {
+    missionId: "aaaaaaaa-0000-4000-8000-aaaaaaaaaaaa",
+    contract: "HaulCargo_SingleToMulti4_Processed_Stims_Stanton3_SmallGrade",
+    contractKey: "HaulCargo_SingleToMulti4_Processed_Stims_Stanton3_SmallGrade",
+    generator: "Covalex_Hauling", contractDefId: null, title: "Member Rank - Small Cargo Haul",
+    board: null, acceptedAt: 1, deliverSeen: true, trackedNow: false,
+    // One pickup at #0; four drop-offs at #0..#3 — exactly what the game emits.
+    stops: [
+      stop("pickup", 0, { x: 1000, y: 0, z: 0 }),
+      stop("dropoff", 0, { x: 2000, y: 0, z: 0 }),
+      stop("dropoff", 1, { x: 3000, y: 0, z: 0 }),
+      stop("dropoff", 2, { x: 4000, y: 0, z: 0 }),
+      stop("dropoff", 3, { x: 5000, y: 0, z: 0 }),
+    ],
+    items: [], totalScu: 8, endedAt: null, completion: null, payout: null,
+  };
+  const view = {
+    updatedAt: 1, playerNodeId: null, ship: null, contracts: [c as never],
+    untracked: [], trackedMissionId: null, runStartedAt: null, finished: [],
+  };
+  const p = buildHaulingPlan(view as never, data);
+  const legs = p.contracts[0].legs;
+  check("🔴 every leg of a SingleToMulti4 gets the contract's single pickup",
+    legs.length === 4 && legs.every((l) => l.fromLocation === legs[0].fromLocation && l.fromLocation != null),
+    JSON.stringify(legs.map((l) => l.fromLocation)));
+  check("…so none of them fall out of the route as un-pickup-able",
+    p.unrouted.length === 0, JSON.stringify(p.unrouted.map((u) => u.reason)));
+  // The whole point: the route must tell him to collect the FULL contract, not leg #0's share.
+  const pickedUp = p.trips.flatMap((t) => t.stops).flatMap((s) => s.actions)
+    .filter((a) => a.kind === "pickup").reduce((n, a) => n + (a.scu ?? 0), 0);
+  check("…and the route collects all 8 SCU at that one stop, not 2",
+    pickedUp === 8, String(pickedUp));
+}
+
 // ── degenerate input ───────────────────────────────────────────────────────
 const empty = buildHaulingPlan(
   { updatedAt: 0, playerNodeId: null, ship: null, contracts: [], untracked: [], trackedMissionId: null,

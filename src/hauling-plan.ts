@@ -490,8 +490,35 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       ? dropoffs.map((_, i) => Math.floor(pinTotal / dropoffs.length) + (i < pinTotal % dropoffs.length ? 1 : 0))
       : null;
 
+    /**
+     * 🔴 ONE PICKUP CAN SERVE EVERY LEG — and for `SingleToMultiN`, which is most of the board, it
+     * always does.
+     *
+     * The game emits ONE pickup marker per contract and N drop-off markers, keyed `…#0` … `…#N`.
+     * Matching a pickup by `key === drop.key` therefore finds one only for leg #0, and legs #1..#N
+     * come back with no origin at all — they fall out of the route as "the log carries no pickup
+     * marker for this leg".
+     *
+     * Sub, live, 2026-08-17, holding two `SingleToMulti4` contracts: the widget told him to collect
+     * **2 SCU of Stims** when the contract is 10 SCU across four drops, and six of his eight legs
+     * were listed as unroutable. He said it plainly — "it's so far off on what I'm supposed to pick
+     * up I don't even know where to begin."
+     *
+     * 🔑 The key match stays FIRST, and the fallback is gated on the CONTRACT KEY's shape token,
+     * not on "only one pickup happens to be present".
+     *
+     * ⚠️ That distinction is load-bearing and the test suite caught me getting it wrong. A
+     * `MultiToSingle` genuinely has one pickup PER LEG, and one of Sub's live contracts on
+     * 2026-08-16 carried a drop-off whose pickup marker the log never emitted. Falling back to
+     * "the only pickup left" there does not recover a leg — it sends him to the wrong place, which
+     * is worse than the honest "this leg has no pickup marker" the widget prints today. Only
+     * `SingleToMulti*` promises, by name, that there is exactly one pickup for the whole contract.
+     */
+    const oneSharedPickup = /^SingleToMulti/i.test(c.contractKey.split("_")[1] ?? "");
+    const pickups = c.stops.filter((s) => s.role === "pickup");
     const legs: PlannedLeg[] = dropoffs.map((drop, i) => {
-      const pickup = c.stops.find((s) => s.key === drop.key && s.role === "pickup") ?? null;
+      const pickup = c.stops.find((s) => s.key === drop.key && s.role === "pickup")
+        ?? (oneSharedPickup && pickups.length === 1 ? pickups[0] : null);
       const b = boundsFor(data, c.contractKey, i, dropoffs.length);
       // 🔑 AN EXACT MANIFEST BEATS EVERY ESTIMATE. Mission-item hauls (recover-cargo and friends)
       // enumerate every box in the log with its SCU in the class name, so for those there is
