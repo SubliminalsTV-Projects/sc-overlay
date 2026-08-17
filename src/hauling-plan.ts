@@ -721,14 +721,33 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     }
   }
   if (undrawable) notes.push(`${undrawable} boxes are a size the box table has no footprint for, so they are missing from the layout.`);
-  // Unload order = the route's drop-off order, so the first stop's boxes sit nearest the ramp.
-  const groupOrder: string[] = [];
+  // 🔴 YOU CANNOT LOAD WHAT YOU HAVE NOT COLLECTED. This was the drop-off order alone, which reads
+  // the hold correctly (first drop nearest the ramp) but told Sub to load his Waste FIRST — cargo
+  // he picks up at the fifth stop, on a moon he has not flown to yet. A stow order that opens with
+  // a box you do not have is not an instruction, it is a puzzle.
+  //
+  // So: collection order first, and only then depth. Everything gathered at the first pickup is
+  // loaded before anything gathered at the second, and WITHIN one pickup the load dropped LAST
+  // goes in deepest — which is the ramp rule, now applied where it actually holds.
+  const pickupAt = new Map<string, number>();
+  const dropAt = new Map<string, number>();
+  let seq = 0;
   for (const trip of trips) {
     for (const s of trip.stops) {
-      if (s.kind !== "dropoff") continue;
-      for (const a of s.actions) if (!groupOrder.includes(a.group)) groupOrder.push(a.group);
+      for (const a of s.actions) {
+        const at = seq++;
+        if (a.kind === "pickup") { if (!pickupAt.has(a.group)) pickupAt.set(a.group, at); }
+        else if (!dropAt.has(a.group)) dropAt.set(a.group, at);
+      }
     }
   }
+  // Cargo already aboard was collected before the route begins, so it is deepest of all — it went
+  // in first and everything loaded since sits on top of it.
+  const groupOrder = [...new Set([...pickupAt.keys(), ...dropAt.keys()])].sort((a, b) => {
+    const pa = pickupAt.get(a) ?? -1, pb = pickupAt.get(b) ?? -1;
+    if (pa !== pb) return pa - pb;
+    return (dropAt.get(b) ?? 0) - (dropAt.get(a) ?? 0);
+  });
   const pack = hull ? packCargo(grids, items, { groupOrder }) : null;
 
   if (!hull) notes.push("Pick the ship you are flying to see where the boxes go.");
