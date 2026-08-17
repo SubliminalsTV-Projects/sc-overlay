@@ -89,6 +89,12 @@ export interface PlanOptions {
   startAt?: string | null;
   /** missionId -> total SCU the player pinned by hand. Splits evenly across that contract's legs. */
   pins?: Record<string, number>;
+  /** Mission ids the player has set aside. Listed but never planned — see where openLegs is built.
+   *
+   *  🔑 Distinct from ABANDONED, which the game reports itself (`CompletionType[Abandon]` and
+   *  `MISSION_STATE_WITHDRAWN`) and which ends the contract outright. This is the gap before that:
+   *  "I have decided not to do this one", which a player knows long before mobiGlas does. */
+  hidden?: string[];
   travelSpeedMps?: number;
   stopMinutes?: number;
 }
@@ -153,6 +159,8 @@ export interface PlannedContract {
   exact: boolean;
   /** Enough is known to route and pack this one. */
   plannable: boolean;
+  /** The player set this one aside. Still listed so it can be restored; never planned. */
+  hidden: boolean;
 }
 
 export interface PlanStop {
@@ -362,6 +370,7 @@ function weakest(sources: ScuSource[]): ScuSource {
 
 export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts: PlanOptions = {}): HaulingPlan {
   const notes: string[] = [];
+  const hiddenIds = new Set(opts.hidden ?? []);
   const boxSet = boxSetFrom(data.boxes());
   const largestBox = boxSet.reduce((m, b) => Math.max(m, b.scu), 0);
 
@@ -521,6 +530,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       source: src,
       exact: src === "manifest" || src === "log" || src === "pinned" || src === "dataset",
       plannable: total != null && c.endedAt == null,
+      hidden: hiddenIds.has(c.missionId),
     };
     contracts.push(planned);
     for (const leg of legs) legByGroup.set(leg.group, { c, leg });
@@ -530,8 +540,14 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // A leg whose drop-off has completed is done and gone. A leg whose PICKUP completed is already
   // in the hold: it still has to be packed and delivered, but there is nothing left to fly TO for
   // its pickup, so it contributes no visit — only load. That is `aboardScu`.
+  // 🔴 A CONTRACT THE PLAYER HAS SET ASIDE IS NOT PART OF THE RUN. The game already removes an
+  // ABANDONED contract for us (`CompletionType[Abandon]` / `MISSION_STATE_WITHDRAWN` both end it),
+  // but a player often decides to skip one long before they get round to abandoning it in mobiGlas
+  // — and until they do, it drags the route and the hold around with it.
+  // Hidden contracts stay in `contracts` flagged, so the widget can list and restore them; they are
+  // simply not part of anything that plans.
   const openLegs = contracts
-    .filter((c) => c.plannable)
+    .filter((c) => c.plannable && !c.hidden)
     .flatMap((c) => c.legs.filter((l) => l.dropoffState !== "completed" && l.scu != null).map((leg) => ({ c, leg })));
   const aboardScu = openLegs
     .filter(({ leg }) => leg.pickupState === "completed")

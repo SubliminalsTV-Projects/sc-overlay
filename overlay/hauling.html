@@ -131,6 +131,15 @@
   /* ── Contract cards ──────────────────────────────────────────────────────── */
   .card { padding: 6px 12px 7px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
   .card.done { opacity: 0.6; }
+  /* Set aside: dimmed and struck through the title, so it reads as "not part of this run" rather
+     than "finished". Still listed — the player has to be able to put it back. */
+  .card.setaside { opacity: 0.45; }
+  .card.setaside .t { text-decoration: line-through; }
+  .card .cardx { flex: none; margin-left: 6px; width: 18px; height: 18px; line-height: 1; padding: 0;
+    border: 1px solid rgba(var(--accent-rgb), 0.3); border-radius: 5px; background: transparent;
+    color: var(--faint); font-size: 11px; cursor: pointer; }
+  .card .cardx:hover { color: var(--red); border-color: var(--red); }
+  .card.setaside .cardx:hover { color: var(--cyan-bright); border-color: var(--cyan); }
   .card .top { display: flex; align-items: baseline; gap: 6px; }
   .card .t { flex: 1; min-width: 0; font-size: 11.5px; color: var(--cyan-text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -317,6 +326,12 @@
   let startPick = (() => { try { return localStorage.getItem(START_KEY) || ""; } catch { return ""; } })();
   // Which end of the hold the stow diagram is drawn from. Remembered, because a player who turned
   // it round did so for a reason and a reset every render would fight them.
+  /* Contracts the player has set aside. Kept per-browser like the pins — it is a decision about
+     THIS run, not a setting. The game removes an ABANDONED contract on its own; this covers the gap
+     before that, when the player has decided to skip one but has not opened mobiGlas yet. */
+  const HIDE_KEY = "sc-hauling-hidden";
+  let hidden = (() => { try { return JSON.parse(localStorage.getItem(HIDE_KEY) || "[]"); } catch { return []; } })();
+  function saveHidden() { try { localStorage.setItem(HIDE_KEY, JSON.stringify(hidden)); } catch { /* private mode */ } }
   const SPIN_KEY = "sc-hauling-spin";
   let stowSpin = (() => { try { return localStorage.getItem(SPIN_KEY) === "1"; } catch { return false; } })();
   function saveStart() { try { localStorage.setItem(START_KEY, startPick); } catch { /* private mode */ } }
@@ -386,11 +401,19 @@
     try {
       const r = await fetch("/api/hauling/plan", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ ship: shipPick, objective, pins, startAt: startPick }),
+        body: JSON.stringify({ ship: shipPick, objective, pins, startAt: startPick, hidden }),
       });
       if (!r.ok) return;
       plan = await r.json();
       prunePins(new Set(plan.contracts.filter((c) => !c.ended).map((c) => c.missionId)));
+      /* 🔑 TRACKING IT AGAIN BRINGS IT BACK — Sub's own suggestion, and better than a restore
+         button nobody would find: the player is already in mobiGlas, and selecting a contract there
+         is an unambiguous statement that they intend to fly it. Also drop any id the board no
+         longer carries, so a finished or abandoned contract does not sit in this list for ever. */
+      const live = new Set(plan.contracts.map((c) => c.missionId));
+      const restored = plan.contracts.filter((c) => c.trackedNow && hidden.includes(c.missionId)).map((c) => c.missionId);
+      const next = hidden.filter((id) => live.has(id) && !restored.includes(id));
+      if (next.length !== hidden.length) { hidden = next; saveHidden(); }
       // A start the plan no longer knows about is a place from a finished board. Silently keeping
       // it would route from somewhere that is not on the map any more.
       // 🔴 BUT ONLY ONCE THERE IS A BOARD TO CHECK AGAINST. This ran unguarded and erased the
@@ -893,12 +916,33 @@
     body.appendChild(sec);
     for (const c of list) {
       const card = document.createElement("div");
-      card.className = "card" + (c.ended ? " done" : "");
+      card.className = "card" + (c.ended ? " done" : "") + (c.hidden ? " setaside" : "");
       const top = document.createElement("div");
       top.className = "top";
       const t = document.createElement("div"); t.className = "t"; t.textContent = c.title || c.contractKey;
       const amt = document.createElement("div"); amt.className = "amt"; amt.textContent = fmtScu(c);
       top.append(t, amt, badge(c.source));
+      /* 🔴 SET ASIDE. A player decides to skip a contract long before they open mobiGlas to abandon
+         it, and until then it drags the route and the hold around with it. The game reports a real
+         abandon on its own (`CompletionType[Abandon]`), which ends the contract outright — this is
+         only the gap before that, and it is reversible: track it in mobiGlas and it comes straight
+         back. Not offered on an ended contract, which is already out of the plan. */
+      if (!c.ended) {
+        const x = document.createElement("button");
+        x.type = "button";
+        x.className = "cardx";
+        x.textContent = c.hidden ? "＋" : "✕";
+        x.title = c.hidden
+          ? "Put this contract back in the plan."
+          : "Set aside — drop it from the route and the hold. Track it in mobiGlas to bring it back.";
+        x.addEventListener("click", (e) => {
+          e.stopPropagation();
+          hidden = c.hidden ? hidden.filter((id) => id !== c.missionId) : hidden.concat([c.missionId]);
+          saveHidden();
+          load();
+        });
+        top.appendChild(x);
+      }
       const sub = document.createElement("div");
       sub.className = "sub";
       const where = [];

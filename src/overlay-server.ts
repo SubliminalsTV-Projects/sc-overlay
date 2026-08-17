@@ -2635,6 +2635,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       objective: body.objective === "fewest-stops" ? "fewest-stops" : "auec-per-hour",
       // Where the player says they are standing. See PlanOptions.startAt.
       startAt: typeof body.startAt === "string" && body.startAt ? body.startAt : null,
+      // Contracts the player has set aside. See PlanOptions.hidden.
+      hidden: Array.isArray(body.hidden) ? body.hidden.filter((x): x is string => typeof x === "string") : [],
       pins,
     });
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
