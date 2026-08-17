@@ -1096,7 +1096,10 @@ function rememberSeenPlaces(names: readonly string[]): void {
     const n = (raw ?? "").trim();
     if (!n || /^Site \d+$/.test(n) || player.has(n)) continue;
     const at = config.haulingSeenPlaces.indexOf(n);
-    if (at === config.haulingSeenPlaces.length - 1) continue;   // already the most recent
+    // ⚠️ `at >= 0` is load-bearing. On an EMPTY list indexOf is -1 and length-1 is also -1, so a
+    // bare `at === length - 1` reads "already the most recent" for every name and the list can
+    // never take its first entry. Silent: no error, just a feature that quietly never learns.
+    if (at >= 0 && at === config.haulingSeenPlaces.length - 1) continue;
     if (at >= 0) config.haulingSeenPlaces.splice(at, 1);
     config.haulingSeenPlaces.push(n);
     changed = true;
