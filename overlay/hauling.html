@@ -47,8 +47,14 @@
   .summary { flex: none; padding: 8px 12px 9px; border-bottom: 1px solid var(--divider);
     position: relative; z-index: 4; }
   .shiprow { display: flex; align-items: center; gap: 6px; }
-  #shipPick { flex: 1; min-width: 0; font-family: var(--sans); font-size: 11px; color: var(--cyan-bright);
+  /* Both pickers share one rule. #startPick was added without it and rendered as a bare white box
+     with white text in it — unreadable, and Sub could not tell what the control even was. */
+  #shipPick, #startPick { flex: 1; min-width: 0; font-family: var(--sans); font-size: 11px; color: var(--cyan-bright);
     background: var(--menu-bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; }
+  #startPick { margin-top: 5px; }
+  /* The dropdown's own list is drawn by the OS, which does not inherit the control's colours —
+     without this the options render dark-on-dark (or white-on-white) once it is open. */
+  #shipPick option, #startPick option { background: var(--menu-bg); color: var(--cyan-bright); }
   .src { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--faint); }
   .caps { display: flex; gap: 3px; margin-top: 7px; height: 13px; }
@@ -509,6 +515,9 @@
   /** Has the player re-opened the collapsed "all answered" card to edit a figure? Reset whenever a
    *  row needs action again, so a new unanswered contract always arrives expanded. */
   let trackOpen = false;
+  /** missionId -> the row's live DOM, kept across renders so an input the player is clicking is
+   *  never destroyed underneath them. See renderTrack. */
+  const trackRows = new Map();
 
   /** 🔴 The load checklist. Each row names a contract whose tonnage the game has not stated,
    *  says which of the three states it is in, shows the bounds we do have, and offers a box to
@@ -547,52 +556,72 @@
       : "These are tracked and the game still has not stated their load. It only says the tonnage when it assigns the objective, and re-tracking does not replay that — so type the figure off your mobiGlas, or wait for the next spawn-in.";
     $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
     const list = $("trackList");
-    list.textContent = "";
+    // 🔴 ROWS ARE REUSED, keyed by mission — they used to be torn down and rebuilt on every render,
+    // and that made the second box unclickable. Typing in one box and clicking the next fires
+    // `change` on blur → load() → render() → `list.textContent = ""`, which DESTROYS the input the
+    // player is mid-click on. The click then lands on a detached node and nothing happens; it looks
+    // like the field is dead. Sub hit this trying to enter three tonnages in a row.
+    // 🔑 A node the player is reaching for must survive the render.
+    const seen = new Set();
     for (const c of live) {
-      const row = document.createElement("div");
-      row.className = "trow";
-      const t = document.createElement("div");
-      t.className = "t";
-      t.textContent = c.title || c.contractKey;
-      t.title = (c.giver ? c.giver + " · " : "") + (c.missionType || c.generator);
-      // Rank tier + size band, off the title. Known the moment a contract is accepted, unlike the
-      // tonnage — and it is the wording on the board, so it is how this row is matched to the
-      // contract in mobiGlas.
-      const bd = document.createElement("div");
-      bd.className = "bd";
-      if (c.board && (c.board.rank || c.board.size)) {
-        bd.textContent = [c.board.rank, c.board.size].filter(Boolean).join(" · ");
-        bd.title = "The rank tier and size band this contract is listed under on the board.";
+      seen.add(c.missionId);
+      let r = trackRows.get(c.missionId);
+      if (!r) {
+        const row = document.createElement("div");
+        row.className = "trow";
+        const t = document.createElement("div");
+        t.className = "t";
+        // Rank tier + size band, off the title. Known the moment a contract is accepted, unlike the
+        // tonnage — and it is the wording on the board, so it is how this row is matched to the
+        // contract in mobiGlas.
+        const bd = document.createElement("div");
+        bd.className = "bd";
+        const st = document.createElement("span");
+        const rng = document.createElement("div");
+        rng.className = "rng";
+        const inp = document.createElement("input");
+        inp.type = "number"; inp.min = "1"; inp.step = "1";
+        inp.placeholder = "SCU";
+        inp.title = "Type the SCU total from your mobiGlas to pin it.";
+        // Editing takes the canvas keyboard grab; the shell suspends the interact key while it is on.
+        inp.addEventListener("focus", () => { try { host()?.editStart?.(); } catch { /* standalone */ } });
+        inp.addEventListener("blur", () => { try { host()?.editEnd?.(); } catch { /* standalone */ } });
+        // Keyed off the row's OWN missionId, not a captured contract object, because the row now
+        // outlives the render that made it.
+        const mid = c.missionId;
+        inp.addEventListener("change", () => {
+          const v = parseInt(inp.value, 10);
+          if (Number.isFinite(v) && v > 0) pins[mid] = v; else delete pins[mid];
+          savePins();
+          load();
+        });
+        row.append(t, bd, st, rng, inp);
+        r = { row, t, bd, st, rng, inp };
+        trackRows.set(c.missionId, r);
       }
+      r.t.textContent = c.title || c.contractKey;
+      r.t.title = (c.giver ? c.giver + " · " : "") + (c.missionType || c.generator);
+      if (c.board && (c.board.rank || c.board.size)) {
+        r.bd.textContent = [c.board.rank, c.board.size].filter(Boolean).join(" · ");
+        r.bd.title = "The rank tier and size band this contract is listed under on the board.";
+      } else { r.bd.textContent = ""; r.bd.title = ""; }
       const [label, why] = TRACK_STATE[trackStateOf(c)];
-      const st = document.createElement("span");
-      st.className = "badge " + trackStateOf(c);
-      st.textContent = label;
-      st.title = why;
-      const rng = document.createElement("div");
-      rng.className = "rng";
-      rng.textContent = c.minScu != null && c.maxScu != null
+      r.st.className = "badge " + trackStateOf(c);
+      r.st.textContent = label;
+      r.st.title = why;
+      r.rng.textContent = c.minScu != null && c.maxScu != null
         ? (c.minScu === c.maxScu ? num(c.minScu) + " SCU" : c.minScu + "–" + c.maxScu + " SCU")
         : "unknown";
-      rng.title = c.minScu != null
+      r.rng.title = c.minScu != null
         ? "What the game files allow for this contract. The real figure is somewhere in here."
         : "The game files carry nothing for this contract key.";
-      const inp = document.createElement("input");
-      inp.type = "number"; inp.min = "1"; inp.step = "1";
-      inp.placeholder = "SCU";
-      inp.title = "Type the SCU total from your mobiGlas to pin it.";
-      inp.value = pins[c.missionId] != null ? pins[c.missionId] : "";
-      // Editing takes the canvas keyboard grab; the shell suspends the interact key while it is on.
-      inp.addEventListener("focus", () => { try { host()?.editStart?.(); } catch { /* standalone */ } });
-      inp.addEventListener("blur", () => { try { host()?.editEnd?.(); } catch { /* standalone */ } });
-      inp.addEventListener("change", () => {
-        const v = parseInt(inp.value, 10);
-        if (Number.isFinite(v) && v > 0) pins[c.missionId] = v; else delete pins[c.missionId];
-        savePins();
-        load();
-      });
-      row.append(t, bd, st, rng, inp);
-      list.appendChild(row);
+      // ⚠️ Never overwrite a box the player is typing in — a reload mid-edit would eat the digits
+      // they have entered so far.
+      if (document.activeElement !== r.inp) r.inp.value = pins[c.missionId] != null ? pins[c.missionId] : "";
+      list.appendChild(r.row);   // appendChild MOVES an existing node, so this also fixes the order
+    }
+    for (const [id, r] of trackRows) {
+      if (!seen.has(id)) { r.row.remove(); trackRows.delete(id); }
     }
   }
 
