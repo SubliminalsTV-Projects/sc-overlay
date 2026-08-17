@@ -122,8 +122,14 @@ check("the remaining leg produces a pickup and a drop-off",
 check("the pickup comes before the drop-off",
   multi.trips[0]?.stops[0].kind === "pickup" && multi.trips[0].stops[1].kind === "dropoff");
 check("a tracked drop-off is named from the log, an unnamed place is numbered honestly",
-  multi.trips[0]?.stops[1].name === "Levski" && /^Site \d+$/.test(multi.trips[0].stops[0].name),
+  multi.trips[0]?.stops[1].name === "Levski" && /^Site \d+( · .+)?$/.test(multi.trips[0].stops[0].name),
   multi.trips[0]?.stops.map((s) => s.name).join(" -> "));
+// The pickup the game never named still says which world it is on, read off the contract key's
+// `Stanton1` token. This fixture is a Stanton1 contract, and Stanton1 resolves to exactly one
+// planet — the case the region label is allowed to fire on.
+check("an unnamed place still names its body, from the contract key",
+  multi.trips[0]?.stops[0].name === "Site 1 · Hurston",
+  multi.trips[0]?.stops[0].name);
 
 // ── the whole board at once ────────────────────────────────────────────────
 const all = buildHaulingPlan(viewOf(HAUL_SCENARIOS), data, { ship: "CRUS_Starlifter_C2" });

@@ -333,6 +333,29 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   const legByGroup = new Map<string, { c: HaulContract; leg: PlannedLeg }>();
   /** locationId -> the best name we have for it, learned from tracked drop-offs. */
   const nameByLoc = new Map<string, string>();
+  /** locationId -> the body the contract runs on, for places the game never named. */
+  const regionByLoc = new Map<string, string>();
+  /** The contract key carries the region: `HaulCargo_AToB_Processed_Stims_Stanton3_SupplyGrade`.
+   *  `Stanton3` is an alias locations.json already resolves — to ArcCorp — so a place the game
+   *  never named can still say which world it is on. That is the difference between "Site 1" and
+   *  "Site 1 · ArcCorp" for a player deciding whether it is even the planet they are standing on.
+   *
+   *  ⚠️ ONLY when the code resolves to exactly ONE planet. `Stanton4` matches both "Green" and
+   *  "microTech", and naming the wrong world is worse than naming none — the label would read as
+   *  fact. Codes also match asteroids and stations, hence the Planet filter. */
+  const regionCache = new Map<string, string | null>();
+  const regionOfKey = (contractKey: string | null | undefined): string | null => {
+    if (!contractKey) return null;
+    const m = /(Stanton\d+)/i.exec(contractKey);
+    if (!m) return null;
+    const code = m[1].toLowerCase();
+    const cached = regionCache.get(code);
+    if (cached !== undefined) return cached;
+    const planets = data.byCode(code).filter((l) => l.type === "Planet");
+    const name = planets.length === 1 ? planets[0].name : null;
+    regionCache.set(code, name);
+    return name;
+  };
 
   for (const c of view.contracts) {
     const info = data.contract(c.contractKey);
@@ -375,6 +398,14 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       const from = posKey(pickup?.pos) ?? (pickup ? `${group}:from` : null);
       const to = posKey(drop.pos) ?? `${group}:to`;
       if (drop.destination && to) nameByLoc.set(to, drop.destination);
+      // Both ends of a haul sit in the region its key names, so the pickup — which the game NEVER
+      // names — gets the same body as the drop-off. Recorded for both; nameByLoc still wins where
+      // the game gave a real name.
+      const region = regionOfKey(c.contractKey);
+      if (region) {
+        if (from) regionByLoc.set(from, region);
+        if (to) regionByLoc.set(to, region);
+      }
       return {
         key: drop.key,
         index: drop.index,
@@ -520,7 +551,11 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     const known = nameByLoc.get(locationId);
     if (known) return known;
     let label = fallback.get(locationId);
-    if (!label) { label = `Site ${fallback.size + 1}`; fallback.set(locationId, label); }
+    if (!label) {
+      const region = regionByLoc.get(locationId);
+      label = `Site ${fallback.size + 1}` + (region ? ` · ${region}` : "");
+      fallback.set(locationId, label);
+    }
     return label;
   };
 
