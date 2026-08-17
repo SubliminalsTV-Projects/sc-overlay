@@ -101,7 +101,13 @@ export interface PlannedContract {
   /** From the dataset — the log never names the org or the family. */
   giver: string | null;
   missionType: string | null;
-  tracked: boolean;
+  /** The game has stated this contract's tonnage. ⚠️ NOT "the player tracked it" — see
+   *  `HaulContract` in hauling.ts; conflating the two is what shipped a dead prompt. */
+  deliverSeen: boolean;
+  /** Selected in mobiGlas right now, live from the objective data bank. */
+  trackedNow: boolean;
+  /** Rank tier + size band read off the title ("Rookie" · "Extra Small"). Known at accept. */
+  board: { rank: string | null; size: string | null; direct: boolean } | null;
   ended: boolean;
   completion: string | null;
   payout: number | null;
@@ -153,8 +159,17 @@ export interface HaulingPlan {
     source: "log" | "manual" | "none";
   } | null;
   contracts: PlannedContract[];
-  /** Live contracts with no Deliver line yet — the "TRACK THESE" list, in mission order. */
-  untracked: { missionId: string; title: string | null; minScu: number | null; maxScu: number | null }[];
+  /**
+   * Live contracts whose tonnage the game has never stated, in mission order.
+   *
+   * 🔴 This is NOT "contracts to go and track". `trackedNow` splits it into the two states the
+   * old prompt collapsed into one: a contract that is NOT tracked may still learn its figure at
+   * the next assignment, while one that IS tracked has already asked and the game will not answer
+   * again this session — for that one the only route to a number is the player typing it in.
+   */
+  untracked: { missionId: string; title: string | null; minScu: number | null; maxScu: number | null; trackedNow: boolean }[];
+  /** The contract selected in mobiGlas right now, or null when none is. */
+  trackedMissionId: string | null;
   trips: PlanTrip[];
   /** Contracts no single trip can carry — over capacity even alone. */
   stranded: string[];
@@ -381,7 +396,9 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       generator: c.generator,
       giver: info?.giver ?? null,
       missionType: info?.missionType ?? null,
-      tracked: c.tracked,
+      deliverSeen: c.deliverSeen,
+      trackedNow: c.trackedNow,
+      board: c.board,
       ended: c.endedAt != null,
       completion: c.completion,
       payout: c.payout,
@@ -571,8 +588,9 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       : null,
     contracts,
     untracked: liveContracts
-      .filter((c) => !c.tracked)
-      .map((c) => ({ missionId: c.missionId, title: c.title, minScu: c.minScu, maxScu: c.maxScu })),
+      .filter((c) => !c.deliverSeen)
+      .map((c) => ({ missionId: c.missionId, title: c.title, minScu: c.minScu, maxScu: c.maxScu, trackedNow: c.trackedNow })),
+    trackedMissionId: view.trackedMissionId,
     trips,
     stranded: run.stranded,
     locationNames,

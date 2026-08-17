@@ -164,11 +164,19 @@ export function replayMissionId(seq: number): string {
  * shaped for it (one contract, one blueprint, one payout); a hauling run is a different animal —
  * several legs, positions, per-destination progress, and a manifest.
  *
- * 🔑 `tracked` is the field that matters. The "New Objective: Deliver 0/N SCU …" line is emitted
- * only for a contract the player has TRACKED in mobiGlas — measured on Sub's 2026-08-16 session,
- * where seven accepted hauls produced seven CreateMarker bursts and two Deliver lines, matching
- * the two he had tracked. An untracked contract is therefore a normal, expected state with a real
- * UI to exercise ("track this to see its tonnage"), which is why `haul-untracked` exists.
+ * 🔑 Two INDEPENDENT knobs, because the game treats them as independent and an earlier design
+ * assumed they were the same thing:
+ *
+ *   `tonnageStated`  emit the "New Objective: Deliver 0/N SCU …" line. The game emits it on
+ *                    objective ASSIGNMENT — a fresh accept, a spawn-in, a drop-off changing
+ *                    state — and **never again**, whatever the player does.
+ *   `mobiglas`       emit the objective data-bank Adds, i.e. the contract is selected in mobiGlas.
+ *
+ * All four combinations are real, and the interesting one is `haul-tracked-silent`: tracked, and
+ * still no tonnage. That is Sub's live 2026-08-17 board — he tracked four contracts, watched a
+ * prompt tell him to track them, and nothing changed, because tracking is not what emits the
+ * figure. The widget has to say something different in that state, so the scenario exists to
+ * make it look at.
  */
 
 interface HaulLeg {
@@ -191,8 +199,11 @@ export interface HaulScenario {
   contractKey: string;
   generator: string;
   title: string;
-  /** Did the player TRACK it in mobiGlas? False means no Deliver lines at all. */
-  tracked: boolean;
+  /** Did the game ever state the tonnage? False means no Deliver lines at all. */
+  tonnageStated: boolean;
+  /** Is it the contract selected in mobiGlas? Emits the data-bank Add lines. Independent of
+   *  `tonnageStated` — tracking does not produce a Deliver line. Defaults to false. */
+  mobiglas?: boolean;
   legs: HaulLeg[];
   /** Entity classes of the individual boxes, for mission-item hauls. Empty for SCU hauls,
    *  which log no manifest anywhere — see hauling.ts. */
@@ -212,7 +223,7 @@ export const HAUL_SCENARIOS: HaulScenario[] = [
     contractKey: "HaulCargo_AToB_Processed_Stims_Stanton3_SupplyGrade",
     generator: "Covalex_Hauling",
     title: "Rookie Rank - Direct Medium Cargo Haul",
-    tracked: true,
+    tonnageStated: true,
     legs: [{
       pickup: [-748272.078090, -103662.326450, -263812.173494],
       dropoff: [-771960.562500, -321347.218750, -359509.343750],
@@ -227,7 +238,7 @@ export const HAUL_SCENARIOS: HaulScenario[] = [
     contractKey: "HaulCargo_AToB_Waste_Mixed_ScrapWaste_Stanton3_SupplyGrade",
     generator: "Covalex_Hauling",
     title: "Rookie Rank - Direct Medium Cargo Haul",
-    tracked: false,
+    tonnageStated: false,
     legs: [{
       pickup: [-748272.078090, -103662.326450, -263812.173494],
       dropoff: [-771960.562500, -321347.218750, -359509.343750],
@@ -236,13 +247,29 @@ export const HAUL_SCENARIOS: HaulScenario[] = [
     items: [], ship: "CRUS_Starlifter_C2", durationMin: 3, aUEC: null,
   },
   {
+    id: "haul-tracked-silent",
+    label: "Covalex — TRACKED in mobiGlas, and still no tonnage",
+    note: "🔴 Sub's live 2026-08-17 board, and the state the old prompt got wrong. The contract is selected in mobiGlas — the data bank says so — and the game has still never stated its tonnage, because the Deliver line fires at objective assignment and re-tracking does not replay it. The widget must NOT tell him to track this one; there is nothing left for him to do but type the figure in.",
+    contractKey: "HaulCargo_AToB_RefinedOre_Tin_Stanton3_SupplyGrade",
+    generator: "Covalex_Hauling",
+    title: "Junior Rank - Direct Medium Cargo Haul",
+    tonnageStated: false,
+    mobiglas: true,
+    legs: [{
+      pickup: [-748272.078090, -103662.326450, -263812.173494],
+      dropoff: [-771960.562500, -321347.218750, -359509.343750],
+      destination: "Baijini Point", commodity: "Tin", need: 48, unit: "scu", delivered: false,
+    }],
+    items: [], ship: "CRUS_Starlifter_C2", durationMin: 6, aUEC: null,
+  },
+  {
     id: "haul-multi",
     label: "Two legs, two commodities, one delivered",
     note: "Real pair from 2026-08-02 — the SAME objective uuid with indices _0 and _1. Checks that ticking one leg does not tick the other, and that the capacity bar sums both.",
     contractKey: "HaulCargo_MultiToSingle_Stanton1",
     generator: "Covalex_Hauling",
     title: "Junior Rank - Multi Cargo Haul",
-    tracked: true,
+    tonnageStated: true,
     legs: [
       {
         pickup: [373539.798854, -262716.041903, -269591.417313],
@@ -264,7 +291,7 @@ export const HAUL_SCENARIOS: HaulScenario[] = [
     contractKey: "HH_Pyro_VeryEasy_RecoverCargo",
     generator: "HeadHunters_RecoverCargo",
     title: "Cargo Recovery",
-    tracked: true,
+    tonnageStated: true,
     legs: [{
       pickup: [373539.798854, -262716.041903, -269591.417313],
       dropoff: [383115.366423, -245829.717381, -272467.223889],
@@ -310,12 +337,23 @@ export function haulReplayLines(s: HaulScenario, missionId: string, now = Date.n
   lines.push(
     `<${stamp(start + 3)}> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Accepted:  ${s.title}: " [900] to queue. New queue size: 1, MissionId: [${missionId}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
   );
-  if (s.tracked) {
+  if (s.tonnageStated) {
     s.legs.forEach((leg, i) => {
       const what = leg.unit === "scu" ? `SCU of ${leg.commodity}` : "Cargo Boxes";
       lines.push(
         `<${stamp(start + 4)}> [Notice] <SHUDEvent_OnNotification> Added notification "New Objective: Deliver 0/${leg.need} ${what} to ${leg.destination}: " [${901 + i}] to queue. New queue size: 2, MissionId: [${missionId}], ObjectiveId: [dropoff_${objUuid}_${i}] [Team_CoreGameplayFeatures][Missions][Comms]`,
       );
+    });
+  }
+  // The player selecting this contract in mobiGlas. Copied verbatim from Sub's 2026-08-17 log,
+  // including the "ZonePos:" spelling with bare x/y/z — CreateMarker's own position field is
+  // bracketed and this one is not, which is why the parser carries two patterns.
+  if (s.mobiglas) {
+    s.legs.forEach((leg, i) => {
+      const add = (at: number, objectiveId: string, entity: number, p: [number, number, number]) =>
+        `<${stamp(at)}> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_${entity}[${entity}] - Added to DataBank of Player: IMC-SubliminaL[${nodeId}] - ZonePos: x: ${p[0].toFixed(6)}, y: ${p[1].toFixed(6)}, z: ${p[2].toFixed(6)}, missionId[${missionId}], objectiveId[${objectiveId}] [Team_MissionFeatures][Missions]`;
+      lines.push(add(start + 5, `pickup_${objUuid}_${i}`, 901 + i * 2, leg.pickup));
+      lines.push(add(start + 5, `dropoff_${objUuid}_${i}`, 900 + i * 2, leg.dropoff));
     });
   }
   if (s.ship) {

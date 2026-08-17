@@ -63,11 +63,15 @@
   .facts .v { color: var(--gold); font-weight: 600; }
   .facts .bad { color: var(--red); }
 
-  /* ── 🔴 The track prompt ──────────────────────────────────────────────────
-     Deliberately the loudest thing on the panel. 57% of contracts in the shipped data give a SCU
-     RANGE rather than a number, and the only thing that pins the real figure is the game's own
-     Deliver line — which it emits ONLY for a contract tracked in mobiGlas. So this is not a hint,
-     it is the step that makes the rest of the widget true. */
+  /* ── 🔴 The load checklist ────────────────────────────────────────────────
+     Deliberately the loudest thing on the panel: 57% of contracts in the shipped data give a SCU
+     RANGE rather than a number, and the only things that pin the real figure are the game's own
+     Deliver line and the player typing it in.
+     ⚠️ It used to be headed "TRACK THESE IN MOBIGLAS" unconditionally, on the belief that the
+     Deliver line was tracking-gated. It is not — it fires on objective ASSIGNMENT and re-tracking
+     never replays it — so for an already-tracked contract that heading was an instruction the
+     game would not honour. The heading and the per-row state are both computed now; see
+     renderTrack(). */
   .track { flex: none; border-bottom: 1px solid var(--divider); position: relative; z-index: 4;
     background: rgba(var(--value-rgb), 0.07); }
   .track .th { display: flex; align-items: baseline; gap: 6px; padding: 8px 12px 3px; }
@@ -127,6 +131,14 @@
   .badge.dataset { color: var(--cyan-dim); }
   .badge.range { color: var(--gold); border-color: rgba(var(--value-rgb), 0.45); }
   .badge.unknown { color: var(--red); border-color: rgba(255, 132, 120, 0.4); }
+  /* The three states of the track prompt. Only `todo` is an instruction — `waiting` is the state
+     where the player has already done everything tracking can do, and colouring it like an action
+     is how a prompt starts lying. */
+  .badge.todo { color: var(--gold); border-color: rgba(var(--value-rgb), 0.45); }
+  .badge.waiting { color: var(--cyan-dim); }
+  /* Rank tier + size band, straight off the contract title — how the row is matched to mobiGlas. */
+  .trow .bd { flex: none; font-size: 9px; letter-spacing: 0.04em; color: var(--faint);
+    white-space: nowrap; }
   .tick { flex: none; font-size: 10px; color: var(--green); }
 
   /* ── Stow ─────────────────────────────────────────────────────────────────
@@ -222,10 +234,11 @@
       <div class="facts" id="facts"></div>
     </div>
 
+    <!-- 🔴 Heading and explanation are BOTH filled from the live state — see renderTrack(). A
+         fixed "TRACK THESE IN MOBIGLAS" is what shipped a prompt that could not come true. -->
     <div class="track" id="track" style="display:none">
-      <div class="th"><span class="k">Track these in mobiGlas</span><span class="n" id="trackN"></span></div>
-      <div class="why">The game only writes a contract's real tonnage to the log once you TRACK it.
-        Until then all we have is the dataset's range — or type the figure in yourself.</div>
+      <div class="th"><span class="k" id="trackK"></span><span class="n" id="trackN"></span></div>
+      <div class="why" id="trackWhy"></div>
       <div class="list" id="trackList"></div>
     </div>
 
@@ -296,10 +309,10 @@
   }
   const BADGE = {
     manifest: ["exact", "The game listed every box for this contract."],
-    log: ["tracked", "The tonnage came from the game's own objective line, because you tracked it."],
+    log: ["stated", "The game stated this tonnage on its own objective line."],
     pinned: ["yours", "You typed this figure in."],
     dataset: ["data", "The game files state one figure for this contract."],
-    range: ["range", "The game files only bound this contract. Track it in mobiGlas to pin the real load."],
+    range: ["range", "The game files only bound this contract — the real load is somewhere inside it. The game states the exact figure when it assigns the objective; until then, type it in to pin it."],
     unknown: ["unknown", "Neither the log nor the dataset says how much this contract carries."],
   };
 
@@ -439,14 +452,39 @@
     }
   }
 
-  /** 🔴 The please-track list. It is a checklist, not a warning: each row names a contract whose
-   *  load the game has not told us, shows the bounds we do have, and offers a box to type the real
-   *  figure into. */
+  /* 🔴 THE THREE STATES. The old prompt had one — "TRACK THESE IN MOBIGLAS", shown to every
+     contract whose tonnage was unknown — and for most of them that instruction could not come
+     true. The game states a contract's tonnage when it ASSIGNS the objective (a fresh accept, a
+     spawn-in, a leg changing state); tracking an already-assigned contract replays nothing.
+     Sub tracked four contracts, watched this panel keep telling him to track them, and reasonably
+     concluded the app was broken. So a row now says which of these it is:
+
+       todo      not tracked in mobiGlas. Tracking is worth doing — the next assignment will
+                 carry the figure — but it is a "then", not a "now".
+       waiting   tracked already. Nothing further to do; the game has been asked and will not
+                 answer again this session. The type-it-in box is the only route to a number.
+       pinned    the player typed it. */
+  const TRACK_STATE = {
+    todo: ["track it", "Not tracked in mobiGlas. Track it and the tonnage arrives with the next objective assignment — at the latest, next time you spawn in. Or type it in now."],
+    waiting: ["tracked", "Already tracked — nothing more for you to do here. The game states the tonnage only when it assigns the objective (at accept, or on spawn-in), and re-tracking does not replay it. Type the figure off your mobiGlas to pin it."],
+    pinned: ["yours", "You typed this figure in. Clear the box to fall back to what the game files allow."],
+  };
+  const trackStateOf = (c) => c.source === "pinned" ? "pinned" : c.trackedNow ? "waiting" : "todo";
+
+  /** 🔴 The load checklist. Each row names a contract whose tonnage the game has not stated,
+   *  says which of the three states it is in, shows the bounds we do have, and offers a box to
+   *  type the real figure into. */
   function renderTrack() {
     const el = $("track");
-    const live = plan ? plan.contracts.filter((c) => !c.ended && (!c.tracked || c.source === "range" || c.source === "unknown")) : [];
+    const live = plan ? plan.contracts.filter((c) => !c.ended && (!c.deliverSeen || c.source === "range" || c.source === "unknown")) : [];
     if (!live.length) { el.style.display = "none"; return; }
     el.style.display = "";
+    // The heading is an instruction ONLY while at least one row can act on it.
+    const todo = live.filter((c) => trackStateOf(c) === "todo").length;
+    $("trackK").textContent = todo ? "Track these in mobiGlas" : "Load not confirmed";
+    $("trackWhy").textContent = todo
+      ? "The game states a contract's tonnage when it assigns the objective — at accept, or the next time you spawn in. Track the ones below and the next assignment tells us, or type the figure straight off your mobiGlas."
+      : "These are tracked and the game still has not stated their load. It only says the tonnage when it assigns the objective, and re-tracking does not replay that — so type the figure off your mobiGlas, or wait for the next spawn-in.";
     $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
     const list = $("trackList");
     list.textContent = "";
@@ -457,6 +495,20 @@
       t.className = "t";
       t.textContent = c.title || c.contractKey;
       t.title = (c.giver ? c.giver + " · " : "") + (c.missionType || c.generator);
+      // Rank tier + size band, off the title. Known the moment a contract is accepted, unlike the
+      // tonnage — and it is the wording on the board, so it is how this row is matched to the
+      // contract in mobiGlas.
+      const bd = document.createElement("div");
+      bd.className = "bd";
+      if (c.board && (c.board.rank || c.board.size)) {
+        bd.textContent = [c.board.rank, c.board.size].filter(Boolean).join(" · ");
+        bd.title = "The rank tier and size band this contract is listed under on the board.";
+      }
+      const [label, why] = TRACK_STATE[trackStateOf(c)];
+      const st = document.createElement("span");
+      st.className = "badge " + trackStateOf(c);
+      st.textContent = label;
+      st.title = why;
       const rng = document.createElement("div");
       rng.className = "rng";
       rng.textContent = c.minScu != null && c.maxScu != null
@@ -479,7 +531,7 @@
         savePins();
         load();
       });
-      row.append(t, rng, inp);
+      row.append(t, bd, st, rng, inp);
       list.appendChild(row);
     }
   }

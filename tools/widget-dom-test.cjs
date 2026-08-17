@@ -4432,23 +4432,27 @@ const HAULING = `(async () => {
               { name: "hardpoint_cargo_small", w: 6, l: 9, h: 4, capacityScu: 216, usedScu: 0 }] },
     contracts: [
       { missionId: "m-tracked", title: "Tracked Haul", contractKey: "K1", generator: "Covalex_Hauling",
-        giver: "Covalex", missionType: "Hauling - Planetary", tracked: true, ended: false, completion: null,
+        giver: "Covalex", missionType: "Hauling - Planetary", deliverSeen: true, trackedNow: false,
+        board: { rank: "Rookie", size: "Medium", direct: true }, ended: false, completion: null,
         payout: null, scu: 81, minScu: 81, maxScu: 81, source: "log", exact: true, plannable: true,
         legs: [leg("g-tracked", { scu: 81, min: 81, max: 81, source: "log", exact: true,
           commodity: "Stims", destination: "Baijini Point", boxes: [{ scu: 8, count: 10 }, { scu: 1, count: 1 }],
           boxLabel: "10x8 · 1x1", boxCount: 11 })] },
       { missionId: "m-range", title: "Untracked Haul", contractKey: "K2", generator: "Covalex_Hauling",
-        giver: "Covalex", missionType: "Hauling - Planetary", tracked: false, ended: false, completion: null,
+        giver: "Covalex", missionType: "Hauling - Planetary", deliverSeen: false, trackedNow: false,
+        board: { rank: "Junior", size: "Extra Small", direct: true }, ended: false, completion: null,
         payout: null, scu: 56, minScu: 40, maxScu: 56, source: "range", exact: false, plannable: true,
         legs: [leg("g-range")] },
       { missionId: "m-orphan", title: "Orphan Haul", contractKey: "K3", generator: "Covalex_Hauling",
-        giver: "Covalex", missionType: "Hauling - Planetary", tracked: true, ended: false, completion: null,
+        giver: "Covalex", missionType: "Hauling - Planetary", deliverSeen: true, trackedNow: false,
+        board: null, ended: false, completion: null,
         payout: null, scu: 16, minScu: 16, maxScu: 16, source: "log", exact: true, plannable: true,
         legs: [leg("g-orphan", { scu: 16, min: 16, max: 16, source: "log", exact: true,
           commodity: "Waste", destination: "Riker Memorial Spaceport", fromLocation: null,
           boxes: [{ scu: 8, count: 2 }], boxLabel: "2x8", boxCount: 2 })] },
     ],
-    untracked: [{ missionId: "m-range", title: "Untracked Haul", minScu: 40, maxScu: 56 }],
+    untracked: [{ missionId: "m-range", title: "Untracked Haul", minScu: 40, maxScu: 56, trackedNow: false }],
+    trackedMissionId: null,
     trips: [{ landings: 2, totalMinutes: 12, peakScu: 137, method: "exact", stops: [
       { id: "@1,1,1:pickup", name: "Baijini Point", kind: "pickup", minutes: 4, loadAfterScu: 137, sameSpot: false,
         actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" },
@@ -4485,7 +4489,7 @@ const HAULING = `(async () => {
   ok("a TRACKED contract prints the game's own figure",
      byTitle("Tracked Haul").querySelector(".amt").textContent === "81 SCU",
      byTitle("Tracked Haul").querySelector(".amt").textContent);
-  ok("...badged as coming from the log", byTitle("Tracked Haul").querySelector(".badge").textContent === "tracked");
+  ok("...badged as coming from the log", byTitle("Tracked Haul").querySelector(".badge").textContent === "stated");
   ok("every contract carries a provenance badge", cards.every((c) => c.querySelector(".badge")));
   ok("a modelled box split is labelled modelled",
      [...byTitle("Tracked Haul").querySelectorAll(".chips .badge")].some((b) => b.textContent === "modelled"));
@@ -4498,6 +4502,44 @@ const HAULING = `(async () => {
      rows.map((r) => r.textContent).join(" | "));
   ok("...showing the bounds we do have", /40–56 SCU/.test(rows[0].textContent), rows[0].textContent);
   ok("...with somewhere to type the real figure", !!rows[0].querySelector("input"));
+  ok("...and the rank tier and size band it is listed under on the board",
+     rows[0].querySelector(".bd").textContent === "Junior · Extra Small",
+     rows[0].querySelector(".bd").textContent);
+
+  // 🔴 THE THREE STATES. This contract is not tracked, so tracking it is worth doing and the
+  // panel says so.
+  ok("an UNTRACKED contract is told to be tracked",
+     rows[0].querySelector(".badge").textContent === "track it",
+     rows[0].querySelector(".badge").textContent);
+  ok("...and the heading is the instruction",
+     document.getElementById("trackK").textContent === "Track these in mobiGlas",
+     document.getElementById("trackK").textContent);
+
+  // 🔴 Now track it. The tonnage is STILL unknown — the game states it at objective assignment
+  // and re-tracking replays nothing — so the panel must stop asking for something already done.
+  // This is Sub's live 2026-08-17 board, and the exact state the old prompt got wrong.
+  plan.contracts[1].trackedNow = true;
+  plan.trackedMissionId = "m-range";
+  render();
+  await sleep(60);
+  const trow = document.querySelector(".trow");
+  ok("🔴 a TRACKED contract with no tonnage is not told to track it again",
+     trow.querySelector(".badge").textContent === "tracked",
+     trow.querySelector(".badge").textContent);
+  ok("🔴 ...and the heading stops being an instruction nothing can satisfy",
+     document.getElementById("trackK").textContent === "Load not confirmed",
+     document.getElementById("trackK").textContent);
+  ok("🔴 ...and the explanation says why there is nothing left to do",
+     /re-tracking does not replay/.test(document.getElementById("trackWhy").textContent),
+     document.getElementById("trackWhy").textContent);
+  ok("...while the row still offers the box to type the figure into",
+     !!trow.querySelector("input"));
+  ok("...and the contract is still listed, not hidden",
+     document.querySelectorAll(".trow").length === 1);
+  plan.contracts[1].trackedNow = false;
+  plan.trackedMissionId = null;
+  render();
+  await sleep(60);
 
   // ── 🔴 nothing is dropped from the route in silence ──────────────────────
   const notes = [...document.querySelectorAll(".note")].map((n) => n.textContent).join(" | ");

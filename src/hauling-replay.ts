@@ -40,9 +40,9 @@ function replay(path: string): HaulContract[] {
 function describe(c: HaulContract): string {
   const drops = c.stops.filter((s) => s.role === "dropoff");
   const done = drops.filter((s) => s.state === "completed").length;
-  const cargo = c.tracked
+  const cargo = c.deliverSeen
     ? drops.map((s) => (s.need == null ? "?" : `${s.need}${s.unit === "scu" ? " SCU" : s.unit === "boxes" ? " box" : "×"} ${s.commodity ?? ""} → ${s.destination ?? "?"}`)).join(" · ")
-    : "(not tracked — no Deliver line)";
+    : "(no Deliver line — the game never stated the tonnage)";
   return `  ${c.missionId.slice(0, 8)}  ${(c.completion ?? "live").padEnd(10)} `
     + `${String(c.payout ?? "").padStart(7)}  drops ${done}/${drops.length}  items ${c.items.length}  ${c.contractKey}\n`
     + `            ${cargo}`;
@@ -63,6 +63,10 @@ const paths = collectLogPaths(DEFAULT_LOG).filter((p) => {
 console.log(`sweeping ${paths.length} logs under ${dirname(DEFAULT_LOG)}\n`);
 
 let total = 0, tracked = 0, ended = 0, completed = 0, paid = 0, withItems = 0, withPos = 0, dropsDone = 0, dropsAll = 0;
+// 🔑 How many sessions END with a contract selected in mobiGlas, off the objective data bank.
+// This is the tracking signal the app was blind to until 2026-08-17, and it is counted per LOG
+// because tracking is exclusive — at most one contract per session can be the tracked one.
+let sessionsTracking = 0, sessionsWithHauls = 0;
 const generators = new Map<string, number>();
 const units = new Map<string, number>();
 const examples: string[] = [];
@@ -70,14 +74,16 @@ const examples: string[] = [];
 for (const p of paths) {
   let contracts: HaulContract[];
   try { contracts = replay(p); } catch (err) { console.log(`  !! ${p}: ${(err as Error).message}`); continue; }
+  if (contracts.length) sessionsWithHauls++;
   for (const c of contracts) {
     total++;
     generators.set(c.generator, (generators.get(c.generator) ?? 0) + 1);
-    if (c.tracked) { tracked++; if (examples.length < 12) examples.push(describe(c)); }
+    if (c.deliverSeen) { tracked++; if (examples.length < 12) examples.push(describe(c)); }
     if (c.endedAt != null) ended++;
     if (c.completion === "Complete") { completed++; if (c.payout != null) paid++; }
     if (c.items.length) withItems++;
     if (c.stops.some((s) => s.pos)) withPos++;
+    if (c.trackedNow) sessionsTracking++;
     for (const s of c.stops) {
       if (s.unit) units.set(s.unit, (units.get(s.unit) ?? 0) + 1);
       if (s.role !== "dropoff") continue;
@@ -89,7 +95,8 @@ for (const p of paths) {
 
 const pct = (n: number, d: number) => (d ? `${((n / d) * 100).toFixed(1)}%` : "—");
 console.log(`hauling contracts seen ........ ${total}`);
-console.log(`  TRACKED (Deliver line) ...... ${tracked}  (${pct(tracked, total)})   <- the tracking gate`);
+console.log(`  TONNAGE STATED (Deliver line) ${tracked}  (${pct(tracked, total)})   <- fires at objective assignment, NOT on track`);
+console.log(`  TRACKED IN MOBIGLAS at EOF .. ${sessionsTracking}  of ${sessionsWithHauls} hauling sessions`);
 console.log(`  with a marker position ...... ${withPos}  (${pct(withPos, total)})`);
 console.log(`  with an exact item manifest . ${withItems}  (${pct(withItems, total)})`);
 console.log(`  ended ....................... ${ended}`);

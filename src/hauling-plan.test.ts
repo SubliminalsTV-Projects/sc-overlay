@@ -229,7 +229,7 @@ check("clearing the override falls back to the log's ship",
 
 // ── degenerate input ───────────────────────────────────────────────────────
 const empty = buildHaulingPlan(
-  { updatedAt: 0, playerNodeId: null, ship: null, contracts: [], untracked: [] },
+  { updatedAt: 0, playerNodeId: null, ship: null, contracts: [], untracked: [], trackedMissionId: null },
   data,
 );
 check("an empty board is an empty plan, not a throw",

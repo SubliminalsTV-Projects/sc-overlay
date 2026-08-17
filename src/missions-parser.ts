@@ -67,11 +67,23 @@ export type MissionEvent =
    *  log, so callers correlate it to the completion that fired just before by time. */
   | { kind: "reward"; ts: string | null; amount: number }
   | { kind: "blueprintReceived"; ts: string | null; name: string; missionId: string | null }
-  /** A hauling contract's delivery objective, off the "New Objective: Deliver 0/N …"
-   *  notification. 🔑 This line is TRACKING-GATED, not lossy: the game only emits it for a
-   *  contract the player has TRACKED in mobiGlas. Measured on Sub's 2026-08-16 session — 7
-   *  hauling contracts accepted, 7 CreateMarkers, 2 Deliver lines, matching the 2 he tracked.
-   *  So its absence is a prompt to the player, never a parser bug. */
+  /**
+   * A hauling contract's delivery objective, off the "New Objective: Deliver 0/N …" notification.
+   *
+   * 🔴 **This fires on objective ASSIGNMENT, not on track — and re-tracking never replays it.**
+   * Earlier research called it "tracking-gated" and concluded the widget could ask the player to
+   * track a contract to learn its tonnage. **That is wrong, and it is the bug this event's
+   * doc comment exists to stop coming back.** Settled on Sub's live 2026-08-17 session: four
+   * hauling contracts, ONE Deliver line (fired at spawn-in for the contract that was already
+   * tracked), and then eight deliberate track/untrack cycles across all four contracts over three
+   * minutes producing **zero** further Deliver lines. So the widget may say "track it and the
+   * figure arrives at the next assignment" — it may NOT say "track it to see the tonnage now",
+   * which is a prompt the game will not answer.
+   *
+   * The assignments that DO emit it: a fresh accept (within ~1 s of `Contract Accepted`), a
+   * spawn-in re-emission (which carries live progress, hence `have`), and a drop-off changing
+   * state. See `trackedMarker` for the signal that actually reports tracking.
+   */
   | {
       kind: "haulObjective";
       ts: string | null;
@@ -89,6 +101,51 @@ export type MissionEvent =
       /** Commodity ("Processed Food") or item name; null for the bare "Cargo Boxes" form. */
       commodity: string | null;
       destination: string;
+    }
+  /**
+   * An objective marker entering or leaving the player's data bank — i.e. **the player TRACKED
+   * or untracked a contract in mobiGlas.** This is the live tracking signal, and it was in the
+   * log the whole time under a name that reads like marker plumbing:
+   *
+   *   <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_1873[1873]
+   *     - Added to DataBank of Player: IMC-SubliminaL[204772220757]
+   *     - ZonePos: x: -771960.562500, y: -321347.218750, z: -359509.343750,
+   *       missionId[e21a3aa6-…], objectiveId[pickup_5ddfa24e-…_0]
+   *   <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_1869[1869]
+   *     - Removed from DataBank of Player: …, missionId[1bc24142-…], objectiveId[dropoff_4d9…_0]
+   *
+   * 🔑 **Tracking is EXCLUSIVE and it fires on EVERY track**, unlike the Deliver line (see
+   * `haulObjective`). Measured on Sub's live 2026-08-17 session: he cycled four hauling contracts
+   * eight times over three minutes and every single track emitted a clean Remove/Add pair.
+   *
+   * 🔴 **But this event is NOT hauling-only, and for combat missions it is pure noise.** Across
+   * Sub's 481 backup logs it fires **177,853** times; the volume is `HeadHunters_Mercenary_*` and
+   * `CitizensForProsperity_*` markers streaming in and out, which re-add the SAME objective
+   * hundreds of times a session (one log: 1,509 Adds for one FPS contract). Those carry a BARE
+   * uuid objectiveId, not the `pickup_`/`dropoff_`/`d_` tokens hauling writes. So a consumer must
+   * scope this to missions it already knows about — `HaulingTracker` does, by ignoring any
+   * missionId that never produced a hauling `CreateMarker`.
+   *
+   * ⚠️ A Remove also fires for missions that are NOT tracked (markers streaming out): in one real
+   * session `Remove 388616e7` arrived while `1bc24142` was the tracked contract. So a Remove may
+   * only ever retire the objective it names — never assume it means "untracked".
+   *
+   * `pos` is byte-identical to the `CreateMarker` position for the same marker entity (26 of 26 on
+   * the live log), and unlike CreateMarker this line carries NO `zoneHostId`, so it is strictly
+   * the weaker of the two for distance. It is kept only as a backfill for a marker whose
+   * CreateMarker fell outside the window we read.
+   */
+  | {
+      kind: "trackedMarker";
+      ts: string | null;
+      missionId: string;
+      objectiveId: string;
+      /** From `MissionObjectiveMarker_<n>[<n>]` — the same id CreateMarker calls markerEntityId. */
+      markerEntityId: string | null;
+      /** True for AddToPlayerDataBank, false for RemoveFromPlayerDataBank. */
+      added: boolean;
+      /** Only on an Add; the Remove line states no position. */
+      pos: { x: number; y: number; z: number } | null;
     }
   /** Server-pushed objective state ("… - objective_id <id> - state MISSION_OBJECTIVE_STATE_…").
    *  The ONLY per-destination progress signal in the log — the SCU counter itself never moves. */
@@ -279,6 +336,12 @@ const RE = {
   objectiveIdField: /ObjectiveId:\s*\[([^\]]*)\]/,
   mkMarkerEntity: /markerEntityId\s*\[(\d+)\]/,
   mkPosition: /position\s*\[x:\s*([-\d.]+),\s*y:\s*([-\d.]+),\s*z:\s*([-\d.]+)\]/,
+  // The data-bank lines name their marker in the message PREFIX rather than in a labelled field:
+  // "MissionObjectiveMarker_1873[1873] - Added to DataBank of Player: …".
+  bankMarkerEntity: /MissionObjectiveMarker_\d+\[(\d+)\]/,
+  // Add only. Spelled "ZonePos:" with bare x/y/z and NO surrounding brackets, so it needs its own
+  // pattern — `mkPosition` anchors on the bracketed `position [x: …]` form CreateMarker writes.
+  bankPosition: /ZonePos:\s*x:\s*([-\d.]+),\s*y:\s*([-\d.]+),\s*z:\s*([-\d.]+)/,
   // "…for: mission_id <uuid> - objective_id <id> - state MISSION_OBJECTIVE_STATE_COMPLETED - created 0"
   upsert: new RegExp(`mission_id\\s+(${UUID})\\s*-\\s*objective_id\\s+(\\S+)\\s*-\\s*state\\s+MISSION_OBJECTIVE_STATE_(\\w+)(?:\\s*-\\s*created\\s+(\\d+))?`),
   // "Mission Item <class>_<entityId> (<entityId>) registered with mission id <uuid>, phase id
@@ -436,7 +499,28 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
     }
 
     // 🔑 The only reliable hauling accept signal is the marker above — it fires for EVERY
-    // accepted contract. The three tags below fill in what the player's own actions reveal.
+    // accepted contract. The tags below fill in what the player's own actions reveal.
+
+    // 🔑 THE TRACKING SIGNAL. Both spellings share one shape; only the Add carries a ZonePos.
+    // ⚠️ High volume on combat missions (177,853 lines across 481 backup logs) — see the
+    // `trackedMarker` doc comment. Consumers must scope it to missions they already know.
+    case "CObjectiveMarkerComponent::AddToPlayerDataBank":
+    case "CObjectiveMarkerComponent::RemoveFromPlayerDataBank": {
+      const mid = m.match(RE.mkMissionId);
+      const oid = m.match(RE.mkObjective);
+      if (!mid || !oid) return null;
+      const added = tag.endsWith("AddToPlayerDataBank");
+      const p = added ? m.match(RE.bankPosition) : null;
+      return {
+        kind: "trackedMarker",
+        ts: e.timestamp,
+        missionId: mid[1],
+        objectiveId: oid[1],
+        markerEntityId: m.match(RE.bankMarkerEntity)?.[1] ?? null,
+        added,
+        pos: p ? { x: parseFloat(p[1]), y: parseFloat(p[2]), z: parseFloat(p[3]) } : null,
+      };
+    }
 
     case "ObjectiveUpserted": {
       const u = m.match(RE.upsert);

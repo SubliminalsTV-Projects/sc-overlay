@@ -9,16 +9,26 @@
  * 2,299 of 2,299 CreateMarker lines parse completely. Everything else here is optional detail
  * layered on top of it.
  *
- * 🔑 The "New Objective: Deliver 0/N SCU of <C> to <D>" line — the one that names the tonnage,
- * the commodity and the destination — is **TRACKING-GATED**. The game emits it only for a
- * contract the player has TRACKED in mobiGlas. Sub's 2026-08-16 session is the proof: seven
- * hauling contracts accepted, seven CreateMarker bursts, two Deliver lines — and he had tracked
- * exactly two. Earlier research recorded this as "fires unreliably (2 of 8)" and treated it as
- * data loss; it is not. It is a user action we can ask for.
+ * 🔴 TWO DIFFERENT THINGS USED TO SHARE THE WORD "TRACKED", AND CONFLATING THEM SHIPPED A PROMPT
+ * THAT COULD NOT COME TRUE. They are now two fields, and the distinction is the point of this file:
  *
- * That is why `HaulContract.tracked` exists and why `untracked()` is part of the public view: the
- * widget's job is to show the player which contracts still need tracking, not to paper over a
- * gap. Once tracked, the numbers are exact and come straight from the game.
+ *   `deliverSeen`  the game has told us the tonnage — the "New Objective: Deliver 0/N SCU of <C>
+ *                  to <D>" line arrived. It fires on objective ASSIGNMENT: a fresh accept, a
+ *                  spawn-in re-emission, or a drop-off changing state.
+ *   `trackedNow`   the contract is the one currently selected in mobiGlas, read live from
+ *                  `CObjectiveMarkerComponent::Add/RemoveFromPlayerDataBank`.
+ *
+ * 🔑 **Re-tracking does NOT replay the Deliver line.** Earlier research called that line
+ * "tracking-gated" and the widget therefore told the player to track a contract to learn its
+ * tonnage. Sub did exactly that, four contracts, and nothing happened — because the game had
+ * already assigned those objectives and will not restate them. Settled on his live 2026-08-17
+ * log: eight track/untrack cycles across four contracts in three minutes, **zero** Deliver lines,
+ * while every one of those tracks emitted a clean data-bank Remove/Add pair.
+ *
+ * So the widget may say "track it and the figure lands at the next assignment", and it must NOT
+ * say "track it to see the tonnage" to a contract that is already tracked. `trackedNow` is what
+ * makes that distinction possible; before it existed the app could not tell the two states apart
+ * and said the actionable thing to everybody.
  *
  * ── What it does NOT give us ───────────────────────────────────────────────────────────────
  *
@@ -42,6 +52,7 @@
  */
 import { EventEmitter } from "node:events";
 import { objectiveKeyOf, objectiveRoleOf, type MissionEvent } from "./missions-parser.js";
+import { parseBoardTitle, type BoardTitle } from "./hauling-advisor.js";
 
 /** Generators whose contracts are cargo hauls. Matched case-insensitively as a SUBSTRING of the
  *  generator name or the contract key, because CIG names them inconsistently: the org is in the
@@ -117,10 +128,28 @@ export interface HaulContract {
   generator: string;
   contractDefId: string;
   title: string | null;
+  /**
+   * The contract's title decomposed the way the player reads it off the board —
+   * "Rookie Rank - Direct Extra Small Cargo Haul" → rank `Rookie`, size `Extra Small`, direct.
+   *
+   * 🔑 Both halves are real and both were previously declared absent. An earlier read looked at
+   * the contract KEY's grade suffix (`SmallGrade`/`SupplyGrade`/`BulkGrade`) and reported that
+   * Sub's extra-small/small/medium model "doesn't exist in the data". It does — in the title, and
+   * it does not track the grade suffix at all: on Sub's live board `…_Corundum_Stanton3_
+   * SmallGrade` is titled "Extra Small" while `…_Stims_Stanton3_SupplyGrade` is titled "Medium".
+   *
+   * Null for the ~6% of contracts that do not follow the pattern (Dead Saints, Ling Family, Red
+   * Wind promos). Arrives with the accept notification, so it is known the moment a contract is
+   * taken — unlike the tonnage.
+   */
+  board: BoardTitle | null;
   acceptedAt: number | null;
-  /** True once a Deliver objective line has been seen — i.e. the player tracked it in mobiGlas.
-   *  The widget turns this into a checklist: untracked contracts have no tonnage yet. */
-  tracked: boolean;
+  /** The game has stated this contract's tonnage: a "Deliver 0/N …" line arrived. ⚠️ NOT "the
+   *  player tracked it" — see the header. Nothing the player does re-emits that line. */
+  deliverSeen: boolean;
+  /** This is the contract currently selected in mobiGlas, live from the objective data bank.
+   *  Tracking is exclusive, so at most one live contract has this set. */
+  trackedNow: boolean;
   stops: HaulStop[];
   /** Exact manifest, for mission-item hauls only. Empty for every SCU haul. */
   items: HaulItem[];
@@ -145,8 +174,12 @@ export interface HaulingView {
   playerNodeId: string | null;
   ship: HaulShip | null;
   contracts: HaulContract[];
-  /** Mission ids of live contracts with no Deliver line yet — the "please track these" list. */
+  /** Mission ids of live contracts whose tonnage the game has never stated. ⚠️ This is NOT the
+   *  same as "not tracked in mobiGlas" — a tracked contract can be in here, and that is exactly
+   *  the case the old prompt handled wrongly. */
   untracked: string[];
+  /** The contract selected in mobiGlas right now, or null when nothing hauling-related is. */
+  trackedMissionId: string | null;
 }
 
 const ts = (s: string | null): number | null => {
@@ -192,6 +225,17 @@ export class HaulingTracker extends EventEmitter {
   private itemClasses = new Map<string, string>();
   private playerNodeId: string | null = null;
   private ship: HaulShip | null = null;
+  /**
+   * missionId → the objective keys of that mission currently sitting in the player's data bank.
+   *
+   * 🔑 Held per OBJECTIVE rather than as a single "tracked mission" scalar, because a Remove
+   * genuinely fires for missions that are not tracked — markers streaming out. On Sub's
+   * 2026-08-16 session `Remove 388616e7` arrived while `1bc24142` was the tracked contract, and a
+   * scalar that cleared on any matching Remove would have to guess which kind it was. A set
+   * cannot: a stray Remove retires an objective that was never in the bank and changes nothing.
+   */
+  private bank = new Map<string, Set<string>>();
+  private trackedMissionId: string | null = null;
   /** Completions still waiting for their "Awarded N aUEC" line, newest last. */
   private awaitingPayout: { missionId: string; at: number }[] = [];
   /** Rewards that arrived before their completion (dev-replay does this), newest last. */
@@ -207,8 +251,16 @@ export class HaulingTracker extends EventEmitter {
         const c = this.contracts.get(ev.missionId);
         // Only fills in detail — the accept notification alone never creates a contract, because
         // it cannot tell a haul from a bounty. CreateMarker is what admits one.
+        // Safe to require the contract to exist already: measured across 48 accepts in 60 backup
+        // logs, CreateMarker precedes the accept notification every time, with no exceptions.
         if (c) {
-          if (ev.title) c.title = ev.title;
+          if (ev.title) {
+            c.title = ev.title;
+            // The rank tier and size band the player sees on the board. Known at accept, which is
+            // the whole value of it — the tonnage may never be stated at all.
+            const b = parseBoardTitle(ev.title);
+            c.board = b.rank || b.size ? b : null;
+          }
           c.acceptedAt ??= ts(ev.ts);
           this.touch(ev.ts);
         }
@@ -216,6 +268,9 @@ export class HaulingTracker extends EventEmitter {
       }
       case "haulObjective":
         this.onDeliverObjective(ev);
+        break;
+      case "trackedMarker":
+        this.onTrackedMarker(ev);
         break;
       case "objectiveState":
         this.onObjectiveState(ev);
@@ -239,6 +294,8 @@ export class HaulingTracker extends EventEmitter {
       case "sessionStart":
         this.contracts.clear();
         this.itemClasses.clear();
+        this.bank.clear();
+        this.trackedMissionId = null;
         this.ship = null;
         this.awaitingPayout = [];
         this.looseRewards = [];
@@ -255,8 +312,9 @@ export class HaulingTracker extends EventEmitter {
     if (!c) {
       c = {
         missionId: ev.missionId, contract: ev.contract, contractKey: ev.contractKey,
-        generator: ev.generator, contractDefId: ev.contractDefId, title: null,
-        acceptedAt: ts(ev.ts), tracked: false, stops: [], items: [], totalScu: null,
+        generator: ev.generator, contractDefId: ev.contractDefId, title: null, board: null,
+        acceptedAt: ts(ev.ts), deliverSeen: false, trackedNow: ev.missionId === this.trackedMissionId,
+        stops: [], items: [], totalScu: null,
         endedAt: null, completion: null, payout: null,
       };
       this.contracts.set(ev.missionId, c);
@@ -289,7 +347,7 @@ export class HaulingTracker extends EventEmitter {
     if (!ev.missionId) return;
     const c = this.contracts.get(ev.missionId);
     if (!c) return;
-    c.tracked = true;
+    c.deliverSeen = true;
     const key = ev.objectiveId ? objectiveKeyOf(ev.objectiveId) : null;
     // Fall back to the sole drop-off when the notification carried no objective id: a
     // single-destination contract has exactly one, so there is nothing to guess between.
@@ -306,6 +364,55 @@ export class HaulingTracker extends EventEmitter {
       stop.delivered = Math.max(stop.delivered ?? 0, ev.have);
     }
     this.recomputeTotal(c);
+    this.touch(ev.ts);
+  }
+
+  /**
+   * The player tracked or untracked something in mobiGlas.
+   *
+   * 🔴 **Scoped to contracts we already know**, and the early return is load-bearing rather than
+   * defensive: this event is not hauling-only. Across Sub's 481 backup logs it fires 177,853
+   * times, and the volume is combat contracts (`HeadHunters_Mercenary_*`,
+   * `CitizensForProsperity_*`) whose objective markers stream in and out — one session logged
+   * 1,509 Adds for a single FPS contract. Letting those through would emit an SSE push per line
+   * and re-solve the whole plan each time, for a mission this widget does not draw.
+   *
+   * The state machine is deliberately tiny:
+   *   Add     put the objective in that mission's bank set, and that mission becomes the tracked
+   *           one. Last Add wins, which is correct even though a swap interleaves its Remove and
+   *           Add lines inside one millisecond — the new mission's Add always lands, in either
+   *           order, and the old mission's Remove can only ever empty the old mission's own set.
+   *   Remove  drop that objective. A mission is untracked once its set is empty.
+   */
+  private onTrackedMarker(ev: Extract<MissionEvent, { kind: "trackedMarker" }>): void {
+    const c = this.contracts.get(ev.missionId);
+    if (!c) return;
+    const key = objectiveKeyOf(ev.objectiveId);
+    let set = this.bank.get(ev.missionId);
+    if (ev.added) {
+      if (!set) this.bank.set(ev.missionId, (set = new Set()));
+      set.add(key);
+      this.trackedMissionId = ev.missionId;
+      // Backfill only. Measured on the live log: the ZonePos here is byte-identical to the
+      // CreateMarker position for the same marker in 26 of 26 cases, and CreateMarker's is the
+      // better one because it also carries the zoneHostId a distance needs. So this exists purely
+      // for a marker whose CreateMarker fell outside the slice of log we read.
+      if (ev.pos) {
+        const role = objectiveRoleOf(ev.objectiveId);
+        const stop = c.stops.find((s) => s.key === key && s.role === role);
+        if (stop && !stop.pos) stop.pos = ev.pos;
+      }
+    } else if (set) {
+      set.delete(key);
+      if (!set.size) this.bank.delete(ev.missionId);
+    }
+    // Recomputed from the bank rather than assigned, so "nothing is tracked" is a state the log
+    // can actually express — the player untracking everything must not leave a stale flag on.
+    if (this.trackedMissionId && !this.bank.has(this.trackedMissionId)) this.trackedMissionId = null;
+    for (const k of this.contracts.keys()) {
+      const con = this.contracts.get(k)!;
+      con.trackedNow = k === this.trackedMissionId;
+    }
     this.touch(ev.ts);
   }
 
@@ -427,7 +534,11 @@ export class HaulingTracker extends EventEmitter {
   private prune(): void {
     const now = this.lastAt || Date.now();
     for (const [id, c] of this.contracts) {
-      if (c.endedAt != null && now - c.endedAt > KEEP_ENDED_MS) this.contracts.delete(id);
+      if (c.endedAt != null && now - c.endedAt > KEEP_ENDED_MS) {
+        this.contracts.delete(id);
+        this.bank.delete(id);
+        if (this.trackedMissionId === id) this.trackedMissionId = null;
+      }
     }
   }
 
@@ -439,7 +550,8 @@ export class HaulingTracker extends EventEmitter {
       playerNodeId: this.playerNodeId,
       ship: this.ship,
       contracts,
-      untracked: contracts.filter((c) => !c.tracked && c.endedAt == null).map((c) => c.missionId),
+      untracked: contracts.filter((c) => !c.deliverSeen && c.endedAt == null).map((c) => c.missionId),
+      trackedMissionId: this.trackedMissionId,
     };
   }
 }

@@ -68,7 +68,7 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
   const c = t.view().contracts[0];
   assert.ok(c, "CreateMarker alone must admit the contract");
   assert.equal(c.title, "Rookie Rank - Direct Medium Cargo Haul");
-  assert.equal(c.tracked, true, "a Deliver line means the player tracked it");
+  assert.equal(c.deliverSeen, true, "a Deliver line is the game stating the tonnage");
   assert.equal(c.totalScu, 81);
   assert.equal(c.stops.length, 2, "one pickup + one drop-off");
   const drop = c.stops.find((s) => s.role === "dropoff")!;
@@ -125,7 +125,7 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
   ]);
   const v = t.view();
   assert.equal(v.contracts.length, 1, "an untracked contract is still a known contract");
-  assert.equal(v.contracts[0].tracked, false);
+  assert.equal(v.contracts[0].deliverSeen, false);
   assert.equal(v.contracts[0].totalScu, null, "no Deliver line means no tonnage — never a guess");
   assert.deepEqual(v.untracked, ["1d999cf2-b491-4cb0-bdb4-9f5d2f05bf98"], "it belongs on the please-track list");
 }
@@ -250,6 +250,136 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
   feed(t, [`<2026-08-05T03:10:00.000Z> [Notice] <SHUDEvent_OnNotification> Added notification "New Objective: Deliver 0/5 SCU of Recycled Material Composite to Levski: " [90] to queue. New queue size: 1, MissionId: [${MID}], ObjectiveId: [dropoff_246aa48e-a4d0-4669-be1f-8d4d029b34ef_0] [Team_CoreGameplayFeatures][Missions][Comms]`]);
   assert.equal(t.view().contracts[0].stops.find((s) => s.role === "dropoff")!.delivered, 3,
     "delivered is monotonic");
+}
+
+// ── 🔴 The tracking signal: CObjectiveMarkerComponent's player data bank ────────────────────
+//
+// Every line below is verbatim from Sub's live 2026-08-17 session, in the order the game wrote
+// them, including the interleaving of Remove and Add inside a single millisecond. Four Covalex
+// contracts; he cycled tracking through them while the tower watched.
+{
+  const t = new HaulingTracker();
+  const STIMS = "1bc24142-bd0f-44ba-9079-1a1527848aea";   // pickup/dropoff_4d907890-…
+  const WASTE = "388616e7-68ba-4bb6-b0ba-2206eaa00cb4";   // pickup/dropoff_7000cb2b-…
+  const CORUN = "e21a3aa6-6149-41c4-ae72-8c265dfaf4ee";   // pickup/dropoff_5ddfa24e-…
+  const mk = (mid: string, obj: string, entity: number) =>
+    `<2026-08-17T00:17:27.013Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${mid}], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Processed_Stims_Stanton3_SupplyGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [${obj}], markerEntityId [${entity}], zoneHostId [758378849484], position [x: -771960.562500, y: -321347.218750, z: -359509.343750] [Team_MissionFeatures][Missions]`;
+  feed(t, [
+    mk(STIMS, "dropoff_4d907890-87c7-4d71-8484-85d8936d18d4_0", 1869),
+    mk(STIMS, "pickup_4d907890-87c7-4d71-8484-85d8936d18d4_0", 1870),
+    mk(WASTE, "dropoff_7000cb2b-feea-41ab-84b2-d87e988283a3_0", 1871),
+    mk(WASTE, "pickup_7000cb2b-feea-41ab-84b2-d87e988283a3_0", 1872),
+    mk(CORUN, "pickup_5ddfa24e-a99a-4615-9174-d097b5ad5b7f_0", 1873),
+    mk(CORUN, "dropoff_5ddfa24e-a99a-4615-9174-d097b5ad5b7f_0", 1874),
+  ]);
+  assert.equal(t.view().trackedMissionId, null, "markers alone say nothing about what is tracked");
+
+  // Spawn-in: the bank state is replayed. Corundum is the tracked one; the other two are cleared.
+  feed(t, [
+    `<2026-08-17T00:17:29.569Z> [Notice] <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_1869[1869] - Removed from DataBank of Player: IMC-SubliminaL[204772220757], missionId[${STIMS}], objectiveId[dropoff_4d907890-87c7-4d71-8484-85d8936d18d4_0] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T00:17:29.569Z> [Notice] <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_1871[1871] - Removed from DataBank of Player: IMC-SubliminaL[204772220757], missionId[${WASTE}], objectiveId[dropoff_7000cb2b-feea-41ab-84b2-d87e988283a3_0] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T00:17:29.569Z> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_1873[1873] - Added to DataBank of Player: IMC-SubliminaL[204772220757] - ZonePos: x: -771960.562500, y: -321347.218750, z: -359509.343750, missionId[${CORUN}], objectiveId[pickup_5ddfa24e-a99a-4615-9174-d097b5ad5b7f_0] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T00:17:29.569Z> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_1874[1874] - Added to DataBank of Player: IMC-SubliminaL[204772220757] - ZonePos: x: -748272.078090, y: -103662.326450, z: -263812.173494, missionId[${CORUN}], objectiveId[dropoff_5ddfa24e-a99a-4615-9174-d097b5ad5b7f_0] [Team_MissionFeatures][Missions]`,
+  ]);
+  assert.equal(t.view().trackedMissionId, CORUN, "the mission whose markers went into the bank");
+  assert.equal(t.view().contracts.find((c) => c.missionId === CORUN)!.trackedNow, true);
+  assert.equal(t.view().contracts.find((c) => c.missionId === STIMS)!.trackedNow, false);
+
+  // 🔑 A swap, in the game's own order: the NEW mission's Add lands FIRST, before the old
+  // mission's Removes. A scalar "Remove clears it" would blank the flag that was just set.
+  feed(t, [
+    `<2026-08-17T00:18:20.247Z> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_1871[1871] - Added to DataBank of Player: IMC-SubliminaL[204772220757] - ZonePos: x: -771960.562500, y: -321347.218750, z: -359509.343750, missionId[${WASTE}], objectiveId[dropoff_7000cb2b-feea-41ab-84b2-d87e988283a3_0] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T00:18:20.247Z> [Notice] <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_1874[1874] - Removed from DataBank of Player: IMC-SubliminaL[204772220757], missionId[${CORUN}], objectiveId[dropoff_5ddfa24e-a99a-4615-9174-d097b5ad5b7f_0] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T00:18:20.247Z> [Notice] <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_1873[1873] - Removed from DataBank of Player: IMC-SubliminaL[204772220757], missionId[${CORUN}], objectiveId[pickup_5ddfa24e-a99a-4615-9174-d097b5ad5b7f_0] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T00:18:20.247Z> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_1872[1872] - Added to DataBank of Player: IMC-SubliminaL[204772220757] - ZonePos: x: -748272.078090, y: -103662.326450, z: -263812.173494, missionId[${WASTE}], objectiveId[pickup_7000cb2b-feea-41ab-84b2-d87e988283a3_0] [Team_MissionFeatures][Missions]`,
+  ]);
+  assert.equal(t.view().trackedMissionId, WASTE, "tracking is exclusive — the last Add wins");
+  assert.equal(t.view().contracts.filter((c) => c.trackedNow).length, 1,
+    "at most one contract can be tracked at a time");
+
+  // ⚠️ A stray Remove for a mission that is NOT tracked — markers streaming out, seen for real in
+  // the 2026-08-16 session. It must retire nothing but its own objective.
+  feed(t, [
+    `<2026-08-17T00:18:30.000Z> [Notice] <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_1869[1869] - Removed from DataBank of Player: IMC-SubliminaL[204772220757], missionId[${STIMS}], objectiveId[dropoff_4d907890-87c7-4d71-8484-85d8936d18d4_0] [Team_MissionFeatures][Missions]`,
+  ]);
+  assert.equal(t.view().trackedMissionId, WASTE, "a stray Remove must not untrack the live one");
+
+  // Untracking for real: the tracked mission's own objectives leave the bank with no Add behind.
+  feed(t, [
+    `<2026-08-17T00:18:40.000Z> [Notice] <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_1871[1871] - Removed from DataBank of Player: IMC-SubliminaL[204772220757], missionId[${WASTE}], objectiveId[dropoff_7000cb2b-feea-41ab-84b2-d87e988283a3_0] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T00:18:40.000Z> [Notice] <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_1872[1872] - Removed from DataBank of Player: IMC-SubliminaL[204772220757], missionId[${WASTE}], objectiveId[pickup_7000cb2b-feea-41ab-84b2-d87e988283a3_0] [Team_MissionFeatures][Missions]`,
+  ]);
+  assert.equal(t.view().trackedMissionId, null, "untracking everything is a state the log can say");
+
+  // 🔴 And the whole point: tracked, and STILL no tonnage. The game states the figure at objective
+  // assignment and re-tracking does not replay it — eight track cycles in Sub's live log produced
+  // zero Deliver lines. The two flags must be independently observable or the widget cannot tell
+  // "go and track this" from "there is nothing left for you to do here".
+  feed(t, [
+    `<2026-08-17T00:18:50.000Z> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_1869[1869] - Added to DataBank of Player: IMC-SubliminaL[204772220757] - ZonePos: x: -771960.562500, y: -321347.218750, z: -359509.343750, missionId[${STIMS}], objectiveId[dropoff_4d907890-87c7-4d71-8484-85d8936d18d4_0] [Team_MissionFeatures][Missions]`,
+  ]);
+  const stims = t.view().contracts.find((c) => c.missionId === STIMS)!;
+  assert.equal(stims.trackedNow, true);
+  assert.equal(stims.deliverSeen, false, "tracked is not the same fact as tonnage-known");
+  assert.deepEqual(t.view().untracked, [STIMS, WASTE, CORUN],
+    "every contract still lacks a stated tonnage, tracked or not");
+}
+
+// ⚠️ The data bank is NOT hauling-only. Across Sub's 481 backup logs it fires 177,853 times, and
+// the volume is combat contracts whose markers stream in and out — one session logged 1,509 Adds
+// for a single HeadHunters FPS contract, all carrying a BARE uuid objectiveId. A tracker that let
+// those through would push an SSE frame and re-solve the plan per line, for a mission it never
+// draws.
+{
+  const t = new HaulingTracker();
+  feed(t, [
+    `<2026-08-13T09:26:45.000Z> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_204[204] - Added to DataBank of Player: IMC-SubliminaL[204772220757] - ZonePos: x: 1.0, y: 2.0, z: 3.0, missionId[4fe9ab33-ae6f-b345-aacf-82251adb1c4e], objectiveId[39fc3b41-bde1-ea62-6407-1eeef00723e1] [Team_MissionFeatures][Missions]`,
+  ]);
+  assert.equal(t.view().contracts.length, 0, "a combat mission never becomes a hauling contract");
+  assert.equal(t.view().trackedMissionId, null, "and it never claims to be the tracked haul");
+}
+
+// 🔴 A MULTI-DROP CONTRACT LOSES ONE OBJECTIVE FROM THE BANK AND IS STILL TRACKED. This is the
+// case that decides the whole design, and it is not rare: swept across all 481 backup logs, a
+// Remove names the currently-tracked mission while leaving it partially in the bank **422 times**.
+// The obvious scalar rule ("a Remove for the tracked mission untracks it") reports every one of
+// those as an untrack, so the widget would flash "go and track this" at a contract the player is
+// looking at — the same wrong prompt, one layer down. Real GoblinG shape: two drop-off legs of one
+// contract, whose ids differ only in the leading hash and the final index.
+{
+  const t = new HaulingTracker();
+  const MID = "6af30ddb-1a2f-4a55-9d0e-8f5b0e0a1c11";
+  const D0 = "d_2920218645_a789f57a-e12b-4bcd-8132-e0c03d84fc89_-1_0";
+  const D1 = "d_2360646142_a789f57a-e12b-4bcd-8132-e0c03d84fc89_-1_1";
+  const mk = (obj: string, entity: number) =>
+    `<2025-08-02T04:00:00.000Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${MID}], generator name [GoblinG_Generator], contract [GoblinG_HaulCargo_L_Stanton2], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [${obj}], markerEntityId [${entity}], zoneHostId [1], position [x: 1.0, y: 2.0, z: 3.0] [Team_MissionFeatures][Missions]`;
+  const bank = (verb: "Add" | "Remove", obj: string, entity: number) => verb === "Add"
+    ? `<2025-08-02T04:03:00.000Z> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> MissionObjectiveMarker_${entity}[${entity}] - Added to DataBank of Player: IMC-SubliminaL[204772220757] - ZonePos: x: 1.0, y: 2.0, z: 3.0, missionId[${MID}], objectiveId[${obj}] [Team_MissionFeatures][Missions]`
+    : `<2025-08-02T04:03:32.215Z> [Notice] <CObjectiveMarkerComponent::RemoveFromPlayerDataBank> MissionObjectiveMarker_${entity}[${entity}] - Removed from DataBank of Player: IMC-SubliminaL[204772220757], missionId[${MID}], objectiveId[${obj}] [Team_MissionFeatures][Missions]`;
+  feed(t, [mk(D0, 10), mk(D1, 11), bank("Add", D0, 10), bank("Add", D1, 11)]);
+  assert.equal(t.view().trackedMissionId, MID);
+  feed(t, [bank("Remove", D0, 10)]);
+  assert.equal(t.view().trackedMissionId, MID,
+    "one leg leaving the bank does not untrack a multi-drop contract");
+  feed(t, [bank("Remove", D1, 11)]);
+  assert.equal(t.view().trackedMissionId, null, "the last one out does");
+}
+
+// ── The board title: rank tier and size band, known at accept ───────────────────────────────
+// 🔑 Both were previously declared absent from the data after checking the contract KEY's grade
+// suffix. They live in the TITLE, and they do not track the suffix: on this very board
+// `…_SmallGrade` is titled "Extra Small" while `…_SupplyGrade` is titled "Medium".
+{
+  const t = new HaulingTracker();
+  const MID = "e21a3aa6-6149-41c4-ae72-8c265dfaf4ee";
+  feed(t, [
+    `<2026-08-17T00:17:27.014Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${MID}], generator name [Covalex_Hauling], contract [HaulCargo_AToB_RefinedOre_Corundum_Stanton3_SmallGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [pickup_5ddfa24e-a99a-4615-9174-d097b5ad5b7f_0], markerEntityId [1873], zoneHostId [758378849484], position [x: -771960.562500, y: -321347.218750, z: -359509.343750] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T00:17:27.099Z> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Accepted:  Rookie Rank - Direct Extra Small Cargo Haul: " [3] to queue. New queue size: 4, MissionId: [${MID}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
+  ]);
+  const c = t.view().contracts[0];
+  assert.deepEqual(c.board, { rank: "Rookie", size: "Extra Small", direct: true });
+  assert.equal(c.contractKey.endsWith("SmallGrade"), true,
+    "the key says SmallGrade while the board says Extra Small — the suffix is not the band");
 }
 
 console.log("hauling tests passed");
