@@ -76,6 +76,17 @@ export interface PlanOptions {
    *  Weaker than a manual pick and than the hauling log line, so it sits last in the chain. */
   detectedShip?: string | null;
   objective?: "auec-per-hour" | "fewest-stops";
+  /** The locationId the player says they are AT, so the route starts from there.
+   *
+   *  🔑 Without this the optimiser has no origin and is free to open anywhere, which on a pair of
+   *  mirrored contracts (A→B and B→A) means a coin flip. Sub hit exactly that: standing at the
+   *  ArcCorp end with both a load to collect there and one to bring back, he was told to fly to
+   *  Baijini EMPTY first — a wasted leg the model could not see, because an empty opening hop
+   *  costs nothing it was measuring.
+   *
+   *  The player supplies it because the game does not: no player-position signal has been found in
+   *  the log, only mission-marker coordinates. An unknown id is ignored rather than guessed at. */
+  startAt?: string | null;
   /** missionId -> total SCU the player pinned by hand. Splits evenly across that contract's legs. */
   pins?: Record<string, number>;
   travelSpeedMps?: number;
@@ -551,12 +562,16 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // 🔑 The hold that is still FREE. Cargo already aboard cannot be unloaded to make room for a
   // pickup, so planning against the full rating would happily overfill a part-loaded ship.
   const freeCapacity = capacityScu != null ? Math.max(0, capacityScu - aboardScu) : undefined;
+  // Where the player says they are. Only a place the route already touches can be an origin — an
+  // id we have no coordinates for would silently become "anywhere", which is the bug, not the fix.
+  const startPos = opts.startAt ? posByLoc.get(opts.startAt) ?? null : null;
   const run = stops.length
     ? planRun(stops, routeContracts, {
         objective: opts.objective ?? "auec-per-hour",
         capacityScu: freeCapacity,
         travelSpeedMps: opts.travelSpeedMps,
         stopMinutes: opts.stopMinutes,
+        startPos,
       })
     : { trips: [], stranded: [], totalMinutes: 0, payout: 0, auecPerHour: 0 };
 

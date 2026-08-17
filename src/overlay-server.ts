@@ -2633,6 +2633,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // own detector already resolved for the skin. See PlanOptions.detectedShip.
       detectedShip: shipName,
       objective: body.objective === "fewest-stops" ? "fewest-stops" : "auec-per-hour",
+      // Where the player says they are standing. See PlanOptions.startAt.
+      startAt: typeof body.startAt === "string" && body.startAt ? body.startAt : null,
       pins,
     });
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });

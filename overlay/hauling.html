@@ -80,6 +80,10 @@
   .track .th .n { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); }
   .track .why { padding: 0 12px 6px; font-size: 10px; line-height: 1.5; color: var(--cyan-dim); }
   .track .list { max-height: 132px; overflow-y: auto; }
+  /* Collapsed = answered. Quietened rather than removed: the heading still reports what the plan
+     is using, and the whole strip is the click target that brings the type-in boxes back. */
+  .track.done { cursor: pointer; opacity: 0.72; }
+  .track.done .th .k { color: var(--cyan-dim); }
   .trow { display: flex; align-items: center; gap: 7px; padding: 4px 12px; }
   .trow .t { flex: 1; min-width: 0; font-size: 11px; color: var(--cyan-text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -230,6 +234,12 @@
         <select id="shipPick" title="The ship you are flying. The log names it when it can; pick it here when it cannot."></select>
         <span class="src" id="shipSrc"></span>
       </div>
+      <!-- 🔴 Where the player is standing. The game does not log it, and without it the optimiser
+           has no origin: on mirrored contracts (A→B and B→A) it opens wherever it likes, which
+           sent Sub to Baijini EMPTY while the load he wanted was at his feet. -->
+      <div class="shiprow">
+        <select id="startPick" title="Where you are right now. The route starts here, so it stops sending you to the far end empty."></select>
+      </div>
       <div class="caps" id="caps"></div>
       <div class="facts" id="facts"></div>
     </div>
@@ -270,6 +280,11 @@
   let objective = "auec-per-hour";
   let showDone = false;
   let shipPick = "";          // "" = trust the log
+  // Where the player says they are. localStorage, not config: it is a fact about right now, and a
+  // stale one is worse than none — so it is dropped the moment the plan stops containing it.
+  const START_KEY = "sc-hauling-start";
+  let startPick = (() => { try { return localStorage.getItem(START_KEY) || ""; } catch { return ""; } })();
+  function saveStart() { try { localStorage.setItem(START_KEY, startPick); } catch { /* private mode */ } }
   /** Which lift the stow diagram is lighting up. Defaults to the first one to load. */
   let focusMission = null;
   /** Hull classes whose boxes the station's arm places for you — they get no stowage plan at all.
@@ -336,11 +351,14 @@
     try {
       const r = await fetch("/api/hauling/plan", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ ship: shipPick, objective, pins }),
+        body: JSON.stringify({ ship: shipPick, objective, pins, startAt: startPick }),
       });
       if (!r.ok) return;
       plan = await r.json();
       prunePins(new Set(plan.contracts.filter((c) => !c.ended).map((c) => c.missionId)));
+      // A start the plan no longer knows about is a place from a finished board. Silently keeping
+      // it would route from somewhere that is not on the map any more.
+      if (startPick && !(plan.locationNames && startPick in plan.locationNames)) { startPick = ""; saveStart(); }
     } catch { /* sidecar down — keep the last good plan on screen */ }
     render();
   }
@@ -398,6 +416,24 @@
       el.appendChild(o);
     }
     el.value = shipPick;
+  }
+
+  /** Where you are. Options are the places THIS board touches — nowhere else can be an origin the
+   *  router understands, and offering the whole star map would be offering places it cannot use. */
+  function renderStartPicker() {
+    const el = $("startPick");
+    el.textContent = "";
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "I'm somewhere else — just order the stops";
+    el.appendChild(auto);
+    for (const [id, name] of Object.entries((plan && plan.locationNames) || {})) {
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = "I'm at " + name;
+      el.appendChild(o);
+    }
+    el.value = startPick;
   }
 
   function renderSummary() {
@@ -470,6 +506,9 @@
     pinned: ["yours", "You typed this figure in. Clear the box to fall back to what the game files allow."],
   };
   const trackStateOf = (c) => c.source === "pinned" ? "pinned" : c.trackedNow ? "waiting" : "todo";
+  /** Has the player re-opened the collapsed "all answered" card to edit a figure? Reset whenever a
+   *  row needs action again, so a new unanswered contract always arrives expanded. */
+  let trackOpen = false;
 
   /** 🔴 The load checklist. Each row names a contract whose tonnage the game has not stated,
    *  says which of the three states it is in, shows the bounds we do have, and offers a box to
@@ -486,6 +525,20 @@
     // pinning cannot change that — so "all pinned" is a normal resting state, not an alarm.
     const todo = live.filter((c) => trackStateOf(c) === "todo").length;
     const allPinned = live.every((c) => trackStateOf(c) === "pinned");
+    // 🔴 Nothing outstanding: the player answered every row themselves. The card cannot simply be
+    // hidden — the type-in box lives ONLY here, so hiding it strands the one way to correct a
+    // wrong figure — so it collapses to its heading and reopens on a click.
+    // A pinned row never leaves `live` (the filter keeps whatever the GAME never stated, and
+    // pinning cannot change that), which is why "answered" has to be a display state, not a filter.
+    if (allPinned && !trackOpen) {
+      el.classList.add("done");
+      $("trackK").textContent = "Load set by you";
+      $("trackWhy").textContent = "You typed these in and the plan is using your figures. Click to change them.";
+      $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
+      $("trackList").textContent = "";
+      return;
+    }
+    el.classList.remove("done");
     $("trackK").textContent = todo ? "Track these in mobiGlas" : allPinned ? "Load set by you" : "Load not confirmed";
     $("trackWhy").textContent = todo
       ? "The game states a contract's tonnage when it assigns the objective — at accept, or the next time you spawn in. Track the ones below and the next assignment tells us, or type the figure straight off your mobiGlas."
@@ -975,6 +1028,7 @@
     $("doneBtn").classList.toggle("on", showDone);
     if (!plan) return;
     renderSummary();
+    renderStartPicker();
     renderTrack();
     if (view === "layout") renderStow(); else renderRoute();
   }
@@ -991,6 +1045,17 @@
     shipPick = $("shipPick").value;
     saveShip(shipPick);
     load();
+  });
+  $("startPick").addEventListener("change", () => {
+    startPick = $("startPick").value;
+    saveStart();
+    load();
+  });
+  // Only meaningful while collapsed; expanded, the strip's own inputs handle their own clicks.
+  $("track").addEventListener("click", () => {
+    if (!$("track").classList.contains("done")) return;
+    trackOpen = true;
+    render();
   });
   // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
   document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
