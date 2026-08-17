@@ -352,7 +352,31 @@ export class HaulingTracker extends EventEmitter {
     // Fall back to the sole drop-off when the notification carried no objective id: a
     // single-destination contract has exactly one, so there is nothing to guess between.
     const drops = c.stops.filter((s) => s.role === "dropoff");
-    const stop = key ? drops.find((s) => s.key === key) : drops.length === 1 ? drops[0] : undefined;
+    let stop = key ? drops.find((s) => s.key === key) : drops.length === 1 ? drops[0] : undefined;
+    // 🔴 A DELIVER LINE FOR A LEG WITH NO MARKER MUST CREATE THE LEG, not be discarded.
+    //
+    // Found on Sub's live board, 2026-08-17: contract 388616e7
+    // (`HaulCargo_AToB_Waste_Mixed_ScrapWaste_…`) carries TWO drop-off legs to the same place —
+    // `dropoff_7000cb2b-…_0` = 51 SCU of Waste and `…_1` = 50 SCU of Scrap — and the game emitted
+    // a CreateMarker only for `_0`. So `_1` had no stop to join to, its Deliver line was dropped
+    // on the floor, and the contract reported **51 SCU instead of 101**. He was about to load a
+    // ship against that number.
+    //
+    // 🔑 The Deliver line is authoritative that a leg EXISTS: it names the mission, the
+    // objectiveId, the commodity and the tonnage. A marker adds a position and nothing else that
+    // matters here, so a missing marker must cost the position, never the leg. `pos` stays null
+    // and the router already handles a leg with no coordinates (flat distance estimate).
+    if (!stop && key) {
+      stop = {
+        key, objectiveId: ev.objectiveId!, role: "dropoff",
+        index: parseInt(key.split("#")[1] ?? "0", 10) || 0,
+        pos: null, markerEntityId: null,
+        destination: null, commodity: null, need: null, delivered: null, unit: null,
+        state: "pending", completedAt: null,
+      };
+      c.stops.push(stop);
+      c.stops.sort((a, b) => a.index - b.index || a.role.localeCompare(b.role));
+    }
     if (stop) {
       stop.destination = ev.destination;
       stop.commodity = ev.commodity;

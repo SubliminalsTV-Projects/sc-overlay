@@ -365,6 +365,28 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
   assert.equal(t.view().trackedMissionId, null, "the last one out does");
 }
 
+// ── 🔴 A Deliver line for a leg the game gave no marker for ─────────────────────────────────
+// Sub's live board, 2026-08-17. One contract, TWO drop-off legs to the same place, and a
+// CreateMarker for only the first. The second leg's tonnage was being discarded, so the contract
+// reported 51 SCU when it carries 101 — a number he was about to load a ship against.
+{
+  const t = new HaulingTracker();
+  const MID = "388616e7-68ba-4bb6-b0ba-2206eaa00cb4";
+  const OBJ = "7000cb2b-feea-41ab-84b2-d87e988283a3";
+  feed(t, [
+    `<2026-08-17T01:00:00.000Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${MID}], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Waste_Mixed_ScrapWaste_Stanton3_SupplyGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [dropoff_${OBJ}_0], markerEntityId [1871], zoneHostId [758378849484], position [x: -771960.562500, y: -321347.218750, z: -359509.343750] [Team_MissionFeatures][Missions]`,
+    `<2026-08-17T01:00:00.100Z> [Notice] <SHUDEvent_OnNotification> Added notification "New Objective: Deliver 0/51 SCU of Waste to Baijini Point: " [4] to queue. New queue size: 5, MissionId: [${MID}], ObjectiveId: [dropoff_${OBJ}_0] [Team_CoreGameplayFeatures][Missions][Comms]`,
+    `<2026-08-17T01:00:00.200Z> [Notice] <SHUDEvent_OnNotification> Added notification "New Objective: Deliver 0/50 SCU of Scrap to Baijini Point: " [5] to queue. New queue size: 6, MissionId: [${MID}], ObjectiveId: [dropoff_${OBJ}_1] [Team_CoreGameplayFeatures][Missions][Comms]`,
+  ]);
+  const c = t.view().contracts[0];
+  assert.equal(c.totalScu, 101, "both legs count — a missing marker must not cost a leg");
+  const drops = c.stops.filter((s) => s.role === "dropoff");
+  assert.equal(drops.length, 2);
+  assert.deepEqual(drops.map((s) => [s.index, s.need, s.commodity]), [[0, 51, "Waste"], [1, 50, "Scrap"]]);
+  assert.equal(drops[1].pos, null, "the marker-less leg has no position, and that is all it loses");
+  assert.equal(drops[0].pos?.x, -771960.5625, "the leg that DID have a marker keeps its position");
+}
+
 // ── The board title: rank tier and size band, known at accept ───────────────────────────────
 // 🔑 Both were previously declared absent from the data after checking the contract KEY's grade
 // suffix. They live in the TITLE, and they do not track the suffix: on this very board
