@@ -88,7 +88,8 @@
   .track .list { max-height: 132px; overflow-y: auto; }
   /* Collapsed = answered. Quietened rather than removed: the heading still reports what the plan
      is using, and the whole strip is the click target that brings the type-in boxes back. */
-  .track.done { cursor: pointer; opacity: 0.72; }
+  .track.done { opacity: 0.72; }
+  .track .th { cursor: pointer; }
   .track.done .th .k { color: var(--cyan-dim); }
   .trow { display: flex; align-items: center; gap: 7px; padding: 4px 12px; }
   .trow .t { flex: 1; min-width: 0; font-size: 11px; color: var(--cyan-text);
@@ -253,7 +254,7 @@
     <!-- 🔴 Heading and explanation are BOTH filled from the live state — see renderTrack(). A
          fixed "TRACK THESE IN MOBIGLAS" is what shipped a prompt that could not come true. -->
     <div class="track" id="track" style="display:none">
-      <div class="th"><span class="k" id="trackK"></span><span class="n" id="trackN"></span></div>
+      <div class="th" id="trackHead"><span class="k" id="trackK"></span><span class="n" id="trackN"></span></div>
       <div class="why" id="trackWhy"></div>
       <div class="list" id="trackList"></div>
     </div>
@@ -547,7 +548,17 @@
     releaseTimer = setTimeout(() => {
       releaseTimer = null; grabHeld = false; wantFocus = null;
       try { host()?.editEnd?.(); } catch { /* standalone */ }
+      // Stepping out of the last box with every figure supplied is the natural moment to put the
+      // card away — Sub asked for exactly this, and it beats making him hunt for a control.
+      if (allPinnedNow()) { trackOpen = false; render(); }
     }, 0);
+  }
+  /** Every listed contract carries a figure the player typed. Recomputed rather than remembered:
+   *  the board changes underneath this widget constantly. */
+  function allPinnedNow() {
+    if (!plan) return false;
+    const live = plan.contracts.filter((c) => !c.ended && (!c.deliverSeen || c.source === "range" || c.source === "unknown"));
+    return live.length > 0 && live.every((c) => trackStateOf(c) === "pinned");
   }
 
   /** 🔴 The load checklist. Each row names a contract whose tonnage the game has not stated,
@@ -1116,11 +1127,12 @@
     saveStart();
     load();
   });
-  // Only meaningful while collapsed; expanded, the strip's own inputs handle their own clicks.
-  $("track").addEventListener("click", () => {
-    if (!$("track").classList.contains("done")) return;
-    trackOpen = true;
-    render();
+  // The heading is the toggle, BOTH ways. It only opened before, so once Sub expanded a finished
+  // card he could never put it away again. Bound to the heading, not the whole strip, so clicking
+  // a row or typing in a box never collapses the thing you are working in.
+  $("trackHead").addEventListener("click", () => {
+    if ($("track").classList.contains("done")) { trackOpen = true; render(); return; }
+    if (allPinnedNow()) { trackOpen = false; render(); }   // only collapsible once nothing is owed
   });
   // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
   document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
