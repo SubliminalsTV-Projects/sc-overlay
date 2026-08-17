@@ -1033,14 +1033,21 @@
         inp.addEventListener("pointerdown", () => { wantFocus = inp; });
         inp.addEventListener("input", () => askPlaces(p.locationId, inp.value, row));
         inp.addEventListener("keydown", (e) => onSugKey(e, p.locationId, inp, row));
+        // Emptying the box is how a wrong name is undone, and `change` is what catches it —
+        // `keydown`'s Enter path only ever saves a non-empty pick.
+        inp.addEventListener("change", () => { if (!inp.value.trim()) savePlace(p.locationId, ""); });
         row.append(top, inp);
         r = { row, site, role, inp };
         placeRows.set(p.locationId, r);
       }
-      r.site.textContent = p.label;
+      // 🔑 A place YOU named shows its Site-style slot as "yours" and pre-fills the box, so the
+      // answer can be corrected or emptied. Clearing the box deletes the name — see savePlace.
+      r.site.textContent = p.yours ? "yours" : p.label;
       r.role.textContent = p.role === "pickup" ? "you pick up here"
         : p.role === "both" ? "you pick up and drop off here" : "you drop off here";
       if (p.commodity) r.role.textContent += "  ·  " + p.commodity;
+      if (p.yours) r.role.textContent += "  ·  clear the box to undo";
+      if (document.activeElement !== r.inp) r.inp.value = p.yours || "";
       holder.appendChild(r.row);   // appendChild MOVES an existing node, so this fixes order too
     }
     for (const [id, r] of placeRows) {

@@ -260,7 +260,16 @@ export interface HaulingPlan {
    * the list of things the player can answer, with the role each place plays so a row can say
    * "picking up from" instead of making them work out which Site is which.
    */
-  unnamedPlaces: { locationId: string; label: string; role: "pickup" | "dropoff" | "both"; commodity: string | null }[];
+  unnamedPlaces: {
+    locationId: string;
+    /** "Site 3" for an un-named place, or the name you gave it. */
+    label: string;
+    /** The name YOU gave, or null when this place has none yet. Pre-fills the box so a wrong
+     *  answer can be corrected or cleared — naming used to be one-way. */
+    yours: string | null;
+    role: "pickup" | "dropoff" | "both";
+    commodity: string | null;
+  }[];
   /** Pickups the game has already completed — cargo aboard, not yet delivered. NOT routed (there
    *  is nowhere to fly), but shown greyed ahead of the live steps so a contract reads
    *  start-to-finish instead of the list opening mid-sentence. */
@@ -824,12 +833,33 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       if (leg.toLocation) cargoAt.set(leg.toLocation, leg.commodity);
     }
   }
-  const unnamedPlaces = [...unnamed].map(([locationId, label]) => ({
-    locationId,
-    label,
-    role: roleOf.get(locationId) ?? "dropoff",
+  /**
+   * 🔴 A NAME YOU GAVE MUST STAY EDITABLE. Naming was one-way: the moment a place got a name it
+   * dropped out of this list, the row disappeared, and there was no way to correct or clear it.
+   * Sub named five different Corundum sites "Everus Harbor" — the rows were indistinguishable
+   * before the SingleToMulti fix let them say which one you LOAD at — and then asked, reasonably,
+   * "how do I undo that".
+   *
+   * So the list carries both: places with no name yet, and places YOU named, pre-filled and
+   * clearable. A place the GAME named is not offered — that name is authoritative and re-asking
+   * about it would invite exactly the kind of wrong answer this is here to fix.
+   */
+  const namable = [...unnamed].map(([locationId, label]) => ({
+    locationId, label, yours: null as string | null,
+    role: roleOf.get(locationId) ?? ("dropoff" as const),
     commodity: cargoAt.get(locationId) ?? null,
   }));
+  for (const [locationId, given] of Object.entries(byPlayer)) {
+    const name = given.trim();
+    // Skip anything the game has since named itself, and anything not on this board.
+    if (!name || nameByLoc.has(locationId) || !roleOf.has(locationId)) continue;
+    namable.push({
+      locationId, label: name, yours: name,
+      role: roleOf.get(locationId) ?? ("dropoff" as const),
+      commodity: cargoAt.get(locationId) ?? null,
+    });
+  }
+  const unnamedPlaces = namable;
   for (const u of unrouted) u.destination ??= u.toLocation ? locationNames[u.toLocation] ?? null : null;
 
   // 🔑 `planRun` gives up quietly: when no trip can be formed for what is left in the pool it
