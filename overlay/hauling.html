@@ -130,6 +130,20 @@
 
   /* ── Contract cards ──────────────────────────────────────────────────────── */
   .card { padding: 6px 12px 7px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* The turn-around, parked in the picture's bottom-left corner. Quiet until hovered — it is a
+     control, not part of the diagram — and tinted gold while turned so the state is visible
+     without reading the door label. */
+  /* A foldable section header. The caret is the affordance; the whole strip is the target. */
+  .sec.fold { cursor: pointer; user-select: none; }
+  .sec.fold .caret { flex: none; margin-right: 4px; color: var(--faint); font-size: 9px; }
+  .sec.fold:hover .caret { color: var(--cyan-bright); }
+  .isowrap { position: relative; }
+  .spincorner { position: absolute; left: 4px; bottom: 4px; width: 22px; height: 22px; padding: 0;
+    display: grid; place-items: center; border-radius: 6px; cursor: pointer;
+    border: 1px solid rgba(var(--accent-rgb), 0.28); background: rgba(0, 0, 0, 0.35);
+    color: var(--cyan-dim); font-size: 13px; line-height: 1; opacity: 0.55; transition: opacity .12s; }
+  .spincorner:hover { opacity: 1; color: var(--cyan-bright); border-color: var(--cyan); }
+  .spincorner.on { opacity: 1; color: var(--gold); border-color: var(--gold); }
   .card.done { opacity: 0.6; }
   /* Set aside: dimmed and struck through the title, so it reads as "not part of this run" rather
      than "finished". Still listed — the player has to be able to put it back. */
@@ -332,6 +346,10 @@
   const HIDE_KEY = "sc-hauling-hidden";
   let hidden = (() => { try { return JSON.parse(localStorage.getItem(HIDE_KEY) || "[]"); } catch { return []; } })();
   function saveHidden() { try { localStorage.setItem(HIDE_KEY, JSON.stringify(hidden)); } catch { /* private mode */ } }
+  /* The contracts list folded away. It is reference, not instruction — the route tells you what to
+     do — so on a small overlay it is the first thing worth reclaiming. */
+  const FOLD_KEY = "sc-hauling-fold-contracts";
+  let foldContracts = (() => { try { return localStorage.getItem(FOLD_KEY) === "1"; } catch { return false; } })();
   const SPIN_KEY = "sc-hauling-spin";
   let stowSpin = (() => { try { return localStorage.getItem(SPIN_KEY) === "1"; } catch { return false; } })();
   function saveStart() { try { localStorage.setItem(START_KEY, startPick); } catch { /* private mode */ } }
@@ -909,11 +927,19 @@
     const list = plan.contracts.filter((c) => showDone || !c.ended);
     if (!list.length) return;
     const sec = document.createElement("div");
-    sec.className = "sec";
+    sec.className = "sec fold" + (foldContracts ? " closed" : "");
+    const caret = document.createElement("span"); caret.className = "caret"; caret.textContent = foldContracts ? "▸" : "▾";
     const h = document.createElement("span"); h.textContent = "Contracts";
     const n = document.createElement("span"); n.className = "n"; n.textContent = list.length + " on the board";
-    sec.append(h, n);
+    sec.append(caret, h, n);
+    sec.title = "Show or hide the contract details.";
+    sec.addEventListener("click", () => {
+      foldContracts = !foldContracts;
+      try { localStorage.setItem(FOLD_KEY, foldContracts ? "1" : "0"); } catch { /* private mode */ }
+      render();
+    });
     body.appendChild(sec);
+    if (foldContracts) return;
     for (const c of list) {
       const card = document.createElement("div");
       card.className = "card" + (c.ended ? " done" : "") + (c.hidden ? " setaside" : "");
@@ -1088,20 +1114,7 @@
     n.title = m.derivedOrder
       ? "Read off the packer's own placement order — the last drop-off sits deepest, so it is lifted first."
       : "Stated by the stowage planner.";
-    // 🔑 The turn-around lives HERE, on the page it acts on. It was only in the settings drawer and
-    // Sub never found it — he asked for rotation twice while it was already built and shipping.
-    // A control for a picture belongs next to the picture.
-    const turn = document.createElement("button");
-    turn.type = "button";
-    turn.className = "turnbtn" + (stowSpin ? " on" : "");
-    turn.textContent = stowSpin ? "↻ Door behind" : "↻ Turn around";
-    turn.title = "Walk round to the other end of the hold. A fixed camera always hides the boxes behind the front row.";
-    turn.addEventListener("click", () => {
-      stowSpin = !stowSpin;
-      try { localStorage.setItem(SPIN_KEY, stowSpin ? "1" : "0"); } catch { /* private mode */ }
-      render();
-    });
-    sec.append(h, n, turn);
+    sec.append(h, n);
     wrap.appendChild(sec);
 
     m.steps.forEach((s, i) => {
@@ -1218,6 +1231,22 @@
       box.className = "isowrap";
       const svg = StowView.iso(g.spec, g.boxes, { focus: focusMission, depthOf: depthOf, spin: stowSpin });
       box.appendChild(svg);
+      /* 🔑 The turn-around sits ON the picture, bottom-left, because that is the only thing it acts
+         on and a whole toolbar row for one control was wasted space. Sub asked for rotation twice
+         while a header button for it was already shipping — he never found it up there. */
+      const turn = document.createElement("button");
+      turn.type = "button";
+      turn.className = "spincorner" + (stowSpin ? " on" : "");
+      turn.innerHTML = "&#8635;";
+      turn.title = stowSpin
+        ? "Looking from the far end — the door is behind you. Click to turn back."
+        : "Turn the hold around. A fixed camera always hides the boxes behind the front row.";
+      turn.addEventListener("click", () => {
+        stowSpin = !stowSpin;
+        try { localStorage.setItem(SPIN_KEY, stowSpin ? "1" : "0"); } catch { /* private mode */ }
+        render();
+      });
+      box.appendChild(turn);
       svgs.push(svg);
       wrap.appendChild(box);
     }

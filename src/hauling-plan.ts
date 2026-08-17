@@ -59,6 +59,22 @@ export type ScuSource =
  *
  *  Kept to the four planets on purpose. It disambiguates; it is not a translation table, and a
  *  code absent from here degrades to no label rather than to a guess. */
+/** Seconds to move ONE box, measured off Sub's own run: he loaded Silicon + Scrap into a C2 on
+ *  2026-08-17 and it took twelve minutes. The app counted 29 boxes for that load (he counted 25),
+ *  which brackets 24.8–28.8 s each.
+ *
+ *  🔴 This replaces a flat FOUR MINUTES per stop, which was the single worst number in the widget:
+ *  it made a 1-box call and a 29-box call cost the same, so every estimate for a real load was out
+ *  by a factor of six. Handling dominates a hauling run — his 239 km hop costs 0.02 minutes and
+ *  the load at each end costs twelve.
+ *
+ *  ⚠️ One player, one ship, one run. It is a far better guess than a constant that ignored the
+ *  cargo entirely, and it is still a guess — the honest fix is measuring it live per player, which
+ *  the log can support (see the elevator/objective bracket in the handoff). */
+const SECONDS_PER_BOX = 25;
+/** Approach, park, and get to the kiosk — the part of a stop that is not touching boxes. */
+const STOP_BASE_MINUTES = 1;
+
 const CANON_PLANET: Record<string, string> = {
   stanton1: "hurston",
   stanton2: "crusader",
@@ -171,6 +187,8 @@ export interface PlanStop {
   minutes: number;
   /** SCU aboard on leaving. Includes cargo already loaded before the plan was made. */
   loadAfterScu: number;
+  /** Estimated minutes spent AT this stop: approach plus one lift per box. See SECONDS_PER_BOX. */
+  handlingMinutes: number;
   /** True when the previous stop is the same place — one landing, two jobs. */
   sameSpot: boolean;
   /** ⚠️ `kind` is PER ACTION: one landing can unload and load, so the stop's own kind cannot
@@ -181,7 +199,11 @@ export interface PlanStop {
 export interface PlanTrip {
   stops: PlanStop[];
   landings: number;
+  /** Travel + handling. ⚠️ Handling dominates: travel between Sub's stops is ~0.02 min, the load
+   *  at each end is ~12. A total that counted only flying was wrong by more than an order. */
   totalMinutes: number;
+  travelMinutes: number;
+  handlingMinutes: number;
   peakScu: number;
   method: "exact" | "heuristic";
 }
@@ -667,7 +689,11 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         objective: opts.objective ?? "auec-per-hour",
         capacityScu: freeCapacity,
         travelSpeedMps: opts.travelSpeedMps,
-        stopMinutes: opts.stopMinutes,
+        // ⚠️ ZERO, deliberately. The solver's flat per-stop allowance is now modelled properly as
+        // handling (one lift per box — see SECONDS_PER_BOX), and leaving both in counted every stop
+        // twice: Sub's board reported 12 minutes of "travel" for 0.2 minutes of actual flying.
+        // The route's own total is pure travel; handling is added on top in toTrip.
+        stopMinutes: opts.stopMinutes ?? 0,
         startPos,
       })
     : { trips: [], stranded: [], totalMinutes: 0, payout: 0, auecPerHour: 0 };
@@ -877,6 +903,11 @@ function toTrip(
       name: nameOf(locationId),
       kind,
       minutes: leg?.minutes ?? 0,
+      /* 🔴 THE STOP IS THE JOB. Every box at this stop is one lift, and a lift takes about
+         SECONDS_PER_BOX. A stop that moves 29 boxes is not the same stop as one that moves 1, and
+         a flat rate said it was. Base covers approach, park and reaching the kiosk. */
+      handlingMinutes: STOP_BASE_MINUTES + (stop?.actions ?? [])
+        .reduce((n, a) => n + (legByGroup.get(a.contractId)?.leg.boxCount ?? 0), 0) * SECONDS_PER_BOX / 60,
       // Cargo already in the hold rides along the whole trip, so it belongs in every reading.
       loadAfterScu: (leg?.loadAfterScu ?? 0) + aboardScu,
       sameSpot: (leg?.minutes ?? 1) === 0,
@@ -895,10 +926,15 @@ function toTrip(
       }),
     };
   });
+  // The trip's own figure counts travel only. Handling is what a hauling run is actually made of,
+  // so it is added here rather than left as a per-stop detail nobody sums.
+  const handling = out.reduce((n, s) => n + s.handlingMinutes, 0);
   return {
     stops: out,
     landings: trip.stops,
-    totalMinutes: trip.totalMinutes,
+    totalMinutes: trip.totalMinutes + handling,
+    travelMinutes: trip.totalMinutes,
+    handlingMinutes: handling,
     peakScu: trip.peakScu + aboardScu,
     method: trip.method,
   };
