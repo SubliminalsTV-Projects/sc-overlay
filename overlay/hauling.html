@@ -347,6 +347,39 @@
   .legend span { display: inline-flex; align-items: center; gap: 4px; }
   .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 
+  /* ── The advisor ──────────────────────────────────────────────────────────
+     "What should I go looking for?" — a ranked list of contract TYPES, matched against the board
+     by its TITLE, because the title IS the model: "<Rung> Rank - Direct <Size> Cargo Haul". */
+  .stand { padding: 8px 12px; border-bottom: 1px solid var(--divider); }
+  .stand .row { display: flex; align-items: center; gap: 6px; }
+  .stand select, .stand input { font-family: var(--sans); font-size: 11px; color: var(--cyan-bright);
+    background: var(--menu-bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; }
+  .stand select { flex: 1; min-width: 0; }
+  .stand select option { background: var(--menu-bg); color: var(--cyan-bright); }
+  .stand input { width: 74px; font-family: var(--mono); text-align: right; }
+  .stand input:focus, .stand select:focus { outline: none; border-color: var(--cyan); }
+  /* The headline the whole tab exists for. */
+  .climb { margin-top: 7px; font-size: 11px; line-height: 1.5; color: var(--cyan-text); }
+  .climb .big { font-family: var(--mono); font-size: 15px; font-weight: 700; color: var(--gold); }
+  .climb .sub { display: block; margin-top: 2px; font-size: 9.5px; color: var(--faint); }
+  .climb .none { color: var(--amber); }
+
+  .arow { display: flex; gap: 8px; padding: 6px 12px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* Locked = above your rung, so it is not on your board at all. Kept in the list because seeing
+     what the next rank unlocks is half the reason to grind toward it. */
+  .arow.locked { opacity: 0.45; }
+  .arow .n { flex: none; width: 18px; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  .arow .mid { flex: 1; min-width: 0; }
+  .arow .t { font-size: 11.5px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .arow.locked .t { color: var(--cyan-dim); }
+  .arow .m { font-family: var(--mono); font-size: 9.5px; color: var(--faint); margin-top: 1px; }
+  .arow .r { flex: none; text-align: right; }
+  .arow .r .v { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--gold); }
+  .arow .r .u { display: block; font-size: 8.5px; color: var(--faint); }
+  .lockpill { font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--amber); }
+
   /* ⛔ Open haulers load themselves. The panel that replaces the whole view for them. */
   .noplan { padding: 30px 20px; text-align: center; }
   .noplan .k { font-size: 13px; font-weight: 600; color: var(--gold); }
@@ -361,6 +394,7 @@
       <span class="tabs">
         <button id="tabRoute" class="hbtn on" type="button" title="What order to fly the stops">Route</button>
         <button id="tabLayout" class="hbtn" type="button" title="What to load first, and where it goes on your ship">Stow</button>
+        <button id="tabAdvisor" class="hbtn" type="button" title="Which contracts to go looking for, and how far the next rank is">Rank</button>
       </span>
     </div>
 
@@ -418,6 +452,10 @@
       <div class="ws-sec">Stow view</div>
       <div class="ws-row">
         <button id="spinBtn" class="hbtn" type="button" title="Walk round to the other end of the hold. A fixed camera always hides the boxes behind the front row.">Turn around</button>
+      </div>
+      <div class="ws-sec">Rank tab</div>
+      <div class="ws-row">
+        <button id="goalBtn" class="hbtn" type="button" title="Rank the board by reputation for the work, or by aUEC for the work. They do not agree.">Best reputation</button>
       </div>
       <div class="ws-sec">Contracts</div>
       <div class="ws-row">
@@ -1078,6 +1116,196 @@
     load();
   }
 
+  /**
+   * 🔴 THE ADVISOR — what to go looking for, and how far the next rank is.
+   *
+   * Ranks contract TYPES, not board rows. Nothing here reads the screen: the shipped datasets are
+   * scored and the player matches the answer against the board BY ITS TITLE, because the title is
+   * the whole model spelled out — "Experienced Rank - Direct Medium Cargo Haul" is rung, shape and
+   * size band in one string.
+   *
+   * 🔑 Reputation is a pure function of the RUNG. Across the 393 real contracts in the three core
+   * families every tier awards exactly one value — Rookie 50, Junior 500, Member 1000, Experienced
+   * 2000, Senior 4000, Master 8000 — so the advice is "climb the ladder, then take the SMALLEST
+   * size band that rung offers", because a smaller band is fewer boxes for the same flat rep.
+   *
+   * ⚠️ These are SOLO estimates: every contract scored as if it were the only one you took, which
+   * is the right number for an accept/skip decision at the board and NOT comparable with the Route
+   * tab's, which re-scores the accepted set with real packing.
+   */
+  let advisor = null;
+  let advisorGoal = "rep";
+  async function loadAdvisor() {
+    try {
+      const r = await fetch("/api/hauling/advisor?goal=" + advisorGoal, { cache: "no-store" });
+      if (r.ok) advisor = await r.json();
+    } catch { /* sidecar down — keep whatever we had */ }
+    if (view === "advisor") render();
+  }
+
+  function renderAdvisor() {
+    const body = $("body");
+    body.textContent = "";
+    if (!advisor) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = "Working out what is worth flying…";
+      body.appendChild(d);
+      loadAdvisor();
+      return;
+    }
+    body.appendChild(renderStanding());
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    const h = document.createElement("span");
+    h.textContent = advisorGoal === "rep" ? "Best reputation for the work" : "Best aUEC for the work";
+    const n = document.createElement("span");
+    n.className = "n";
+    // The unit is not decoration — under a manual hull there IS no published per-box timing, so
+    // the honest denominator is boxes, and saying so is what stops the number being read as time.
+    n.textContent = advisor.regime === "auto" ? "per second of loading" : "per box you move";
+    n.title = advisor.regime === "auto"
+      ? "This hull auto-loads, so the cost is the station arm's published seconds."
+      : "You load this hull by hand, and the tractor-beam grind has no published timing — so the"
+        + " cost is box COUNT. Sub: six 1 SCU boxes is about the same work as six 32 SCU boxes.";
+    sec.append(h, n);
+    body.appendChild(sec);
+
+    advisor.contracts.forEach((c, i) => {
+      const row = document.createElement("div");
+      row.className = "arow" + (c.locked ? " locked" : "");
+      const nEl = document.createElement("div"); nEl.className = "n"; nEl.textContent = String(i + 1);
+      const mid = document.createElement("div"); mid.className = "mid";
+      const t = document.createElement("div"); t.className = "t";
+      t.textContent = c.title || c.key;
+      t.title = c.key + (c.giver ? "  ·  " + c.giver : "");
+      const m = document.createElement("div"); m.className = "m";
+      const bits = [];
+      bits.push(c.boxes + " box" + (c.boxes === 1 ? "" : "es"));
+      bits.push(c.scuLo === c.scuHi ? c.scuLo + " SCU" : c.scuLo + "–" + c.scuHi + " SCU");
+      if (c.dropoffs > 1) bits.push(c.dropoffs + " drops");
+      if (c.rep > 0) bits.push(num(c.rep) + " rep");
+      if (c.payout) bits.push(num(c.payout) + " aUEC");
+      m.textContent = bits.join("  ·  ");
+      mid.append(t, m);
+      if (c.locked) {
+        const lp = document.createElement("span");
+        lp.className = "lockpill";
+        lp.textContent = "  needs " + c.rank;
+        lp.title = "Above your standing, so this is not on your board yet. Listed so you can see"
+          + " what the next rung opens up.";
+        m.appendChild(lp);
+      }
+      const r = document.createElement("div"); r.className = "r";
+      const v = document.createElement("div"); v.className = "v";
+      const rate = advisorGoal === "rep" ? c.repRate : c.moneyRate;
+      v.textContent = rate >= 100 ? Math.round(rate) : rate.toFixed(rate >= 10 ? 1 : 2);
+      const u = document.createElement("div"); u.className = "u";
+      u.textContent = advisorGoal === "rep" ? "rep/box" : "aUEC/box";
+      if (advisor.regime === "auto") u.textContent = advisorGoal === "rep" ? "rep/s" : "aUEC/s";
+      r.append(v, u);
+      row.append(nEl, mid, r);
+      body.appendChild(row);
+    });
+  }
+
+  /** Where you are on the ladder, and what that means for the next rung. */
+  function renderStanding() {
+    const wrap = document.createElement("div");
+    wrap.className = "stand";
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const sel = document.createElement("select");
+    sel.title = "Your Hauling standing, as mobiGlas names it.";
+    const none = document.createElement("option");
+    none.value = ""; none.textContent = "My hauling rank is…";
+    sel.appendChild(none);
+    for (const r of advisor.ladder) {
+      const o = document.createElement("option");
+      o.value = r.name; o.textContent = r.name;
+      sel.appendChild(o);
+    }
+    sel.value = advisor.rank || "";
+    sel.addEventListener("change", () => saveStanding({ rank: sel.value }));
+
+    /* 🔑 OPTIONAL, AND THE REASON IT EXISTS: mobiGlas draws a BAR, not a number. The rung is the
+       thing every player can answer; the exact standing is for whoever has it. Without it the
+       estimate below is reported as a RANGE, because the player could be anywhere on that bar and
+       quoting the midpoint would be inventing a position we cannot see. */
+    const exact = document.createElement("input");
+    exact.type = "number"; exact.min = "0"; exact.step = "1";
+    exact.placeholder = "rep";
+    exact.title = "Your exact standing, if you know it. Optional — without it the estimate is a"
+      + " range across the whole rung.";
+    exact.value = advisor.rep != null ? advisor.rep : "";
+    exact.addEventListener("focus", () => grabOn(exact));
+    exact.addEventListener("blur", () => grabOff());
+    exact.addEventListener("pointerdown", () => { wantFocus = exact; });
+    exact.addEventListener("change", () => saveStanding({ rep: exact.value === "" ? null : Number(exact.value) }));
+
+    row.append(sel, exact);
+    wrap.appendChild(row);
+    wrap.appendChild(renderClimb());
+    return wrap;
+  }
+
+  /** "How long to the next rank" — the number Sub asked for. */
+  function renderClimb() {
+    const d = document.createElement("div");
+    d.className = "climb";
+    const c = advisor.climb;
+    if (!c) {
+      d.className += " none";
+      d.textContent = "Tell me your hauling rank and I'll work out how far the next one is.";
+      return d;
+    }
+    if (!c.next) { d.textContent = "You are at the top of the hauling ladder."; return d; }
+    // 🔴 NO RATE, NO TIME. climbToNextRung counts only loading work — no flying, no quantum, no
+    // walk to the elevator — so turning it into "time to rank" would understate by however long
+    // the travelling takes, which is most of it. Say what we know instead.
+    if (c.hoursMax == null) {
+      d.textContent = num(c.repNeedMax) + " reputation to " + c.next + ".";
+      const s = document.createElement("span"); s.className = "sub";
+      s.textContent = "Deliver something and I can turn that into a time from your own rate.";
+      d.appendChild(s);
+      return d;
+    }
+    const big = document.createElement("span");
+    big.className = "big";
+    big.textContent = c.exact ? fmtMins(c.hoursMax * 60)
+      : "up to " + fmtMins(c.hoursMax * 60);
+    d.append(big, document.createTextNode(" to " + c.next));
+    const s = document.createElement("span");
+    s.className = "sub";
+    s.textContent = (c.exact
+      ? num(c.repNeedMax) + " rep to go"
+      : num(c.repNeedMax) + " rep if you only just made " + c.rung)
+      + " · at your " + Math.round(c.repPerHour) + " rep/h";
+    s.title = c.exact
+      ? "From the standing you typed, against the reputation an hour you are actually earning."
+      : "mobiGlas shows a bar, not a number, so this assumes the worst case — that you only just"
+        + " reached " + c.rung + ". Type your exact standing above and this becomes a single figure.";
+    d.appendChild(s);
+    if (advisor.runsOfBest && advisor.runsOfBest.runs) {
+      const r = document.createElement("span");
+      r.className = "sub";
+      r.textContent = "≈ " + advisor.runsOfBest.runs + " × " + advisor.runsOfBest.title;
+      r.title = "Runs of the best-paying contract open to you, at " + num(advisor.runsOfBest.rep) + " rep each.";
+      d.appendChild(r);
+    }
+    return d;
+  }
+
+  async function saveStanding(patch) {
+    try {
+      await fetch("/api/hauling/standing", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+      });
+    } catch { /* not saved — the control keeps what was chosen for this session */ }
+    await loadAdvisor();
+    render();
+  }
+
   function renderRoute() {
     const body = $("body");
     body.textContent = "";
@@ -1670,8 +1898,10 @@
   function render() {
     $("tabRoute").classList.toggle("on", view === "route");
     $("tabLayout").classList.toggle("on", view === "layout");
+    $("tabAdvisor").classList.toggle("on", view === "advisor");
     $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
     $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
+    $("goalBtn").textContent = advisorGoal === "money" ? "Best aUEC" : "Best reputation";
     $("spinBtn").textContent = stowSpin ? "Turned around" : "Turn around";
     $("spinBtn").classList.toggle("on", stowSpin);
     $("doneBtn").classList.toggle("on", showDone);
@@ -1685,12 +1915,23 @@
     renderStartPicker();
     renderTrack();
     renderPlaces();
-    if (view === "layout") renderStow(); else renderRoute();
+    /* 🔑 AFTER those two, because each sets its own display. The naming and load checklists belong
+       to the board you are flying; the advisor is about contracts you have NOT taken. Leaving them
+       up opened the Rank tab two screens below its own heading. */
+    if (view === "advisor") { $("track").style.display = "none"; $("places").style.display = "none"; }
+    if (view === "advisor") renderAdvisor();
+    else if (view === "layout") renderStow();
+    else renderRoute();
   }
 
   // ── wiring ────────────────────────────────────────────────────────────────
   $("tabRoute").addEventListener("click", () => { view = "route"; render(); });
   $("tabLayout").addEventListener("click", () => { view = "layout"; render(); });
+  $("tabAdvisor").addEventListener("click", () => { view = "advisor"; if (!advisor) loadAdvisor(); render(); });
+  $("goalBtn").addEventListener("click", () => {
+    advisorGoal = advisorGoal === "rep" ? "money" : "rep";
+    loadAdvisor();
+  });
   $("objBtn").addEventListener("click", () => {
     objective = objective === "fewest-stops" ? "auec-per-hour" : "fewest-stops";
     load();

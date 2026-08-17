@@ -2558,6 +2558,16 @@ export class MissionTracker extends EventEmitter {
     };
   }
 
+  /** Every dataset mission whose KEY starts with `prefix`. For callers that reason about a whole
+   *  family rather than one contract — the hauling advisor ranks all 853 `HaulCargo` keys. */
+  missionsByKeyPrefix(prefix: string): Record<string, DatasetMission> {
+    const out: Record<string, DatasetMission> = {};
+    for (const [k, m] of Object.entries(this.dataset?.missions ?? {})) {
+      if (k.startsWith(prefix)) out[k] = m;
+    }
+    return out;
+  }
+
   /** Dataset entry for a mission id, or undefined. Since schema/2 the missions map
    *  also holds pool-LESS missions that carry a payout or item rewards. */
   private datasetMission(missionId: string): DatasetMission | undefined {

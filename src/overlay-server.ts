@@ -18,6 +18,10 @@ import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
 import { canAutoLoad } from "./hauling-autoload.js";
 import { buildHaulingPlan } from "./hauling-plan.js";
+import {
+  buildContracts, climbToNextRung, rankContracts, regimeFor, HAULING_LADDER,
+  type AdvisorContract,
+} from "./hauling-advisor.js";
 import { MissionFeedbackStore } from "./mission-feedback.js";
 import { FabClaims } from "./fab-claim.js";
 import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLines } from "./dev-replay.js";
@@ -230,6 +234,18 @@ interface Config {
    * hauling contract are by definition real hauling stops, so they rank above the dataset.
    */
   haulingSeenPlaces: string[];
+  /**
+   * The player's `Hauling` standing, for the advisor's "how far to the next rank".
+   *
+   * 🔑 TWO FIELDS BECAUSE THE GAME SHOWS A BAR, NOT A NUMBER. mobiGlas names the rung and draws a
+   * progress bar; it does not print the integer. So the rung is the thing a player can always
+   * answer, and the exact standing is the optional refinement for someone who has it. With only a
+   * rung the estimate is reported as a RANGE — anything else would be inventing a position on a
+   * bar we cannot see.
+   */
+  haulingRank: string;
+  /** Exact `Hauling` standing if the player knows it, else null. */
+  haulingRep: number | null;
   /** Remembers whether the Web Page widget was left open, so it's restored on launch. */
   webViewOpen: boolean;
   /** URL shown by the Web Page widget (http/https only). Empty = it shows its address picker. */
@@ -428,6 +444,8 @@ const DEFAULTS: Config = {
   haulingShip: "",
   haulingPlaces: {},
   haulingSeenPlaces: [],
+  haulingRank: "",
+  haulingRep: null,
   webViewOpen: false,
   // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
   // it's the page most likely to be wanted beside the game, and it shows what the widget does.
@@ -1166,6 +1184,64 @@ function haulingPlaceSuggestions(q: string): { name: string; hint: string | null
   }
   out.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
   return out.slice(0, PLACE_LIMIT).map(({ name, hint, seen: s }) => ({ name, hint, seen: s }));
+}
+
+// ── The advisor: which contracts to go looking for ──────────────────────────
+//
+// `src/hauling-advisor.ts` has done this work since it was written and nothing has ever called it —
+// only `parseBoardTitle` was wired up. It ranks the shipped contract TYPES by reputation (or money)
+// per unit of handling, which is the accept/skip decision at the board, and answers "how many of
+// these to the next rung".
+
+/** Built once: `buildContracts` walks 853 keys against the orders table, and neither dataset
+ *  changes while the process is up. */
+let advisorRows: AdvisorContract[] | null = null;
+function advisorContracts(): AdvisorContract[] {
+  if (advisorRows) return advisorRows;
+  const missions = tracker.missionsByKeyPrefix("HaulCargo");
+  const orders = haulingData.contracts();
+  advisorRows = buildContracts(missions as never, orders as never);
+  console.log(`[hauling] advisor: ${advisorRows.length} rankable contract types`);
+  return advisorRows;
+}
+
+/**
+ * How long the next rung is away.
+ *
+ * 🔴 THREE BASES, AND THE BEST AVAILABLE ONE WINS — never a blend.
+ *   measured   the player's own rep/hour from finished contracts this session. The only figure
+ *              that includes flying, faffing and the walk to the elevator, so it is the only one
+ *              that is an ANSWER rather than a floor.
+ *   projected  the same, from the plan's forecast, once something is accepted but nothing done.
+ *   none       no rate at all — report the runs and refuse to quote a time. `climbToNextRung`
+ *              deliberately counts only loading work, so turning its seconds into "time to rank"
+ *              would understate it by however long the flying takes, which is most of it.
+ *
+ * 🔑 And with only a RUNG (no exact standing) the answer is a RANGE, because the player could be
+ * anywhere on that bar. Reporting the midpoint would be inventing a position we cannot see.
+ */
+function haulingClimb(bestRepPerHour: number | null): Record<string, unknown> | null {
+  const rungName = config.haulingRank;
+  const rung = HAULING_LADDER.find((r) => r.name === rungName);
+  if (!rung) return null;
+  const i = HAULING_LADDER.findIndex((r) => r.name === rung.name);
+  const next = HAULING_LADDER[i + 1] ?? null;
+  if (!next) return { rung: rung.name, next: null, exact: config.haulingRep != null };
+  const exact = config.haulingRep;
+  // Worst case is the whole rung; best case is standing on its ceiling already.
+  const needMax = next.minRep - (exact ?? rung.minRep);
+  const needMin = exact != null ? needMax : 0;
+  const hours = (n: number) => (bestRepPerHour && bestRepPerHour > 0 ? n / bestRepPerHour : null);
+  return {
+    rung: rung.name,
+    next: next.name,
+    exact: exact != null,
+    repNeedMin: Math.max(0, needMin),
+    repNeedMax: Math.max(0, needMax),
+    hoursMin: hours(Math.max(0, needMin)),
+    hoursMax: hours(Math.max(0, needMax)),
+    repPerHour: bestRepPerHour,
+  };
 }
 
 // ── Mining Assistant (signature scanner + refinery timer) ────────────────────
@@ -2820,6 +2896,87 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const q = (new URL(req.url ?? "", "http://x").searchParams.get("q") ?? "").trim();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true, places: haulingPlaceSuggestions(q) }));
+    return;
+  }
+  /**
+   * What to go looking for on the board, ranked, plus how far the next rung is.
+   *
+   * ⚠️ These figures are SOLO estimates — every contract scored as if it were the only one you
+   * took — and they are the right ones for the accept/skip decision. They are NOT comparable with
+   * the Route tab's numbers, which re-score the accepted set with real packing. See the header of
+   * hauling-advisor.ts.
+   */
+  if (url.startsWith("/api/hauling/advisor") && req.method === "GET") {
+    const qs = new URL(req.url ?? "", "http://x").searchParams;
+    const goal = qs.get("goal") === "money" ? "money" : "rep";
+    const ship = qs.get("ship") || config.haulingShip || shipName || null;
+    const ranked = rankContracts(advisorContracts(), {
+      ship, goal,
+      // Standing gates the board: a rung above the player's is not offered to them. With only a
+      // rung name we use its FLOOR, which locks exactly what the game locks.
+      rep: config.haulingRep ?? HAULING_LADDER.find((r) => r.name === config.haulingRank)?.minRep ?? null,
+      includeLocked: true,
+    });
+    const regime = regimeFor(ship);
+    // The rate to quote the climb against: what the player is actually managing, else the plan's
+    // forecast. See haulingClimb — a modelled per-run time would be a floor, not an answer.
+    const rates = buildHaulingPlan(hauling.view(), haulingData, {
+      ship: config.haulingShip, detectedShip: shipName, pins: {}, hidden: [],
+      rewards: (k) => tracker.rewardsForKey(k), placeNames: config.haulingPlaces,
+    }).rates;
+    const perHour = rates.actual?.repPerHour ?? rates.projected?.repPerHour ?? null;
+    const top = ranked.slice(0, 24).map((r) => ({
+      key: r.contract.key,
+      title: r.contract.title,
+      giver: r.contract.giver,
+      missionType: r.contract.missionType,
+      rank: r.contract.rank,
+      size: r.contract.size,
+      direct: r.contract.shape.pickups === 1 && r.contract.shape.dropoffs === 1,
+      pickups: r.contract.shape.pickups,
+      dropoffs: r.contract.shape.dropoffs,
+      rep: r.contract.rep,
+      payout: r.contract.payout,
+      scuLo: r.contract.scuLo,
+      scuHi: r.contract.scuHi,
+      boxes: r.effort.boxes,
+      repRate: r.repRate,
+      moneyRate: r.moneyRate,
+      locked: r.locked,
+    }));
+    // "How many of these to the next rung" — off the best UNLOCKED rep contract, which is what the
+    // player would actually be flying.
+    const bestOpen = ranked.find((r) => !r.locked && r.contract.rep > 0) ?? null;
+    const standing = config.haulingRep
+      ?? HAULING_LADDER.find((r) => r.name === config.haulingRank)?.minRep ?? null;
+    const climb = bestOpen && standing != null
+      ? climbToNextRung(bestOpen.contract, standing, regime)
+      : null;
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true, goal, regime,
+      ladder: HAULING_LADDER,
+      rank: config.haulingRank || null,
+      rep: config.haulingRep,
+      contracts: top,
+      climb: haulingClimb(perHour),
+      runsOfBest: climb && bestOpen ? { key: bestOpen.contract.key, title: bestOpen.contract.title, rep: bestOpen.contract.rep, runs: climb.runs, boxes: climb.boxes } : null,
+    }));
+    return;
+  }
+  /** Where the player says they are on the hauling ladder. */
+  if (url === "/api/hauling/standing" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    if (typeof body.rank === "string") {
+      config.haulingRank = HAULING_LADDER.some((r) => r.name === body.rank) ? body.rank : "";
+    }
+    if ("rep" in body) {
+      const n = Number(body.rep);
+      config.haulingRep = Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+    }
+    saveConfig();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, rank: config.haulingRank, rep: config.haulingRep }));
     return;
   }
   /** Name a place by hand — or clear it by sending an empty name. Keyed by the planner's location
