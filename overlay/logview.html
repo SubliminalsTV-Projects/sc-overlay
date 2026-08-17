@@ -258,9 +258,12 @@
   }
 
   // ── copy ────────────────────────────────────────────────────────────────────
-  // The RAW line, not what is rendered — Sub pastes these straight into a conversation, and a
-  // line with our dimming or highlighting baked into it is a line that no longer says what the
-  // game said. execCommand is the fallback: the overlay is not always a secure context.
+  // The row's stored `_raw`, not what is rendered. They are the same string TODAY — the only thing
+  // the renderer does is wrap the timestamp in a dim span, which textContent puts back. It is kept
+  // separate for the first decoration anyone adds (a highlight, a repeat count, an ellipsis), at
+  // which point textContent silently stops being what the game wrote and Sub pastes our edit of a
+  // log line into a conversation about what that log line said.
+  // execCommand is the fallback: the overlay is not always a secure context.
   function copyRow(el) {
     const text = el._raw || el.textContent || "";
     const done = () => {
