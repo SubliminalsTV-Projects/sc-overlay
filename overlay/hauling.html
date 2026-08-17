@@ -70,7 +70,22 @@
   .facts .bad { color: var(--red); }
   /* A forecast, not a reading. Same rule as everywhere else on this panel: a number the app worked
      out is never dressed the same as one it was told. */
-  .facts .est { color: var(--cyan-dim); font-style: italic; }
+  .facts .est, .ratebar .est { color: var(--cyan-dim); font-style: italic; }
+
+  /* ── What the run earns, per hour ─────────────────────────────────────────
+     Its own strip, ruled off from the board facts above it, because it answers a different
+     question. "contracts 3" is a property of what you are holding; "72k aUEC/h" is a property of
+     how long the work is taking you. Sub asked for the separation so the second is not read as the
+     first — the rate is per hour of RUN, not per contract. */
+  .ratebar { display: flex; align-items: baseline; gap: 10px; margin-top: 7px; padding-top: 6px;
+    border-top: 1px solid var(--divider); }
+  .ratebar .k { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--faint); }
+  .ratebar .fig { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--green); }
+  .ratebar .fig.est { color: var(--cyan-dim); font-weight: 600; }
+  .ratebar .rep { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--gold); }
+  .ratebar .rep.est { color: var(--cyan-dim); font-weight: 600; }
+  .ratebar .basis { margin-left: auto; font-size: 9px; color: var(--faint); white-space: nowrap; }
 
   /* ── 🔴 The load checklist ────────────────────────────────────────────────
      Deliberately the loudest thing on the panel: 57% of contracts in the shipped data give a SCU
@@ -107,7 +122,14 @@
      Reuses .track's frame so it reads as the same kind of question as the load checklist, tinted
      cyan rather than gold because it is not a warning — nothing is wrong, the game simply never
      said where this is. */
-  .track.places { background: rgba(var(--accent-rgb), 0.06); }
+  /* 🔴 THE SUGGESTION LIST MUST NOT BE CLIPPED. It inherited `.track .list`'s `overflow-y: auto`,
+     which is right for the tonnage checklist (many rows, capped height) and fatal here: an
+     absolutely-positioned dropdown inside a scrolling box is cut off at the box's edge, which is
+     exactly what Sub saw. So this section does NOT scroll — it has at most a handful of rows — and
+     the whole strip is raised above #body so the list hangs over the route as far as it likes.
+     Sub: "it should just hang as low as it wants to go." */
+  .track.places { background: rgba(var(--accent-rgb), 0.06); overflow: visible; z-index: 6; }
+  .track.places .list { max-height: none; overflow: visible; }
   .track.places .th .k { color: var(--cyan-bright); }
   .prow { padding: 4px 12px 5px; position: relative; }
   .prow .top { display: flex; align-items: baseline; gap: 6px; }
@@ -355,13 +377,22 @@
       </div>
       <div class="caps" id="caps"></div>
       <div class="facts" id="facts"></div>
+      <!-- 🔴 THE RATES GET THEIR OWN STRIP. Sitting in .facts they read as another property of the
+           board, like "contracts 3" — and they are not: they are a rate against TIME, and the time
+           is the run you are actually flying, not the contracts you happen to hold. Sub asked for
+           them separated so that is understood. -->
+      <div class="ratebar" id="ratebar" style="display:none"></div>
     </div>
 
     <!-- 🔴 Heading and explanation are BOTH filled from the live state — see renderTrack(). A
          fixed "TRACK THESE IN MOBIGLAS" is what shipped a prompt that could not come true. -->
     <div class="track" id="track" style="display:none">
-      <div class="th" id="trackHead"><span class="k" id="trackK"></span><span class="n" id="trackN"></span></div>
-      <div class="why" id="trackWhy"></div>
+      <!-- 🔑 The ⓘ sits IN the heading, not on a line of its own. It had its own .why row, which
+           cost a whole line of a 560px panel to render one glyph out of line with the words it
+           explains. Sub: "that's just wasting UI space." -->
+      <div class="th" id="trackHead">
+        <span class="k" id="trackK"></span><span class="whyinfo" id="trackInfo">ⓘ</span><span class="n" id="trackN"></span>
+      </div>
       <div class="list" id="trackList"></div>
     </div>
 
@@ -371,8 +402,9 @@
          kind of row. Only a TRACKED drop-off is ever named by the game, so pickups are almost
          always anonymous and this is the only way they ever get a name. -->
     <div class="track places" id="places" style="display:none">
-      <div class="th"><span class="k">Name these places</span><span class="n" id="placesN"></span></div>
-      <div class="why" id="placesWhy"></div>
+      <div class="th">
+        <span class="k">Name these places</span><span class="whyinfo" id="placesInfo">ⓘ</span><span class="n" id="placesN"></span>
+      </div>
       <div class="list" id="placesList"></div>
     </div>
 
@@ -651,7 +683,7 @@
       s.appendChild(b);
       facts.appendChild(s);
     }
-    renderRates(facts);
+    renderRates();
   }
 
   /**
@@ -668,35 +700,55 @@
    * gRPC service — no amounts, no deltas. The figure comes off the mission dataset, which states it
    * per contract and reads it from the game files rather than fitting it.
    */
-  function renderRates(facts) {
+  function renderRates() {
+    const bar = $("ratebar");
+    bar.textContent = "";
     const r = (plan && plan.rates) || {};
     const rate = r.actual || r.projected;
-    if (!rate) return;
+    if (!rate) { bar.style.display = "none"; return; }
+    bar.style.display = "";
     const measured = !!r.actual;
+    const est = measured ? "" : " est";
     const per = (v) => (v >= 1000 ? Math.round(v / 1000) + "k" : Math.round(v));
-    const add = (label, value, why) => {
-      const s = document.createElement("span");
-      s.textContent = label + " ";
-      const b = document.createElement("span");
-      b.className = "v" + (measured ? "" : " est");
-      b.textContent = value;
-      s.appendChild(b);
-      s.title = why;
-      facts.appendChild(s);
-    };
-    add(measured ? "earning" : "should earn", per(rate.auecPerHour) + " aUEC/h", measured
+
+    const k = document.createElement("span");
+    k.className = "k";
+    k.textContent = measured ? "Earning" : "Should earn";
+    bar.appendChild(k);
+
+    const money = document.createElement("span");
+    money.className = "fig" + est;
+    money.textContent = per(rate.auecPerHour) + " aUEC/h";
+    money.title = measured
       ? "Measured — " + num(Math.round(r.actual.auec)) + " aUEC from " + r.actual.contracts
-        + " finished contract" + (r.actual.contracts > 1 ? "s" : "") + " over " + fmtMins(r.actual.minutes) + " of run."
+        + " finished contract" + (r.actual.contracts > 1 ? "s" : "") + " over " + fmtMins(r.actual.minutes)
+        + " of run. Per hour of RUN TIME, not per contract: flying and loading count against it."
       : "A forecast: nothing has finished yet, so this is what the board ahead is worth against the"
         + " estimated run time. It becomes a measured figure the moment you deliver."
-        + (r.payoutModelled ? "  ⚠️ A contract here has a modelled payout, not a stated one." : ""));
+        + (r.payoutModelled ? "  ⚠️ A contract here has a modelled payout, not a stated one." : "");
+    bar.appendChild(money);
+
     // Suppressed at zero rather than printed as "0/h": Master-rank Large and Bulk hauls genuinely
     // pay no reputation, and a zero there is a fact about the contract, not about the run.
     if (rate.repPerHour > 0) {
-      add("rep", per(rate.repPerHour) + "/h", "Reputation per hour, on the same basis. The game"
-        + " never logs reputation in any form — this comes from the mission dataset, which states"
-        + " it per contract.");
+      const rep = document.createElement("span");
+      rep.className = "rep" + est;
+      rep.textContent = per(rate.repPerHour) + " rep/h";
+      rep.title = "Reputation per hour, on the same basis. The game never logs reputation in any"
+        + " form — this comes from the mission dataset, which states it per contract.";
+      bar.appendChild(rep);
     }
+
+    /* 🔑 SAY WHAT THE DENOMINATOR IS. The whole reason this strip exists is that a rate reads like
+       a property of the contracts unless something tells you otherwise, and it is not — it is
+       against the clock. Naming the window is what makes the number interpretable. */
+    const basis = document.createElement("span");
+    basis.className = "basis";
+    basis.textContent = measured ? "over " + fmtMins(r.actual.minutes) + " of run" : "at the estimated pace";
+    basis.title = measured
+      ? "Every minute since the first hauling event this session, including the ones spent not hauling."
+      : "Against this planner's own estimate for the run ahead.";
+    bar.appendChild(basis);
   }
 
   /* 🔴 THE THREE STATES. The old prompt had one — "TRACK THESE IN MOBIGLAS", shown to every
@@ -788,12 +840,7 @@
     if (allPinned && !trackOpen) {
       el.classList.add("done");
       $("trackK").textContent = "Load set by you";
-      $("trackWhy").textContent = "";
-      const doneInfo = document.createElement("span");
-      doneInfo.className = "whyinfo";
-      doneInfo.textContent = "ⓘ";
-      doneInfo.title = "You typed these in and the plan is using your figures. Click the heading to change them.";
-      $("trackWhy").appendChild(doneInfo);
+      $("trackInfo").title = "You typed these in and the plan is using your figures. Click the heading to change them.";
       $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
       $("trackList").textContent = "";
       return;
@@ -810,12 +857,7 @@
       : allPinned
       ? "The game never stated these, so they stay listed — but you have typed the figures in and the plan is using yours. Clear a box to fall back to what the game files allow."
       : "These are tracked and the game still has not stated their load. It only says the tonnage when it assigns the objective, and re-tracking does not replay that — so type the figure off your mobiGlas, or wait for the next spawn-in.";
-    $("trackWhy").textContent = "";
-    const info = document.createElement("span");
-    info.className = "whyinfo";
-    info.textContent = "ⓘ";
-    info.title = why;
-    $("trackWhy").appendChild(info);
+    $("trackInfo").title = why;
     $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
     const list = $("trackList");
     // 🔴 ROWS ARE REUSED, keyed by mission — they used to be torn down and rebuilt on every render,
@@ -915,15 +957,9 @@
     if (!list.length) { el.style.display = "none"; return; }
     el.style.display = "";
     $("placesN").textContent = list.length + (list.length > 1 ? " places" : " place");
-    if (!$("placesWhy").firstChild) {
-      const info = document.createElement("span");
-      info.className = "whyinfo";
-      info.textContent = "ⓘ";
-      info.title = "The game only names a place when it states a delivery objective, so pickups and"
-        + " untracked legs arrive anonymous. Type the name and it sticks to those coordinates — you"
-        + " will not be asked about this place again. Start typing and it will find it.";
-      $("placesWhy").appendChild(info);
-    }
+    $("placesInfo").title = "The game only names a place when it states a delivery objective, so"
+      + " pickups and untracked legs arrive anonymous. Type the name and it sticks to those"
+      + " coordinates — you will not be asked about this place again.";
     const holder = $("placesList");
     const seen = new Set();
     for (const p of list) {

@@ -65,6 +65,10 @@ const fmt = (e: MissionEvent): string => {
       return `HAULITEM [${short(e.missionId)}] ${e.registered ? "+" : "-"} ${e.itemClass ?? e.entityId}`;
     case "vehicleControl":
       return `VEHICLE  ${e.action.padEnd(7)} ${e.model}`;
+    case "cargoPlatform":
+      return `CARGO    ${e.direction === "down" ? "OFFLOAD" : "LOAD   "} ${e.platform}`;
+    case "cargoKiosk":
+      return `KIOSK    ${e.terminal}`;
     case "trackedMarker":
       return `MOBIGLAS [${short(e.missionId)}] ${e.added ? "TRACK  " : "untrack"} ${e.objectiveId}`;
   }

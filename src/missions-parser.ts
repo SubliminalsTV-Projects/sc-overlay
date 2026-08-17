@@ -190,6 +190,40 @@ export type MissionEvent =
       /** `vehicle` with the trailing `_<entityId>` removed: "CRUS_Starlifter_C2". */
       model: string;
     }
+  /**
+   * A freight-elevator platform moved — the only signal in the log that says whether cargo is
+   * going ONTO the pad or coming OFF it.
+   *
+   * 🔴 THIS IS WHY "aboard" WAS A LIE. The game completes a pickup objective the instant it
+   * releases the cargo to the elevator, not when it reaches the ship. Measured on Sub's own run,
+   * 2026-08-17:
+   *
+   *   20:50:02  FillUnstowRequest      he presses the kiosk
+   *   20:50:05  pickup → COMPLETED     the widget claimed "aboard" here
+   *   20:50:16  RaisingPlatform        the boxes have not left the floor yet
+   *
+   * Eleven seconds before the platform even starts rising, and minutes before any of it is
+   * tractored in. So `down` is OFFLOADING and `up` is LOADING.
+   *
+   * 🔑 It fires at OUTPOSTS too (`LoadingPlatformManager_FreightElevator_HT_Outpost`, and the bare
+   * `LoadingPlatformManager` at exterior pads), which is what makes it usable where the "Hangar
+   * Request Completed" notification never comes — Samson & Son's has no ATC at all.
+   *
+   * ⚠️ SHIP elevators are excluded. `LoadingPlatformManager_ShipElevator_*` is the hangar lift that
+   * raises and lowers SHIPS; it cycles constantly as traffic comes and goes, including other
+   * people's, and says nothing about cargo.
+   */
+  | {
+      kind: "cargoPlatform";
+      ts: string | null;
+      /** "down" = cargo sent to storage (offloading) · "up" = cargo brought out (loading). */
+      direction: "down" | "up";
+      /** The manager's own tag, e.g. "LoadingPlatformManager_FreightElevator_HT_Outpost". */
+      platform: string;
+    }
+  /** The player pressed a freight-elevator kiosk. Unambiguously OUR action, unlike a platform
+   *  moving, which is why it is worth having separately: it brackets a real load. */
+  | { kind: "cargoKiosk"; ts: string | null; terminal: string }
   /** Entered/re-entered the persistent universe (login / server change) — the
    *  previous shard's tracked-mission selection no longer applies. */
   | { kind: "sessionStart"; ts: string | null }
@@ -358,6 +392,12 @@ const RE = {
   // no log ever contains two distinct non-zero node ids, and the id matches the `PlayerId[…]`
   // the game prints on EndMission — so the phrase means what it says.
   vehicleToken: /Local client node\s*\[(\d+)\]\s*(requesting|granted|releasing)\s+control token for\s*'([^']+)'\s*\[(\d+)\]/,
+  /* "[Loading Platform] Loading Platform Manager [<tag>] Platform state changed to <State>".
+     The tag is bare at exterior pads (just "LoadingPlatformManager"), so the name class allows a
+     plain word as well as the suffixed hangar/outpost forms. */
+  platformState: /Loading Platform Manager \[([A-Za-z0-9_]+)\] Platform state changed to ([A-Za-z]+)/,
+  /* "[FreightElevatorKioskUIProvider] <Terminal>[123] - Processed bindings into transfer request" */
+  kioskTerminal: /\[FreightElevatorKioskUIProvider\]\s*([A-Za-z0-9_]+)\[/,
   blueprint: /^Received Blueprint:\s*(.+?):\s*$/,
   missionIdField: new RegExp(`MissionId:\\s*\\[(${UUID})\\]`),
   // CreateMarker fields (note: contractDefinitionId has NO space before its bracket)
@@ -572,6 +612,27 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
         vehicle, entityId,
         model: vehicle.endsWith(`_${entityId}`) ? vehicle.slice(0, -(entityId.length + 1)) : vehicle,
       };
+    }
+
+    /* Cargo going onto or off the freight-elevator pad — see the `cargoPlatform` note for why this
+       is the signal that "aboard" was missing, and for the measured timings. */
+    case "CSCLoadingPlatformManager::OnLoadingPlatformStateChanged": {
+      const p = m.match(RE.platformState);
+      if (!p) return null;
+      const platform = p[1];
+      // ⚠️ Ship elevators are hangar traffic, not cargo. Excluded — see the event's note.
+      if (/ShipElevator/i.test(platform)) return null;
+      const state = p[2];
+      const direction = state === "LoweringPlatform" ? "down" : state === "RaisingPlatform" ? "up" : null;
+      // Gate states (Opening/Closing, and the two Idles) say the doors moved, not which way the
+      // cargo went. Only the two travel states carry direction, so only they are reported.
+      if (!direction) return null;
+      return { kind: "cargoPlatform", ts: e.timestamp, direction, platform };
+    }
+
+    case "CEntityComponentFreightElevatorUIProvider::FillUnstowRequest": {
+      const t = m.match(RE.kioskTerminal);
+      return t ? { kind: "cargoKiosk", ts: e.timestamp, terminal: t[1] } : null;
     }
 
     case "CMissionLogEntry::UpdateActiveObjective": {
