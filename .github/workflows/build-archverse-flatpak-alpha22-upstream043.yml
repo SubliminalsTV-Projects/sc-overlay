@@ -1,0 +1,308 @@
+name: Build ArchVerse Alpha22 Flatpak Upstream043
+
+on:
+  push:
+    branches: [integration/flatpak-alpha22-upstream043]
+    paths:
+      - 'electron/**'
+      - 'src/**'
+      - 'overlay/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'archverse-flatpak/**'
+      - '.github/workflows/build-archverse-flatpak-alpha22-upstream043.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, converge, install, and GUI-smoke-test 0.1.43 Flatpak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+
+    steps:
+      - name: Checkout 0.1.43 Flatpak integration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify source convergence target
+        run: |
+          set -euxo pipefail
+          test "$(node -p 'require("./package.json").version')" = "0.1.43"
+          grep -Fq 'NO Pass-1 PRECONDITION ANY MORE' electron/capture.cjs
+          grep -Fq 'typeof read.signature === "number"' electron/capture.cjs
+          grep -Fq 'drag lock held 30s' electron/main.cjs
+
+      - name: Build current 0.1.43 sidecar and run Linux-safe regressions
+        run: |
+          set -euxo pipefail
+          npm ci
+          npm run build:server
+          npm run test:handover
+          npm run test:mining
+          npm run test:location
+          npm run test:contracts
+
+      - name: Reconstruct verified Alpha 22 Linux Electron shell
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/archverse-a20 /tmp/archverse-stage /tmp/archverse-alpha20.tar.gz
+          mkdir -p /tmp/archverse-a20 /tmp/archverse-stage/{app,bin,flatpak,tests}
+          curl --fail --location --retry 3 --retry-delay 2 \
+            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/releases/download/v0.1.42-r31-alpha.20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz \
+            -o /tmp/archverse-alpha20.tar.gz
+          echo 'f4256aeac8c13fb0a64fc6065a8869bf58015dbe694200a550aaf9e99e3dd0a6  /tmp/archverse-alpha20.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/archverse-alpha20.tar.gz -C /tmp/archverse-a20 \
+            --strip-components=2 --wildcards '*/app/electron/*'
+          test -f /tmp/archverse-a20/electron/capture.cjs
+          cp -a /tmp/archverse-a20/electron /tmp/archverse-stage/app/
+          patch --batch /tmp/archverse-stage/app/electron/capture.cjs < archverse-flatpak/patches/electron/capture.patch
+          patch --batch /tmp/archverse-stage/app/electron/linux/focus-controller.cjs < archverse-flatpak/patches/electron/focus-controller.patch
+          patch --batch /tmp/archverse-stage/app/electron/main.cjs < archverse-flatpak/patches/electron/main.patch
+          patch --batch /tmp/archverse-stage/app/electron/window-manager.cjs < archverse-flatpak/patches/electron/window-manager.patch
+          patch --batch /tmp/archverse-stage/app/electron/linux/star-citizen-session.cjs < archverse-flatpak/patches/electron/star-citizen-session.patch
+          cp archverse-flatpak/files/runtime-env.cjs /tmp/archverse-stage/app/electron/linux/
+          cp archverse-flatpak/files/flatpak-star-citizen-session.cjs /tmp/archverse-stage/app/electron/linux/
+
+      - name: Converge packaged Electron shell on upstream 0.1.43 mining semantics
+        run: |
+          set -euxo pipefail
+          node archverse-flatpak/tools/converge-electron-043.cjs \
+            /tmp/archverse-stage/app/electron/capture.cjs \
+            /tmp/archverse-stage/app/electron/main.cjs
+
+      - name: Apply and converge Alpha 22 sidecar safety deltas
+        run: |
+          set -euxo pipefail
+          patch --batch build/server/overlay/config.html < archverse-flatpak/patches/server/config.html.patch
+          patch --batch build/server/overlay/mining.html < archverse-flatpak/patches/server/mining.html.patch
+          node archverse-flatpak/tools/converge-missions-043.cjs build/server/overlay/missions.html
+          patch --batch build/server/server.mjs < archverse-flatpak/patches/server/server.mjs.patch
+          cp archverse-flatpak/files/overlay/archverse-resource-scanner.js build/server/overlay/
+          cp archverse-flatpak/files/overlay/archverse-widget-appearance.js build/server/overlay/
+
+      - name: Stage production payload
+        run: |
+          set -euxo pipefail
+          npm prune --omit=dev
+          cp -a build/server /tmp/archverse-stage/app/server
+          cp -a node_modules /tmp/archverse-stage/app/node_modules
+          cp archverse-flatpak/files/app-package.json /tmp/archverse-stage/app/package.json
+          cp archverse-flatpak/tests/rapidocr-flatpak-selftest.mjs /tmp/archverse-stage/app/
+          cp archverse-flatpak/files/bin/sc-blueprint-tracker /tmp/archverse-stage/bin/
+          chmod 0755 /tmp/archverse-stage/bin/sc-blueprint-tracker
+          cp LICENSE.md /tmp/archverse-stage/LICENSE.md
+          cp -a archverse-flatpak/packaging/. /tmp/archverse-stage/flatpak/
+          cp archverse-flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.yml /tmp/archverse-stage/
+          cp archverse-flatpak/tests/flatpak-session-binder.test.cjs /tmp/archverse-stage/tests/
+
+      - name: Verify 0.1.43 mining and Flatpak invariants before packaging
+        working-directory: /tmp/archverse-stage
+        run: |
+          set -euxo pipefail
+          node --check app/electron/capture.cjs
+          node --check app/electron/main.cjs
+          node --check app/electron/window-manager.cjs
+          node --check app/electron/linux/focus-controller.cjs
+          node --check app/electron/linux/star-citizen-session.cjs
+          node --check app/electron/linux/runtime-env.cjs
+          node --check app/electron/linux/flatpak-star-citizen-session.cjs
+          node --check app/rapidocr-flatpak-selftest.mjs
+          node tests/flatpak-session-binder.test.cjs
+
+          grep -Fq 'ARCHVERSE_043_MINING_GATE' app/electron/capture.cjs
+          grep -Fq 'if (mining && cfg.rapidOcr !== false) {' app/electron/capture.cjs
+          grep -Fq 'const locked = mining && sigBox && Date.now() - sigBoxAt < SIG_LOCK_MS;' app/electron/capture.cjs
+          ! grep -Fq 'const locked = mining && archScanModeRead.active' app/electron/capture.cjs
+          grep -Fq 'const needGeneric = fab || miss || claim || payout;' app/electron/capture.cjs
+          grep -Fq 'typeof read.signature === "number"' app/electron/capture.cjs
+          grep -Fq 'Math.round(lastTickMs * 1.5)' app/electron/capture.cjs
+          grep -Fq 'reportLinuxRapidFailure' app/electron/capture.cjs
+          grep -Fq 'drag lock held 30s' app/electron/main.cjs
+          ! grep -E 'if \([^\n]*archScanModeRead\.active[^\n]*rapidOcr' app/electron/capture.cjs
+          ! grep -E 'if \([^\n]*detectScanModeRadarIcon[^\n]*rapidOcr' app/electron/capture.cjs
+
+          grep -Fq 'ARCHVERSE_043_REGION_CLASSIFIER' app/server/overlay/missions.html
+          grep -Fq 'window.__overlayClassifyPoint = classifyOverlayPoint;' app/server/overlay/missions.html
+          grep -Fq 'body.boardbox #boardBox' app/server/overlay/missions.html
+          ! grep -Fq 'setInterval(reportRegions, 100);' app/server/overlay/missions.html
+          grep -Fq 'ARCHVERSE_043_LINUX_OCR_HEALTH' app/server/server.mjs
+          grep -q 'SC_TRACKER_CONFIG_DIR' app/server/server.mjs
+          grep -q 'salvageConfirmed === true' app/server/overlay/mining.html
+          grep -q 'salvageConfirmed === true' app/server/overlay/archverse-resource-scanner.js
+          grep -q 'strip-components: 0' io.github.gbmccray32_boop.ArchVerseOverlay.yml
+          grep -q 'xrandr --current' flatpak/archverse-overlay
+          grep -q 'SC_OVERLAY_DEFAULT_ZONE_WIDTH' flatpak/archverse-overlay
+          ! grep -R --line-number -E 'flatpak-spawn[[:space:]]+--host|org\.freedesktop\.Flatpak' .
+
+      - name: Install Flatpak and headless desktop tools
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder librsvg2-bin appstream xvfb curl dbus-x11
+          command -v dbus-run-session
+          flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Render icon and validate metadata
+        run: |
+          set -euxo pipefail
+          rsvg-convert -w 512 -h 512 \
+            /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.svg \
+            -o /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.png
+          mkdir -p /tmp/archverse-stage/app/build
+          cp /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.png /tmp/archverse-stage/app/build/icon.png
+          cp /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.png /tmp/archverse-stage/app/server/overlay/tray-icon.png
+          appstreamcli validate --no-net /tmp/archverse-stage/flatpak/io.github.gbmccray32_boop.ArchVerseOverlay.metainfo.xml
+
+      - name: Build Alpha 22 upstream043 Flatpak
+        working-directory: /tmp/archverse-stage
+        run: |
+          set -euxo pipefail
+          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=repo \
+            builddir io.github.gbmccray32_boop.ArchVerseOverlay.yml
+          mkdir -p dist
+          flatpak build-bundle repo \
+            dist/ArchVerse-Overlay-0.1.43-r31-alpha.22-upstream043-test1-x86_64.flatpak \
+            io.github.gbmccray32_boop.ArchVerseOverlay alpha22 \
+            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          sha256sum dist/ArchVerse-Overlay-0.1.43-r31-alpha.22-upstream043-test1-x86_64.flatpak \
+            > dist/ArchVerse-Overlay-0.1.43-r31-alpha.22-upstream043-test1-x86_64.flatpak.sha256
+
+      - name: Install bundle and verify sandbox resources plus RapidOCR startup
+        working-directory: /tmp/archverse-stage
+        run: |
+          set -euxo pipefail
+          flatpak install --user -y --reinstall dist/ArchVerse-Overlay-0.1.43-r31-alpha.22-upstream043-test1-x86_64.flatpak
+          flatpak run --command=sh io.github.gbmccray32_boop.ArchVerseOverlay -lc '
+            set -eux
+            test "${SC_TRACKER_FLATPAK:-}" = 1
+            command -v xdotool
+            command -v xrandr
+            test -x /app/archverse/bin/sc-blueprint-tracker
+            test -x /app/lib/archverse-electron/electron
+            test -f /app/archverse/app/electron/capture.cjs
+            test -f /app/archverse/app/electron/main.cjs
+            test -f /app/archverse/app/rapidocr-flatpak-selftest.mjs
+            test -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node
+            test -f /app/archverse/app/node_modules/@gutenye/ocr-models/assets/ch_PP-OCRv4_rec_infer.onnx
+            test ! -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so
+            test ! -f /app/archverse/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_tensorrt.so
+            grep -Fq ARCHVERSE_043_MINING_GATE /app/archverse/app/electron/capture.cjs
+            grep -Fq "drag lock held 30s" /app/archverse/app/electron/main.cjs
+            grep -Fq ARCHVERSE_043_REGION_CLASSIFIER /app/archverse/app/server/overlay/missions.html
+            cd /app/archverse/app
+            /app/bin/archverse-node rapidocr-flatpak-selftest.mjs
+          '
+
+      - name: Launch real ArchVerse GUI under Xvfb, private runtime dir, and D-Bus
+        run: |
+          set -euxo pipefail
+          export XDG_RUNTIME_DIR="${RUNNER_TEMP}/archverse-xdg-runtime"
+          rm -rf "$XDG_RUNTIME_DIR"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          test -O "$XDG_RUNTIME_DIR"
+
+          dbus-run-session -- bash -ceu '
+            set -o pipefail
+            test -n "${DBUS_SESSION_BUS_ADDRESS:-}"
+            Xvfb :99 -screen 0 1280x720x24 -ac +extension RANDR >/tmp/archverse-xvfb.log 2>&1 &
+            XVFB_PID=$!
+            cleanup() {
+              flatpak kill io.github.gbmccray32_boop.ArchVerseOverlay 2>/dev/null || true
+              kill "$XVFB_PID" 2>/dev/null || true
+            }
+            trap cleanup EXIT
+            export DISPLAY=:99
+            sleep 1
+
+            flatpak run --env=SC_TRACKER_RENDER_MODE=gpu-off \
+              io.github.gbmccray32_boop.ArchVerseOverlay \
+              >/tmp/archverse-flatpak-gui.log 2>&1 &
+            GUI_PID=$!
+
+            ready=0
+            for i in $(seq 1 25); do
+              if ! kill -0 "$GUI_PID" 2>/dev/null; then
+                echo "ArchVerse exited before GUI liveness gate." >&2
+                cat /tmp/archverse-flatpak-gui.log >&2 || true
+                cat /tmp/archverse-xvfb.log >&2 || true
+                exit 1
+              fi
+              if curl -fsS http://127.0.0.1:8778/api/config >/tmp/archverse-api-config.json 2>/dev/null; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+
+            if [ "$ready" != 1 ]; then
+              echo "Sidecar did not become ready within 25 seconds." >&2
+              cat /tmp/archverse-flatpak-gui.log >&2 || true
+              cat /tmp/archverse-xvfb.log >&2 || true
+              exit 1
+            fi
+
+            kill -0 "$GUI_PID"
+            flatpak ps | grep -F io.github.gbmccray32_boop.ArchVerseOverlay
+            grep -Fq "[flatpak] detected desktop canvas: 1280x720" /tmp/archverse-flatpak-gui.log
+            grep -Fq "[launcher] canvas profile: 1280x720" /tmp/archverse-flatpak-gui.log
+            ! grep -Fq "locale_file_path.empty()" /tmp/archverse-flatpak-gui.log
+            ! grep -Fq "Assertion failed: bus" /tmp/archverse-flatpak-gui.log
+            sleep 4
+            kill -0 "$GUI_PID"
+            curl -fsS http://127.0.0.1:8778/api/config >/tmp/archverse-api-config-final.json
+            echo "ArchVerse 0.1.43 Flatpak GUI remained alive and sidecar responded."
+            cat /tmp/archverse-flatpak-gui.log
+          '
+
+      - name: Prepare field-test diagnostics
+        if: success()
+        run: |
+          set -euxo pipefail
+          cp archverse-flatpak/tools/flatpak-doctor.sh /tmp/archverse-stage/dist/flatpak-doctor.sh
+          cp archverse-flatpak/tools/flatpak-electron-gui-smoke.sh /tmp/archverse-stage/dist/flatpak-electron-gui-smoke.sh
+          chmod 0755 /tmp/archverse-stage/dist/flatpak-doctor.sh /tmp/archverse-stage/dist/flatpak-electron-gui-smoke.sh
+          cat > /tmp/archverse-stage/dist/UPSTREAM043-TEST-INSTRUCTIONS.txt <<'EOF'
+          ArchVerse Overlay 0.1.43-r31 Alpha 22 — upstream043 Flatpak Test 1
+          =================================================================
+
+          This build converges the packaged Linux scanner on upstream 0.1.43 mining semantics.
+          RapidOCR inspects the configured mining crop whenever mining is armed. Radar/scan-mode
+          detection remains diagnostic only and cannot gate the cropped OCR pass. A parsed mining
+          signature is sufficient to enter the fast polling window.
+
+          Use this SAME x86_64 Flatpak artifact for field validation on an Arch-family host
+          (Arch/CachyOS) and a Fedora-family host (Fedora/Nobara).
+
+          Install:
+            flatpak install --user --reinstall ./ArchVerse-Overlay-0.1.43-r31-alpha.22-upstream043-test1-x86_64.flatpak
+
+          Run:
+            flatpak run io.github.gbmccray32_boop.ArchVerseOverlay
+
+          Diagnostic:
+            ./flatpak-doctor.sh
+
+          Mining priorities: enter and leave scan mode repeatedly; scan known rocks; remain in
+          normal flight HUD for several minutes; verify there is no stuck scan state; verify valid
+          signatures are read without radar-icon dependence; collect diagnostics for any missed read.
+          EOF
+
+      - name: Upload Alpha 22 upstream043 artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha22-Upstream043-Test1
+          path: /tmp/archverse-stage/dist/*
+          if-no-files-found: error
+          compression-level: 0
