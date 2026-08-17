@@ -207,6 +207,29 @@ interface Config {
    *  trust the log. Persisted because the log's ship signal is not guaranteed — a relog, or
    *  taking off in a ship the vehicle-control lines never named, leaves it blank. */
   haulingShip: string;
+  /**
+   * Places the player has named by hand, keyed by the hauling planner's own location id.
+   *
+   * 🔑 THAT ID IS THE COORDINATES, rounded to the kilometre (see posKey in hauling-plan.ts) — not a
+   * zoneHostId, which the game reissues every session and which would make every saved name go
+   * stale overnight. A marker's position is byte-identical across days, so naming a place once
+   * names it for good.
+   *
+   * Why it has to exist at all: only a TRACKED drop-off carries a name (the Deliver line's "… to
+   * <D>"), so a pickup site, or any leg the player never tracked, shows as "Site 1". Sub has asked
+   * for this four times.
+   */
+  haulingPlaces: Record<string, string>;
+  /**
+   * Every place name the GAME has ever stated on a Deliver line, newest last.
+   *
+   * 🔴 This is the good half of the suggestion list, and it is not optional garnish. locations.json
+   * carries 1,968 rows and **does not contain "Riker Memorial Spaceport"** — nor any other city
+   * spaceport; it has `Area18` but not the spaceport inside it. A picker built only from the
+   * dataset would fail on Sub's single most common drop-off. Names the game has actually used on a
+   * hauling contract are by definition real hauling stops, so they rank above the dataset.
+   */
+  haulingSeenPlaces: string[];
   /** Remembers whether the Web Page widget was left open, so it's restored on launch. */
   webViewOpen: boolean;
   /** URL shown by the Web Page widget (http/https only). Empty = it shows its address picker. */
@@ -403,6 +426,8 @@ const DEFAULTS: Config = {
   battagliaOpen: false,
   haulingOpen: false,
   haulingShip: "",
+  haulingPlaces: {},
+  haulingSeenPlaces: [],
   webViewOpen: false,
   // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
   // it's the page most likely to be wanted beside the game, and it shows what the widget does.
@@ -482,13 +507,19 @@ function loadConfig(): Config {
         // off-frame or squashed to nothing is replaced for the same reason (it reads an empty
         // rectangle and looks exactly like a scanner that has stopped working).
         return { ...DEFAULTS, ...raw, payoutScan: false,
-          contractRegion: contractRegionOrDefault(raw?.contractRegion) };
+          contractRegion: contractRegionOrDefault(raw?.contractRegion),
+          // ⚠️ Copied, not spread through. A shallow `{...DEFAULTS}` hands out DEFAULTS' OWN
+          // container for these two, and both are mutated in place (naming a place, learning a
+          // name) — so the defaults object would accumulate this session's data and any later
+          // load would inherit it. Also normalises a config written before the fields existed.
+          haulingPlaces: { ...(raw?.haulingPlaces ?? {}) },
+          haulingSeenPlaces: Array.isArray(raw?.haulingSeenPlaces) ? [...raw.haulingSeenPlaces] : [] };
       }
     } catch {
       /* corrupt — try the next source */
     }
   }
-  return { ...DEFAULTS };
+  return { ...DEFAULTS, haulingPlaces: {}, haulingSeenPlaces: [] };
 }
 // 🔑 Whether this is a genuinely FIRST run, decided BEFORE anything can write a config —
 // the setup wizard takes over the screen, so it must never fire at someone who has been
@@ -1026,6 +1057,100 @@ const haulingData = new HaulingDataStore(dataDir);
   const c = haulingData.counts();
   console.log(`[hauling] ships: ${c.ships}, contracts: ${c.contracts}, locations: ${c.locations}` +
     (c.version ? ` (${c.version})` : ""));
+}
+
+// ── Naming a place the game never named ─────────────────────────────────────
+//
+// Only a TRACKED drop-off gets a name out of the game, so most stops read "Site 1". Sub has asked
+// four times for a box to type the real name into. Two pieces make that work: a list worth
+// choosing from, and a match that forgives typing.
+
+/** Types a cargo ship can actually be sent to. Everything else in locations.json is scenery: 816
+ *  asteroids, plus stars, systems, jump points and nav points. Offering them is offering a wrong
+ *  answer, and it is most of the list. */
+const PLACE_TYPES = new Set([
+  "Outpost", "Outpost_InvalidQT", "LandingZone", "Manmade",
+  "Manmade_VisibleOnInteraction", "PointOfInterest", "Moon", "Planet",
+]);
+/** How many suggestions a 420px panel can usefully show. */
+const PLACE_LIMIT = 8;
+/** Ceiling on the learned list, so a long-running install cannot grow the config without bound. */
+const SEEN_PLACES_MAX = 200;
+
+/**
+ * Remember names the GAME stated, newest last.
+ *
+ * 🔑 A name only counts if the game produced it. `Site 3` and anything the player typed are
+ * excluded — the point of this list is that its entries are known-good, so it can outrank a
+ * dataset of 1,125 candidates. Player answers are already remembered per place; feeding them back
+ * in here would let one typo become a permanent suggestion.
+ */
+function rememberSeenPlaces(names: readonly string[]): void {
+  const player = new Set(Object.values(config.haulingPlaces));
+  let changed = false;
+  for (const raw of names) {
+    const n = (raw ?? "").trim();
+    if (!n || /^Site \d+$/.test(n) || player.has(n)) continue;
+    const at = config.haulingSeenPlaces.indexOf(n);
+    if (at === config.haulingSeenPlaces.length - 1) continue;   // already the most recent
+    if (at >= 0) config.haulingSeenPlaces.splice(at, 1);
+    config.haulingSeenPlaces.push(n);
+    changed = true;
+  }
+  if (!changed) return;
+  if (config.haulingSeenPlaces.length > SEEN_PLACES_MAX) {
+    config.haulingSeenPlaces = config.haulingSeenPlaces.slice(-SEEN_PLACES_MAX);
+  }
+  void saveConfig();
+}
+
+/**
+ * Subsequence match with a bias toward the obvious reading.
+ *
+ * Returns null when the query's letters do not appear in order. Lower is better. A prefix match
+ * beats a word-start match beats letters merely scattered through the string, so typing "bai" puts
+ * "Baijini Point" above "Bloom Air Institute" even though both technically match.
+ */
+function fuzzyScore(name: string, q: string): number | null {
+  if (!q) return 0;
+  const hay = name.toLowerCase();
+  const needle = q.toLowerCase();
+  if (hay.startsWith(needle)) return 0;
+  const at = hay.indexOf(needle);
+  // A run that begins at a word boundary reads as a real hit; one starting mid-word is weaker.
+  if (at >= 0) return at === 0 || /[\s&'/-]/.test(hay[at - 1]) ? 1 : 2;
+  let i = 0, gaps = 0;
+  for (const ch of hay) {
+    if (ch === needle[i]) { i++; if (i === needle.length) break; }
+    else if (i > 0) gaps++;
+  }
+  return i === needle.length ? 3 + gaps / 1000 : null;
+}
+
+/** Ranked suggestions for the naming box: names the game has used, then the shipped dataset. */
+function haulingPlaceSuggestions(q: string): { name: string; hint: string | null; seen: boolean }[] {
+  const out: { name: string; hint: string | null; seen: boolean; rank: number }[] = [];
+  const taken = new Set<string>();
+  // Tier 1 — the game's own words, most recently used first. `seen.length - i` keeps recency as
+  // the tiebreak inside an equal fuzzy score, which is what "people work one area for hours" needs.
+  const seen = config.haulingSeenPlaces;
+  seen.forEach((name, i) => {
+    const s = fuzzyScore(name, q);
+    if (s === null) return;
+    taken.add(name.toLowerCase());
+    out.push({ name, hint: "used before", seen: true, rank: s - 10 - (i / (seen.length || 1)) });
+  });
+  // Tier 2 — the shipped dataset, minus everything a ship cannot be sent to.
+  for (const l of Object.values(haulingData.locations())) {
+    if (!l.name || !PLACE_TYPES.has(l.type ?? "")) continue;
+    if (taken.has(l.name.toLowerCase())) continue;
+    const s = fuzzyScore(l.name, q);
+    if (s === null) continue;
+    taken.add(l.name.toLowerCase());
+    out.push({ name: l.name, hint: l.parentName ?? l.system ?? null, seen: false, rank: s });
+  }
+  out.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
+  return out.slice(0, PLACE_LIMIT).map(({ name, hint, seen: s }) => ({ name, hint, seen: s }));
 }
 
 // ── Mining Assistant (signature scanner + refinery timer) ────────────────────
@@ -2660,6 +2785,44 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.end(JSON.stringify({ ok: true, ...hauling.view() }));
     return;
   }
+  /**
+   * Candidate place names for the Hauling widget's naming box, best first.
+   *
+   * 🔴 TWO TIERS, AND THE ORDER IS THE WHOLE POINT.
+   *   1. Names the GAME has stated on a hauling Deliver line, most recent first. These are real
+   *      hauling stops by construction, and they cover what the dataset cannot: locations.json has
+   *      1,968 rows and none of them is "Riker Memorial Spaceport" — it carries `Area18` but not
+   *      the spaceport inside it, and the same is true of every city.
+   *   2. locations.json, filtered to types a ship can actually be sent to. That drops 816 asteroids
+   *      and the stars, systems and jump points — 1,968 rows down to 1,125 — because an asteroid is
+   *      never a cargo stop and offering it is offering a wrong answer.
+   *
+   * Matching is subsequence-fuzzy so "sams" finds "Samson & Son's Salvage Center", with a prefix
+   * and word-start bonus so exact typing still wins. Sub: "you just start typing it in and it'll
+   * just autocorrect it."
+   */
+  if (url.startsWith("/api/hauling/places") && req.method === "GET") {
+    const q = (new URL(req.url ?? "", "http://x").searchParams.get("q") ?? "").trim();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, places: haulingPlaceSuggestions(q) }));
+    return;
+  }
+  /** Name a place by hand — or clear it by sending an empty name. Keyed by the planner's location
+   *  id, which IS the coordinates (see PlanOptions.placeNames). */
+  if (url === "/api/hauling/place" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    const id = typeof body.locationId === "string" ? body.locationId : "";
+    const name = typeof body.name === "string" ? body.name.trim().slice(0, 80) : "";
+    if (id) {
+      if (name) config.haulingPlaces[id] = name;
+      else delete config.haulingPlaces[id];
+      saveConfig();
+      hauling.emit("change");   // re-solve and push, so the route relabels immediately
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: !!id }));
+    return;
+  }
   // The solved plan: route order, box layout, and every load figure tagged with where it came
   // from. Computed HERE rather than in the widget because the solver and the datasets are both
   // server-side — the page only draws what this returns.
@@ -2689,7 +2852,15 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // contract has completed and never states reputation at all, so both come off the mission
       // dataset the blueprint tracker already has loaded.
       rewards: (key) => tracker.rewardsForKey(key),
+      // Places the player named by hand. See ConfigShape.haulingPlaces — keyed by coordinates, so
+      // an answer given once holds for good.
+      placeNames: config.haulingPlaces,
     });
+    // 🔑 LEARN EVERY NAME THE GAME STATES. locations.json does not carry city spaceports —
+    // "Riker Memorial Spaceport" is not in its 1,968 rows — so the dataset alone cannot offer the
+    // player the name they most often need. A name the game used on a hauling contract is by
+    // definition a real hauling stop, which makes this the better half of the suggestion list.
+    rememberSeenPlaces(Object.values(plan.locationNames));
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true, ...plan }));
     return;

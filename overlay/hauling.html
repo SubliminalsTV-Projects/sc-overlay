@@ -103,6 +103,34 @@
     border-radius: 5px; padding: 2px 4px; }
   .trow input:focus { outline: none; border-color: var(--cyan); }
 
+  /* ── Naming a place ───────────────────────────────────────────────────────
+     Reuses .track's frame so it reads as the same kind of question as the load checklist, tinted
+     cyan rather than gold because it is not a warning — nothing is wrong, the game simply never
+     said where this is. */
+  .track.places { background: rgba(var(--accent-rgb), 0.06); }
+  .track.places .th .k { color: var(--cyan-bright); }
+  .prow { padding: 4px 12px 5px; position: relative; }
+  .prow .top { display: flex; align-items: baseline; gap: 6px; }
+  .prow .site { flex: none; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  .prow .role { flex: 1; min-width: 0; font-size: 10px; color: var(--cyan-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prow input { width: 100%; margin-top: 3px; font-family: var(--sans); font-size: 11px;
+    color: var(--cyan-bright); background: var(--menu-bg); border: 1px solid var(--divider);
+    border-radius: 5px; padding: 3px 6px; }
+  .prow input:focus { outline: none; border-color: var(--cyan); }
+  /* The suggestions. Absolutely positioned so opening the list never reflows the route underneath
+     it — a list that pushes the page down moves the row you are aiming at. */
+  .psug { position: absolute; left: 12px; right: 12px; top: 100%; z-index: 9;
+    background: var(--menu-bg); border: 1px solid var(--cyan); border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55); overflow: hidden; }
+  .psug div { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; cursor: pointer;
+    font-size: 11px; color: var(--cyan-text); }
+  .psug div:hover, .psug div.on { background: rgba(var(--accent-rgb), 0.22); }
+  .psug .h { margin-left: auto; font-size: 9px; color: var(--faint); white-space: nowrap; }
+  /* A name the GAME has used before. It outranks the 1,125 dataset rows for a reason worth
+     showing: it is known to be a real hauling stop. */
+  .psug .seen { color: var(--green); }
+
   #body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; z-index: 4; }
   .sec { display: flex; align-items: baseline; gap: 6px; padding: 9px 12px 5px;
     font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
@@ -335,6 +363,17 @@
       <div class="th" id="trackHead"><span class="k" id="trackK"></span><span class="n" id="trackN"></span></div>
       <div class="why" id="trackWhy"></div>
       <div class="list" id="trackList"></div>
+    </div>
+
+    <!-- 🔴 Places the game never named. Same shape and same keyboard handling as the load
+         checklist above — Sub asked for it as "you know how we have to put in the totals", which
+         is exactly the right instinct: it is the same kind of question and belongs in the same
+         kind of row. Only a TRACKED drop-off is ever named by the game, so pickups are almost
+         always anonymous and this is the only way they ever get a name. -->
+    <div class="track places" id="places" style="display:none">
+      <div class="th"><span class="k">Name these places</span><span class="n" id="placesN"></span></div>
+      <div class="why" id="placesWhy"></div>
+      <div class="list" id="placesList"></div>
     </div>
 
     <div id="body"><div class="empty" id="emptyState">Waiting for a hauling contract…</div></div>
@@ -851,6 +890,154 @@
     for (const [id, r] of trackRows) {
       if (!seen.has(id)) { r.row.remove(); trackRows.delete(id); }
     }
+  }
+
+  /**
+   * 🔴 NAME A PLACE THE GAME NEVER NAMED — Sub's most-asked-for control.
+   *
+   * Only a TRACKED drop-off carries a name (the Deliver line's "… to <D>"), so pickups are
+   * essentially always anonymous and show as "Site 1". The answer is remembered against the
+   * place's COORDINATES (the planner's location id is the position rounded to the kilometre), so
+   * it is asked once and never again — including across game restarts, when the zoneHostId this
+   * could otherwise have been keyed on is reissued.
+   *
+   * 🔑 Rows are REUSED across renders, keyed by location id, for the same reason the load
+   * checklist reuses its rows: a plan push mid-typing would otherwise destroy the input under the
+   * player's cursor and the field would look dead. That bug cost a session once already.
+   */
+  const placeRows = new Map();
+  /** locationId -> the suggestions currently showing, and which one arrow keys have landed on. */
+  let sugFor = null, sugList = [], sugIndex = -1;
+
+  function renderPlaces() {
+    const el = $("places");
+    const list = (plan && plan.unnamedPlaces) || [];
+    if (!list.length) { el.style.display = "none"; return; }
+    el.style.display = "";
+    $("placesN").textContent = list.length + (list.length > 1 ? " places" : " place");
+    if (!$("placesWhy").firstChild) {
+      const info = document.createElement("span");
+      info.className = "whyinfo";
+      info.textContent = "ⓘ";
+      info.title = "The game only names a place when it states a delivery objective, so pickups and"
+        + " untracked legs arrive anonymous. Type the name and it sticks to those coordinates — you"
+        + " will not be asked about this place again. Start typing and it will find it.";
+      $("placesWhy").appendChild(info);
+    }
+    const holder = $("placesList");
+    const seen = new Set();
+    for (const p of list) {
+      seen.add(p.locationId);
+      let r = placeRows.get(p.locationId);
+      if (!r) {
+        const row = document.createElement("div");
+        row.className = "prow";
+        const top = document.createElement("div"); top.className = "top";
+        const site = document.createElement("span"); site.className = "site";
+        const role = document.createElement("span"); role.className = "role";
+        top.append(site, role);
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.placeholder = "Type where this is…";
+        inp.autocomplete = "off";
+        // Same canvas keyboard grab as the tonnage boxes — see grabOn/grabOff. Reusing it is not
+        // tidiness: the shell suspends the interact key while a field is live, and a field that
+        // did not take the grab would type into the game instead.
+        inp.addEventListener("focus", () => grabOn(inp));
+        inp.addEventListener("blur", () => { grabOff(); setTimeout(() => closeSug(p.locationId), 120); });
+        inp.addEventListener("pointerdown", () => { wantFocus = inp; });
+        inp.addEventListener("input", () => askPlaces(p.locationId, inp.value, row));
+        inp.addEventListener("keydown", (e) => onSugKey(e, p.locationId, inp, row));
+        row.append(top, inp);
+        r = { row, site, role, inp };
+        placeRows.set(p.locationId, r);
+      }
+      r.site.textContent = p.label;
+      r.role.textContent = p.role === "pickup" ? "you pick up here"
+        : p.role === "both" ? "you pick up and drop off here" : "you drop off here";
+      if (p.commodity) r.role.textContent += "  ·  " + p.commodity;
+      holder.appendChild(r.row);   // appendChild MOVES an existing node, so this fixes order too
+    }
+    for (const [id, r] of placeRows) {
+      if (!seen.has(id)) { r.row.remove(); placeRows.delete(id); }
+    }
+  }
+
+  /** Ask the server to rank the candidates. Debounced: one request per character is fine at this
+   *  size, but a burst while someone types fast is pure waste. */
+  let sugTimer = null;
+  function askPlaces(locationId, q, row) {
+    clearTimeout(sugTimer);
+    sugTimer = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/hauling/places?q=" + encodeURIComponent(q), { cache: "no-store" });
+        if (!r.ok) return;
+        const places = (await r.json()).places || [];
+        showSug(locationId, places, row);
+      } catch { /* sidecar down — typing still saves, it just cannot suggest */ }
+    }, 90);
+  }
+
+  function closeSug(locationId) {
+    if (sugFor !== locationId) return;
+    const r = placeRows.get(locationId);
+    r?.row.querySelector(".psug")?.remove();
+    sugFor = null; sugList = []; sugIndex = -1;
+  }
+
+  function showSug(locationId, places, row) {
+    row.querySelector(".psug")?.remove();
+    sugFor = locationId; sugList = places; sugIndex = places.length ? 0 : -1;
+    if (!places.length) return;
+    const box = document.createElement("div");
+    box.className = "psug";
+    places.forEach((p, i) => {
+      const d = document.createElement("div");
+      if (i === sugIndex) d.className = "on";
+      const n = document.createElement("span");
+      if (p.seen) n.className = "seen";
+      n.textContent = p.name;
+      d.appendChild(n);
+      if (p.hint) { const h = document.createElement("span"); h.className = "h"; h.textContent = p.hint; d.appendChild(h); }
+      // pointerdown, not click: the input's blur fires first on a click and would close the list
+      // out from under the pointer.
+      d.addEventListener("pointerdown", (e) => { e.preventDefault(); savePlace(locationId, p.name); });
+      box.appendChild(d);
+    });
+    row.appendChild(box);
+  }
+
+  /** Arrow keys walk the list, Enter takes the highlighted one, Escape gives up. Enter with
+   *  nothing highlighted saves exactly what was typed — a place the datasets have never heard of
+   *  is a real case (locations.json has no city spaceports at all). */
+  function onSugKey(e, locationId, inp, row) {
+    const box = row.querySelector(".psug");
+    if (e.key === "Escape") { closeSug(locationId); inp.blur(); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!sugList.length) return;
+      e.preventDefault();
+      sugIndex = (sugIndex + (e.key === "ArrowDown" ? 1 : sugList.length - 1)) % sugList.length;
+      if (box) [...box.children].forEach((c, i) => c.classList.toggle("on", i === sugIndex));
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const pick = sugIndex >= 0 && sugList[sugIndex] ? sugList[sugIndex].name : inp.value.trim();
+      if (pick) savePlace(locationId, pick);
+    }
+  }
+
+  async function savePlace(locationId, name) {
+    closeSug(locationId);
+    const r = placeRows.get(locationId);
+    if (r) { r.inp.value = name; r.inp.blur(); }
+    try {
+      await fetch("/api/hauling/place", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locationId, name }),
+      });
+    } catch { /* not saved — the row stays, so it can be tried again */ }
+    load();
   }
 
   function renderRoute() {
@@ -1459,6 +1646,7 @@
     renderSummary();
     renderStartPicker();
     renderTrack();
+    renderPlaces();
     if (view === "layout") renderStow(); else renderRoute();
   }
 

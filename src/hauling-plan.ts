@@ -118,6 +118,9 @@ export interface PlanOptions {
    *  Supplied by the caller (see MissionTracker.rewardsForKey) so this module stays dataset-free
    *  apart from the hauling store it already takes. Omit and the rate block is simply absent. */
   rewards?: (contractKey: string) => { payout: number | null; payoutModelled: boolean; rep: number } | null;
+  /** locationId -> the name the PLAYER gave that place. Beats the "Site N" fallback and loses to a
+   *  name the game itself stated, which is the only source that cannot be a typo. */
+  placeNames?: Record<string, string>;
 }
 
 export interface PlannedLeg {
@@ -249,6 +252,15 @@ export interface HaulingPlan {
   /** Every place any leg touches, keyed by location id — the route's own names, plus the places
    *  it deliberately does not visit, so the layout legend and the unrouted list can say where. */
   locationNames: Record<string, string>;
+  /**
+   * Places still wearing a "Site N" — the rows the naming box offers.
+   *
+   * 🔑 Only a TRACKED drop-off is ever named by the game (the Deliver line's "… to <D>"), so a
+   * pickup site, or any leg the player never tracked, has no name at all and never will. This is
+   * the list of things the player can answer, with the role each place plays so a row can say
+   * "picking up from" instead of making them work out which Site is which.
+   */
+  unnamedPlaces: { locationId: string; label: string; role: "pickup" | "dropoff" | "both"; commodity: string | null }[];
   /** Pickups the game has already completed — cargo aboard, not yet delivered. NOT routed (there
    *  is nowhere to fly), but shown greyed ahead of the live steps so a contract reads
    *  start-to-finish instead of the list opening mid-sentence. */
@@ -730,9 +742,17 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // "Drop-off at Pickup 1" the moment a place was used for both, which is the normal case: Sub's
   // board runs Baijini -> Riker and Riker -> Baijini at the same time.
   const fallback = new Map<string, string>();
+  /** Places still wearing a "Site N" — what the widget offers the player to name. */
+  const unnamed = new Map<string, string>();
+  const byPlayer = opts.placeNames ?? {};
   const nameOf = (locationId: string): string => {
     const known = nameByLoc.get(locationId);
     if (known) return known;
+    // 🔑 The player's own answer outranks the numbered fallback and is outranked by the game's own
+    // Deliver line — that one cannot be a typo, and re-asking about a place the game has since
+    // named would be the widget forgetting something it was told.
+    const mine = byPlayer[locationId]?.trim();
+    if (mine) return mine;
     let label = fallback.get(locationId);
     if (!label) {
       // ⛔ NO REGION SUFFIX. This briefly read "Site 1 · ArcCorp", taken from the contract key's
@@ -743,6 +763,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       // honest "Site 1" invites the question. A confident wrong planet answers it falsely.
       label = `Site ${fallback.size + 1}`;
       fallback.set(locationId, label);
+      unnamed.set(locationId, label);
     }
     return label;
   };
@@ -757,7 +778,31 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   }
   const locationNames: Record<string, string> = {};
   for (const [id, name] of nameByLoc) locationNames[id] = name;
+  for (const [id, name] of Object.entries(byPlayer)) if (name.trim()) locationNames[id] ??= name.trim();
   for (const [id, name] of fallback) locationNames[id] ??= name;
+  // What the naming box offers. Role comes from how the legs actually use the place, so the row
+  // can say "picking up from" rather than making the player work out which Site is which.
+  const roleOf = new Map<string, "pickup" | "dropoff" | "both">();
+  const noteRole = (id: string | null, role: "pickup" | "dropoff") => {
+    if (!id) return;
+    const had = roleOf.get(id);
+    roleOf.set(id, !had || had === role ? role : "both");
+  };
+  const cargoAt = new Map<string, string>();
+  for (const { leg } of openLegs) {
+    noteRole(leg.fromLocation, "pickup");
+    noteRole(leg.toLocation, "dropoff");
+    if (leg.commodity) {
+      if (leg.fromLocation) cargoAt.set(leg.fromLocation, leg.commodity);
+      if (leg.toLocation) cargoAt.set(leg.toLocation, leg.commodity);
+    }
+  }
+  const unnamedPlaces = [...unnamed].map(([locationId, label]) => ({
+    locationId,
+    label,
+    role: roleOf.get(locationId) ?? "dropoff",
+    commodity: cargoAt.get(locationId) ?? null,
+  }));
   for (const u of unrouted) u.destination ??= u.toLocation ? locationNames[u.toLocation] ?? null : null;
 
   // 🔑 `planRun` gives up quietly: when no trip can be formed for what is left in the pool it
@@ -901,6 +946,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     trips,
     stranded: run.stranded,
     locationNames,
+    unnamedPlaces,
     completedPickups,
     startResolved,
     unrouted,
