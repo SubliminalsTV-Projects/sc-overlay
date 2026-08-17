@@ -69,19 +69,57 @@ check("nothing stands taller than the 2-cell cap", packed.placements.every((p) =
 check("per-grid usage sums to the load",
   packed.byGrid.reduce((s, g) => s + g.usedScu, 0) === packed.loadedScu);
 
-// ── the height cap actually buys us something ──────────────────────────────
-// Contract 3 is capped at 1 SCU: eight 1x1x1 boxes. Packed naively they would each own a 2-high
-// slot and burn 16 cells of grid. Stacked in pairs they burn 8 — four footprints, two levels deep.
+// ── a box occupies what it is, and nothing more ────────────────────────────
+// ⚠️ These three used to assert that 1-high boxes were PAIRED into 2-high units, four footprints
+// for eight boxes. That was a workaround for level-band packing, where a level took the height of
+// its tallest box and a lone 1-high box wasted the 2-high slot it sat in. With real per-cell
+// occupancy there are no levels and nothing to waste, so the mechanism is gone — and asserting it
+// would pin an implementation detail rather than the property anyone cares about.
 const alu = packCargo(C2_GRIDS, itemsFor("c3", 8, 1));
-const aluFootprints = new Set(alu.placements.map((p) => `${p.x},${p.y}`));
-check("eight 1 SCU boxes stack into four footprints", alu.fits && aluFootprints.size === 4,
-  `${aluFootprints.size} footprints`);
-check("...by pairing them two high", alu.placements.filter((p) => p.z === 1).length === 4);
+check("eight 1 SCU boxes cost exactly eight cells",
+  alu.fits && alu.placements.reduce((s, p) => s + p.dx * p.dy * p.dz, 0) === 8,
+  String(alu.placements.reduce((s, p) => s + p.dx * p.dy * p.dz, 0)));
 
-// A 4 SCU box is 2x2x1 and pairs the same way.
+// ⚠️ itemsFor(id, SCU, CAP) — a total and a per-box cap, not a count and a size. So this is 24 SCU
+// as six 4 SCU boxes, and 24 cells is the whole of it.
 const flat4 = packCargo(C2_GRIDS, itemsFor("ice", 24, 4));
-check("4 SCU boxes pair vertically too", flat4.fits
-  && new Set(flat4.placements.map((p) => `${p.x},${p.y}`)).size === 3);
+check("4 SCU boxes waste nothing either",
+  flat4.fits && flat4.placements.reduce((s, p) => s + p.dx * p.dy * p.dz, 0) === 24,
+  String(flat4.placements.reduce((s, p) => s + p.dx * p.dy * p.dz, 0)));
+
+// ── 🔴 GRAVITY. Nothing floats. ────────────────────────────────────────────
+// Sub, looking at the isometric view: "I can't put a box in a floating position. There has to be a
+// box under it... this is a space sim, not an arcade game." The old engine placed a level on top of
+// a PARTLY filled one, so a box could hang over the gap below it — correct in the diagram, and
+// impossible to build in the ship.
+function floatingIn(result: ReturnType<typeof packCargo>): number {
+  const byGrid = new Map<string, Set<string>>();
+  for (const p of result.placements) {
+    let s = byGrid.get(p.grid);
+    if (!s) { s = new Set(); byGrid.set(p.grid, s); }
+    for (let X = p.x; X < p.x + p.dx; X++) for (let Y = p.y; Y < p.y + p.dy; Y++) for (let Z = p.z; Z < p.z + p.dz; Z++) s.add(`${X},${Y},${Z}`);
+  }
+  let floating = 0;
+  for (const p of result.placements) {
+    if (p.z === 0) continue;
+    const occ = byGrid.get(p.grid)!;
+    for (let X = p.x; X < p.x + p.dx; X++) for (let Y = p.y; Y < p.y + p.dy; Y++) {
+      if (!occ.has(`${X},${Y},${p.z - 1}`)) { floating++; return floating; }
+    }
+  }
+  return floating;
+}
+// A deliberately awkward mix: big flats, tall pairs and singles together, which is what produced
+// the overhangs before.
+const gravityMix = packCargo(C2_GRIDS, [
+  ...itemsFor("a", 20, 8, "FIRST"),
+  ...itemsFor("b", 30, 1, "SECOND"),
+  ...itemsFor("c", 12, 4, "THIRD"),
+  ...itemsFor("d", 6, 16, "FOURTH"),
+]);
+check("🔴 no box is left hanging in the air", floatingIn(gravityMix) === 0,
+  `${floatingIn(gravityMix)} unsupported`);
+check("...nor in the uniform packs", floatingIn(alu) === 0 && floatingIn(flat4) === 0);
 
 // ── a one-level ship ───────────────────────────────────────────────────────
 // The A2 holds the same 216 SCU as the C2's small grid in a completely different shape: 6x18x2.

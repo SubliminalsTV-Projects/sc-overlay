@@ -139,8 +139,15 @@ const all = buildHaulingPlan(viewOf(HAUL_SCENARIOS), data, { ship: "CRUS_Starlif
 check("the manual ship pick is honoured and flagged as manual", all.ship?.source === "manual");
 check("every scenario contract is present", all.contracts.length === HAUL_SCENARIOS.length, String(all.contracts.length));
 check("the whole board fits a C2", all.pack?.fits === true, `${all.pack?.loadedScu}/${all.pack?.capacityScu}`);
-check("what is packed equals what is left to move",
-  all.pack != null && all.pack.loadedScu === all.totals.scu, `${all.pack?.loadedScu} vs ${all.totals.scu}`);
+// 🔴 THE LAYOUT IS THE HOLD RIGHT NOW, not the whole trip. It used to pack every undelivered leg,
+// and that describes a hold which never exists: cargo aboard today is handed over long before the
+// last pickup is collected. Sub, carrying Stims he would deliver before ever touching the Waste:
+// "showing me how to load the ship if I picked up everything doesn't really help me."
+// So the pack is what is COLLECTED and undelivered — a subset of what is left to move, never all
+// of it once the board has more than one pickup ahead.
+check("the layout packs the current hold, not the whole trip",
+  all.pack != null && all.pack.loadedScu <= all.totals.scu && all.pack.loadedScu > 0,
+  `packed ${all.pack?.loadedScu} of ${all.totals.scu} still to move`);
 check("no box is placed outside its grid", (all.pack?.placements ?? []).every((p) => {
   const g = all.ship?.grids.find((x) => x.name === p.grid);
   return !!g && p.x >= 0 && p.y >= 0 && p.z >= 0 && p.x + p.dx <= g.w && p.y + p.dy <= g.l && p.z + p.dz <= g.h;
@@ -214,8 +221,13 @@ check("🔑 a pin never overrides the game's own number", pinnedTracked.contract
   check("an unroutable leg is reported rather than dropped",
     p.unrouted.length === 1 && /pickup marker/.test(p.unrouted[0].reason),
     JSON.stringify(p.unrouted));
-  check("it is still carried in the totals and the layout",
-    p.totals.scu === 6 && p.pack?.loadedScu === 6);
+  // It stays in the TOTALS — it is still cargo this board owes — but not in the layout. The layout
+  // draws the hold, and with its pickup marker missing there is no evidence this leg was ever
+  // collected. Drawing it would assert a box is in the ship on the strength of a drop-off alone.
+  // Silently omitting it would be the old sin; it is reported in `unrouted`, checked above.
+  check("it stays in the totals, and out of a hold we cannot vouch for",
+    p.totals.scu === 6 && p.pack?.loadedScu === 0,
+    `totals ${p.totals.scu}, packed ${p.pack?.loadedScu}`);
 }
 
 // ── 🔑 a mission-item haul: the ONE family with an exact manifest ──────────

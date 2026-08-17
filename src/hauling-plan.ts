@@ -705,11 +705,37 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   }
 
   // ── layout ──────────────────────────────────────────────────────────────
-  // Everything not yet delivered gets packed, INCLUDING what is already aboard — the question the
-  // layout answers is "where does it all go", and the boxes in the hold are part of that.
+  // 🔴 THE HOLD IS A MOMENT, NOT A TRIP. This used to pack every undelivered leg at once, on the
+  // theory that the layout answers "where does it all go". It does not: Sub is carrying Stims he
+  // will have handed over before he ever touches the Waste, so a diagram containing both describes
+  // a hold that never exists. In his words — "showing me how to load the ship if I picked up
+  // everything doesn't really help me, because the stems will be gone by the time I pick up those
+  // other things."
+  //
+  // So the layout is the CURRENT hold: legs collected and not yet delivered. It advances on its own
+  // as the game completes objectives, which is the same signal the route already reads.
+  //
+  // When the hold is empty there is nothing to draw and the player is usually standing at a
+  // warehouse about to load — so it looks ahead to the next pickup instead and says so, rather
+  // than showing a blank grid at the exact moment the answer is wanted.
+  const aboardLegs = openLegs.filter(({ leg }) => leg.pickupState === "completed");
+  const nextPickupGroups = new Set<string>();
+  outer: for (const trip of trips) {
+    for (const s of trip.stops) {
+      const picks = s.actions.filter((a) => a.kind === "pickup");
+      if (!picks.length) continue;
+      for (const a of picks) nextPickupGroups.add(a.group);
+      break outer;   // only the FIRST loading stop — the one being flown to
+    }
+  }
+  const layoutLegs = aboardLegs.length
+    ? aboardLegs
+    : openLegs.filter(({ leg }) => nextPickupGroups.has(leg.group));
+  const layoutIsNext = !aboardLegs.length && layoutLegs.length > 0;
+
   const items: PackItem[] = [];
   let undrawable = 0;
-  for (const { leg } of openLegs) {
+  for (const { leg } of layoutLegs) {
     let n = 0;
     for (const b of leg.boxes) {
       // A manifest can name a size the box table does not carry (the fractional 1/8, 1/4 and 1/2
@@ -751,6 +777,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   const pack = hull ? packCargo(grids, items, { groupOrder }) : null;
 
   if (!hull) notes.push("Pick the ship you are flying to see where the boxes go.");
+  if (layoutIsNext) notes.push("Your hold is empty — this is what to load at your next pickup.");
   if (pack && !pack.fits) notes.push(`${pack.unplaced.length} boxes do not fit — this is more than one trip.`);
   const rangeCount = contracts.filter((c) => !c.ended && c.source === "range").length;
   if (rangeCount) {

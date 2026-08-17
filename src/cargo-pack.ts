@@ -1,15 +1,27 @@
 /**
  * CARGO BIN-PACKER — where does each box physically go on this ship's grids.
  *
- * 🔑 This is NOT a general 3D packer, and deliberately so. Every real cargo grid caps box height at
- * 2 cells (`maxPermittedItemSize.z` = 2.5 m), so nothing is ever more than 2 cells tall and big
- * boxes always lie flat. That collapses the problem to LAYERED 2D: fill a level, move up, repeat.
- * A 4-cell-high grid is two levels of 2-high boxes, and that is as deep as the stack ever gets.
+ * 🔴 NOTHING FLOATS. A box rests on the floor, or every cell of its footprint rests on a box below.
+ * That is the whole rule, and it is why this tracks real per-cell occupancy.
  *
- * The algorithm is shelf packing (first-fit-decreasing-height) inside each level:
- *   level (z band)  ->  shelf (y band, depth set by its first box)  ->  boxes laid across x.
- * Which is also how a human loads a freight elevator: rows of boxes front to back. Layouts come
- * out legible rather than merely dense, and at these sizes (a C2 holds ~40 boxes) greedy is fine.
+ * ⚠️ It used to be SHELF PACKING in level bands — fill a z band, close it, start the next on top —
+ * and that model was wrong in three ways at once, all of which Sub hit in one evening on 2026-08-17:
+ *
+ *   • It never asked what was UNDER a box, so a level laid on a partly-filled one left boxes
+ *     hanging in mid-air. "I can't put a box in a floating position... this is a space sim, not an
+ *     arcade game."
+ *   • A closed level could never be revisited, so it refused 52 SCU of boxes while 278 SCU of the
+ *     hold stood empty — a hold 40% free reporting "does not fit".
+ *   • Groups were ordered along y while stacking happened along z with nothing reconciling them, so
+ *     the load order contradicted the picture: a box told to load FIRST sat on one loaded later.
+ *
+ * Boxes are placed individually, biggest first, at the first position that can hold them, chosen by
+ * (y, z, x) — nearest the ramp, then lowest, then across. The hold fills as a supported wall from
+ * the door backwards, small boxes settle into the gaps left on top, and groups packed in unload
+ * order still come out nearest the door with no shelf bookkeeping at all.
+ *
+ * Box height is capped at 2 cells by every real grid (`maxPermittedItemSize.z` = 2.5 m), so stacks
+ * stay shallow; that is a property of the data, not an assumption the algorithm needs.
  *
  * A ship is SEVERAL GRIDS with different dimensions, not one pool of SCU — a C2 is 8x15x4 plus
  * 6x9x4, and a box that fits the first may not fit the second. Grids are filled in the order given.
@@ -95,54 +107,11 @@ export function itemsFromBoxes(boxes: readonly BoxSpec[], group: string, idPrefi
 
 // ── internals ──────────────────────────────────────────────────────────────
 //
-// A "unit" is what the packer actually places. Usually one box. But a box only 1 cell tall wastes
-// the top half of a 2-high level if placed alone, and in the game you simply stack a second one on
-// it — so identical flat boxes from the SAME drop-off are paired into one 2-high unit up front and
-// split back into two placements at the end. Without this, a contract capped at 1 SCU (Sub has
-// one: 8 SCU of Aluminium, eight 1x1x1 boxes) would burn twice the grid it needs.
-
-interface Unit {
-  dims: [number, number, number];
-  group: string | null;
-  /** Members bottom-up; > 1 only for a stacked pair. */
-  members: PackItem[];
-}
-
-interface Cursor {
-  z: number;
-  levelH: number;
-  y: number;
-  shelfD: number;
-  x: number;
-}
-
-const MAX_STACK_H = 2;
-
-function stackFlat(items: PackItem[]): Unit[] {
-  const units: Unit[] = [];
-  const pending = new Map<string, PackItem>();
-  for (const it of items) {
-    const [dx, dy, dz] = it.dims;
-    const group = it.group ?? null;
-    if (dz * 2 > MAX_STACK_H) {
-      units.push({ dims: [dx, dy, dz], group, members: [it] });
-      continue;
-    }
-    const key = `${group}|${dx}x${dy}x${dz}`;
-    const waiting = pending.get(key);
-    if (waiting) {
-      pending.delete(key);
-      units.push({ dims: [dx, dy, dz * 2], group, members: [waiting, it] });
-    } else {
-      pending.set(key, it);
-    }
-  }
-  // Odd ones out stand alone and keep their true height.
-  for (const it of pending.values()) {
-    units.push({ dims: [it.dims[0], it.dims[1], it.dims[2]], group: it.group ?? null, members: [it] });
-  }
-  return units;
-}
+// ⚠️ There is no "unit" type any more. Identical flat boxes from one drop-off used to be PAIRED
+// into a 2-high unit before packing, because a level took the height of its tallest box and a lone
+// 1-high box wasted the slot it sat in. With per-cell occupancy there are no levels and nothing to
+// waste — a box occupies exactly what it is, and stacking is simply what happens when one lands on
+// another. The pairing only made larger, more awkward shapes to place.
 
 /** Yaw is the only rotation — a 24 SCU box on its end would break the 2-cell height cap anyway. */
 function orientations(dims: [number, number, number]): Array<[number, number, number]> {
@@ -150,43 +119,79 @@ function orientations(dims: [number, number, number]): Array<[number, number, nu
   return a === b ? [[a, b, c]] : [[a, b, c], [b, a, c]];
 }
 
-function tryPlace(g: GridSpec, u: Unit, c: Cursor): [number, number, number] | null {
+/**
+ * 🔴 THE HOLD IS CELLS, NOT BANDS — and nothing floats.
+ *
+ * The previous engine was shelf packing: fill a level (z band), close it, start the next on top.
+ * It never asked what was UNDER a box, so it would place one over an empty part of the level below
+ * — a box hanging in mid-air, which Sub rejected on sight: "this is a space sim, not an arcade
+ * game." And because a closed level could never be revisited, it also refused 52 SCU of boxes while
+ * 278 SCU of the hold stood empty, and produced load orders that contradicted their own stacking
+ * (a box scheduled to load FIRST, resting on one loaded later).
+ *
+ * All three were the same defect. This tracks real occupancy per cell and enforces one rule:
+ *
+ *   a box sits on the floor, or every cell of its footprint rests on a box below.
+ *
+ * Position is chosen by (y, z, x) — nearest the ramp first, then lowest, then across. So the hold
+ * fills as a wall from the door backwards, each box supported, and groups packed in unload order
+ * come out nearest the door without any shelf bookkeeping.
+ */
+class Occupancy {
+  private readonly cells: Uint8Array;
+  constructor(readonly w: number, readonly l: number, readonly h: number) {
+    this.cells = new Uint8Array(w * l * h);
+  }
+  private idx(x: number, y: number, z: number): number {
+    return (z * this.l + y) * this.w + x;
+  }
+  free(x: number, y: number, z: number): boolean {
+    return this.cells[this.idx(x, y, z)] === 0;
+  }
+  filled(x: number, y: number, z: number): boolean {
+    return this.cells[this.idx(x, y, z)] === 1;
+  }
+  fill(x: number, y: number, z: number, dx: number, dy: number, dz: number): void {
+    for (let X = x; X < x + dx; X++) for (let Y = y; Y < y + dy; Y++) for (let Z = z; Z < z + dz; Z++) {
+      this.cells[this.idx(X, Y, Z)] = 1;
+    }
+  }
+  /** Room for this box here, AND something holding it up. */
+  accepts(x: number, y: number, z: number, dx: number, dy: number, dz: number): boolean {
+    if (x + dx > this.w || y + dy > this.l || z + dz > this.h) return false;
+    for (let X = x; X < x + dx; X++) for (let Y = y; Y < y + dy; Y++) for (let Z = z; Z < z + dz; Z++) {
+      if (!this.free(X, Y, Z)) return false;
+    }
+    if (z === 0) return true;   // the floor holds anything
+    // ⚠️ EVERY cell must be supported, not most. A box overhanging its neighbour by one cell is
+    // still a box that falls over, and "mostly supported" is the kind of rule that looks fine in a
+    // diagram and cannot be built in the ship.
+    for (let X = x; X < x + dx; X++) for (let Y = y; Y < y + dy; Y++) {
+      if (!this.filled(X, Y, z - 1)) return false;
+    }
+    return true;
+  }
+}
+
+/** Lowest, nearest the ramp, leftmost — the first position that can actually hold the box. */
+function findSpot(g: GridSpec, occ: Occupancy, dims: readonly [number, number, number]): { x: number; y: number; z: number; dx: number; dy: number; dz: number } | null {
   const cap = g.maxBox;
-  let best: [number, number, number] | null = null;
-  for (const [dx, dy, dz] of orientations(u.dims)) {
+  let best: { x: number; y: number; z: number; dx: number; dy: number; dz: number } | null = null;
+  for (const [dx, dy, dz] of orientations(dims as [number, number, number])) {
     if (cap && (dx > cap.x || dy > cap.y || dz > cap.z)) continue;
-    if (dz > g.h - c.z) continue;
-    if (c.levelH > 0 && dz > c.levelH) continue;
-    if (dy > g.l - c.y) continue;
-    if (c.shelfD > 0 && dy > c.shelfD) continue;
-    if (dx > g.w - c.x) continue;
-    // Shallow shelves waste less: an 8x2 box laid across an 8-wide grid leaves a 2-deep shelf,
-    // the same box stood along y leaves an 8-deep one that the next row can rarely refill.
-    if (!best || dy < best[1] || (dy === best[1] && dx > best[0])) best = [dx, dy, dz];
+    for (let y = 0; y <= g.l - dy; y++) {
+      for (let z = 0; z <= g.h - dz; z++) {
+        for (let x = 0; x <= g.w - dx; x++) {
+          if (!occ.accepts(x, y, z, dx, dy, dz)) continue;
+          if (!best || y < best.y || (y === best.y && (z < best.z || (z === best.z && x < best.x)))) {
+            best = { x, y, z, dx, dy, dz };
+          }
+          break;   // leftmost x at this (y,z) is the best x; no need to scan further
+        }
+      }
+    }
   }
   return best;
-}
-
-function closeShelf(c: Cursor): void {
-  c.y += c.shelfD;
-  c.shelfD = 0;
-  c.x = 0;
-}
-
-function closeLevel(c: Cursor): void {
-  closeShelf(c);
-  c.z += c.levelH;
-  c.levelH = 0;
-  c.y = 0;
-}
-
-/** Biggest, tallest, longest first — classic FFDH ordering. */
-function sortUnits(units: Unit[]): Unit[] {
-  return [...units].sort((p, q) => {
-    const [px, py, pz] = p.dims;
-    const [qx, qy, qz] = q.dims;
-    return qz - pz || Math.max(qx, qy) - Math.max(px, py) || qx * qy - px * py;
-  });
 }
 
 // ── the packer ─────────────────────────────────────────────────────────────
@@ -196,12 +201,10 @@ export function packCargo(
   items: readonly PackItem[],
   opts: PackOptions = {},
 ): PackResult {
-  const units = stackFlat([...items]);
-
   // Group order decides unload order; ungrouped boxes ride at the back.
   const seen: string[] = [];
-  for (const u of units) {
-    const key = u.group ?? "";
+  for (const it of items) {
+    const key = it.group ?? "";
     if (!seen.includes(key)) seen.push(key);
   }
   const wanted = opts.groupOrder ?? [];
@@ -210,8 +213,15 @@ export function packCargo(
     ...seen.filter((k) => !wanted.includes(k)),
   ];
 
-  const queue: Unit[] = [];
-  for (const key of groupKeys) queue.push(...sortUnits(units.filter((u) => (u.group ?? "") === key)));
+  const queue: PackItem[] = [];
+  for (const key of groupKeys) {
+    // Biggest first — the classic decreasing order. Small boxes then settle into what is left,
+    // including the gaps on top, which is exactly what the level-band engine could never go back
+    // and do.
+    queue.push(...items
+      .filter((it) => (it.group ?? "") === key)
+      .sort((a, b) => b.scu - a.scu || b.dims[0] * b.dims[1] - a.dims[0] * a.dims[1]));
+  }
 
   const placements: Placement[] = [];
   const usedByGrid = new Map<string, number>();
@@ -219,55 +229,31 @@ export function packCargo(
 
   for (const g of grids) {
     if (remaining.length === 0) break;
-    const c: Cursor = { z: 0, levelH: 0, y: 0, shelfD: 0, x: 0 };
-    const leftovers: Unit[] = [];
-    let lastGroup: string | null | undefined;
+    const occ = new Occupancy(g.w, g.l, g.h);
+    const leftovers: PackItem[] = [];
 
-    for (const u of remaining) {
-      // A new drop-off starts a new shelf, so each stop's boxes sit in one contiguous band.
-      if (lastGroup !== undefined && u.group !== lastGroup && c.shelfD > 0) closeShelf(c);
-      lastGroup = u.group;
-
-      let fit = tryPlace(g, u, c);
-      if (!fit && c.shelfD > 0) {
-        closeShelf(c);
-        fit = tryPlace(g, u, c);
-      }
-      if (!fit && c.levelH > 0) {
-        closeLevel(c);
-        fit = tryPlace(g, u, c);
-      }
-      if (!fit) {
-        leftovers.push(u);
-        continue;
-      }
-
-      const [dx, dy, dz] = fit;
-      if (c.shelfD === 0) c.shelfD = dy;
-      if (c.levelH === 0) c.levelH = dz;
-      let z = c.z;
-      for (const m of u.members) {
-        placements.push({
-          grid: g.name,
-          item: m.id,
-          group: m.group ?? null,
-          scu: m.scu,
-          x: c.x,
-          y: c.y,
-          z,
-          dx,
-          dy,
-          dz: m.dims[2],
-        });
-        z += m.dims[2];
-      }
-      usedByGrid.set(g.name, (usedByGrid.get(g.name) ?? 0) + u.members.reduce((s, m) => s + m.scu, 0));
-      c.x += dx;
+    for (const it of remaining) {
+      const spot = findSpot(g, occ, it.dims);
+      if (!spot) { leftovers.push(it); continue; }
+      occ.fill(spot.x, spot.y, spot.z, spot.dx, spot.dy, spot.dz);
+      placements.push({
+        grid: g.name,
+        item: it.id,
+        group: it.group ?? null,
+        scu: it.scu,
+        x: spot.x,
+        y: spot.y,
+        z: spot.z,
+        dx: spot.dx,
+        dy: spot.dy,
+        dz: spot.dz,
+      });
+      usedByGrid.set(g.name, (usedByGrid.get(g.name) ?? 0) + it.scu);
     }
     remaining = leftovers;
   }
 
-  const unplaced = remaining.flatMap((u) => u.members);
+  const unplaced = remaining;
   return {
     placements,
     unplaced,
