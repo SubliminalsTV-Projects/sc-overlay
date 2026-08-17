@@ -123,6 +123,13 @@ const DEFAULTS = {
 /** Above this many visits, exact enumeration stops being cheap and we fall back to a heuristic. */
 const EXACT_STOP_LIMIT = 14;
 
+/** Minutes charged per SCU held, per leg. Deliberately tiny: a 400 SCU hold costs 0.4 min a leg,
+ *  enough to order drop-offs before pickups at the same landing and to stop the solver dragging a
+ *  full hold around a loop, and far too small to reorder a route that has a real reason to be in
+ *  its order. Travel between stops is ~0.02 min, so without a term like this the objective is flat
+ *  and the returned order is whichever was built first. */
+const CARRY_PENALTY_MIN_PER_SCU = 0.001;
+
 function euclidean(a: Vec3, b: Vec3): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
@@ -290,7 +297,14 @@ function solveExact(ctx: Ctx): Solved | null {
         if ((ctx.before[next] & mask) !== ctx.before[next]) continue;
         const nmask = mask | bit;
         if (loads[nmask] > ctx.capacity) continue;
-        const cand = here + ctx.legMinutes(last, next);
+        // 🔴 CARRYING COSTS SOMETHING. Travel is ~free in this model (200,000 m/s against a
+        // 4-minute stop), so without this the solver is indifferent to WHEN a drop-off happens and
+        // will cheerfully route a full hold through the whole loop to unload at the last stop.
+        // Sub sat at Riker holding 101 SCU of Stims bound for Baijini, was sent to Baijini to LOAD
+        // at step 1, and told to drop the Stims there at step 5 — the same place, four stops later.
+        // A hauler unloads what they are carrying the moment they are standing where it goes.
+        // Scaled so it breaks ties and orders drop-offs early without ever outweighing a real stop.
+        const cand = here + ctx.legMinutes(last, next) + loads[nmask] * CARRY_PENALTY_MIN_PER_SCU;
         const at = nmask * ctx.n + next;
         if (cand < cost[at]) {
           cost[at] = cand;

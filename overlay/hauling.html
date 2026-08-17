@@ -109,6 +109,11 @@
 
   /* ── Route ───────────────────────────────────────────────────────────────── */
   .stop { display: flex; gap: 8px; padding: 6px 12px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* "You are here" — the origin, not a stop to fly to. Marked with a rail rather than a number so
+     it never reads as step 1 of the route itself. */
+  .stop.here { background: rgba(var(--accent-rgb), 0.05); border-left: 2px solid var(--gold); }
+  .stop.here .nm { flex: 1; min-width: 0; font-size: 11.5px; color: var(--gold); font-weight: 600; }
+  .stop.here .act { flex: none; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); align-self: center; }
   .stop .num { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px;
     font-family: var(--mono); font-size: 10px; font-weight: 700; border: 1px solid var(--divider);
     color: var(--cyan-dim); background: rgba(0, 0, 0, 0.22); }
@@ -707,6 +712,27 @@
       if (trip.method === "heuristic") n.textContent += " · approx.";
       sec.append(h, n);
       body.appendChild(sec);
+      // 🔴 WHERE YOU ARE IS THE FIRST LINE OF A ROUTE. Sub, standing at Riker holding a load for
+      // Baijini, read a list that opened with "Baijini" and could not tell whether the app had
+      // understood him — it had, and had nothing for him to do at Riker, but a route that never
+      // names your own position gives you no way to know that. Directions start from here.
+      // Only on the first trip, and only when he has told us where he is.
+      if (ti === 0 && startPick && plan.locationNames && plan.locationNames[startPick]) {
+        const here = document.createElement("div");
+        here.className = "stop here";
+        const nm = document.createElement("div");
+        nm.className = "nm";
+        nm.textContent = plan.locationNames[startPick];
+        const tag = document.createElement("div");
+        tag.className = "act";
+        tag.textContent = plan.aboardScu > 0 ? "You are here · " + num(plan.aboardScu) + " SCU aboard" : "You are here";
+        const ld = document.createElement("div");
+        ld.className = "ld";
+        ld.textContent = num(plan.aboardScu) + " SCU";
+        ld.title = "In the hold right now.";
+        here.append(nm, tag, ld);
+        body.appendChild(here);
+      }
       trip.stops.forEach((s, i) => {
         const row = document.createElement("div");
         row.className = "stop " + s.kind + (s.sameSpot && i > 0 ? " same" : "");

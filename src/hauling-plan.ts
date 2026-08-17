@@ -544,6 +544,8 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   /** Legs that must be carried but cannot be put in a route — reported, never dropped. */
   const unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; toLocation: string | null; reason: string }[] = [];
   const routeGroups = new Set<string>();
+  /** Drop-offs, held back until every pickup node exists — see where they are pushed. */
+  const pendingDrops: { leg: PlannedLeg; stillToLoad: boolean }[] = [];
   for (const { c, leg } of openLegs) {
     if (!leg.toLocation) {
       unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, toLocation: leg.toLocation, reason: "the log has not placed this drop-off yet" });
@@ -557,8 +559,32 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     if (stillToLoad) {
       visit(leg.fromLocation!, "pickup").actions.push({ contractId: leg.group, kind: "pickup", scu: leg.scu ?? 0, commodity: leg.commodity ?? undefined });
     }
-    visit(leg.toLocation, "dropoff").actions.push({ contractId: leg.group, kind: "dropoff", scu: leg.scu ?? 0, commodity: leg.commodity ?? undefined });
+    // 🔴 CARGO ALREADY IN THE HOLD HAS NOWHERE TO WAIT. Its pickup is done, so its drop-off has no
+    // prerequisite — the moment the player is standing at that place, it comes off. Keeping it on a
+    // separate `:dropoff` node let the solver schedule a SECOND visit to a place it had already
+    // sent him to: Sub sat at Riker holding 101 SCU for Baijini, was routed to Baijini at step 1 to
+    // LOAD, and told to drop the Stims at step 5 — same place, four stops later, hauling them
+    // around the whole loop for nothing.
+    // Folding it onto the pickup node at that location makes it ONE landing: arrive, unload what
+    // you brought, load what you came for. Safe because a prerequisite-free drop-off adds no
+    // precedence, so the merged node keeps the pickup's (a pickup never has any). ⚠️ Only ever for
+    // an already-loaded leg — merging a leg still awaiting its pickup would create the classic
+    // A→B/B→A deadlock, where each location must precede the other.
+    // ⚠️ DEFERRED to a second pass. Whether this drop-off can join a pickup at the same place
+    // depends on a node that a LATER leg may not have created yet — deciding it inline made the
+    // merge depend on contract order, so it silently did nothing when the aboard leg happened to
+    // be first, which is exactly the case it exists for.
+    pendingDrops.push({ leg, stillToLoad });
     routeGroups.add(leg.group);
+  }
+
+  // Second pass: every pickup node now exists, so an already-loaded leg can be folded onto the
+  // landing the player is going to make anyway.
+  for (const { leg, stillToLoad } of pendingDrops) {
+    const node = !stillToLoad && stopById.has(`${leg.toLocation}:pickup`)
+      ? visit(leg.toLocation!, "pickup")
+      : visit(leg.toLocation!, "dropoff");
+    node.actions.push({ contractId: leg.group, kind: "dropoff", scu: leg.scu ?? 0, commodity: leg.commodity ?? undefined });
   }
 
   const routeContracts: RouteContract[] = [...routeGroups].map((id) => ({ id, payout: 0 }));
