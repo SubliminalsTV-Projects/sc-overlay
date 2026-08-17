@@ -383,6 +383,11 @@
      because it rides inside a section heading, not a toolbar. */
   .goalseg { display: inline-flex; gap: 3px; margin-left: 4px; }
   .goalseg .hbtn { padding: 1px 6px; font-size: 9px; letter-spacing: 0.02em; text-transform: none; }
+  /* The family filter — also in the open, for the same reason as the goal switch. Wraps, because a
+     420px panel cannot hold five of these on one line. */
+  .typebar { display: flex; flex-wrap: wrap; gap: 3px; padding: 7px 12px 2px;
+    border-bottom: 1px solid var(--divider); }
+  .typebar .hbtn { padding: 2px 7px; font-size: 9px; letter-spacing: 0.02em; text-transform: none; }
 
   /* ⛔ Open haulers load themselves. The panel that replaces the whole view for them. */
   .noplan { padding: 30px 20px; text-align: center; }
@@ -1139,12 +1144,24 @@
    */
   let advisor = null;
   let advisorGoal = "rep";
+  /* Which family of hauling contracts. "" is all of them, which is deliberately NOT the default —
+     see the type filter's note in the endpoint: Interstellar is a separate economy and blending it
+     into a reputation ranking gives an order that is wrong for both. Remembered, because a player
+     works one board for hours. */
+  const TYPE_KEY = "sc-hauling-advisor-type";
+  let advisorType = (() => { try { return localStorage.getItem(TYPE_KEY) ?? "Hauling - Planetary"; } catch { return "Hauling - Planetary"; } })();
   async function loadAdvisor() {
     try {
-      const r = await fetch("/api/hauling/advisor?goal=" + advisorGoal, { cache: "no-store" });
+      const r = await fetch("/api/hauling/advisor?goal=" + advisorGoal
+        + "&type=" + encodeURIComponent(advisorType), { cache: "no-store" });
       if (r.ok) advisor = await r.json();
     } catch { /* sidecar down — keep whatever we had */ }
     if (view === "advisor") render();
+  }
+  function setAdvisorType(t) {
+    advisorType = t;
+    try { localStorage.setItem(TYPE_KEY, t); } catch { /* private mode */ }
+    loadAdvisor();
   }
 
   function renderAdvisor() {
@@ -1158,6 +1175,7 @@
       return;
     }
     body.appendChild(renderStanding());
+    body.appendChild(renderTypeFilter());
     const sec = document.createElement("div");
     sec.className = "sec";
     const h = document.createElement("span");
@@ -1272,6 +1290,42 @@
       return wrap;
     }
     for (const c of climbs) wrap.appendChild(renderClimb(c));
+    return wrap;
+  }
+
+  /**
+   * Which family of hauling contracts to rank.
+   *
+   * 🔑 Defaults to Planetary rather than "all", and that is a correctness choice as much as a
+   * convenience one. `Hauling - Interstellar` is a SEPARATE ECONOMY — its Rookie tier pays 50 or
+   * 100 and its Master tier pays 0 or 200, where every core Master pays 8000 — so a single ranking
+   * across all families produces an order that is wrong for whichever board you are standing at.
+   * The label carries that warning rather than burying it.
+   */
+  function renderTypeFilter() {
+    const wrap = document.createElement("div");
+    wrap.className = "typebar";
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "hbtn" + (advisorType === "" ? " on" : "");
+    all.textContent = "All";
+    all.title = "Every hauling family at once. Useful for a survey, misleading for a decision — the"
+      + " families do not share an economy.";
+    all.addEventListener("click", () => setAdvisorType(""));
+    wrap.appendChild(all);
+    // Short names: the panel is 420px and "Hauling - Interstellar" four times over is the whole row.
+    for (const t of (advisor.types || [])) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "hbtn" + (advisorType === t.name ? " on" : "");
+      b.textContent = t.name.replace(/^Hauling\s*-\s*/, "").replace(/^Hauling$/, "Contract");
+      b.title = t.name + " — " + t.count + " contract types."
+        + (/Interstellar/.test(t.name)
+          ? "  ⚠️ A separate economy: its Master tier pays 0-200 rep where every other Master pays 8,000. Do not compare its rates with the others'."
+          : "");
+      b.addEventListener("click", () => setAdvisorType(t.name));
+      wrap.appendChild(b);
+    }
     return wrap;
   }
 

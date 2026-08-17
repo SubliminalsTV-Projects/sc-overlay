@@ -2936,12 +2936,24 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const qs = new URL(req.url ?? "", "http://x").searchParams;
     const goal = qs.get("goal") === "money" ? "money" : "rep";
     const ship = qs.get("ship") || config.haulingShip || shipName || null;
+    /* 🔑 THE FAMILIES ARE NOT ONE BOARD. Planetary 455, Hauling 161, Stellar 160, Interstellar 49,
+       Local 28 — and the player picks a board before they pick a contract, so ranking across all
+       of them at once answers a question nobody asked. Sub: "we also have planetary and stellar
+       hauling missions... we need a filter for that too."
+
+       ⚠️ Interstellar especially. It is a SEPARATE ECONOMY (see hauling-advisor's header): its
+       Rookie tier pays 50 OR 100 and its Master tier pays 0 or 200 where every core Master pays
+       8000 — money contracts with the rep switched off. Blending it into a reputation ranking
+       produces an order that is wrong for both. */
+    const wantType = qs.get("type") || "";
+    const types = new Map<string, number>();
+    for (const c of advisorContracts()) types.set(c.missionType ?? "Hauling", (types.get(c.missionType ?? "Hauling") ?? 0) + 1);
     const standings = haulingStandings();
     /* 🔴 GATED PER GIVER. rankContracts takes ONE standing, which is right for one faction and
        wrong across four — so it is called with no standing at all (nothing locked) and the lock is
        applied here, against the giver each contract actually belongs to. A contract from a faction
        we have never worked for gates on 0, which is correct: that is exactly what the board shows. */
-    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true })
+    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true, missionType: wantType || null })
       .map((r) => {
         const giver = r.contract.giver ?? "";
         const standing = standings.get(giver) ?? 0;
@@ -3028,6 +3040,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({
       ok: true, goal, regime,
+      type: wantType || null,
+      types: [...types.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
       ladder: HAULING_LADDER,
       contracts: top,
       climbs,
