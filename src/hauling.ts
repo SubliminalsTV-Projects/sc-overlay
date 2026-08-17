@@ -180,6 +180,11 @@ export interface HaulingView {
   untracked: string[];
   /** The contract selected in mobiGlas right now, or null when nothing hauling-related is. */
   trackedMissionId: string | null;
+  /** When this run's clock started — the first hauling event the app saw. Null before any. */
+  runStartedAt: number | null;
+  /** Contracts that have FINISHED since the app started, oldest first. Deliberately NOT the ended
+   *  entries of `contracts`, which are pruned after ten minutes — see the ledger note. */
+  finished: { at: number; missionId: string; contractKey: string; payout: number | null }[];
 }
 
 const ts = (s: string | null): number | null => {
@@ -245,6 +250,22 @@ export class HaulingTracker extends EventEmitter {
    *  contract as already collected because an older contract to the same place had been, and the
    *  widget told him he was carrying 87 SCU he had never picked up. */
   private doneObjectives = new Map<string, number | null>();
+  /**
+   * Every hauling contract that has FINISHED since the app started, oldest first — the ledger the
+   * aUEC/hour figure is computed from.
+   *
+   * 🔴 IT CANNOT BE DERIVED FROM `contracts`. Those are pruned ten minutes after they end
+   * (KEEP_ENDED_MS), so a rate read off them covers the last ten minutes and nothing else — it
+   * would read high right after a delivery and collapse to zero aUEC/hour the moment Sub flew a
+   * leg longer than the prune window, which is most of them.
+   *
+   * 🔑 It also SURVIVES `sessionStart`. A game restart does not un-earn what the run already paid,
+   * exactly as a restart does not un-collect the cargo in the hold.
+   */
+  private ledger: { at: number; missionId: string; contractKey: string; payout: number | null }[] = [];
+  /** When this run's clock starts — the first hauling event the app ever saw. Set once and never
+   *  cleared, for the same reason the ledger is not. */
+  private runStartedAt: number | null = null;
   /** Completions still waiting for their "Awarded N aUEC" line, newest last. */
   private awaitingPayout: { missionId: string; at: number }[] = [];
   /** Rewards that arrived before their completion (dev-replay does this), newest last. */
@@ -528,7 +549,14 @@ export class HaulingTracker extends EventEmitter {
     // 🔑 Only on the FIRST end event. A completion emits both `MissionEnded` and `EndMission` in
     // the same millisecond, so claiming on each would queue the same contract for payout twice —
     // and the second claim would then steal the next contract's award.
-    if (first && c.completion === "Complete") this.claimPayout(c);
+    if (first && c.completion === "Complete") {
+      // Into the ledger BEFORE the payout is known — the award line arrives up to three seconds
+      // later (PAYOUT_WINDOW_MS) and is written in afterwards by syncLedger. Recording the
+      // completion immediately is what makes the rep side exact even when no award ever lands.
+      this.ledger.push({ at: c.endedAt, missionId: c.missionId, contractKey: c.contractKey, payout: c.payout });
+      this.claimPayout(c);
+      this.syncLedger(c);
+    }
     this.touch(ev.ts);
   }
 
@@ -543,13 +571,20 @@ export class HaulingTracker extends EventEmitter {
     }
     if (best) {
       const c = this.contracts.get(best.missionId);
-      if (c) c.payout = ev.amount;
+      if (c) { c.payout = ev.amount; this.syncLedger(c); }
       this.awaitingPayout = this.awaitingPayout.filter((p) => p !== best);
       this.touch(ev.ts);
       return;
     }
     this.looseRewards.push({ amount: ev.amount, at });
     this.looseRewards = this.looseRewards.filter((r) => at - r.at <= PAYOUT_WINDOW_MS);
+  }
+
+  /** Copy a contract's settled payout onto its ledger row. The row is written at completion, when
+   *  the award line has usually not arrived yet. */
+  private syncLedger(c: HaulContract): void {
+    const row = this.ledger.find((r) => r.missionId === c.missionId);
+    if (row && row.payout == null) row.payout = c.payout;
   }
 
   /** Pair a completion with a reward that already arrived, or queue it to wait for one. */
@@ -578,6 +613,8 @@ export class HaulingTracker extends EventEmitter {
    *  clock, so a seed read of an old file doesn't claim to be current. */
   private touch(evTs: string | null): void {
     this.lastAt = Math.max(this.lastAt, ts(evTs) ?? 0);
+    // The run clock opens at the first hauling event and never restarts — see runStartedAt.
+    if (this.runStartedAt == null && this.lastAt > 0) this.runStartedAt = this.lastAt;
     this.prune();
     this.emit("change");
   }
@@ -603,6 +640,8 @@ export class HaulingTracker extends EventEmitter {
       contracts,
       untracked: contracts.filter((c) => !c.deliverSeen && c.endedAt == null).map((c) => c.missionId),
       trackedMissionId: this.trackedMissionId,
+      runStartedAt: this.runStartedAt,
+      finished: [...this.ledger],
     };
   }
 }

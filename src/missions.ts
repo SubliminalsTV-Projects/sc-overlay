@@ -2535,6 +2535,29 @@ export class MissionTracker extends EventEmitter {
     return true;
   }
 
+  /**
+   * What a contract KEY is worth, straight off the dataset — for callers holding a key and no
+   * mission id, which is every hauling contract until it completes.
+   *
+   * 🔴 `payoutModelled` is why this returns a flag and not just a number. The dataset fills the
+   * datacore's `reward="0"` rows from a fitted curve, and those are wrong about one time in four;
+   * a caller that averages them into an aUEC/hour has fabricated a rate. Of the 853 `HaulCargo`
+   * keys only 38 are modelled — but "nearly all read" is exactly the kind of thing that has to be
+   * reported rather than assumed.
+   *
+   * Reputation carries no such caveat: it is read from the game files, and 839 of the 853 keys
+   * have it.
+   */
+  rewardsForKey(contractKey: string): { payout: number | null; payoutModelled: boolean; rep: number } | null {
+    const m = this.dataset?.missions[contractKey];
+    if (!m) return null;
+    return {
+      payout: m.payout?.max ?? null,
+      payoutModelled: m.payoutCalculated === true,
+      rep: (m.reputationGained ?? []).reduce((s, r) => s + (r.amount || 0), 0),
+    };
+  }
+
   /** Dataset entry for a mission id, or undefined. Since schema/2 the missions map
    *  also holds pool-LESS missions that carry a payout or item rewards. */
   private datasetMission(missionId: string): DatasetMission | undefined {

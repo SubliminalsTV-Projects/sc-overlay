@@ -68,6 +68,9 @@
     font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); }
   .facts .v { color: var(--gold); font-weight: 600; }
   .facts .bad { color: var(--red); }
+  /* A forecast, not a reading. Same rule as everywhere else on this panel: a number the app worked
+     out is never dressed the same as one it was told. */
+  .facts .est { color: var(--cyan-dim); font-style: italic; }
 
   /* ── 🔴 The load checklist ────────────────────────────────────────────────
      Deliberately the loudest thing on the panel: 57% of contracts in the shipped data give a SCU
@@ -608,6 +611,52 @@
       b.textContent = v;
       s.appendChild(b);
       facts.appendChild(s);
+    }
+    renderRates(facts);
+  }
+
+  /**
+   * 🔴 WHAT THE RUN IS EARNING — per hour, in both currencies.
+   *
+   * Two rates, and which one is on screen is never left to be guessed. `actual` is MEASURED: real
+   * awards read off the log against real elapsed time. `projected` is what the board ahead is worth
+   * against this planner's own run estimate, and is therefore only ever as good as that estimate.
+   * Sub asked for the real figure "projected if we don't actually have enough data", so the
+   * measured one wins whenever it exists and the wording says which is showing — "earning" for a
+   * fact, "should earn" for a forecast.
+   *
+   * ⚠️ REPUTATION IS NEVER IN THE GAME LOG. Searching a live session finds only the name of the rep
+   * gRPC service — no amounts, no deltas. The figure comes off the mission dataset, which states it
+   * per contract and reads it from the game files rather than fitting it.
+   */
+  function renderRates(facts) {
+    const r = (plan && plan.rates) || {};
+    const rate = r.actual || r.projected;
+    if (!rate) return;
+    const measured = !!r.actual;
+    const per = (v) => (v >= 1000 ? Math.round(v / 1000) + "k" : Math.round(v));
+    const add = (label, value, why) => {
+      const s = document.createElement("span");
+      s.textContent = label + " ";
+      const b = document.createElement("span");
+      b.className = "v" + (measured ? "" : " est");
+      b.textContent = value;
+      s.appendChild(b);
+      s.title = why;
+      facts.appendChild(s);
+    };
+    add(measured ? "earning" : "should earn", per(rate.auecPerHour) + " aUEC/h", measured
+      ? "Measured — " + num(Math.round(r.actual.auec)) + " aUEC from " + r.actual.contracts
+        + " finished contract" + (r.actual.contracts > 1 ? "s" : "") + " over " + fmtMins(r.actual.minutes) + " of run."
+      : "A forecast: nothing has finished yet, so this is what the board ahead is worth against the"
+        + " estimated run time. It becomes a measured figure the moment you deliver."
+        + (r.payoutModelled ? "  ⚠️ A contract here has a modelled payout, not a stated one." : ""));
+    // Suppressed at zero rather than printed as "0/h": Master-rank Large and Bulk hauls genuinely
+    // pay no reputation, and a zero there is a fact about the contract, not about the run.
+    if (rate.repPerHour > 0) {
+      add("rep", per(rate.repPerHour) + "/h", "Reputation per hour, on the same basis. The game"
+        + " never logs reputation in any form — this comes from the mission dataset, which states"
+        + " it per contract.");
     }
   }
 

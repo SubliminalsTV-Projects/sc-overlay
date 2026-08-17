@@ -2685,6 +2685,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // Contracts the player has set aside. See PlanOptions.hidden.
       hidden: Array.isArray(body.hidden) ? body.hidden.filter((x): x is string => typeof x === "string") : [],
       pins,
+      // What each contract pays and what standing it moves. The log states the payout only once a
+      // contract has completed and never states reputation at all, so both come off the mission
+      // dataset the blueprint tracker already has loaded.
+      rewards: (key) => tracker.rewardsForKey(key),
     });
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true, ...plan }));

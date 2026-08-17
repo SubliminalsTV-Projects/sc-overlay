@@ -113,6 +113,11 @@ export interface PlanOptions {
   hidden?: string[];
   travelSpeedMps?: number;
   stopMinutes?: number;
+  /** What a contract key pays and what standing it moves, from the mission dataset — the log
+   *  states neither until a contract completes, and never states reputation at all.
+   *  Supplied by the caller (see MissionTracker.rewardsForKey) so this module stays dataset-free
+   *  apart from the hauling store it already takes. Omit and the rate block is simply absent. */
+  rewards?: (contractKey: string) => { payout: number | null; payoutModelled: boolean; rep: number } | null;
 }
 
 export interface PlannedLeg {
@@ -259,6 +264,24 @@ export interface HaulingPlan {
   pack: PackResult | null;
   /** SCU already aboard: legs whose pickup completed but whose drop-off has not. */
   aboardScu: number;
+  /**
+   * What the run is earning, per hour, in both currencies the player cares about.
+   *
+   * 🔑 TWO RATES, NEVER BLENDED. `actual` is measured — real awards off the log against real
+   * elapsed time — and is null until something has actually finished, because a rate computed from
+   * an empty numerator is not a small rate, it is no rate. `projected` is what the board ahead is
+   * worth against this planner's own estimated run time, and is therefore only ever as good as
+   * that estimate. Sub asked for the real figure "projected if we don't actually have enough
+   * data", so the widget shows `actual` when it exists and falls back to `projected`, saying which.
+   *
+   * ⚠️ `payoutModelled` is true when ANY contract counted here has a fitted rather than a read
+   * payout. Rare on hauling (38 of 853 keys) and never silent.
+   */
+  rates: {
+    actual: { auecPerHour: number; repPerHour: number; minutes: number; auec: number; rep: number; contracts: number } | null;
+    projected: { auecPerHour: number; repPerHour: number; minutes: number; auec: number; rep: number } | null;
+    payoutModelled: boolean;
+  };
   totals: {
     /** SCU still to move across every live, plannable contract. */
     scu: number;
@@ -851,6 +874,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   }
 
   const liveContracts = contracts.filter((c) => !c.ended);
+  const rates = buildRates(view, liveContracts, trips.reduce((n, t) => n + t.totalMinutes, 0), opts.rewards);
   return {
     updatedAt: view.updatedAt,
     ship: hull
@@ -882,6 +906,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     unrouted,
     pack,
     aboardScu,
+    rates,
     totals: {
       scu: openLegs.reduce((s, { leg }) => s + (leg.scu ?? 0), 0),
       capacityScu,
@@ -896,6 +921,73 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     },
     notes,
   };
+}
+
+/**
+ * aUEC and reputation per hour — measured where it can be, projected where it cannot.
+ *
+ * 🔴 THE TWO NUMBERS COME FROM DIFFERENT PLACES AND MUST NOT BE AVERAGED TOGETHER.
+ *   - aUEC EARNED is real: the game logs `Awarded N aUEC` and the tracker has already paired each
+ *     award with the completion it belongs to.
+ *   - REPUTATION is never logged in any form — searching a live session finds only the name of the
+ *     gRPC service. It comes from the dataset, keyed by contract, where 839 of the 853 `HaulCargo`
+ *     keys carry it and it is read from the game files rather than fitted.
+ *   - aUEC AHEAD is dataset too, and that one is fitted for 38 of the 853 keys, which is why
+ *     `payoutModelled` exists. Checked against Sub's own finished contract on 2026-08-17 the
+ *     dataset said 62,000 and the log's award was 62,000.
+ *
+ * Elapsed time is the LOG's clock, not the wall clock, so an app reading a stale file cannot claim
+ * a rate for time that has not happened.
+ */
+function buildRates(
+  view: HaulingView,
+  liveContracts: readonly PlannedContract[],
+  plannedMinutes: number,
+  rewards?: (contractKey: string) => { payout: number | null; payoutModelled: boolean; rep: number } | null,
+): HaulingPlan["rates"] {
+  let modelled = false;
+  const lookup = (key: string) => {
+    const r = rewards?.(key) ?? null;
+    if (r?.payoutModelled) modelled = true;
+    return r;
+  };
+
+  // ── measured ───────────────────────────────────────────────────────────────
+  let actual: HaulingPlan["rates"]["actual"] = null;
+  const elapsedMin = view.runStartedAt != null ? (view.updatedAt - view.runStartedAt) / 60_000 : 0;
+  // 🔑 A minute of elapsed time is the floor. Two contracts completing in the same second is a
+  // real thing (Sub delivers a mixed hold in one lift), and dividing by ~0 would report millions
+  // of aUEC an hour — a number that is arithmetically correct and a lie about the run.
+  if (view.finished.length && elapsedMin >= 1) {
+    const auec = view.finished.reduce((s, f) => s + (f.payout ?? 0), 0);
+    const rep = view.finished.reduce((s, f) => s + (lookup(f.contractKey)?.rep ?? 0), 0);
+    actual = {
+      auec, rep, minutes: elapsedMin, contracts: view.finished.length,
+      auecPerHour: auec / (elapsedMin / 60),
+      repPerHour: rep / (elapsedMin / 60),
+    };
+  }
+
+  // ── projected ──────────────────────────────────────────────────────────────
+  // Only what is actually going to be flown: a contract the player set aside, or one whose load is
+  // unknown, is not in the route and must not be in the rate the route is judged by.
+  let projected: HaulingPlan["rates"]["projected"] = null;
+  const ahead = liveContracts.filter((c) => c.plannable && !c.hidden);
+  if (ahead.length && plannedMinutes > 0) {
+    let auec = 0, rep = 0;
+    for (const c of ahead) {
+      const r = lookup(c.contractKey);
+      auec += r?.payout ?? 0;
+      rep += r?.rep ?? 0;
+    }
+    projected = {
+      auec, rep, minutes: plannedMinutes,
+      auecPerHour: auec / (plannedMinutes / 60),
+      repPerHour: rep / (plannedMinutes / 60),
+    };
+  }
+
+  return { actual, projected, payoutModelled: modelled };
 }
 
 /** One RoutePlan -> the stop list the widget draws, with names and per-stop actions. */

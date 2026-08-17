@@ -307,11 +307,15 @@ check("clearing the override falls back to the log's ship",
 
 // ── degenerate input ───────────────────────────────────────────────────────
 const empty = buildHaulingPlan(
-  { updatedAt: 0, playerNodeId: null, ship: null, contracts: [], untracked: [], trackedMissionId: null },
+  { updatedAt: 0, playerNodeId: null, ship: null, contracts: [], untracked: [], trackedMissionId: null,
+    runStartedAt: null, finished: [] },
   data,
 );
 check("an empty board is an empty plan, not a throw",
   empty.contracts.length === 0 && empty.trips.length === 0 && empty.totals.scu === 0);
+// 🔑 BOTH rates null, not zero. "0 aUEC/hour" is a claim about the run; no rate is the truth.
+check("an empty board quotes no rate at all",
+  empty.rates.actual === null && empty.rates.projected === null);
 
 // The bundle really is on disk where the server will look for it.
 check("the shipped orders file is the schema this module reads",
