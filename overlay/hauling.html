@@ -1185,6 +1185,9 @@
       if (c.dropoffs > 1) bits.push(c.dropoffs + " drops");
       if (c.rep > 0) bits.push(num(c.rep) + " rep");
       if (c.payout) bits.push(num(c.payout) + " aUEC");
+      // How many commodity variants wear this exact title. Not trivia: it is roughly how likely
+      // you are to actually find one of these on a board.
+      if (c.variants > 1) bits.push(c.variants + " variants");
       m.textContent = bits.join("  ·  ");
       mid.append(t, m);
       if (c.locked) {

@@ -2925,7 +2925,29 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       rewards: (k) => tracker.rewardsForKey(k), placeNames: config.haulingPlaces,
     }).rates;
     const perHour = rates.actual?.repPerHour ?? rates.projected?.repPerHour ?? null;
-    const top = ranked.slice(0, 24).map((r) => ({
+    /**
+     * 🔴 COLLAPSE BY TITLE. The list is matched against the board by its TITLE — that is the whole
+     * premise of the module — and the datasets carry one key per COMMODITY, so a straight top-24
+     * opened with six byte-identical "Experienced Rank - Small Cargo Haul" rows. Six lines of a
+     * 560px panel saying one thing, and it reads like a bug.
+     *
+     * Keeps the best-scoring instance of each title (the list is already sorted, so the first one
+     * wins) and counts the rest, because "there are 6 of these on the board" is real information —
+     * it is how likely you are to actually find one.
+     *
+     * ⚠️ Box count is part of the identity, not just the title: same-titled contracts genuinely
+     * differ (4 boxes at 500 rep/box vs 6 at 333), and collapsing those would hide a 1.5x
+     * difference behind one row.
+     */
+    const byTitle = new Map<string, { row: typeof ranked[number]; variants: number }>();
+    for (const r of ranked) {
+      const k = `${r.contract.title}|${r.effort.boxes}`;
+      const had = byTitle.get(k);
+      if (had) had.variants++;
+      else byTitle.set(k, { row: r, variants: 1 });
+    }
+    const top = [...byTitle.values()].slice(0, 24).map(({ row: r, variants }) => ({
+      variants,
       key: r.contract.key,
       title: r.contract.title,
       giver: r.contract.giver,
