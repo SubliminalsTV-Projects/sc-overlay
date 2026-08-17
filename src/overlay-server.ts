@@ -1074,6 +1074,10 @@ const PLACE_TYPES = new Set([
 ]);
 /** How many suggestions a 420px panel can usefully show. */
 const PLACE_LIMIT = 8;
+/** ⚠️ The datacore ships unfinished rows under real-looking types — "<= PLACEHOLDER =>",
+ *  "<= UNINITIALIZED =>" — and they sort to the top of an alphabetical list because of the angle
+ *  bracket. Offering one as a place name is offering nonsense. */
+const PLACE_JUNK = /^<=|=>$|^\s*$/;
 /** Ceiling on the learned list, so a long-running install cannot grow the config without bound. */
 const SEEN_PLACES_MAX = 200;
 
@@ -1140,9 +1144,17 @@ function haulingPlaceSuggestions(q: string): { name: string; hint: string | null
     taken.add(name.toLowerCase());
     out.push({ name, hint: "used before", seen: true, rank: s - 10 - (i / (seen.length || 1)) });
   });
+  // 🔑 AN EMPTY BOX OFFERS ONLY WHAT THE GAME HAS USED. Ranking 1,125 dataset rows with no query
+  // to rank them BY produces an alphabetical list starting at "The Pit" — eight rows of noise, and
+  // worse, it buries the handful of places this player actually visits. With nothing typed the
+  // useful answer is "somewhere you have been before"; the dataset earns its place the moment
+  // there are letters to match against.
+  if (!q) return out.sort((a, b) => a.rank - b.rank).slice(0, PLACE_LIMIT)
+    .map(({ name, hint, seen: s }) => ({ name, hint, seen: s }));
   // Tier 2 — the shipped dataset, minus everything a ship cannot be sent to.
   for (const l of Object.values(haulingData.locations())) {
     if (!l.name || !PLACE_TYPES.has(l.type ?? "")) continue;
+    if (PLACE_JUNK.test(l.name)) continue;
     if (taken.has(l.name.toLowerCase())) continue;
     const s = fuzzyScore(l.name, q);
     if (s === null) continue;

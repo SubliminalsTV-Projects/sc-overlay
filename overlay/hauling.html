@@ -938,6 +938,8 @@
         top.append(site, role);
         const inp = document.createElement("input");
         inp.type = "text";
+        // 🔑 The empty box only offers places the game has already named, so the hint says so
+        // rather than promising a list that is not there yet on a first run.
         inp.placeholder = "Type where this is…";
         inp.autocomplete = "off";
         // Same canvas keyboard grab as the tonnage boxes — see grabOn/grabOff. Reusing it is not
