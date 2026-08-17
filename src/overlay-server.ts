@@ -3004,7 +3004,11 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       config.haulingRank = HAULING_LADDER.some((r) => r.name === body.rank) ? body.rank : "";
     }
     if ("rep" in body) {
-      const n = Number(body.rep);
+      // ⚠️ `Number(null)` is 0, and 0 is a REAL standing (the bottom of the Trainee rung) — so a
+      // bare finite check turns "I don't know my standing" into "I am at zero", which is a
+      // different claim and silently wrong. Null and empty string mean unknown, explicitly.
+      const raw = body.rep;
+      const n = raw === null || raw === "" ? NaN : Number(raw);
       config.haulingRep = Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
     }
     saveConfig();
