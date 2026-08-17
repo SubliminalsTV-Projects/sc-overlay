@@ -888,7 +888,11 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       liveContracts: liveContracts.length,
       unknownContracts: liveContracts.filter((c) => c.scu == null).length,
       recentPayout: contracts.reduce((s, c) => s + (c.payout ?? 0), 0),
-      totalMinutes: run.totalMinutes,
+      // 🔴 Travel AND handling. This read `run.totalMinutes` — the router's own figure, which is
+      // flying time only. Since travel between Sub's stops is ~0.2 minutes, the widget's headline
+      // "est. run" said 1m for every board he ever loaded, no matter how many boxes were on it.
+      // The work is the boxes: the same run estimates 27 minutes once they are counted.
+      totalMinutes: trips.reduce((n, t) => n + t.totalMinutes, 0),
     },
     notes,
   };

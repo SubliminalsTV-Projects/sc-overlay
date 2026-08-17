@@ -137,6 +137,12 @@
   .sec.fold { cursor: pointer; user-select: none; }
   .sec.fold .caret { flex: none; margin-right: 4px; color: var(--faint); font-size: 9px; }
   .sec.fold:hover .caret { color: var(--cyan-bright); }
+  /* The "why" reduced to one glyph. The reason stays reachable on hover; it stops eating four
+     lines of a small overlay on every render. */
+  .whyinfo { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid rgba(var(--accent-rgb), 0.35); color: var(--cyan-dim); font-size: 9px;
+    cursor: help; }
+  .whyinfo:hover { color: var(--cyan-bright); border-color: var(--cyan); }
   .isowrap { position: relative; }
   .spincorner { position: absolute; left: 4px; bottom: 4px; width: 22px; height: 22px; padding: 0;
     display: grid; place-items: center; border-radius: 6px; cursor: pointer;
@@ -668,18 +674,34 @@
     if (allPinned && !trackOpen) {
       el.classList.add("done");
       $("trackK").textContent = "Load set by you";
-      $("trackWhy").textContent = "You typed these in and the plan is using your figures. Click to change them.";
+      $("trackWhy").textContent = "";
+      const doneInfo = document.createElement("span");
+      doneInfo.className = "whyinfo";
+      doneInfo.textContent = "ⓘ";
+      doneInfo.title = "You typed these in and the plan is using your figures. Click the heading to change them.";
+      $("trackWhy").appendChild(doneInfo);
       $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
       $("trackList").textContent = "";
       return;
     }
     el.classList.remove("done");
     $("trackK").textContent = todo ? "Track these in mobiGlas" : allPinned ? "Load set by you" : "Load not confirmed";
-    $("trackWhy").textContent = todo
+    /* 🔴 THE EXPLANATION IS A TOOLTIP, NOT A PARAGRAPH. Sub: "let's just put a circle with an eye
+       and put all that information in a tooltip. I want to clean up the UI." He is right — this is
+       WHY text, read once and then re-read on every render for the rest of the session. The reason
+       has to stay reachable, because "why am I typing this in" is a fair question, but it does not
+       have to occupy four lines of a small overlay forever. */
+    const why = todo
       ? "The game states a contract's tonnage when it assigns the objective — at accept, or the next time you spawn in. Track the ones below and the next assignment tells us, or type the figure straight off your mobiGlas."
       : allPinned
       ? "The game never stated these, so they stay listed — but you have typed the figures in and the plan is using yours. Clear a box to fall back to what the game files allow."
       : "These are tracked and the game still has not stated their load. It only says the tonnage when it assigns the objective, and re-tracking does not replay that — so type the figure off your mobiGlas, or wait for the next spawn-in.";
+    $("trackWhy").textContent = "";
+    const info = document.createElement("span");
+    info.className = "whyinfo";
+    info.textContent = "ⓘ";
+    info.title = why;
+    $("trackWhy").appendChild(info);
     $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
     const list = $("trackList");
     // 🔴 ROWS ARE REUSED, keyed by mission — they used to be torn down and rebuilt on every render,

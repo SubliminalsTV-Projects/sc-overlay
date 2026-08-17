@@ -237,7 +237,13 @@ export class HaulingTracker extends EventEmitter {
   private bank = new Map<string, Set<string>>();
   private trackedMissionId: string | null = null;
   /** Objectives already completed in a PREVIOUS game session, kept across the reset so a
-   *  re-created marker does not report finished work as still to do. See the sessionStart case. */
+   *  re-created marker does not report finished work as still to do. See the sessionStart case.
+   *
+   *  🔴 KEYED BY MISSION **AND** OBJECTIVE. An objectiveId is NOT unique to a contract — it is a
+   *  template/location id the game reuses freely: one drop-off id appears across 22 different
+   *  missions in Sub's corpus, another across 15. Keying on it alone marked a brand-new Silicon
+   *  contract as already collected because an older contract to the same place had been, and the
+   *  widget told him he was carrying 87 SCU he had never picked up. */
   private doneObjectives = new Map<string, number | null>();
   /** Completions still waiting for their "Awarded N aUEC" line, newest last. */
   private awaitingPayout: { missionId: string; at: number }[] = [];
@@ -308,7 +314,7 @@ export class HaulingTracker extends EventEmitter {
            So the completed objectives are kept across the reset and re-applied when their marker
            reappears. Keyed by objectiveId, which is stable for the life of the contract. */
         for (const c of this.contracts.values()) {
-          for (const s of c.stops) if (s.state === "completed") this.doneObjectives.set(s.objectiveId, s.completedAt);
+          for (const s of c.stops) if (s.state === "completed") this.doneObjectives.set(`${c.missionId}|${s.objectiveId}`, s.completedAt);
         }
         this.contracts.clear();
         this.itemClasses.clear();
@@ -354,8 +360,8 @@ export class HaulingTracker extends EventEmitter {
         destination: null, commodity: null, need: null, delivered: null, unit: null,
         // A marker re-created after a relaunch is always "pending" — but if we watched this exact
         // objective complete before the session reset, it is not.
-        state: this.doneObjectives.has(ev.objectiveId) ? "completed" : "pending",
-        completedAt: this.doneObjectives.get(ev.objectiveId) ?? null,
+        state: this.doneObjectives.has(`${ev.missionId}|${ev.objectiveId}`) ? "completed" : "pending",
+        completedAt: this.doneObjectives.get(`${ev.missionId}|${ev.objectiveId}`) ?? null,
       });
       c.stops.sort((a, b) => a.index - b.index || a.role.localeCompare(b.role));
     }
