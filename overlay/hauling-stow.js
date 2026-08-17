@@ -295,7 +295,7 @@
     for (let i = 0; i < grids.length; i++) {
       const mine = boxes.filter((b) => b.gridName === grids[i].name);
       if (!mine.length) continue;
-      used.push({ index: i, spec: grids[i], boxes: mine, label: gridLabel(grids[i].name) });
+      used.push({ index: i, spec: grids[i], boxes: mine, label: gridLabel(grids[i].name, ship && ship.className) });
     }
 
     return {
@@ -337,9 +337,44 @@
     return leg.destination || names[leg.toLocation] || null;
   }
 
-  /** `hardpoint_cargo_large` -> `cargo large`. The raw port name is an implementation detail. */
-  function gridLabel(name) {
-    return String(name || "").replace(/^hardpoint_/, "").replace(/_/g, " ");
+  /* 🔴 A HOLD IS SOMEWHERE ON THE SHIP, and "cargo large" does not tell you where to walk. Sub,
+     loading a C2 with a door at each end: "I would like to have it be called Rear and Front."
+
+     CIG names the position itself on 91 ports across the fleet — front, rear, back, nose, tail,
+     mid, centre, left, right — so that is read straight off the port and needs no table. The
+     Hercules is not one of them: it says only `hardpoint_cargo_large` / `_small`, which is why the
+     hull table below exists.
+
+     ⚠️ The table is DELIBERATELY tiny. Guessing "the big grid is always at the back" would be a
+     rule invented from one airframe; a hull is only listed once someone has actually stood in it. */
+  var POSITION_WORDS = [
+    ["front", "Front"], ["nose", "Front"],
+    ["rear", "Rear"], ["back", "Rear"], ["tail", "Rear"],
+    ["mid", "Mid"], ["center", "Mid"], ["centre", "Mid"],
+  ];
+  var SIDE_WORDS = [["left", "Left"], ["right", "Right"]];
+
+  /** Hulls whose ports do not state a position, confirmed by someone who flies them.
+   *  Crusader Hercules (Sub, 2026-08-17): "the small one's always in the front, the big one's in
+   *  the rear" — and each grid has its own door, which is the whole reason the label matters. */
+  var GRID_POSITION_BY_HULL = {
+    CRUS_Starlifter_C2: { hardpoint_cargo_large: "Rear", hardpoint_cargo_small: "Front" },
+    CRUS_Starlifter_M2: { hardpoint_cargo_large: "Rear", hardpoint_cargo_small: "Front" },
+  };
+
+  /** `hardpoint_cargo_large` on a C2 -> `Rear`. Falls back to the readable port name. */
+  function gridLabel(name, shipClass) {
+    var port = String(name || "");
+    var byHull = shipClass && GRID_POSITION_BY_HULL[shipClass];
+    if (byHull && byHull[port]) return byHull[port];
+    var low = port.toLowerCase();
+    var pos = null, side = null;
+    for (var i = 0; i < POSITION_WORDS.length; i++) if (low.indexOf(POSITION_WORDS[i][0]) >= 0) { pos = POSITION_WORDS[i][1]; break; }
+    for (var j = 0; j < SIDE_WORDS.length; j++) if (low.indexOf(SIDE_WORDS[j][0]) >= 0) { side = SIDE_WORDS[j][1]; break; }
+    if (pos && side) return pos + " " + side.toLowerCase();
+    if (pos) return pos;
+    if (side) return side;
+    return port.replace(/^hardpoint_/, "").replace(/_/g, " ");
   }
 
   // ── the drawing ─────────────────────────────────────────────────────────────

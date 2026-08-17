@@ -1146,7 +1146,7 @@
       const bits = [num(s.scu) + " SCU"];
       if (i === 0 && m.steps.length > 1) bits.push("deepest in the hold");
       if (i === m.steps.length - 1 && m.steps.length > 1) bits.push("last on, first off");
-      if (s.grids.length) bits.push(s.grids.map(StowView.gridLabel).join(" + "));
+      if (s.grids.length) bits.push(s.grids.map((g) => StowView.gridLabel(g, plan.ship && plan.ship.className)).join(" + "));
       meta.textContent = bits.join("  ·  ");
       mid.append(sig, meta);
 
