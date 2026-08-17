@@ -213,6 +213,11 @@
     stroke-width: 0.04; }
   svg.iso .iso-wall-b { fill: rgba(var(--accent-rgb), 0.02); }
   svg.iso .iso-rule { stroke: rgba(var(--accent-rgb), 0.16); stroke-width: 0.025; }
+  /* The ramp edge. Gold and heavier than a cell rule, because "which way am I looking" has to be
+     answerable at a glance — especially once the view can be spun. */
+  svg.iso .iso-door-bar { fill: none; stroke: var(--gold); stroke-width: 0.09; stroke-linecap: round; }
+  svg.iso .iso-door-label { fill: var(--gold); font-family: var(--sans); font-size: 0.5px;
+    font-weight: 700; letter-spacing: 0.06px; }
   svg.iso .iso-face { stroke: rgba(0, 0, 0, 0.55); stroke-width: 0.03; stroke-linejoin: round; }
   /* A ghosted lift must still read as CARGO IS HERE — the hold is not empty just because you are
      looking at a different lift — while never competing with the one you are being told to load. */
@@ -271,6 +276,10 @@
       <div class="ws-row">
         <button id="objBtn" class="hbtn" type="button" title="Both order a trip by time. This only decides which contracts share a trip when the load needs splitting.">Fastest run</button>
       </div>
+      <div class="ws-sec">Stow view</div>
+      <div class="ws-row">
+        <button id="spinBtn" class="hbtn" type="button" title="Walk round to the other end of the hold. A fixed camera always hides the boxes behind the front row.">Turn around</button>
+      </div>
       <div class="ws-sec">Contracts</div>
       <div class="ws-row">
         <button id="doneBtn" class="hbtn" type="button" title="Show contracts that have already ended">Show finished</button>
@@ -296,6 +305,10 @@
   // stale one is worse than none — so it is dropped the moment the plan stops containing it.
   const START_KEY = "sc-hauling-start";
   let startPick = (() => { try { return localStorage.getItem(START_KEY) || ""; } catch { return ""; } })();
+  // Which end of the hold the stow diagram is drawn from. Remembered, because a player who turned
+  // it round did so for a reason and a reset every render would fight them.
+  const SPIN_KEY = "sc-hauling-spin";
+  let stowSpin = (() => { try { return localStorage.getItem(SPIN_KEY) === "1"; } catch { return false; } })();
   function saveStart() { try { localStorage.setItem(START_KEY, startPick); } catch { /* private mode */ } }
   /** Which lift the stow diagram is lighting up. Defaults to the first one to load. */
   let focusMission = null;
@@ -427,7 +440,14 @@
     el.textContent = "";
     const auto = document.createElement("option");
     auto.value = "";
-    auto.textContent = "Auto — whatever the log sees";
+    // 🔴 SAY WHAT AUTO ACTUALLY FOUND. "Auto — whatever the log sees" is a promise, not a reading:
+    // Sub's C2 was detected correctly and the control gave him no way to know that, so he could not
+    // tell a working detector from a silent one. Name the hull when we have it.
+    const found = plan && plan.ship && plan.ship.source !== "manual" ? plan.ship.displayName : null;
+    auto.textContent = found ? "Auto — " + found : "Auto — nothing detected yet";
+    auto.title = found
+      ? "Detected from the game. Pick a hull below to override it."
+      : "No ship seen yet — the game names it when you board. Pick one below if it stays blank.";
     el.appendChild(auto);
     for (const s of ships) {
       const o = document.createElement("option");
@@ -1100,7 +1120,7 @@
 
       const box = document.createElement("div");
       box.className = "isowrap";
-      const svg = StowView.iso(g.spec, g.boxes, { focus: focusMission, depthOf: depthOf });
+      const svg = StowView.iso(g.spec, g.boxes, { focus: focusMission, depthOf: depthOf, spin: stowSpin });
       box.appendChild(svg);
       svgs.push(svg);
       wrap.appendChild(box);
@@ -1172,6 +1192,8 @@
     $("tabLayout").classList.toggle("on", view === "layout");
     $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
     $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
+    $("spinBtn").textContent = stowSpin ? "Turned around" : "Turn around";
+    $("spinBtn").classList.toggle("on", stowSpin);
     $("doneBtn").classList.toggle("on", showDone);
     if (!plan) return;
     renderSummary();
@@ -1192,6 +1214,11 @@
     shipPick = $("shipPick").value;
     saveShip(shipPick);
     load();
+  });
+  $("spinBtn").addEventListener("click", () => {
+    stowSpin = !stowSpin;
+    try { localStorage.setItem(SPIN_KEY, stowSpin ? "1" : "0"); } catch { /* private mode */ }
+    render();
   });
   $("startPick").addEventListener("change", () => {
     startPick = $("startPick").value;

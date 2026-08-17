@@ -390,7 +390,21 @@
        box spanning [y, y+dy] is drawn at [l-y-dy, l-y]. Drawn from the other end the picture is a
        mirror of the hold the player is about to walk into, which is worse than no picture — it
        would put the boxes they unload first at the back. */
-    const flip = (y, d) => l - y - (d || 0);
+    /* 🔴 SPIN — walk round to the other end of the hold.
+       Sub, mid-load: "the isometric view is just hiding three boxes that I kind of forgot about."
+       A fixed camera always has a blind side, and the boxes behind the front row are exactly the
+       ones you need to see before you start stacking.
+       ⚠️ It cannot be a 2D transform of the finished drawing. Rotating the SCENE 180° about the
+       vertical maps to `C - px` horizontally but `C - py - 2z` vertically — the z term means the
+       picture is not a rotation of itself. So the COORDINATES turn, and the projection is left
+       alone (see the warning on `project`).
+       Everything below works in VIEW space: the walls and floor sit at view 0 and stay the far
+       side whichever way round we stand, so only the boxes need mapping. */
+    const spin = !!opts.spin;
+    /** Min corner of a box in view space — the near/far sense of both axes flips together. */
+    const vx = (x, dx) => (spin ? w - x - dx : x);
+    const vy = (y, dy) => (spin ? y : l - y - dy);
+    const flip = (y, d) => vy(y, d || 0);
 
     // The two FAR walls (the back of the hold, seen from the entrance) plus the floor: an open box
     // seen from the ramp. Without them a stack of boxes floats in nothing and the grid's real size
@@ -398,6 +412,31 @@
     poly([pt(0, 0, 0), pt(w, 0, 0), pt(w, l, 0), pt(0, l, 0)].join(" "), "iso-floor");
     poly([pt(0, 0, 0), pt(w, 0, 0), pt(w, 0, h), pt(0, 0, h)].join(" "), "iso-wall");
     poly([pt(0, 0, 0), pt(0, l, 0), pt(0, l, h), pt(0, 0, h)].join(" "), "iso-wall iso-wall-b");
+
+    /* 🔴 WHERE THE DOOR IS. Without it the picture is a box of cargo with no orientation, and once
+       the view can spin there is nothing at all to tell you which way round you are looking.
+       The ramp is raw y=0; in view space that is the NEAR edge normally and the FAR edge when spun,
+       which is exactly the information the label carries. */
+    (function drawDoor() {
+      const dy = spin ? 0 : l;                       // the ramp edge, in view space
+      const mid = w / 2;
+      const g = document.createElementNS(NS, "g");
+      g.setAttribute("class", "iso-door");
+      svg.appendChild(g);
+      const bar = document.createElementNS(NS, "polyline");
+      bar.setAttribute("points", [pt(0, dy, 0), pt(w, dy, 0)].join(" "));
+      bar.setAttribute("class", "iso-door-bar");
+      g.appendChild(bar);
+      const t = document.createElementNS(NS, "text");
+      const p = project(mid, dy, 0);
+      // Nudge clear of the floor edge — outward when the door is near, inward when it is behind.
+      t.setAttribute("x", p[0]);
+      t.setAttribute("y", p[1] + (spin ? -0.35 : 0.95));
+      t.setAttribute("class", "iso-door-label");
+      t.setAttribute("text-anchor", "middle");
+      t.textContent = spin ? "DOOR (behind)" : "DOOR";
+      g.appendChild(t);
+    })();
 
     // Cell rules, so the SCU scale is readable off the floor itself.
     for (let x = 1; x < w; x++) line([x, 0, 0], [x, l, 0], "iso-rule");
@@ -411,9 +450,9 @@
     /* Painter's algorithm, in MIRRORED space: the viewer is along (+x, +y', +z), so the away-most
        corner is the min corner and ascending `x + y' + z` puts the back of the hold down first.
        Exact for the axis-aligned, non-overlapping, grid-snapped boxes this packer emits. */
-    const depthKey = (b) => b.x + flip(b.y, b.dy) + b.z;
+    const depthKey = (b) => vx(b.x, b.dx) + vy(b.y, b.dy) + b.z;
     const order = boxes.slice().sort((a, b) =>
-      depthKey(a) - depthKey(b) || a.z - b.z || flip(a.y, a.dy) - flip(b.y, b.dy) || a.x - b.x);
+      depthKey(a) - depthKey(b) || a.z - b.z || vy(a.y, a.dy) - vy(b.y, b.dy) || vx(a.x, a.dx) - vx(b.x, b.dx));
 
     for (const b of order) {
       const ghost = !!(opts.focus && b.missionId !== opts.focus);
@@ -425,8 +464,8 @@
       g.setAttribute("data-group", b.group || "");
       svg.appendChild(g);
       // y0/y1 are in MIRRORED space, so y1 is the box's ramp-facing side.
-      const x0 = b.x, z0 = b.z, x1 = b.x + b.dx, z1 = b.z + b.dz;
-      const y0 = flip(b.y, b.dy), y1 = flip(b.y);
+      const x0 = vx(b.x, b.dx), x1 = x0 + b.dx, z0 = b.z, z1 = b.z + b.dz;
+      const y0 = vy(b.y, b.dy), y1 = y0 + b.dy;
       // The two walls that face the ramp — the near wall (falling away to the lower left) and the
       // right-hand wall (x = x1) — then the lit top.
       const faces = [

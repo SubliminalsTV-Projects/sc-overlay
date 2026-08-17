@@ -480,7 +480,11 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         maxContainerScu: cap,
         capSource: b.cap != null ? "dataset" : "assumed",
         boxes,
-        boxLabel: boxes.map((x) => `${x.count}x${x.scu}`).join(" · "),
+        // 🔴 "12x8" reads as a BOX DIMENSION, and Sub read it that way: "what is 12 by 8? We don't
+        // have any boxes that are 12 by 8." It meant twelve 8 SCU boxes. A player knows what an
+        // 8 SCU box is — it has exactly one shape — so name the size and drop the geometry.
+        // The unit goes on the LAST entry only, so a list stays short without becoming ambiguous.
+        boxLabel: boxes.map((x, i) => `${x.count} × ${x.scu}${i === boxes.length - 1 ? " SCU" : ""}`).join(" · "),
         // The game's own box count when it stated one ("Deliver 0/9 Cargo Boxes"), so an
         // un-manifested item haul still shows how many boxes are coming.
         boxCount: boxes.length ? boxes.reduce((s, x) => s + x.count, 0)

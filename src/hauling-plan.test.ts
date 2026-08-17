@@ -237,8 +237,11 @@ const itemsPlan = buildHaulingPlan(viewOf(byId("haul-items")), data);
 const i0 = itemsPlan.contracts[0];
 check("an enumerated manifest is the source, and it is exact",
   i0?.source === "manifest" && i0.exact === true, i0?.source);
+// ⚠️ The label reads "8 × 8 · 1 × 1 SCU", not "8x8 · 1x1". Sub read the old form as a box
+// DIMENSION — "what is 12 by 8? we don't have any boxes that are 12 by 8" — when it meant twelve
+// 8 SCU boxes. A player knows what an 8 SCU box is; it has one shape. So: count × size, unit once.
 check("nine boxes summing to 65 SCU, not nine SCU",
-  i0?.scu === 65 && i0.legs[0].boxCount === 9 && i0.legs[0].boxLabel === "8x8 · 1x1",
+  i0?.scu === 65 && i0.legs[0].boxCount === 9 && i0.legs[0].boxLabel === "8 × 8 · 1 × 1 SCU",
   `${i0?.scu} SCU / ${i0?.legs[0].boxCount} boxes / ${i0?.legs[0].boxLabel}`);
 check("a manifest is not re-partitioned", i0?.legs[0].boxSource === "manifest");
 
