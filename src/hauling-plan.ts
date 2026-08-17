@@ -53,6 +53,12 @@ export type ScuSource =
 export interface PlanOptions {
   /** Ship class or display name chosen by the player; overrides whatever the log saw. */
   ship?: string | null;
+  /** The hull the app's OWN ship detector saw — the same signal that drives the manufacturer skin.
+   *  🔑 It is a separate signal from `view.ship`, and it is the one that actually works: on
+   *  2026-08-17 the skin correctly reported "Crusader C2 Hercules Starlifter" while this planner
+   *  said no ship at all, because it only ever consulted the hauling tracker's own reading.
+   *  Weaker than a manual pick and than the hauling log line, so it sits last in the chain. */
+  detectedShip?: string | null;
   objective?: "auec-per-hour" | "fewest-stops";
   /** missionId -> total SCU the player pinned by hand. Splits evenly across that contract's legs. */
   pins?: Record<string, number>;
@@ -308,7 +314,12 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // ── ship ────────────────────────────────────────────────────────────────
   const picked = opts.ship?.trim() ? data.ship(opts.ship.trim()) : null;
   const fromLog = !picked && view.ship ? data.ship(view.ship.model) : null;
-  const hull = picked ?? fromLog;
+  // Last resort: the app's own ship detector (the one the skin uses). data.ship() matches a
+  // display name as well as a class, and that detector reports display names, so this resolves.
+  const fromDetector = !picked && !fromLog && opts.detectedShip?.trim()
+    ? data.ship(opts.detectedShip.trim())
+    : null;
+  const hull = picked ?? fromLog ?? fromDetector;
   if (opts.ship?.trim() && !picked) notes.push(`"${opts.ship.trim()}" is not a hull in ships.json.`);
   if (!hull && view.ship) notes.push(`The log says you are flying ${view.ship.model}, which ships.json does not carry.`);
   const grids = hull ? gridsOf(hull) : [];
@@ -567,7 +578,11 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   if (pack && !pack.fits) notes.push(`${pack.unplaced.length} boxes do not fit — this is more than one trip.`);
   const rangeCount = contracts.filter((c) => !c.ended && c.source === "range").length;
   if (rangeCount) {
-    notes.push(`${rangeCount} contract${rangeCount > 1 ? "s" : ""} planned at the TOP of the dataset's range. Track ${rangeCount > 1 ? "them" : "it"} in mobiGlas to pin the real load.`);
+    // ⚠️ This used to end "Track them in mobiGlas to pin the real load." That is the same false
+    // advice the widget's prompt carried until 4c195d2: the Deliver line fires on objective
+    // ASSIGNMENT, and re-tracking never replays it, so tracking cannot pin anything. Typing the
+    // figure in is the only action left to the player.
+    notes.push(`${rangeCount} contract${rangeCount > 1 ? "s" : ""} planned at the TOP of the dataset's range. Type the real load in to pin ${rangeCount > 1 ? "them" : "it"}.`);
   }
 
   const liveContracts = contracts.filter((c) => !c.ended);

@@ -79,8 +79,14 @@ check("🔴 a ranged contract is not marked exact", u0?.source !== "range" || u0
 check("a bounded contract reports both ends",
   u0?.source === "unknown" || (u0.minScu != null && u0.maxScu != null),
   `${u0?.source} ${u0?.minScu}-${u0?.maxScu}`);
-check("the widget is told to go and track it",
-  untracked.notes.some((n) => /track/i.test(n)) || u0?.source === "dataset" || u0?.source === "unknown",
+// ⚠️ This used to assert the note said "track it". Tracking cannot pin a tonnage — the Deliver
+// line fires on objective assignment and re-tracking never replays it — so the note now tells the
+// player the only thing that actually works, and the test asserts it does NOT say track.
+check("the widget is told to type the load in, not to track it",
+  untracked.notes.some((n) => /type the real load in/i.test(n)) || u0?.source === "dataset" || u0?.source === "unknown",
+  untracked.notes.join(" | "));
+check("🔴 no note tells the player to track — that advice is false",
+  !untracked.notes.some((n) => /track/i.test(n)),
   untracked.notes.join(" | "));
 
 // The scenario's contract key is not one the dataset carries, which is itself a case to survive:

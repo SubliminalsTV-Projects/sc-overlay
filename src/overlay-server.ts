@@ -2629,6 +2629,9 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const plan = buildHaulingPlan(hauling.view(), haulingData, {
       // An absent `ship` falls back to the saved pick; an explicit "" clears it back to the log.
       ship: typeof body.ship === "string" ? body.ship : config.haulingShip,
+      // …and if neither the pick nor the hauling log line names a hull, use the ship the app's
+      // own detector already resolved for the skin. See PlanOptions.detectedShip.
+      detectedShip: shipName,
       objective: body.objective === "fewest-stops" ? "fewest-stops" : "auec-per-hour",
       pins,
     });
