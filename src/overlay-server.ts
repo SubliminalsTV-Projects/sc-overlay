@@ -1535,8 +1535,55 @@ function syncFull(): void {
 
 /** One-time read of the current log so the overlay knows the tracked mission +
  *  collected state immediately on start (the watcher then tails from the end). */
+/** How far back a rotated log is still worth reading. A hauling run spans hours, not days, and a
+ *  week-old log would resurrect contracts that are long gone. */
+const BACKUP_SEED_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * 🔴 A LOG ROTATION MUST NOT ERASE WHAT THE PLAYER ALREADY DID.
+ *
+ * The game starts a fresh `Game.log` on every launch and moves the old one to `logbackups/`. The
+ * seed below reads only the CURRENT file, so everything from before the last restart was simply
+ * gone — and mission state does not restate itself.
+ *
+ * Sub, 2026-08-17, holding 103 SCU of Scrap: the widget told him to go and collect it. He had
+ * collected it hours earlier; the game logged `pickup … MISSION_OBJECTIVE_STATE_COMPLETED` and then
+ * rotated the log, and the app was reading a file that started after the fact. Same root cause as
+ * losing his ship, his tonnages and his contracts across each of the day's crashes.
+ *
+ * So: replay the most recent backup first, then the live log on top. Mission events are idempotent
+ * — the tracker keys by missionId and objectiveId — so anything restated simply lands twice.
+ *
+ * ⚠️ Only the newest backup, and only if it is recent. Reading the whole folder would drag back
+ * every contract the player has ever flown.
+ */
+function seedFromRotatedLog(): void {
+  try {
+    const dir = join(dirname(config.logPath), "logbackups");
+    if (!existsSync(dir)) return;
+    const newest = readdirSync(dir)
+      .filter((f) => f.toLowerCase().endsWith(".log"))
+      .map((f) => join(dir, f))
+      .map((p) => ({ p, at: statSync(p).mtimeMs }))
+      .sort((a, b) => b.at - a.at)[0];
+    if (!newest || Date.now() - newest.at > BACKUP_SEED_MAX_AGE_MS) return;
+    let applied = 0;
+    for (const line of readFileSync(newest.p, "utf8").split(/\r?\n/)) {
+      if (!line) continue;
+      const ev = parseMissionEvent(parseLine(line));
+      if (ev) { tracker.apply(ev); hauling.apply(ev); applied++; }
+    }
+    const mins = Math.round((Date.now() - newest.at) / 60000);
+    console.log(`[seed] rotated log replayed: ${applied} mission events from ${mins}m ago (${newest.p})`);
+  } catch (err) {
+    console.log(`[seed] rotated log skipped: ${(err as Error).message}`);
+  }
+}
+
 function seedTrackerFromLog(): number | null {
   try {
+    // Before the live log: whatever the player did before the game last restarted.
+    seedFromRotatedLog();
     // 🔑 Read as a BUFFER so the exact byte count is known. `text.length` is CHARACTERS, and the
     // watcher seeks by bytes — any non-ASCII in the log (handles, ship names) would make the two
     // disagree and re-emit or skip lines at the seam.

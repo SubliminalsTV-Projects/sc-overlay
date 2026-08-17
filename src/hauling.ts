@@ -236,6 +236,9 @@ export class HaulingTracker extends EventEmitter {
    */
   private bank = new Map<string, Set<string>>();
   private trackedMissionId: string | null = null;
+  /** Objectives already completed in a PREVIOUS game session, kept across the reset so a
+   *  re-created marker does not report finished work as still to do. See the sessionStart case. */
+  private doneObjectives = new Map<string, number | null>();
   /** Completions still waiting for their "Awarded N aUEC" line, newest last. */
   private awaitingPayout: { missionId: string; at: number }[] = [];
   /** Rewards that arrived before their completion (dev-replay does this), newest last. */
@@ -292,6 +295,21 @@ export class HaulingTracker extends EventEmitter {
       // the mission tracker does NOT reset on the PU-side establish. Mirroring that here would
       // wipe the contracts that had just been restored.
       case "sessionStart":
+        /* 🔴 REMEMBER WHAT WAS ALREADY DONE. Dropping the contracts is right — the game re-emits
+           CreateMarker for every accepted one on spawn-in, so they come back. What does NOT come
+           back is their PROGRESS: a re-created marker is always `pending`, and the objective's
+           COMPLETED event was in the previous session's log.
+
+           Sub, 2026-08-17, carrying 103 SCU of Scrap he had collected hours earlier: the widget
+           told him to go and collect it. The game had logged the pickup complete and then rotated
+           its log; the app re-read the board from scratch and called the leg untouched. A hauling
+           contract lives on CIG's servers and survives a relaunch — only our picture of it did not.
+
+           So the completed objectives are kept across the reset and re-applied when their marker
+           reappears. Keyed by objectiveId, which is stable for the life of the contract. */
+        for (const c of this.contracts.values()) {
+          for (const s of c.stops) if (s.state === "completed") this.doneObjectives.set(s.objectiveId, s.completedAt);
+        }
         this.contracts.clear();
         this.itemClasses.clear();
         this.bank.clear();
@@ -334,7 +352,10 @@ export class HaulingTracker extends EventEmitter {
         index: parseInt(key.split("#")[1] ?? "0", 10) || 0,
         pos: ev.pos, markerEntityId: ev.markerEntityId,
         destination: null, commodity: null, need: null, delivered: null, unit: null,
-        state: "pending", completedAt: null,
+        // A marker re-created after a relaunch is always "pending" — but if we watched this exact
+        // objective complete before the session reset, it is not.
+        state: this.doneObjectives.has(ev.objectiveId) ? "completed" : "pending",
+        completedAt: this.doneObjectives.get(ev.objectiveId) ?? null,
       });
       c.stops.sort((a, b) => a.index - b.index || a.role.localeCompare(b.role));
     }
