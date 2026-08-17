@@ -299,6 +299,20 @@ interface Bounds {
  * re-used template, or legs the log has not all emitted yet) fall back to the whole contract's
  * span and its widest cap, which over-states rather than invents.
  */
+/** What a leg is carrying, from the datacore. Same index rule as `boundsFor`: orders line up with
+ *  legs only when there are equally many, otherwise the contract has to speak with one voice — and
+ *  a mixed-commodity contract has no single answer, so it gives none rather than naming the first.
+ *
+ *  🔑 This is knowable at ACCEPT, unlike the tonnage. The commodity is fixed by the contract; only
+ *  how much of it is rolled per instance. So the widget can say WHAT before it can say HOW MUCH. */
+function commodityFor(data: HaulingDataStore, contractKey: string, index: number, legCount: number): string | null {
+  const orders = data.contract(contractKey)?.orders ?? [];
+  if (!orders.length) return null;
+  if (orders.length === legCount) return orders[index]?.commodity ?? null;
+  const names = [...new Set(orders.map((o) => o.commodity).filter((c): c is string => !!c))];
+  return names.length === 1 ? names[0] : null;
+}
+
 function boundsFor(data: HaulingDataStore, contractKey: string, index: number, legCount: number): Bounds {
   const contract = data.contract(contractKey);
   const orders = contract?.orders ?? [];
@@ -453,7 +467,13 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         key: drop.key,
         index: drop.index,
         group,
-        commodity: drop.commodity,
+        // 🔑 The LOG only names a commodity on a Deliver line, which fires when the game assigns
+        // the objective — so an untracked contract showed a bare tonnage and Sub had no idea what
+        // three of his five loads even were. The DATASET has known all along: the contract key is
+        // in every CreateMarker line from the moment of accept, and it maps straight to a
+        // commodity. All five of his contracts resolve — Stims, Silicon, Tin, Waste, Scrap.
+        // The log still wins where it spoke; this only fills the silence.
+        commodity: drop.commodity ?? commodityFor(data, c.contractKey, i, dropoffs.length),
         destination: drop.destination,
         unit: drop.unit,
         ...r,
