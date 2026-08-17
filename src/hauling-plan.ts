@@ -161,8 +161,11 @@ export interface HaulingPlan {
     displayName: string | null;
     totalScu: number;
     grids: PlanGrid[];
-    /** "log" = the game told us · "manual" = the player picked · "none" = no ship known. */
-    source: "log" | "manual" | "none";
+    /** "log" = the hauling log line named it · "manual" = the player picked · "detected" = the
+     *  app's own ship detector (the skin's signal) resolved it · "none" = no ship known.
+     *  🔑 "detected" is NOT "log": they are separate signals that disagreed on 2026-08-17, and
+     *  reporting one as the other is how the next reader draws the wrong conclusion. */
+    source: "log" | "manual" | "detected" | "none";
   } | null;
   contracts: PlannedContract[];
   /**
@@ -598,7 +601,10 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
             capacityScu: g.w * g.l * g.h,
             usedScu: pack?.byGrid.find((u) => u.grid === g.name)?.usedScu ?? 0,
           })),
-          source: picked ? "manual" : "log",
+          // ⚠️ This was `picked ? "manual" : "log"`, which stamped ANY non-manual hull as "log".
+          // On 2026-08-17 that told Sub the log had named his C2 while view.ship was null — the
+          // app asserting a provenance it did not have, and he reasonably believed it.
+          source: picked ? "manual" : fromLog ? "log" : "detected",
         }
       : null,
     contracts,
