@@ -2946,7 +2946,18 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       if (had) had.variants++;
       else byTitle.set(k, { row: r, variants: 1 });
     }
-    const top = [...byTitle.values()].slice(0, 24).map(({ row: r, variants }) => ({
+    /**
+     * 🔴 KEEP A WINDOW ON THE NEXT RUNG. `includeLocked` retains locked contracts but they sort
+     * last, so a plain top-24 of an unlocked-rich list cuts every one of them — which defeats the
+     * reason they are kept at all. Sub is sitting at a rank cusp deliberately waiting to see what
+     * changes when he crosses it; "what does the next rung open up" is the question, not a footnote.
+     *
+     * So the list is the best unlocked PLUS the best few locked, rather than the best N overall.
+     */
+    const collapsed = [...byTitle.values()];
+    const open = collapsed.filter((x) => !x.row.locked).slice(0, 20);
+    const soon = collapsed.filter((x) => x.row.locked).slice(0, 4);
+    const top = [...open, ...soon].map(({ row: r, variants }) => ({
       variants,
       key: r.contract.key,
       title: r.contract.title,

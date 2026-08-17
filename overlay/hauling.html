@@ -1170,7 +1170,20 @@
     sec.append(h, n);
     body.appendChild(sec);
 
+    let ruled = false;
     advisor.contracts.forEach((c, i) => {
+      /* The locked block is appended after the open one (see the endpoint), so the first locked row
+         is where "what you could be flying" turns into "what the next rung opens up". Saying so is
+         the difference between a useful preview and a list that looks mis-sorted. */
+      if (c.locked && !ruled) {
+        ruled = true;
+        const s = document.createElement("div");
+        s.className = "sec";
+        const sh = document.createElement("span"); sh.textContent = "What the next rank opens up";
+        const sn = document.createElement("span"); sn.className = "n"; sn.textContent = "not on your board yet";
+        s.append(sh, sn);
+        body.appendChild(s);
+      }
       const row = document.createElement("div");
       row.className = "arow" + (c.locked ? " locked" : "");
       const nEl = document.createElement("div"); nEl.className = "n"; nEl.textContent = String(i + 1);
