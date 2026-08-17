@@ -519,6 +519,37 @@
    *  never destroyed underneath them. See renderTrack. */
   const trackRows = new Map();
 
+  // ── the shared keyboard grab ───────────────────────────────────────────────────────────────
+  // 🔴 THE GRAB IS PER-WIDGET, NOT PER-FIELD, and it hands focus back through ONE function.
+  // Re-entering it while already inside a field is what made every box except the first
+  // unreachable: focusing box 2 called editStart again, the shell took window focus and called
+  // __haulingFocus to give it back — and that focused `querySelector("input")`, i.e. box 1.
+  // Clicking box 2 and TABBING to box 2 both died there, which is the tell: Tab is native
+  // behaviour, so nothing in this page's own DOM could have explained it.
+  //
+  // Two rules fix it, and both are needed:
+  //   1. Remember which box the player actually wants, so the hand-back goes to the right one.
+  //   2. Do not tear the grab down and rebuild it when focus moves BETWEEN fields of this widget.
+  //      The release is deferred a tick, and a sibling taking focus cancels it — so moving box to
+  //      box never re-enters the grab at all, and the shell is never asked to re-focus anything.
+  let wantFocus = null;
+  let grabHeld = false;
+  let releaseTimer = null;
+  function grabOn(el) {
+    wantFocus = el;
+    clearTimeout(releaseTimer); releaseTimer = null;
+    if (grabHeld) return;   // already inside a field — re-entering is the bug, not the fix
+    grabHeld = true;
+    try { host()?.editStart?.(); } catch { /* standalone */ }
+  }
+  function grabOff() {
+    clearTimeout(releaseTimer);
+    releaseTimer = setTimeout(() => {
+      releaseTimer = null; grabHeld = false; wantFocus = null;
+      try { host()?.editEnd?.(); } catch { /* standalone */ }
+    }, 0);
+  }
+
   /** 🔴 The load checklist. Each row names a contract whose tonnage the game has not stated,
    *  says which of the three states it is in, shows the bounds we do have, and offers a box to
    *  type the real figure into. */
@@ -583,9 +614,14 @@
         inp.type = "number"; inp.min = "1"; inp.step = "1";
         inp.placeholder = "SCU";
         inp.title = "Type the SCU total from your mobiGlas to pin it.";
-        // Editing takes the canvas keyboard grab; the shell suspends the interact key while it is on.
-        inp.addEventListener("focus", () => { try { host()?.editStart?.(); } catch { /* standalone */ } });
-        inp.addEventListener("blur", () => { try { host()?.editEnd?.(); } catch { /* standalone */ } });
+        // Editing takes the canvas keyboard grab; the shell suspends the interact key while it is
+        // on. Held across a move between boxes — see grabOn/grabOff.
+        inp.addEventListener("focus", () => grabOn(inp));
+        inp.addEventListener("blur", () => grabOff());
+        // Pointer-down lands BEFORE the old field blurs, so this is the earliest honest statement
+        // of which box the player is going to. Without it, a hand-back that races the focus event
+        // has nothing better than "the first one" to aim at.
+        inp.addEventListener("pointerdown", () => { wantFocus = inp; });
         // Keyed off the row's OWN missionId, not a captured contract object, because the row now
         // outlives the render that made it.
         const mid = c.missionId;
@@ -1121,7 +1157,16 @@
     try { document.activeElement?.blur?.(); } catch { /* nothing focused */ }
     try { host()?.editEnd?.(); } catch { /* not embedded */ }
   };
-  window.__haulingFocus = () => { try { $("trackList").querySelector("input")?.focus(); } catch { /* none */ } };
+  // The shell's hand-back after it takes window focus. 🔴 This used to be
+  // `querySelector("input")` — ALWAYS the first box — so every attempt to reach box 2 or 3 was
+  // dragged back to box 1. Aim at the box the player is actually in; fall back to the first only
+  // when we have no idea, which is the cold-start case this was written for.
+  window.__haulingFocus = () => {
+    try {
+      const target = wantFocus && wantFocus.isConnected ? wantFocus : $("trackList").querySelector("input");
+      target?.focus();
+    } catch { /* none */ }
+  };
 </script>
 </body>
 </html>
