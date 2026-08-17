@@ -480,10 +480,17 @@
     if (!live.length) { el.style.display = "none"; return; }
     el.style.display = "";
     // The heading is an instruction ONLY while at least one row can act on it.
+    // 🔴 THREE row states need THREE headings. This was `todo ? … : "Load not confirmed"`, which
+    // told Sub the load was unconfirmed on 2026-08-17 *immediately after he confirmed it himself*.
+    // A pinned row never leaves this list — the filter keeps anything the GAME never stated, and
+    // pinning cannot change that — so "all pinned" is a normal resting state, not an alarm.
     const todo = live.filter((c) => trackStateOf(c) === "todo").length;
-    $("trackK").textContent = todo ? "Track these in mobiGlas" : "Load not confirmed";
+    const allPinned = live.every((c) => trackStateOf(c) === "pinned");
+    $("trackK").textContent = todo ? "Track these in mobiGlas" : allPinned ? "Load set by you" : "Load not confirmed";
     $("trackWhy").textContent = todo
       ? "The game states a contract's tonnage when it assigns the objective — at accept, or the next time you spawn in. Track the ones below and the next assignment tells us, or type the figure straight off your mobiGlas."
+      : allPinned
+      ? "The game never stated these, so they stay listed — but you have typed the figures in and the plan is using yours. Clear a box to fall back to what the game files allow."
       : "These are tracked and the game still has not stated their load. It only says the tonnage when it assigns the objective, and re-tracking does not replay that — so type the figure off your mobiGlas, or wait for the next spawn-in.";
     $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
     const list = $("trackList");
