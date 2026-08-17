@@ -19,7 +19,7 @@ import { HaulingDataStore } from "./hauling-data.js";
 import { canAutoLoad } from "./hauling-autoload.js";
 import { buildHaulingPlan } from "./hauling-plan.js";
 import {
-  buildContracts, climbToNextRung, rankContracts, regimeFor, HAULING_LADDER,
+  buildContracts, climbToNextRung, rankContracts, regimeFor, rungAt, HAULING_LADDER,
   type AdvisorContract,
 } from "./hauling-advisor.js";
 import { MissionFeedbackStore } from "./mission-feedback.js";
@@ -234,18 +234,16 @@ interface Config {
    * hauling contract are by definition real hauling stops, so they rank above the dataset.
    */
   haulingSeenPlaces: string[];
-  /**
-   * The player's `Hauling` standing, for the advisor's "how far to the next rank".
-   *
-   * 🔑 TWO FIELDS BECAUSE THE GAME SHOWS A BAR, NOT A NUMBER. mobiGlas names the rung and draws a
-   * progress bar; it does not print the integer. So the rung is the thing a player can always
-   * answer, and the exact standing is the optional refinement for someone who has it. With only a
-   * rung the estimate is reported as a RANGE — anything else would be inventing a position on a
-   * bar we cannot see.
-   */
-  haulingRank: string;
-  /** Exact `Hauling` standing if the player knows it, else null. */
-  haulingRep: number | null;
+  /* ⛔ NO haulingRank / haulingRep. A picker was built here and it was wrong twice over, both
+     caught by Sub within minutes:
+       1. The app ALREADY KNOWS. MissionTracker.repDiagnostics() carries every giver's witnessed
+          standing, accrued from every log backup — his Covalex read 5,400 (Member) while the
+          widget was asking him to type it. Asking for a number you hold is not a fallback, it is
+          a bug with a text box on it.
+       2. "The player cannot know their rep value" — correct. mobiGlas draws a bar, not an
+          integer. The only place he could read the number is this app, so a box asking him for it
+          is circular.
+     Standing is read live, per giver. See the advisor endpoint. */
   /** Remembers whether the Web Page widget was left open, so it's restored on launch. */
   webViewOpen: boolean;
   /** URL shown by the Web Page widget (http/https only). Empty = it shows its address picker. */
@@ -444,8 +442,6 @@ const DEFAULTS: Config = {
   haulingShip: "",
   haulingPlaces: {},
   haulingSeenPlaces: [],
-  haulingRank: "",
-  haulingRep: null,
   webViewOpen: false,
   // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
   // it's the page most likely to be wanted beside the game, and it shows what the widget does.
@@ -1206,41 +1202,71 @@ function advisorContracts(): AdvisorContract[] {
 }
 
 /**
- * How long the next rung is away.
+ * How long one contract actually takes, MEASURED — accept to turn-in, off the player's own runs.
  *
- * 🔴 THREE BASES, AND THE BEST AVAILABLE ONE WINS — never a blend.
- *   measured   the player's own rep/hour from finished contracts this session. The only figure
- *              that includes flying, faffing and the walk to the elevator, so it is the only one
- *              that is an ANSWER rather than a floor.
- *   projected  the same, from the plan's forecast, once something is accepted but nothing done.
- *   none       no rate at all — report the runs and refuse to quote a time. `climbToNextRung`
- *              deliberately counts only loading work, so turning its seconds into "time to rank"
- *              would understate it by however long the flying takes, which is most of it.
+ * 🔑 Sub asked for this directly: "we have enough information to figure out exactly how long it
+ * takes me to do a mission, because you know when I grabbed it and when I turned it in." Right, and
+ * it beats the modelled figure outright — `handlingEffort` counts box handling and nothing else, so
+ * it is a floor, while this includes the flying, the elevator queue and the walk.
  *
- * 🔑 And with only a RUNG (no exact standing) the answer is a RANGE, because the player could be
- * anywhere on that bar. Reporting the midpoint would be inventing a position we cannot see.
+ * MEDIAN, not mean. One contract accepted and forgotten for two hours would drag an average into
+ * uselessness, and a hauler's run times are naturally skewed that way.
+ *
+ * ⚠️ Contracts overlap — several are usually run together — so this is "wall-clock from accepting
+ * this one to finishing it", not "time this one cost you". It is the honest reading of what the log
+ * records, and the right one for "how long until I rank up" precisely because a real session runs
+ * them in parallel too.
  */
-function haulingClimb(bestRepPerHour: number | null): Record<string, unknown> | null {
-  const rungName = config.haulingRank;
-  const rung = HAULING_LADDER.find((r) => r.name === rungName);
-  if (!rung) return null;
-  const i = HAULING_LADDER.findIndex((r) => r.name === rung.name);
-  const next = HAULING_LADDER[i + 1] ?? null;
-  if (!next) return { rung: rung.name, next: null, exact: config.haulingRep != null };
-  const exact = config.haulingRep;
-  // Worst case is the whole rung; best case is standing on its ceiling already.
-  const needMax = next.minRep - (exact ?? rung.minRep);
-  const needMin = exact != null ? needMax : 0;
-  const hours = (n: number) => (bestRepPerHour && bestRepPerHour > 0 ? n / bestRepPerHour : null);
+function haulingRunMinutes(): { median: number; samples: number } | null {
+  const spans = hauling.view().finished
+    .filter((f) => f.acceptedAt != null && f.at > f.acceptedAt)
+    .map((f) => (f.at - (f.acceptedAt as number)) / 60_000)
+    .sort((a, b) => a - b);
+  if (!spans.length) return null;
+  return { median: spans[Math.floor(spans.length / 2)], samples: spans.length };
+}
+
+/**
+ * 🔴 STANDING IS PER GIVER, NOT PER SCOPE.
+ *
+ * Four factions share the `Hauling` scope — Covalex (817 contracts), Dead Saints (8), Red Wind (7),
+ * Ling Family (7) — and reputation accrues to the FACTION. Sub saw the danger before the code did:
+ * "if I select my rank, it's going to show me missions from another mission giver at that rank, and
+ * I'm not that rank with that mission giver." Exactly right. Gating on one ladder would have
+ * offered him Member-tier Ling Family work against a Covalex standing he earned elsewhere.
+ *
+ * The numbers come from MissionTracker's own accrual, which has been running all along and is
+ * keyed by giver — 307 credited completions at the time this was written, reading Covalex 5,400.
+ */
+function haulingStandings(): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const g of tracker.repDiagnostics().givers) {
+    if (g.scope === "Hauling") out.set(g.giver, g.sum);
+  }
+  return out;
+}
+
+/**
+ * How long the next rung is away, for ONE giver.
+ *
+ * 🔑 The rate is the player's own MEASURED rep/hour, or nothing. `climbToNextRung` counts only
+ * loading work — no flying, no quantum, no walk to the elevator — so turning its seconds into
+ * "time to rank" would understate by however long the travelling takes, which is most of it. No
+ * rate, no time: report the rep needed and say what would fix that.
+ */
+function haulingClimb(giver: string, standing: number, repPerHour: number | null): Record<string, unknown> {
+  const { current, next } = rungAt(standing);
+  if (!next) return { giver, standing, rung: current.name, next: null };
+  const need = Math.max(0, next.minRep - standing);
   return {
-    rung: rung.name,
+    giver, standing,
+    rung: current.name,
     next: next.name,
-    exact: exact != null,
-    repNeedMin: Math.max(0, needMin),
-    repNeedMax: Math.max(0, needMax),
-    hoursMin: hours(Math.max(0, needMin)),
-    hoursMax: hours(Math.max(0, needMax)),
-    repPerHour: bestRepPerHour,
+    // How far through the current rung they are — the bar the game draws but never numbers.
+    progress: (standing - current.minRep) / Math.max(1, next.minRep - current.minRep),
+    repNeeded: need,
+    hours: repPerHour && repPerHour > 0 ? need / repPerHour : null,
+    repPerHour,
   };
 }
 
@@ -2910,13 +2936,23 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const qs = new URL(req.url ?? "", "http://x").searchParams;
     const goal = qs.get("goal") === "money" ? "money" : "rep";
     const ship = qs.get("ship") || config.haulingShip || shipName || null;
-    const ranked = rankContracts(advisorContracts(), {
-      ship, goal,
-      // Standing gates the board: a rung above the player's is not offered to them. With only a
-      // rung name we use its FLOOR, which locks exactly what the game locks.
-      rep: config.haulingRep ?? HAULING_LADDER.find((r) => r.name === config.haulingRank)?.minRep ?? null,
-      includeLocked: true,
-    });
+    const standings = haulingStandings();
+    /* 🔴 GATED PER GIVER. rankContracts takes ONE standing, which is right for one faction and
+       wrong across four — so it is called with no standing at all (nothing locked) and the lock is
+       applied here, against the giver each contract actually belongs to. A contract from a faction
+       we have never worked for gates on 0, which is correct: that is exactly what the board shows. */
+    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true })
+      .map((r) => {
+        const giver = r.contract.giver ?? "";
+        const standing = standings.get(giver) ?? 0;
+        const idx = r.contract.rank ? HAULING_LADDER.findIndex((x) => x.name === r.contract.rank) : -1;
+        // An unparseable title has no rung, so it cannot be gated — treat it as open, same as
+        // rankContracts does.
+        const locked = idx >= 0 && HAULING_LADDER[idx].minRep > standing;
+        return { ...r, locked, giver, standing };
+      })
+      .sort((a, b) => Number(a.locked) - Number(b.locked) || b.score - a.score
+        || a.effort.stops - b.effort.stops || a.effort.boxes - b.effort.boxes);
     const regime = regimeFor(ship);
     // The rate to quote the climb against: what the player is actually managing, else the plan's
     // forecast. See haulingClimb — a modelled per-run time would be a floor, not an answer.
@@ -2976,44 +3012,32 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       repRate: r.repRate,
       moneyRate: r.moneyRate,
       locked: r.locked,
+      standing: r.standing,
     }));
     // "How many of these to the next rung" — off the best UNLOCKED rep contract, which is what the
-    // player would actually be flying.
+    // player would actually be flying, and against ITS giver's standing.
     const bestOpen = ranked.find((r) => !r.locked && r.contract.rep > 0) ?? null;
-    const standing = config.haulingRep
-      ?? HAULING_LADDER.find((r) => r.name === config.haulingRank)?.minRep ?? null;
-    const climb = bestOpen && standing != null
-      ? climbToNextRung(bestOpen.contract, standing, regime)
+    const runs = bestOpen
+      ? climbToNextRung(bestOpen.contract, bestOpen.standing, regime)
       : null;
+    /* Every hauling faction the player has any standing with, best first — because "how far to the
+       next rank" is four different questions and the widget should not silently answer one. */
+    const climbs = [...standings.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([giver, sum]) => haulingClimb(giver, sum, perHour));
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({
       ok: true, goal, regime,
       ladder: HAULING_LADDER,
-      rank: config.haulingRank || null,
-      rep: config.haulingRep,
       contracts: top,
-      climb: haulingClimb(perHour),
-      runsOfBest: climb && bestOpen ? { key: bestOpen.contract.key, title: bestOpen.contract.title, rep: bestOpen.contract.rep, runs: climb.runs, boxes: climb.boxes } : null,
+      climbs,
+      /** Measured, from his own finished runs — see haulingRunMinutes. */
+      runMinutes: haulingRunMinutes(),
+      runsOfBest: runs && bestOpen
+        ? { key: bestOpen.contract.key, title: bestOpen.contract.title, giver: bestOpen.giver,
+            rep: bestOpen.contract.rep, runs: runs.runs, boxes: runs.boxes }
+        : null,
     }));
-    return;
-  }
-  /** Where the player says they are on the hauling ladder. */
-  if (url === "/api/hauling/standing" && req.method === "POST") {
-    const body = (await readBody(req)) as Record<string, unknown>;
-    if (typeof body.rank === "string") {
-      config.haulingRank = HAULING_LADDER.some((r) => r.name === body.rank) ? body.rank : "";
-    }
-    if ("rep" in body) {
-      // ⚠️ `Number(null)` is 0, and 0 is a REAL standing (the bottom of the Trainee rung) — so a
-      // bare finite check turns "I don't know my standing" into "I am at zero", which is a
-      // different claim and silently wrong. Null and empty string mean unknown, explicitly.
-      const raw = body.rep;
-      const n = raw === null || raw === "" ? NaN : Number(raw);
-      config.haulingRep = Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-    }
-    saveConfig();
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ ok: true, rank: config.haulingRank, rep: config.haulingRep }));
     return;
   }
   /** Name a place by hand — or clear it by sending an empty name. Keyed by the planner's location

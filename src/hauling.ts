@@ -184,7 +184,7 @@ export interface HaulingView {
   runStartedAt: number | null;
   /** Contracts that have FINISHED since the app started, oldest first. Deliberately NOT the ended
    *  entries of `contracts`, which are pruned after ten minutes — see the ledger note. */
-  finished: { at: number; missionId: string; contractKey: string; payout: number | null }[];
+  finished: { at: number; acceptedAt: number | null; missionId: string; contractKey: string; payout: number | null }[];
 }
 
 const ts = (s: string | null): number | null => {
@@ -262,7 +262,7 @@ export class HaulingTracker extends EventEmitter {
    * 🔑 It also SURVIVES `sessionStart`. A game restart does not un-earn what the run already paid,
    * exactly as a restart does not un-collect the cargo in the hold.
    */
-  private ledger: { at: number; missionId: string; contractKey: string; payout: number | null }[] = [];
+  private ledger: { at: number; acceptedAt: number | null; missionId: string; contractKey: string; payout: number | null }[] = [];
   /** When this run's clock starts — the first hauling event the app ever saw. Set once and never
    *  cleared, for the same reason the ledger is not. */
   private runStartedAt: number | null = null;
@@ -553,7 +553,14 @@ export class HaulingTracker extends EventEmitter {
       // Into the ledger BEFORE the payout is known — the award line arrives up to three seconds
       // later (PAYOUT_WINDOW_MS) and is written in afterwards by syncLedger. Recording the
       // completion immediately is what makes the rep side exact even when no award ever lands.
-      this.ledger.push({ at: c.endedAt, missionId: c.missionId, contractKey: c.contractKey, payout: c.payout });
+      // 🔑 acceptedAt rides along so a run's real DURATION is recoverable. Sub: "we have enough
+      // information to figure out exactly how long it takes me to do a mission, because you know
+      // when I grabbed it and when I turned it in." Exactly — and a measured duration beats the
+      // modelled one, which counts only box handling.
+      this.ledger.push({
+        at: c.endedAt, acceptedAt: c.acceptedAt, missionId: c.missionId,
+        contractKey: c.contractKey, payout: c.payout,
+      });
       this.claimPayout(c);
       this.syncLedger(c);
     }

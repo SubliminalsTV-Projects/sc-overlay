@@ -379,6 +379,10 @@
   .arow .r .u { display: block; font-size: 8.5px; color: var(--faint); }
   .lockpill { font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
     color: var(--amber); }
+  /* The rep/aUEC switch, in the open where it can be flipped back and forth. Sized down from .hbtn
+     because it rides inside a section heading, not a toolbar. */
+  .goalseg { display: inline-flex; gap: 3px; margin-left: 4px; }
+  .goalseg .hbtn { padding: 1px 6px; font-size: 9px; letter-spacing: 0.02em; text-transform: none; }
 
   /* ⛔ Open haulers load themselves. The panel that replaces the whole view for them. */
   .noplan { padding: 30px 20px; text-align: center; }
@@ -453,10 +457,10 @@
       <div class="ws-row">
         <button id="spinBtn" class="hbtn" type="button" title="Walk round to the other end of the hold. A fixed camera always hides the boxes behind the front row.">Turn around</button>
       </div>
-      <div class="ws-sec">Rank tab</div>
-      <div class="ws-row">
-        <button id="goalBtn" class="hbtn" type="button" title="Rank the board by reputation for the work, or by aUEC for the work. They do not agree.">Best reputation</button>
-      </div>
+      <!-- ⛔ The rep/aUEC toggle does NOT live here. Sub: "something people might want to literally
+           toggle back and forth on to see what the difference is — it shouldn't be hidden behind a
+           menu that's not visible all the time." Right: it is a comparison control, not a setting.
+           It sits on the Rank tab itself. -->
       <div class="ws-sec">Contracts</div>
       <div class="ws-row">
         <button id="doneBtn" class="hbtn" type="button" title="Show contracts that have already ended">Show finished</button>
@@ -1157,7 +1161,25 @@
     const sec = document.createElement("div");
     sec.className = "sec";
     const h = document.createElement("span");
-    h.textContent = advisorGoal === "rep" ? "Best reputation for the work" : "Best aUEC for the work";
+    h.textContent = "Best for the work";
+    /* 🔑 The toggle lives HERE, in the open, not in the cog. The two orderings genuinely disagree —
+       across the 427 rep-paying contracts the median one moves 35 places between them — so
+       flipping back and forth IS the feature, and a control you have to go find is a control that
+       does not get used. */
+    const seg = document.createElement("span");
+    seg.className = "goalseg";
+    for (const [id, label, tip] of [
+      ["rep", "Reputation", "Rank by reputation earned per unit of work."],
+      ["money", "aUEC", "Rank by aUEC earned per unit of work. It is a different order."],
+    ]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "hbtn" + (advisorGoal === id ? " on" : "");
+      b.textContent = label;
+      b.title = tip;
+      b.addEventListener("click", () => { advisorGoal = id; loadAdvisor(); });
+      seg.appendChild(b);
+    }
     const n = document.createElement("span");
     n.className = "n";
     // The unit is not decoration — under a manual hull there IS no published per-box timing, so
@@ -1167,7 +1189,7 @@
       ? "This hull auto-loads, so the cost is the station arm's published seconds."
       : "You load this hull by hand, and the tractor-beam grind has no published timing — so the"
         + " cost is box COUNT. Sub: six 1 SCU boxes is about the same work as six 32 SCU boxes.";
-    sec.append(h, n);
+    sec.append(h, seg, n);
     body.appendChild(sec);
 
     let ruled = false;
@@ -1206,9 +1228,9 @@
       if (c.locked) {
         const lp = document.createElement("span");
         lp.className = "lockpill";
-        lp.textContent = "  needs " + c.rank;
-        lp.title = "Above your standing, so this is not on your board yet. Listed so you can see"
-          + " what the next rung opens up.";
+        lp.textContent = "  needs " + c.rank + " with " + (c.giver || "this giver");
+        lp.title = "Above your standing WITH THAT GIVER, so it is not on your board yet."
+          + " Reputation is per faction — being Member with Covalex does not open Ling Family work.";
         m.appendChild(lp);
       }
       const r = document.createElement("div"); r.className = "r";
@@ -1224,102 +1246,90 @@
     });
   }
 
-  /** Where you are on the ladder, and what that means for the next rung. */
+  /**
+   * 🔴 WHERE YOU STAND — READ, NOT ASKED.
+   *
+   * This was a rank dropdown and a rep box, and both were wrong. The app has been accruing
+   * reputation per giver from every log backup all along (307 credited completions at the time),
+   * so it already knew Covalex 5,400 while the widget was asking Sub to type it. And he could not
+   * have answered anyway: mobiGlas draws a BAR, never an integer, so the only place that number
+   * exists for a player to read is this app. Asking was circular.
+   *
+   * 🔑 ONE ROW PER GIVER. Four factions share the `Hauling` scope and reputation accrues to the
+   * FACTION, so "how far to the next rank" is four different questions. Sub spotted the hazard
+   * before the code did: a single ladder would have offered him Member-tier Ling Family work
+   * against a standing he earned entirely with Covalex.
+   */
   function renderStanding() {
     const wrap = document.createElement("div");
     wrap.className = "stand";
-    const row = document.createElement("div");
-    row.className = "row";
-
-    const sel = document.createElement("select");
-    sel.title = "Your Hauling standing, as mobiGlas names it.";
-    const none = document.createElement("option");
-    none.value = ""; none.textContent = "My hauling rank is…";
-    sel.appendChild(none);
-    for (const r of advisor.ladder) {
-      const o = document.createElement("option");
-      o.value = r.name; o.textContent = r.name;
-      sel.appendChild(o);
+    const climbs = advisor.climbs || [];
+    if (!climbs.length) {
+      const d = document.createElement("div");
+      d.className = "climb none";
+      d.textContent = "No hauling standing seen yet — finish a contract and this fills in.";
+      wrap.appendChild(d);
+      return wrap;
     }
-    sel.value = advisor.rank || "";
-    sel.addEventListener("change", () => saveStanding({ rank: sel.value }));
-
-    /* 🔑 OPTIONAL, AND THE REASON IT EXISTS: mobiGlas draws a BAR, not a number. The rung is the
-       thing every player can answer; the exact standing is for whoever has it. Without it the
-       estimate below is reported as a RANGE, because the player could be anywhere on that bar and
-       quoting the midpoint would be inventing a position we cannot see. */
-    const exact = document.createElement("input");
-    exact.type = "number"; exact.min = "0"; exact.step = "1";
-    exact.placeholder = "rep";
-    exact.title = "Your exact standing, if you know it. Optional — without it the estimate is a"
-      + " range across the whole rung.";
-    exact.value = advisor.rep != null ? advisor.rep : "";
-    exact.addEventListener("focus", () => grabOn(exact));
-    exact.addEventListener("blur", () => grabOff());
-    exact.addEventListener("pointerdown", () => { wantFocus = exact; });
-    exact.addEventListener("change", () => saveStanding({ rep: exact.value === "" ? null : Number(exact.value) }));
-
-    row.append(sel, exact);
-    wrap.appendChild(row);
-    wrap.appendChild(renderClimb());
+    for (const c of climbs) wrap.appendChild(renderClimb(c));
     return wrap;
   }
 
-  /** "How long to the next rank" — the number Sub asked for. */
-  function renderClimb() {
+  /** "How long to the next rank", for one giver. */
+  function renderClimb(c) {
     const d = document.createElement("div");
     d.className = "climb";
-    const c = advisor.climb;
-    if (!c) {
-      d.className += " none";
-      d.textContent = "Tell me your hauling rank and I'll work out how far the next one is.";
+    const who = document.createElement("div");
+    who.className = "sub";
+    who.style.marginTop = "0";
+    who.textContent = c.giver + "  ·  " + c.rung + "  ·  " + num(c.standing) + " rep";
+    who.title = "Accrued by this app from your completed contracts. The game never states it — "
+      + "mobiGlas only draws the bar.";
+    d.appendChild(who);
+    if (!c.next) {
+      const t = document.createElement("div");
+      t.textContent = "Top of the ladder.";
+      d.appendChild(t);
       return d;
     }
-    if (!c.next) { d.textContent = "You are at the top of the hauling ladder."; return d; }
-    // 🔴 NO RATE, NO TIME. climbToNextRung counts only loading work — no flying, no quantum, no
-    // walk to the elevator — so turning it into "time to rank" would understate by however long
-    // the travelling takes, which is most of it. Say what we know instead.
-    if (c.hoursMax == null) {
-      d.textContent = num(c.repNeedMax) + " reputation to " + c.next + ".";
+    /* 🔴 NO RATE, NO TIME. The modelled per-run figure counts only box handling — no flying, no
+       quantum, no walk to the elevator — so quoting it as "time to rank" would understate by most
+       of the real time. Say the rep and say what would fix it. */
+    if (c.hours == null) {
+      const t = document.createElement("div");
+      t.textContent = num(c.repNeeded) + " rep to " + c.next + ".";
       const s = document.createElement("span"); s.className = "sub";
-      s.textContent = "Deliver something and I can turn that into a time from your own rate.";
-      d.appendChild(s);
+      s.textContent = "Finish a contract and this becomes a time, from your own rate.";
+      t.appendChild(s);
+      d.appendChild(t);
       return d;
     }
+    const line = document.createElement("div");
     const big = document.createElement("span");
     big.className = "big";
-    big.textContent = c.exact ? fmtMins(c.hoursMax * 60)
-      : "up to " + fmtMins(c.hoursMax * 60);
-    d.append(big, document.createTextNode(" to " + c.next));
+    big.textContent = fmtMins(c.hours * 60);
+    line.append(big, document.createTextNode(" to " + c.next));
     const s = document.createElement("span");
     s.className = "sub";
-    s.textContent = (c.exact
-      ? num(c.repNeedMax) + " rep to go"
-      : num(c.repNeedMax) + " rep if you only just made " + c.rung)
-      + " · at your " + Math.round(c.repPerHour) + " rep/h";
-    s.title = c.exact
-      ? "From the standing you typed, against the reputation an hour you are actually earning."
-      : "mobiGlas shows a bar, not a number, so this assumes the worst case — that you only just"
-        + " reached " + c.rung + ". Type your exact standing above and this becomes a single figure.";
-    d.appendChild(s);
-    if (advisor.runsOfBest && advisor.runsOfBest.runs) {
+    s.textContent = num(c.repNeeded) + " rep to go · at your " + Math.round(c.repPerHour) + " rep/h";
+    s.title = "Against the reputation an hour you are actually earning, which includes the flying"
+      + " and the loading — not a model of either.";
+    line.appendChild(s);
+    // Runs of the best contract open to you WITH THIS GIVER, and a measured time per run when
+    // enough contracts have finished to have one.
+    const rb = advisor.runsOfBest;
+    if (rb && rb.runs && rb.giver === c.giver) {
       const r = document.createElement("span");
       r.className = "sub";
-      r.textContent = "≈ " + advisor.runsOfBest.runs + " × " + advisor.runsOfBest.title;
-      r.title = "Runs of the best-paying contract open to you, at " + num(advisor.runsOfBest.rep) + " rep each.";
-      d.appendChild(r);
+      const rm = advisor.runMinutes;
+      r.textContent = "≈ " + rb.runs + " × " + rb.title
+        + (rm ? "  ·  ~" + fmtMins(rm.median) + " each" : "");
+      r.title = "Runs of the best contract open to you with this giver, at " + num(rb.rep) + " rep each."
+        + (rm ? "  Run time is the median of your own " + rm.samples + " finished contract(s), accept to turn-in." : "");
+      line.appendChild(r);
     }
+    d.appendChild(line);
     return d;
-  }
-
-  async function saveStanding(patch) {
-    try {
-      await fetch("/api/hauling/standing", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
-      });
-    } catch { /* not saved — the control keeps what was chosen for this session */ }
-    await loadAdvisor();
-    render();
   }
 
   function renderRoute() {
@@ -1917,7 +1927,6 @@
     $("tabAdvisor").classList.toggle("on", view === "advisor");
     $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
     $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
-    $("goalBtn").textContent = advisorGoal === "money" ? "Best aUEC" : "Best reputation";
     $("spinBtn").textContent = stowSpin ? "Turned around" : "Turn around";
     $("spinBtn").classList.toggle("on", stowSpin);
     $("doneBtn").classList.toggle("on", showDone);
@@ -1944,10 +1953,6 @@
   $("tabRoute").addEventListener("click", () => { view = "route"; render(); });
   $("tabLayout").addEventListener("click", () => { view = "layout"; render(); });
   $("tabAdvisor").addEventListener("click", () => { view = "advisor"; if (!advisor) loadAdvisor(); render(); });
-  $("goalBtn").addEventListener("click", () => {
-    advisorGoal = advisorGoal === "rep" ? "money" : "rep";
-    loadAdvisor();
-  });
   $("objBtn").addEventListener("click", () => {
     objective = objective === "fewest-stops" ? "auec-per-hour" : "fewest-stops";
     load();
