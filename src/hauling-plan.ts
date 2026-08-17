@@ -214,6 +214,10 @@ export interface HaulingPlan {
   /** Every place any leg touches, keyed by location id — the route's own names, plus the places
    *  it deliberately does not visit, so the layout legend and the unrouted list can say where. */
   locationNames: Record<string, string>;
+  /** Pickups the game has already completed — cargo aboard, not yet delivered. NOT routed (there
+   *  is nowhere to fly), but shown greyed ahead of the live steps so a contract reads
+   *  start-to-finish instead of the list opening mid-sentence. */
+  completedPickups: { group: string; missionId: string; title: string | null; locationId: string | null; scu: number | null; commodity: string | null }[];
   /** What the player asked for as an origin, and what it resolved to. Reported because "I set a
    *  start and the order did not change" has two very different causes — an ignored option, or an
    *  optimiser that genuinely sees no better order — and guessing between them costs a session. */
@@ -548,6 +552,8 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   const routeGroups = new Set<string>();
   /** Drop-offs, held back until every pickup node exists — see where they are pushed. */
   const pendingDrops: { leg: PlannedLeg; stillToLoad: boolean }[] = [];
+  /** Pickups the game has already completed: display-only, never routed. */
+  const completedPickups: { group: string; missionId: string; title: string | null; locationId: string | null; scu: number | null; commodity: string | null }[] = [];
   for (const { c, leg } of openLegs) {
     if (!leg.toLocation) {
       unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, toLocation: leg.toLocation, reason: "the log has not placed this drop-off yet" });
@@ -560,6 +566,21 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     }
     if (stillToLoad) {
       visit(leg.fromLocation!, "pickup").actions.push({ contractId: leg.group, kind: "pickup", scu: leg.scu ?? 0, commodity: leg.commodity ?? undefined });
+    } else {
+      // 🔴 A DONE PICKUP IS STILL PART OF THE STORY. It is not a place to fly to — the cargo is
+      // already aboard — so it stays out of the router. But dropping it from the DISPLAY made the
+      // list open mid-sentence: Sub, holding Stims he had just loaded at Riker, saw a route that
+      // began at Baijini and could not see that the app knew about the leg at all.
+      // Shown greyed, ahead of the live steps, so the contract reads start-to-finish and the
+      // interim state (collected, not yet delivered) is visible rather than inferred.
+      completedPickups.push({
+        group: leg.group,
+        missionId: c.missionId,
+        title: c.title,
+        locationId: leg.fromLocation,
+        scu: leg.scu,
+        commodity: leg.commodity ?? null,
+      });
     }
     // 🔴 CARGO ALREADY IN THE HOLD HAS NOWHERE TO WAIT. Its pickup is done, so its drop-off has no
     // prerequisite — the moment the player is standing at that place, it comes off. Keeping it on a
@@ -625,8 +646,13 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     if (known) return known;
     let label = fallback.get(locationId);
     if (!label) {
-      const region = regionByLoc.get(locationId);
-      label = `Site ${fallback.size + 1}` + (region ? ` · ${region}` : "");
+      // ⛔ NO REGION SUFFIX. This briefly read "Site 1 · ArcCorp", taken from the contract key's
+      // `Stanton3` token — and it was WRONG. A contract's region is not the body a given stop sits
+      // on: that stop is Samson & Son's Salvage Center, on WALA, a moon you quantum to. Sub read
+      // "ArcCorp" as "somewhere I can drive to" and it would have cost him a trip.
+      // 🔑 The key bounds where a contract operates; only the stop itself knows where it is. An
+      // honest "Site 1" invites the question. A confident wrong planet answers it falsely.
+      label = `Site ${fallback.size + 1}`;
       fallback.set(locationId, label);
     }
     return label;
@@ -723,6 +749,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     trips,
     stranded: run.stranded,
     locationNames,
+    completedPickups,
     startResolved,
     unrouted,
     pack,

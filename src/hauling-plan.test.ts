@@ -124,11 +124,14 @@ check("the pickup comes before the drop-off",
 check("a tracked drop-off is named from the log, an unnamed place is numbered honestly",
   multi.trips[0]?.stops[1].name === "Levski" && /^Site \d+( · .+)?$/.test(multi.trips[0].stops[0].name),
   multi.trips[0]?.stops.map((s) => s.name).join(" -> "));
-// The pickup the game never named still says which world it is on, read off the contract key's
-// `Stanton1` token. This fixture is a Stanton1 contract, and Stanton1 resolves to exactly one
-// planet — the case the region label is allowed to fire on.
-check("an unnamed place still names its body, from the contract key",
-  multi.trips[0]?.stops[0].name === "Site 1 · Hurston",
+// 🔴 An unnamed place must NOT guess which body it is on. This briefly appended the contract key's
+// region ("Site 1 · Hurston"), and the idea is wrong: a key bounds where the CONTRACT runs, not
+// where a given stop sits. On Sub's live board it labelled Samson & Son's Salvage Center — which is
+// on Wala, a MOON he has to quantum to — as being on ArcCorp, the planet he was standing on. He
+// would have gone looking for it locally. An honest "Site 1" invites the question; a confident
+// wrong planet answers it falsely.
+check("an unnamed place does NOT guess which body it is on",
+  /^Site \d+$/.test(multi.trips[0]?.stops[0].name ?? ""),
   multi.trips[0]?.stops[0].name);
 
 // ── the whole board at once ────────────────────────────────────────────────
