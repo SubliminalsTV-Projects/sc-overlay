@@ -165,7 +165,9 @@ export interface PlanStop {
   loadAfterScu: number;
   /** True when the previous stop is the same place — one landing, two jobs. */
   sameSpot: boolean;
-  actions: { missionId: string; title: string | null; commodity: string | null; scu: number | null; group: string }[];
+  /** ⚠️ `kind` is PER ACTION: one landing can unload and load, so the stop's own kind cannot
+   *  describe every chip on it. */
+  actions: { missionId: string; title: string | null; commodity: string | null; scu: number | null; group: string; kind: "pickup" | "dropoff" }[];
 }
 
 export interface PlanTrip {
@@ -749,7 +751,13 @@ function toTrip(
   const out: PlanStop[] = trip.order.map((id, i) => {
     const stop = byId.get(id);
     const leg = trip.legs[i];
-    const kind: "pickup" | "dropoff" = id.endsWith(":pickup") ? "pickup" : "dropoff";
+    // 🔴 What HAPPENS here, not which node this grew from. Once an already-loaded leg is folded
+    // onto a pickup landing, the node id still ends ":pickup" while the stop's real job is to
+    // unload first and then load. Sub read "1. pick up at Baijini" while sitting on 101 SCU bound
+    // for Baijini, and the label was the only thing wrong — the plan underneath was right.
+    // Drop-offs lead: that is the order at a freight elevator, and it is what the solver models.
+    const acts = byId.get(id)?.actions ?? [];
+    const kind: "pickup" | "dropoff" = acts.some((a) => a.kind === "dropoff") ? "dropoff" : "pickup";
     const locationId = stop?.locationId ?? id;
     return {
       id,
@@ -767,6 +775,9 @@ function toTrip(
           commodity: a.commodity ?? null,
           scu: a.scu,
           group: a.contractId,
+          // Per-action, because one stop can do both and the widget must be able to say which
+          // chip is a load and which is a drop.
+          kind: a.kind,
         };
       }),
     };

@@ -370,7 +370,15 @@
       prunePins(new Set(plan.contracts.filter((c) => !c.ended).map((c) => c.missionId)));
       // A start the plan no longer knows about is a place from a finished board. Silently keeping
       // it would route from somewhere that is not on the map any more.
-      if (startPick && !(plan.locationNames && startPick in plan.locationNames)) { startPick = ""; saveStart(); }
+      // 🔴 BUT ONLY ONCE THERE IS A BOARD TO CHECK AGAINST. This ran unguarded and erased the
+      // player's position on EVERY app restart: the first plan arrives before the log watcher has
+      // read any contracts, so locationNames is `{}`, every id looks unknown, and the saved answer
+      // is deleted and written back empty. Sub set his location repeatedly and watched the route
+      // revert to opening at Baijini each time — this line was eating it, not the router.
+      // An empty board proves nothing about a place. Forget nothing until there is something to
+      // compare with.
+      const known = plan.locationNames && Object.keys(plan.locationNames).length;
+      if (startPick && known && !(startPick in plan.locationNames)) { startPick = ""; saveStart(); }
     } catch { /* sidecar down — keep the last good plan on screen */ }
     render();
   }
@@ -735,11 +743,21 @@
       }
       trip.stops.forEach((s, i) => {
         const row = document.createElement("div");
-        row.className = "stop " + s.kind + (s.sameSpot && i > 0 ? " same" : "");
+        row.className = "stop " + (s.actions.some((a) => a.kind === "dropoff") ? "dropoff" : "pickup")
+          + (s.sameSpot && i > 0 ? " same" : "");
+        // 🔴 A STOP CAN BE BOTH, and calling it by one is a lie the player acts on. `kind` is the
+        // node's origin, not what happens there: once an already-loaded leg is folded onto a
+        // pickup landing, the stop UNLOADS and THEN loads — and it still called itself "pickup".
+        // Sub read "1. pick up at Baijini" while standing on 101 SCU bound for Baijini and quite
+        // reasonably concluded the app had lost the plot. Read the actions, not the label.
+        const hasDrop = s.actions.some((a) => a.kind === "dropoff");
+        const hasPick = s.actions.some((a) => a.kind === "pickup");
         const numEl = document.createElement("div");
+        // Drop-offs happen first at a landing (it is the order at an elevator), so a mixed stop
+        // leads with unload.
         numEl.className = "num";
-        numEl.textContent = s.kind === "pickup" ? "↑" : "↓";
-        numEl.title = s.kind === "pickup" ? "Load here" : "Unload here";
+        numEl.textContent = hasDrop && hasPick ? "⇅" : hasDrop ? "↓" : "↑";
+        numEl.title = hasDrop && hasPick ? "Unload, then load" : hasDrop ? "Unload here" : "Load here";
         const mid = document.createElement("div");
         mid.className = "mid";
         const nm = document.createElement("div");
