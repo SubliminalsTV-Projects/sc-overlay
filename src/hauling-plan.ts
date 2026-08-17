@@ -50,6 +50,22 @@ export type ScuSource =
   /** Neither source says anything. `scu` is null and this contract cannot be planned. */
   | "unknown";
 
+/** Stanton's four planets, by the code the contract key writes. Confirmed by Sub, 2026-08-17.
+ *
+ *  🔑 This exists because the DATASET cannot answer it. `Stanton4` carries two Planet records:
+ *  "microTech" and "Green". Green is not a place in the game — it is microTech's internal name
+ *  left in the files, and the data says so plainly once you look: microTech has 59 children
+ *  (every moon and outpost), Green has ZERO. An orphan planet is a ghost record.
+ *
+ *  Kept to the four planets on purpose. It disambiguates; it is not a translation table, and a
+ *  code absent from here degrades to no label rather than to a guess. */
+const CANON_PLANET: Record<string, string> = {
+  stanton1: "hurston",
+  stanton2: "crusader",
+  stanton3: "arccorp",
+  stanton4: "microtech",
+};
+
 export interface PlanOptions {
   /** Ship class or display name chosen by the player; overrides whatever the log saw. */
   ship?: string | null;
@@ -340,9 +356,10 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
    *  never named can still say which world it is on. That is the difference between "Site 1" and
    *  "Site 1 · ArcCorp" for a player deciding whether it is even the planet they are standing on.
    *
-   *  ⚠️ ONLY when the code resolves to exactly ONE planet. `Stanton4` matches both "Green" and
-   *  "microTech", and naming the wrong world is worse than naming none — the label would read as
-   *  fact. Codes also match asteroids and stations, hence the Planet filter. */
+   *  ⚠️ Codes also match asteroids and stations, hence the Planet filter — and `Stanton4` matches
+   *  TWO planets, so the dataset cannot disambiguate it alone. Naming the wrong world is worse
+   *  than naming none, because the label reads as fact. Hence CANON below, and silence for
+   *  anything it does not cover. */
   const regionCache = new Map<string, string | null>();
   const regionOfKey = (contractKey: string | null | undefined): string | null => {
     if (!contractKey) return null;
@@ -352,7 +369,12 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     const cached = regionCache.get(code);
     if (cached !== undefined) return cached;
     const planets = data.byCode(code).filter((l) => l.type === "Planet");
-    const name = planets.length === 1 ? planets[0].name : null;
+    // Pick by name where Stanton is known, so an ambiguous code still resolves; otherwise only a
+    // lone match is safe. Matching by name means the string we PRINT is still the dataset's own
+    // spelling ("microTech"), so this table decides WHICH record, never what it is called.
+    const canon = CANON_PLANET[code];
+    const chosen = canon ? planets.find((l) => l.name?.toLowerCase() === canon) : undefined;
+    const name = chosen?.name ?? (planets.length === 1 ? planets[0].name : null) ?? null;
     regionCache.set(code, name);
     return name;
   };
