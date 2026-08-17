@@ -212,6 +212,10 @@ export interface HaulingPlan {
   /** Every place any leg touches, keyed by location id — the route's own names, plus the places
    *  it deliberately does not visit, so the layout legend and the unrouted list can say where. */
   locationNames: Record<string, string>;
+  /** What the player asked for as an origin, and what it resolved to. Reported because "I set a
+   *  start and the order did not change" has two very different causes — an ignored option, or an
+   *  optimiser that genuinely sees no better order — and guessing between them costs a session. */
+  startResolved: { asked: string | null; resolved: string | null };
   /** Legs that have to be carried but could not be put in a route, each with the reason. Never
    *  silently dropped: a route missing legs would look complete and be wrong. */
   unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; toLocation: string | null; reason: string }[];
@@ -565,6 +569,10 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // Where the player says they are. Only a place the route already touches can be an origin — an
   // id we have no coordinates for would silently become "anywhere", which is the bug, not the fix.
   const startPos = opts.startAt ? posByLoc.get(opts.startAt) ?? null : null;
+  // Reported so a wrong route can be told apart from an ignored origin. "I asked for X and the
+  // order did not change" has two very different causes, and guessing between them wastes a
+  // session — as it did on 2026-08-17.
+  const startResolved = { asked: opts.startAt ?? null, resolved: posKey(startPos) };
   const run = stops.length
     ? planRun(stops, routeContracts, {
         objective: opts.objective ?? "auec-per-hour",
@@ -687,6 +695,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     trips,
     stranded: run.stranded,
     locationNames,
+    startResolved,
     unrouted,
     pack,
     aboardScu,

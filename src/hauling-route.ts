@@ -188,6 +188,18 @@ interface Ctx {
   deltas: number[];
   capacity: number;
   legMinutes: (from: number | null, to: number) => number;
+  /** Visits at the place the player is standing, and therefore the only legal FIRST visits.
+   *
+   *  🔴 This is a CONSTRAINT, not a preference, and it has to be — pricing cannot express it.
+   *  Default travel is 200,000 m/s against a 4-minute stop, so Sub's 239 km Riker→Baijini hop
+   *  costs 0.02 minutes, half a percent of one stop. Every ordering therefore scores the same and
+   *  the solver returns whichever it built first, which is how he was told to fly to Baijini empty
+   *  while standing on the load he needed. An origin expressed as cost is invisible at that scale;
+   *  expressed as "you cannot start where you are not", it always holds.
+   *
+   *  Empty when the player said nothing, or said somewhere this route does not visit — in which
+   *  case every precedence-free visit is a legal opening, exactly as before. */
+  startIdxs: number[];
 }
 
 function buildCtx(stops: readonly RouteStop[], opts: RouteOptions): Ctx {
@@ -210,10 +222,22 @@ function buildCtx(stops: readonly RouteStop[], opts: RouteOptions): Ctx {
     }
   });
 
+  // Visits at the player's own position. Only precedence-free ones count: a drop-off whose pickup
+  // has not happened cannot open a route no matter where the player is standing.
+  const sp = opts.startPos ?? null;
+  const startIdxs: number[] = [];
+  if (sp) {
+    stops.forEach((s, i) => {
+      const p = s.pos;
+      if (p && p.x === sp.x && p.y === sp.y && p.z === sp.z && before[i] === 0) startIdxs.push(i);
+    });
+  }
+
   return {
     stops,
     n,
     before,
+    startIdxs,
     deltas: stops.map(delta),
     capacity: opts.capacityScu ?? Number.POSITIVE_INFINITY,
     legMinutes: (from, to) => {
@@ -244,8 +268,12 @@ function solveExact(ctx: Ctx): Solved | null {
   const loads = new Float64Array(full + 1);
   for (let m = 1; m <= full; m++) loads[m] = loadAfter(ctx, m);
 
+  // The player's own position, when they gave one and this route visits it, is the ONLY legal
+  // opening — see Ctx.startIdxs for why this cannot be left to the cost function.
+  const openings = ctx.startIdxs.length ? ctx.startIdxs : null;
   for (let i = 0; i < ctx.n; i++) {
     if (ctx.before[i] !== 0) continue;
+    if (openings && !openings.includes(i)) continue;
     const m = 1 << i;
     if (loads[m] > ctx.capacity) continue;
     cost[m * ctx.n + i] = ctx.legMinutes(null, i);
