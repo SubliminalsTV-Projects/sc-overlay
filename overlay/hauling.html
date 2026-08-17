@@ -126,7 +126,13 @@
   .stop .acts { font-size: 10px; color: var(--cyan-dim); line-height: 1.5; margin-top: 1px; }
   .stop .acts .c { color: var(--cyan-text); }
   .stop .rt { flex: none; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  /* 🔴 THE FIGURE ON A STEP IS THE FIGURE THAT STEP MOVES. This was `loadAfterScu` — what is in the
+     hold on LEAVING — so the final drop-off of a run always read "0 SCU", which is true and useless:
+     Sub read a step headed DROP OFF next to a zero and reasonably asked what it thought he was
+     dropping off. A numbered instruction states its own quantity; where the hold ends up is a
+     separate fact and now rides underneath in the faint line. */
   .stop .rt .ld { color: var(--gold); }
+  .stop .rt .hold { color: var(--faint); font-size: 9px; }
 
   /* ── Contract cards ──────────────────────────────────────────────────────── */
   .card { padding: 6px 12px 7px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
@@ -164,6 +170,18 @@
   .card .t { flex: 1; min-width: 0; font-size: 11.5px; color: var(--cyan-text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card .amt { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--gold); }
+  /* 🔴 PROVENANCE IS A COLOUR, NOT A PILL. Every load figure and every box count still has to say
+     where it came from — that has been true since the first version — but it was saying it with a
+     word in a bordered chip next to the number, and a card carried up to three of them. Sub: "let's
+     just change the colour of the SCU count rather than having that pill there." He is right: the
+     number IS the thing being qualified, so qualify the number. One key at the foot of the list
+     carries the wording that used to be repeated on every row.
+     ⚠️ The tooltips move WITH the colour — a hue nobody can name is not provenance. */
+  .card .amt.src-log, .card .amt.src-manifest { color: var(--green); }
+  .card .amt.src-pinned { color: var(--cyan-bright); }
+  .card .amt.src-dataset { color: var(--cyan-dim); }
+  .card .amt.src-range { color: var(--gold); }
+  .card .amt.src-unknown { color: var(--red); }
   .card .sub { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px;
     font-size: 9.5px; color: var(--faint); }
   .card .chips { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); margin-top: 2px;
@@ -176,16 +194,24 @@
     background: rgba(var(--accent-rgb), 0.06); white-space: nowrap; }
   .card .boxpill b { font-weight: 700; color: var(--cyan-bright); font-size: 10px; }
   .card .boxpill i { font-style: normal; font-size: 9px; color: var(--faint); }
+  /* Same rule as the SCU figure: gold = this split was worked out here (the game never logs a box
+     breakdown for a cargo haul), green = the game enumerated the boxes itself. Replaces the
+     "modelled" badge, which Sub called noise — the counts have been right every time he checked. */
+  .card .boxpill.src-partition { border-color: rgba(var(--value-rgb), 0.45); background: rgba(var(--value-rgb), 0.08); }
+  .card .boxpill.src-partition b { color: var(--gold); }
+  .card .boxpill.src-manifest { border-color: rgba(46, 230, 160, 0.4); background: rgba(46, 230, 160, 0.08); }
+  .card .boxpill.src-manifest b { color: var(--green); }
   .card .boxcap { font-size: 9px; color: var(--faint); white-space: nowrap; }
-  /* The provenance badge. Every load figure carries one — a number with no badge would be a
-     claim this widget cannot make. */
+  /* The key. One per list, at the foot, because the colours are only decodable together. */
+  .srckey { display: flex; flex-wrap: wrap; gap: 3px 10px; padding: 6px 12px 10px;
+    font-size: 9px; color: var(--faint); }
+  .srckey span { display: inline-flex; align-items: center; gap: 4px; }
+  .srckey i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  /* Now only the load-checklist's row state. The provenance badge that used to share this class is
+     gone — a colour on the figure itself says the same thing without a chip per row (.amt.src-*). */
   .badge { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     border-radius: 4px; padding: 1px 4px; border: 1px solid var(--divider); color: var(--faint); }
-  .badge.manifest, .badge.log { color: var(--green); border-color: rgba(46, 230, 160, 0.4); }
   .badge.pinned { color: var(--cyan-bright); border-color: var(--border); }
-  .badge.dataset { color: var(--cyan-dim); }
-  .badge.range { color: var(--gold); border-color: rgba(var(--value-rgb), 0.45); }
-  .badge.unknown { color: var(--red); border-color: rgba(255, 132, 120, 0.4); }
   /* The three states of the track prompt. Only `todo` is an instruction — `waiting` is the state
      where the player has already done everything tracking can do, and colouring it like an action
      is how a prompt starts lying. */
@@ -778,15 +804,6 @@
     }
   }
 
-  function badge(source) {
-    const [label, why] = BADGE[source] || BADGE.unknown;
-    const b = document.createElement("span");
-    b.className = "badge " + source;
-    b.textContent = label;
-    b.title = why;
-    return b;
-  }
-
   function renderRoute() {
     const body = $("body");
     body.textContent = "";
@@ -904,12 +921,23 @@
           const rt = document.createElement("div");
           rt.className = "rt";
           rt.textContent = sameLanding ? "—" : fmtMins(s.minutes);
+          // 🔴 THE STEP'S OWN TONNAGE. A step headed DROP OFF states how much comes off; a step
+          // headed PICK UP states how much goes on. See the .ld note in the stylesheet.
+          const moved = g.acts.reduce((n, a) => n + (a.scu || 0), 0);
           const ld = document.createElement("div");
           ld.className = "ld";
-          // The hold figure belongs to the landing as a whole, so it is stated once, on its last row.
-          ld.textContent = gi === groups.length - 1 ? num(s.loadAfterScu) + " SCU" : "";
-          ld.title = "In the hold when you leave this stop.";
+          ld.textContent = num(moved) + " SCU";
+          ld.title = g.kind === "dropoff" ? "Comes off here." : "Goes on here.";
           rt.appendChild(ld);
+          // Where the hold ends up is a fact about the LANDING, not about this action, so it is
+          // stated once, quietly, on the landing's last row.
+          if (gi === groups.length - 1) {
+            const hold = document.createElement("div");
+            hold.className = "hold";
+            hold.textContent = "hold " + num(s.loadAfterScu);
+            hold.title = "In the hold when you leave this stop.";
+            rt.appendChild(hold);
+          }
           mid.append(nm, acts);
           row.append(numEl, mid, rt);
           body.appendChild(row);
@@ -968,8 +996,14 @@
       const top = document.createElement("div");
       top.className = "top";
       const t = document.createElement("div"); t.className = "t"; t.textContent = c.title || c.contractKey;
-      const amt = document.createElement("div"); amt.className = "amt"; amt.textContent = fmtScu(c);
-      top.append(t, amt, badge(c.source));
+      // 🔴 The figure carries its own provenance, in its colour. The badge that used to sit beside
+      // it is gone — see the .amt.src-* note in the stylesheet — but the reason it existed has not
+      // changed, so the same wording is still on the number as a tooltip.
+      const amt = document.createElement("div");
+      amt.className = "amt src-" + (c.source || "unknown");
+      amt.textContent = fmtScu(c);
+      amt.title = (BADGE[c.source] || BADGE.unknown)[1];
+      top.append(t, amt);
       /* 🔴 SET ASIDE. A player decides to skip a contract long before they open mobiGlas to abandon
          it, and until then it drags the route and the hold around with it. The game reports a real
          abandon on its own (`CompletionType[Abandon]`), which ends the contract outright — this is
@@ -1024,7 +1058,7 @@
         if (l.boxes && l.boxes.length) {
           for (const b of l.boxes) {
             const pill = document.createElement("span");
-            pill.className = "boxpill";
+            pill.className = "boxpill src-" + (l.boxSource || "partition");
             const size = document.createElement("b");
             size.textContent = b.scu + " SCU";
             const mult = document.createElement("i");
@@ -1035,7 +1069,7 @@
           }
         } else if (l.boxCount) {
           const pill = document.createElement("span");
-          pill.className = "boxpill";
+          pill.className = "boxpill src-" + (l.boxSource || "partition");
           pill.textContent = l.boxCount + " boxes";
           chips.appendChild(pill);
         }
@@ -1051,9 +1085,6 @@
         if (l.boxSource === "partition") {
           chips.title = "Provisional: the game never logs the box split for a cargo haul, so this is the"
             + " largest-box-first model against this contract's own container cap.";
-          const q = document.createElement("span");
-          q.className = "badge range"; q.textContent = "modelled"; q.style.marginLeft = "6px";
-          chips.appendChild(q);
         } else if (l.boxSource === "manifest") {
           chips.title = "Read from the log — the game enumerated every box for this contract.";
         }
@@ -1065,6 +1096,34 @@
       }
       body.appendChild(card);
     }
+    body.appendChild(sourceKey(list));
+  }
+
+  /** The key for the provenance colours. Built from what is actually on screen — a legend listing
+   *  states no card is in is a legend nobody reads twice. */
+  function sourceKey(list) {
+    const key = document.createElement("div");
+    key.className = "srckey";
+    const seen = new Set(list.map((c) => c.source || "unknown"));
+    for (const l of list.flatMap((c) => c.legs)) if (l.boxLabel || l.boxCount) seen.add("box:" + (l.boxSource || "partition"));
+    const ROWS = [
+      ["log", "var(--green)", "SCU stated by the game"],
+      ["manifest", "var(--green)", "SCU listed box by box"],
+      ["pinned", "var(--cyan-bright)", "SCU you typed in"],
+      ["dataset", "var(--cyan-dim)", "SCU from the game files"],
+      ["range", "var(--gold)", "SCU only bounded"],
+      ["unknown", "var(--red)", "SCU unknown"],
+      ["box:manifest", "var(--green)", "boxes listed by the game"],
+      ["box:partition", "var(--gold)", "boxes worked out here"],
+    ];
+    for (const [id, colour, label] of ROWS) {
+      if (!seen.has(id)) continue;
+      const s = document.createElement("span");
+      const i = document.createElement("i"); i.style.background = colour;
+      s.append(i, document.createTextNode(label));
+      key.appendChild(s);
+    }
+    return key;
   }
 
   /**
