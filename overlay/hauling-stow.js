@@ -198,6 +198,12 @@
       const unload = [];
       for (const b of boxes) if (b.group && !unload.includes(b.group)) unload.push(b.group);
       groupOrder = unload.reverse();
+    } else {
+      /* 🔴 `groupOrder` is UNLOAD order — position 0 is the load nearest the door, coming off
+         first. Loading runs the other way: you put the deepest cargo in first and finish with
+         whatever comes off first. Reading the unload order straight out as a load list told Sub to
+         load the wrong end of the ship, and he found out at the drop-off. */
+      groupOrder = groupOrder.slice().reverse();
     }
 
     /* The elevator lifts BY MISSION, so a mission's drops are one lift even when the route

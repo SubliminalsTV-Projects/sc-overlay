@@ -152,6 +152,54 @@ check("no box is placed outside its grid", (all.pack?.placements ?? []).every((p
   const g = all.ship?.grids.find((x) => x.name === p.grid);
   return !!g && p.x >= 0 && p.y >= 0 && p.z >= 0 && p.x + p.dx <= g.w && p.y + p.dy <= g.l && p.z + p.dz <= g.h;
 }));
+/* 🔴 REGRESSION — this one reached the player. Sub was told to stow his Scrap at the door and his
+   Silicon behind it, then drove to Riker (the SILICON drop), unloaded, and handed over the wrong
+   cargo: "so it told me to do it backwards."
+
+   `packCargo` fills from the door outward, so groupOrder[0] is what sits NEAREST the door and comes
+   off FIRST — it is UNLOAD order. It had been handed LOAD order, which is the reverse.
+
+   The invariant, for any two loads collected at the same stop: the one dropped EARLIER sits nearer
+   the door. Cargo collected at different stops is governed by the stronger physical rule (you load
+   through the door, so later pickups cannot be buried) and is excluded here. */
+{
+  const pickupSeq = new Map<string, number>();
+  const dropSeq = new Map<string, number>();
+  let seq = 0;
+  for (const t of all.trips) for (const st of t.stops) for (const a of st.actions) {
+    if (a.kind === "pickup") { if (!pickupSeq.has(a.group)) pickupSeq.set(a.group, seq++); }
+    else if (!dropSeq.has(a.group)) dropSeq.set(a.group, seq++);
+  }
+  const minY = new Map<string, number>();
+  for (const pl of all.pack?.placements ?? []) {
+    if (!pl.group) continue;
+    minY.set(pl.group, Math.min(minY.get(pl.group) ?? Infinity, pl.y));
+  }
+  let checked = 0, wrong = 0;
+  const groups = [...minY.keys()];
+  for (const a of groups) for (const b of groups) {
+    if (a === b) continue;
+    const pa = pickupSeq.get(a) ?? -1, pb = pickupSeq.get(b) ?? -1;
+    // Which of the two SHOULD be nearer the door: collected later wins outright, and only when
+    // they were collected together does the delivery order decide.
+    let aShouldBeNearer: boolean;
+    if (pa !== pb) aShouldBeNearer = pa > pb;
+    else {
+      const da = dropSeq.get(a), db = dropSeq.get(b);
+      if (da == null || db == null || da === db) continue;
+      aShouldBeNearer = da < db;
+    }
+    if (!aShouldBeNearer) continue;                            // each pair is judged once
+    checked++;
+    if ((minY.get(a) ?? 0) > (minY.get(b) ?? 0)) wrong++;
+  }
+  // ⚠️ A vacuous pass is worse than no test — the first cut of this compared ZERO pairs and went
+  // green on a board that had just shipped the bug.
+  check("the stow order is judged against real pairs", checked > 0, `${checked} pairs`);
+  check("cargo coming off FIRST is stowed nearest the door",
+    checked > 0 && wrong === 0, `${checked} pairs compared, ${wrong} stowed backwards`);
+}
+
 check("no two boxes overlap", (() => {
   const ps = all.pack?.placements ?? [];
   for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {

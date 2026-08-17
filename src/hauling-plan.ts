@@ -815,10 +815,26 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   }
   // Cargo already aboard was collected before the route begins, so it is deepest of all — it went
   // in first and everything loaded since sits on top of it.
+  /* 🔴 THIS IS UNLOAD ORDER, AND THE DISTINCTION COST SUB A RUN.
+     `packCargo` fills from the door outward, so groupOrder[0] is the load that ends up NEAREST THE
+     DOOR — the one coming off FIRST. Feeding it load order instead put his Scrap at the ramp and
+     his Silicon behind it, and Scrap drops LAST: he unloaded at Riker, handed over the wrong
+     cargo, and had to dig for the right one. "So it told me to do it backwards."
+
+     Two rules, and the physical one wins:
+       1. COLLECTION. You load through the door, so whatever you collect LAST necessarily sits
+          nearest it. Cargo picked up later cannot be buried under cargo picked up earlier — hence
+          pickup order DESCENDING. Cargo already aboard was collected before everything, so it is
+          deepest of all.
+       2. DELIVERY. Within one collection stop the choice is free, so the load dropped FIRST goes
+          nearest the door — drop order ASCENDING.
+
+     Sub's board: both collected at the same stop, so rule 2 decides, and Silicon (dropped at Riker,
+     first) belongs at the ramp with Scrap (Wala, second) behind it. */
   const groupOrder = [...new Set([...pickupAt.keys(), ...dropAt.keys()])].sort((a, b) => {
     const pa = pickupAt.get(a) ?? -1, pb = pickupAt.get(b) ?? -1;
-    if (pa !== pb) return pa - pb;
-    return (dropAt.get(b) ?? 0) - (dropAt.get(a) ?? 0);
+    if (pa !== pb) return pb - pa;                                    // collected later → nearer the door
+    return (dropAt.get(a) ?? 0) - (dropAt.get(b) ?? 0);               // dropped first → nearer the door
   });
   const pack = hull ? packCargo(grids, items, { groupOrder }) : null;
 
