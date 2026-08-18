@@ -92,6 +92,31 @@
     }
     return String(group || "").split("#")[0];
   }
+  /**
+   * 🔴 THE HOLD IS ZONED BY DROP-OFF STOP — not by mission, and not by commodity.
+   *
+   * Sub, 2026-08-18, holding three missions across two destinations: "people are going to waste a
+   * lot of time doing Tetris with two different commodities that it really doesn't matter…
+   * all I really need is two areas of the cargo grid."
+   *
+   * The physical reason is decisive: when you land, EVERYTHING for that stop comes off, whichever
+   * contract it belongs to. Two of his missions (Silicon, Tin) drop at Riker and one (Scrap) at
+   * Samson's — so the hold has two meaningful regions, not three. Colouring by mission split
+   * Riker's load into two hues and silently invited him to keep them apart for no reason.
+   *
+   * ⚠️ The LOAD STEPS stay grouped by MISSION, and that is not an inconsistency: the freight
+   * elevator lifts per mission, so that is the unit you match at the kiosk. Loading and unloading
+   * have different natural units, and the widget now says so rather than forcing one on both.
+   */
+  function zoneOf(plan, group) {
+    for (const c of (plan && plan.contracts) || []) {
+      for (const l of c.legs || []) {
+        if (l.group === group) return l.toLocation || l.destination || c.missionId;
+      }
+    }
+    return String(group || "").split("#")[0];
+  }
+
   /** A leg's index within its own contract. */
   function depthOf(plan, group) {
     for (const c of (plan && plan.contracts) || []) {
@@ -543,6 +568,7 @@
     iso: iso,
     shade: shade,
     missionOf: missionOf,
+    zoneOf: zoneOf,
     depthOf: depthOf,
     hashHue: hashHue,
     signatureOf: signatureOf,

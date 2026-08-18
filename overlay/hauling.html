@@ -346,6 +346,12 @@
   .legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 8px; font-size: 9.5px; color: var(--cyan-dim); }
   .legend span { display: inline-flex; align-items: center; gap: 4px; }
   .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  /* The zone key: one row per drop-off stop, stacked rather than wrapped inline, because each row
+     now carries the stop AND what is in it and two of those side by side is unreadable at 420px. */
+  .legend.zones { flex-direction: column; gap: 4px; }
+  .legend.zones span { align-items: baseline; font-size: 10.5px; color: var(--cyan-text); }
+  .legend.zones i { flex: none; transform: translateY(1px); }
+  .legend.zones b { font-weight: 400; font-family: var(--mono); font-size: 9px; color: var(--faint); }
 
   /* ── The advisor ──────────────────────────────────────────────────────────
      "What should I go looking for?" — a ranked list of contract TYPES, matched against the board
@@ -556,9 +562,44 @@
      That is the unit the player thinks in and the unit the freight elevator lifts in, so it has to
      be the unit the eye groups by. Keyed off a leg's group so every call site (route chips,
      contract cards, the stow diagram) lands on the same colour for the same cargo. */
-  const colourOf = (group) => StowView.shade(StowView.missionOf(plan, group), depthOf(group));
-  /** A leg's index within its own contract — the lightness step inside the mission's hue. */
+  /* 🔴 ONE COLOUR PER DROP-OFF STOP. This was one hue per MISSION, and Sub found the flaw with a
+     board carrying three missions across two destinations: Silicon and Tin both go to Riker but
+     belonged to different contracts, so they drew in two different colours and the hold looked like
+     it needed three separated regions when it needs two. "All I really need is two areas of the
+     cargo grid." Everything for a stop comes off together, so everything for a stop is one colour.
+     Depth is dropped from the hue for the same reason — it split a zone that unloads as one. */
+  const colourOf = (group) => StowView.shade(StowView.zoneOf(plan, group), 0);
+  /** A leg's index within its own contract. Still used by the diagram's per-box shading. */
   const depthOf = (group) => StowView.depthOf(plan, group);
+
+  /**
+   * The route's own step number for each drop-off place, so the hold's zones can be named with the
+   * numbers already on screen — "② Riker Memorial Spaceport", not a second numbering to reconcile.
+   *
+   * 🔑 Built by walking the route exactly as renderRoute numbers it, because two numberings that
+   * drift apart are worse than none: the whole point is that the zone in the picture and the step
+   * in the list are the same thing.
+   */
+  function dropStepIndex() {
+    const byLoc = new Map();
+    if (!plan) return byLoc;
+    let step = 0;
+    for (const [ti, trip] of plan.trips.entries()) {
+      if (ti === 0) step += (plan.completedPickups || []).length;
+      for (const s of trip.stops) {
+        for (const kind of ["dropoff", "pickup"]) {
+          const acts = s.actions.filter((a) => a.kind === kind);
+          if (!acts.length) continue;
+          step++;
+          // A stop's id is `<locationId>:<kind>` (see buildStops), and zoneOf returns that same
+          // locationId — so stripping the suffix is the join, with no server change needed.
+          const loc = String(s.id || "").replace(/:(pickup|dropoff)$/, "");
+          if (kind === "dropoff" && !byLoc.has(loc)) byLoc.set(loc, { step, name: s.name });
+        }
+      }
+    }
+    return byLoc;
+  }
 
   // ── loading ───────────────────────────────────────────────────────────────
   let pending = null;
@@ -1943,18 +1984,43 @@
     const widest = Math.max.apply(null, svgs.map((s) => Number(s.dataset.vbw)));
     for (const s of svgs) s.style.width = (Number(s.dataset.vbw) / widest * 100) + "%";
 
-    // Which colour is which drop — without it the diagram is pretty and unreadable.
-    const legend = document.createElement("div");
-    legend.className = "legend";
-    for (const s of m.steps) {
-      for (const d of s.drops) {
-        const leg = legOf(d.group);
-        const el = document.createElement("span");
-        const i = document.createElement("i"); i.style.background = d.colour;
-        el.appendChild(i);
-        el.appendChild(document.createTextNode(cargoOf(leg) + " → " + destOf(leg, names)));
-        legend.appendChild(el);
+    /* 🔴 THE KEY IS ONE ROW PER DROP-OFF ZONE, numbered with the ROUTE's own step numbers.
+       It used to be one row per leg, so Sub's board — three missions, two destinations — produced
+       three rows in two colours for what is physically two areas of the hold. The zone is the unit
+       that matters, because everything for a stop leaves the ship together; the commodities inside
+       it are listed because he still wants to know what he is looking at, but they are detail
+       within the zone rather than a reason to separate it. */
+    const steps = dropStepIndex();
+    const zones = new Map();
+    for (const b of m.boxes) {
+      const z = StowView.zoneOf(plan, b.group);
+      let row = zones.get(z);
+      if (!row) {
+        const at = steps.get(z);
+        row = { colour: colourOf(b.group), step: at ? at.step : null,
+                name: at ? at.name : destOf(legOf(b.group), names), items: new Map(), boxes: 0 };
+        zones.set(z, row);
       }
+      const leg = legOf(b.group);
+      const what = (leg && leg.commodity) || "cargo";
+      row.items.set(what, (row.items.get(what) || 0) + (b.scu || 0));
+      row.boxes++;
+    }
+    const legend = document.createElement("div");
+    legend.className = "legend zones";
+    // In route order, so the key reads top-to-bottom the way the run is flown.
+    for (const row of [...zones.values()].sort((a, b) => (a.step ?? 99) - (b.step ?? 99))) {
+      const el = document.createElement("span");
+      const i = document.createElement("i"); i.style.background = row.colour;
+      const label = (row.step ? "Stop " + row.step + " · " : "") + row.name;
+      const what = [...row.items].map(([k, v]) => k + " " + num(v)).join(" · ");
+      el.append(i, document.createTextNode(label));
+      const sub = document.createElement("b");
+      sub.textContent = what + "  ·  " + row.boxes + " box" + (row.boxes === 1 ? "" : "es");
+      el.appendChild(sub);
+      el.title = "Everything for this stop comes off together, so it is one area of the hold —"
+        + " the commodities inside it do not need separating.";
+      legend.appendChild(el);
     }
     wrap.appendChild(legend);
 
