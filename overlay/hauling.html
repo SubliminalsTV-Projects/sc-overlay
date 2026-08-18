@@ -193,6 +193,10 @@
   .stop.dropoff .num { border-color: var(--gold); color: var(--gold); }
   .stop.same .num { border-style: dashed; }
   .stop .mid { flex: 1; min-width: 0; }
+  .stop .nm.editable > span:first-child, .stop .nm.editable { }
+  .stop .nm .pen { margin-left: 5px; font-size: 10px; color: var(--cyan-dim); opacity: 0.75; }
+  .stop .nm.editable:hover .pen { color: var(--cyan-bright); opacity: 1; }
+  .stop .nm.editable:hover { text-decoration: underline dotted rgba(var(--accent-rgb), 0.6); }
   .stop .nminp { font-family: var(--sans); font-size: 12px; font-weight: 600; width: 150px;
     color: var(--cyan-bright); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--cyan);
     border-radius: 4px; padding: 1px 4px; }
@@ -266,6 +270,8 @@
      ⚠️ The tooltips move WITH the colour — a hue nobody can name is not provenance. */
   .card .amt.src-log, .card .amt.src-manifest { color: var(--green); }
   .card .amt.src-pinned { color: var(--cyan-bright); }
+  /* Arithmetic off a figure the player gave, so it reads as theirs — one shade quieter. */
+  .card .amt.src-derived { color: var(--cyan); }
   .card .amt.src-dataset { color: var(--cyan-dim); }
   .card .amt.src-range { color: var(--gold); }
   .card .amt.src-unknown { color: var(--red); }
@@ -620,6 +626,7 @@
     manifest: ["exact", "The game listed every box for this contract."],
     log: ["stated", "The game stated this tonnage on its own objective line."],
     pinned: ["yours", "You typed this figure in."],
+    derived: ["worked out", "The contract total less what you pinned at the other pickups — so this one did not need asking about."],
     dataset: ["data", "The game files state one figure for this contract."],
     range: ["range", "The game files only bound this contract — the real load is somewhere inside it. The game states the exact figure when it assigns the objective; until then, type it in to pin it."],
     unknown: ["unknown", "Neither the log nor the dataset says how much this contract carries."],
@@ -1368,6 +1375,15 @@
       return;
     }
     body.appendChild(renderStanding());
+    /* Named a hull ships.json does not carry. The board still lists — hiding every contract because
+       OUR data is short is worse than not checking the fit — but it must say so, or an unfittable
+       contract looks vetted. */
+    if (advisor.fitUnchecked) {
+      const w = document.createElement("div"); w.className = "droprow";
+      w.textContent = "We do not have cargo-grid data for this ship, so nothing below has been"
+        + " checked against your hold. Everything is listed.";
+      body.appendChild(w);
+    }
     body.appendChild(renderTypeFilter());
     const sec = document.createElement("div");
     sec.className = "sec";
@@ -1856,8 +1872,18 @@
              The keyboard grab is the SHARED one (grabOn/grabOff): without it every keystroke goes
              to the game instead of the box. */
           if (s.locationId) {
+            /* 🔴 AN AFFORDANCE NOBODY CAN SEE IS NOT A FEATURE. Sub: "there is no indication in the
+               UI that lets me know that I can click on Shubin Mining or any location and change
+               where we need to go. So the person would have to alt-tab to it and click inside just
+               to figure that out." So the name carries a dotted underline and a pencil — visible
+               without shouting, and the pencil is the part that reads as "editable" at a glance. */
             nm.title = "Click to name this place. It sticks to these coordinates.";
             nm.style.cursor = "text";
+            nm.classList.add("editable");
+            const pen = document.createElement("span");
+            pen.className = "pen";
+            pen.textContent = "✎";
+            nm.appendChild(pen);
             nm.addEventListener("click", (e) => {
               e.stopPropagation();
               if (nm.querySelector("input")) return;
@@ -1868,13 +1894,17 @@
               inp.placeholder = s.name;
               nm.textContent = step + ". " + g.verb + " — ";
               nm.appendChild(inp);
+              const restore = () => {
+                nm.textContent = label;
+                nm.appendChild(pen);
+              };
               inp.addEventListener("focus", () => grabOn(inp));
               inp.addEventListener("blur", () => grabOff());
               inp.addEventListener("pointerdown", (ev) => { ev.stopPropagation(); wantFocus = inp; });
               inp.addEventListener("keydown", (ev) => {
                 if (ev.key === "Enter") { ev.preventDefault(); savePlace(s.locationId, inp.value.trim()); }
                 // Escape puts the row back without saving — a mis-click must cost nothing.
-                else if (ev.key === "Escape") { ev.preventDefault(); inp.blur(); nm.textContent = label; }
+                else if (ev.key === "Escape") { ev.preventDefault(); inp.blur(); restore(); }
                 ev.stopPropagation();
               });
               inp.focus();

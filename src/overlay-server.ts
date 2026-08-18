@@ -3128,8 +3128,28 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
        selected ship physically cannot take. Resolved the same way the planner resolves it, so a
        hull the planner understands is a hull this understands. Unknown hull => null => nothing
        flagged, which is the only safe reading of "we do not know what you are flying". */
-    const hull = ship?.trim() ? haulingData.ship(ship.trim()) : null;
+    /* 🔴 A LOOKUP MISS MUST NOT EMPTY THE BOARD. This resolved the hull from the query param
+       ALONE, and `haulingData.ship()` matches a className or a displayName exactly — so "Hull A"
+       finds nothing while "MISC Hull A" finds it. Sub picked a Hull A and got a blank Rank tab:
+       maxBoxScu came back null, which the endpoint read as "no ship" and answered with nothing.
+       Two separate mistakes in one line, so both are fixed:
+         1. Resolve like the PLANNER does — picked, then what the log saw, then the app's own ship
+            detector. The advisor being stricter than the planner about the same ship is a bug on
+            its face.
+         2. Distinguish "no ship named" from "ship named, not in ships.json". The first is a
+            question to ask; the second is a gap in our data, and punishing the player for it by
+            hiding every contract is worse than not checking fit at all. */
+    /* `ship` above is ALREADY the resolution chain the planner uses — explicit pick, then the saved
+       one, then what the log saw. Re-deriving it here is how the first attempt at this inverted the
+       precedence; use it as given. The extra fallback is only for the case where the PICKED string
+       is not in ships.json but the log's own name is. */
+    const named = (ship || "").trim();
+    const hull = named
+      ? (haulingData.ship(named) ?? (shipName ? haulingData.ship(shipName.trim()) : null))
+      : null;
     const maxBoxScu = hull ? largestBoxScu(gridsOf(hull)) : null;
+    /** Named a ship we cannot find: rank everything, and say we could not check the fit. */
+    const shipUnknownToUs = !!named && !hull;
     /* 🔴 HIDDEN, NOT GREYED — Sub's ruling: "If the person has a ship that can't pick up the box,
        hide it. I don't know why you'd want to keep them visible." He is right: a locked contract is
        something you can work towards, an oversize one is not a goal, it is noise on a list whose
@@ -3224,14 +3244,16 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({
       ok: true, goal, regime,
-      /** No hull => no board. `needShip` is the widget's cue to ask instead of listing. */
-      needShip: maxBoxScu == null,
+      /** NOTHING named => ask. A name we cannot resolve is not the player's fault, so the board
+       *  still lists — see `fitUnchecked`. */
+      needShip: !named,
+      fitUnchecked: shipUnknownToUs,
       shipName: hull?.displayName ?? hull?.className ?? (ship?.trim() || null),
       maxBoxScu,
       type: wantType || null,
       types: [...types.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
       ladder: HAULING_LADDER,
-      contracts: maxBoxScu == null ? [] : top,
+      contracts: named ? top : [],
       climbs,
       /** Measured, from his own finished runs — see haulingRunMinutes. */
       runMinutes: haulingRunMinutes(),

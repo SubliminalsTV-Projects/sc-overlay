@@ -48,6 +48,10 @@ export type ScuSource =
   | "dataset"
   /** The dataset states a SPAN. 🔴 NOT a number — `scu` is the worst case, for fit checking. */
   | "range"
+  /** ARITHMETIC. The contract total is known and every other pickup has been pinned, so this one
+   *  is the remainder — exact, and never asked about. On a two-pickup contract this is why the
+   *  player types one number instead of two. */
+  | "derived"
   /** Neither source says anything. `scu` is null and this contract cannot be planned. */
   | "unknown";
 
@@ -168,6 +172,10 @@ export interface PlannedLeg {
   dropoffState: HaulStopState;
   delivered: number | null;
   fromLocation: string | null;
+  /** Which pickup of a multi-pickup contract this leg is, and how many there are. Absent for the
+   *  ordinary one-pickup case. See the MORE PICKUPS THAN DROP-OFFS note. */
+  pickupIndex?: number;
+  pickupCount?: number;
   toLocation: string | null;
 }
 
@@ -555,7 +563,9 @@ function resolveScu(logNeed: number | null, pinned: number | null, b: Bounds): {
 }
 
 /** The weakest claim among a contract's legs decides how the contract as a whole is labelled. */
-const WEAKNESS: Record<ScuSource, number> = { manifest: 0, log: 1, pinned: 2, dataset: 3, range: 4, unknown: 5 };
+/* `derived` sits just below `pinned`: it is exact arithmetic, but it is only as good as the figure
+   the player pinned to produce it, so it must not out-rank that figure. */
+const WEAKNESS: Record<ScuSource, number> = { manifest: 0, log: 1, pinned: 2, derived: 3, dataset: 4, range: 5, unknown: 6 };
 function weakest(sources: ScuSource[]): ScuSource {
   // No seed — seeding with a source that is not in the list floors the result at that source's
   // strength, which is how a contract with an exact manifest came back labelled "log".
@@ -655,7 +665,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
      */
     const oneSharedPickup = /^SingleToMulti/i.test(c.contractKey.split("_")[1] ?? "");
     const pickups = c.stops.filter((s) => s.role === "pickup");
-    const legs: PlannedLeg[] = dropoffs.map((drop, i) => {
+    const legsRaw: PlannedLeg[] = dropoffs.map((drop, i) => {
       const pickup = c.stops.find((s) => s.key === drop.key && s.role === "pickup")
         ?? (oneSharedPickup && pickups.length === 1 ? pickups[0] : null);
       const b = boundsFor(data, c.contractKey, i, dropoffs.length);
@@ -729,9 +739,80 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         toLocation: to,
       };
     });
+    /**
+     * 🔴 MORE PICKUPS THAN DROP-OFFS: EVERY ONE IS A PLACE YOU HAVE TO GO.
+     *
+     * Legs are built one per DROP-OFF, which is right for `SingleToMulti*` (most of the board) and
+     * silently wrong for `MultiNToSingle`. Sub's Junior Small Cargo Haul is
+     * `HaulCargo_Multi2ToSingle_Waste_Mixed_ScrapWaste_Stanton3_SmallGrade`: two pickup objectives,
+     * one drop-off. One leg came out, so ONE pickup reached the route and the second was discarded
+     * — he was routed to Shubin SAL-5 and never told about the other half of his load.
+     *
+     * The game is explicit about both: `pickup_<id>_0` and `pickup_<id>_1`, distinct positions, and
+     * the shape is in the contract key. So the leg is split into one per pickup, sharing the
+     * drop-off.
+     *
+     * ⛔ AND THE SPLIT IS NOT INVENTED. Nothing states how much comes from each pickup — the log
+     * gives one total for the contract and the dataset gives only the order pool. So each pickup
+     * carries a RANGE, not a fabricated share: showing "3 SCU" at each end of a 6 SCU contract
+     * would be a guess printed as fact on a screen he makes decisions from. Pin one and the rest
+     * is arithmetic — with two pickups he types one number, ever.
+     */
+    const legs: PlannedLeg[] = (() => {
+      if (dropoffs.length !== 1 || pickups.length < 2 || legsRaw.length !== 1) return legsRaw;
+      const base = legsRaw[0];
+      const n = pickups.length;
+      const total = base.exact && base.scu != null ? base.scu : null;
+      const pinAt = (j: number) => opts.pins?.[`${c.missionId}#p${j}`] ?? null;
+      const pinnedSum = pickups.reduce((sum, _, j) => sum + (pinAt(j) ?? 0), 0);
+      const unpinned = pickups.filter((_, j) => pinAt(j) == null).length;
+      return pickups.map((pu, j) => {
+        const group = `${base.group}#p${j}`;
+        const from = posKey(pu.pos) ?? `${group}:from`;
+        const region = regionOfKey(c.contractKey);
+        if (region && from) regionByLoc.set(from, region);
+        const pinned = pinAt(j);
+        // The last unpinned pickup is DERIVED, not asked about — that is the whole point.
+        const inferred = pinned == null && unpinned === 1 && total != null ? total - pinnedSum : null;
+        const known = pinned ?? inferred;
+        const r = known != null
+          ? { scu: known, min: known, max: known,
+              source: (pinned != null ? "pinned" : "derived") satisfies ScuSource as ScuSource, exact: true }
+          /* Bounded by what must be true: at least 1 SCU here, and no more than the total less one
+             for every other pickup.
+             🔴 BUT `scu` IS THE EVEN SHARE, NOT THE PER-PICKUP WORST CASE. Everywhere else `scu`
+             carries the worst case so "does it fit" is answered safely — here that breaks a
+             stronger invariant: the legs must sum to the contract total. Two pickups of a 6 SCU
+             contract each claiming their worst case is 5 makes the contract 10 SCU, and the packer
+             would reserve a hold half again too big. The total is KNOWN and cannot be exceeded, so
+             the planning figure is the share and the honest spread stays in min/max, which is what
+             the widget prints. */
+          : total != null
+            ? (() => {
+                const share = Math.floor(total / n) + (j < total % n ? 1 : 0);
+                return { scu: share, min: 1, max: total - (n - 1),
+                         source: "range" satisfies ScuSource as ScuSource, exact: false };
+              })()
+            : { scu: null, min: null, max: null, source: "unknown" satisfies ScuSource as ScuSource, exact: false };
+        return {
+          ...base,
+          group,
+          ...r,
+          // The drop-off tonnage belongs to the contract, not to this pickup, so a split leg never
+          // claims to be carrying the whole load.
+          pickupState: pu.state ?? "pending",
+          fromLocation: from,
+          pickupIndex: j,
+          pickupCount: n,
+        };
+      });
+    })();
 
     const sources = legs.map((l) => l.source);
     const total = legs.every((l) => l.scu != null) ? legs.reduce((s, l) => s + (l.scu ?? 0), 0) : null;
+    /** The contract total when this is a multi-pickup split and the total is genuinely known —
+     *  see the note on minScu. Null for every ordinary contract. */
+    const splitTotal = legs.length > 1 && legs[0].pickupCount != null && total != null ? total : null;
     const src = legs.length ? weakest(sources) : "unknown";
     const planned: PlannedContract = {
       missionId: c.missionId,
@@ -748,8 +829,15 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       payout: c.payout,
       legs,
       scu: total,
-      minScu: legs.every((l) => l.min != null) ? legs.reduce((s, l) => s + (l.min ?? 0), 0) : null,
-      maxScu: legs.every((l) => l.max != null) ? legs.reduce((s, l) => s + (l.max ?? 0), 0) : null,
+      /* 🔴 A SPLIT CONTRACT'S BOUNDS ARE NOT THE SUM OF ITS PICKUPS' BOUNDS. On a 6 SCU contract
+         split across two pickups each honestly bounded 1-5, summing gives 2-10 — and the widget
+         would print "2–10 SCU" for a load the player has already pinned at 6. The per-pickup spread
+         is real and belongs on the pickup rows; the CONTRACT total is pinned down, so it is stated
+         exactly. Only the split case is special-cased; every other contract sums as before. */
+      minScu: splitTotal != null ? splitTotal
+        : legs.every((l) => l.min != null) ? legs.reduce((s, l) => s + (l.min ?? 0), 0) : null,
+      maxScu: splitTotal != null ? splitTotal
+        : legs.every((l) => l.max != null) ? legs.reduce((s, l) => s + (l.max ?? 0), 0) : null,
       source: src,
       exact: src === "manifest" || src === "log" || src === "pinned" || src === "dataset",
       plannable: total != null && c.endedAt == null,
