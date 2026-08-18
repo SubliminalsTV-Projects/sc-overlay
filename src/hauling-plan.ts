@@ -277,7 +277,17 @@ export interface HaulingPlan {
   /** What the player asked for as an origin, and what it resolved to. Reported because "I set a
    *  start and the order did not change" has two very different causes — an ignored option, or an
    *  optimiser that genuinely sees no better order — and guessing between them costs a session. */
-  startResolved: { asked: string | null; resolved: string | null };
+  startResolved: {
+    asked: string | null;
+    resolved: string | null;
+    /** The place the LOG put the player, independent of any manual pick — null when the game's
+     *  token matched nothing on this board, or matched ambiguously. */
+    detected: string | null;
+    /** The game's own id, e.g. "Stanton3b_ArcCorp_Area045". Shown when it did NOT resolve, so a
+     *  failed join is diagnosable instead of just being silence. */
+    detectedToken: string | null;
+    detectedAt: number | null;
+  };
   /** Legs that have to be carried but could not be put in a route, each with the reason. Never
    *  silently dropped: a route missing legs would look complete and be wrong. */
   unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; toLocation: string | null; reason: string }[];
@@ -348,6 +358,38 @@ function gridsOf(ship: Ship): GridSpec[] {
     h: g.h,
     maxBox: g.maxBox ?? undefined,
   }));
+}
+
+/**
+ * Join the game's own location token to a place on this board.
+ *
+ * `Stanton3b_ArcCorp_Area045` has to reach `@-283,14,11`, which the board calls "ArcCorp Mining
+ * Area 045". There is no id in common — locations.json carries neither the token as a code nor as
+ * a slug — so the join is on the NAME, letters and digits only, in either direction as a
+ * subsequence. That handles the word the two spellings disagree about: the log writes
+ * `ArcCorp_Area045` and the dataset writes "ArcCorp **Mining** Area 045".
+ *
+ * ⚠️ Subsequence, not substring, and deliberately requiring the DIGITS to survive: "Area045" and
+ * "Area048" differ in one character, and a looser match would put the player at the wrong outpost
+ * — which is worse than not knowing, because the router would then confidently order around it.
+ */
+function matchLocationToken(token: string, names: ReadonlyMap<string, string>): string | null {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  // Drop the leading body code ("Stanton3b"); it names the moon, not the site.
+  const tail = norm(token.split("_").slice(1).join(""));
+  if (!tail) return null;
+  const isSub = (a: string, b: string) => {
+    let i = 0;
+    for (const c of b) { if (c === a[i]) i++; if (i === a.length) return true; }
+    return i === a.length;
+  };
+  const hits: string[] = [];
+  for (const [id, name] of names) {
+    const n = norm(name);
+    if (n && (isSub(tail, n) || isSub(n, tail))) hits.push(id);
+  }
+  // Ambiguity is a reason to say nothing. Two candidates means we cannot tell Area045 from Area048.
+  return hits.length === 1 ? hits[0] : null;
 }
 
 /** Position -> a stable location id. Rounded to the kilometre so a marker re-emitted on spawn-in
@@ -750,11 +792,31 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   const freeCapacity = capacityScu != null ? Math.max(0, capacityScu - aboardScu) : undefined;
   // Where the player says they are. Only a place the route already touches can be an origin — an
   // id we have no coordinates for would silently become "anywhere", which is the bug, not the fix.
-  const startPos = opts.startAt ? posByLoc.get(opts.startAt) ?? null : null;
+  /* 🔴 THE ORIGIN IS DETECTED NOW, not asked for. `RequestLocationInventory` names the player and
+     the place they last opened an inventory at, which a hauler does at every stop — so the router
+     finally has the origin it was designed around. A manual pick still wins: it is a deliberate
+     statement, and the detected one is a LAST-seen that can lag by a stop. */
+  // ⚠️ Built from the maps that exist HERE — `locationNames` is not assembled until after the
+  // trips are solved, and the origin has to be known before them.
+  const knownNames = new Map<string, string>(nameByLoc);
+  for (const [id, n] of Object.entries(opts.placeNames ?? {})) if (n.trim() && !knownNames.has(id)) knownNames.set(id, n.trim());
+  const seen = view.atLocation ? matchLocationToken(view.atLocation.token, knownNames) : null;
+  const startId = opts.startAt || seen;
+  // Only a place the route already touches can be an origin — an id we have no coordinates for
+  // would silently become "anywhere", which is the bug, not the fix.
+  const startPos = startId ? posByLoc.get(startId) ?? null : null;
   // Reported so a wrong route can be told apart from an ignored origin. "I asked for X and the
   // order did not change" has two very different causes, and guessing between them wastes a
   // session — as it did on 2026-08-17.
-  const startResolved = { asked: opts.startAt ?? null, resolved: posKey(startPos) };
+  const startResolved = {
+    asked: opts.startAt ?? null,
+    resolved: posKey(startPos),
+    /** What the LOG said, independently of what the player picked — so the widget can show it and
+     *  a mis-detection is visible rather than silently steering the route. */
+    detected: seen,
+    detectedToken: view.atLocation?.token ?? null,
+    detectedAt: view.atLocation?.at ?? null,
+  };
   const run = stops.length
     ? planRun(stops, routeContracts, {
         objective: opts.objective ?? "auec-per-hour",

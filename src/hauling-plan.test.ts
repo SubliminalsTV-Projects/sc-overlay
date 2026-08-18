@@ -335,7 +335,7 @@ check("clearing the override falls back to the log's ship",
   };
   const view = {
     updatedAt: 1, playerNodeId: null, ship: null, contracts: [c as never],
-    untracked: [], trackedMissionId: null, runStartedAt: null, finished: [],
+    untracked: [], trackedMissionId: null, runStartedAt: null, finished: [], atLocation: null,
   };
   const p = buildHaulingPlan(view as never, data);
   const legs = p.contracts[0].legs;
@@ -354,7 +354,7 @@ check("clearing the override falls back to the log's ship",
 // ── degenerate input ───────────────────────────────────────────────────────
 const empty = buildHaulingPlan(
   { updatedAt: 0, playerNodeId: null, ship: null, contracts: [], untracked: [], trackedMissionId: null,
-    runStartedAt: null, finished: [] },
+    runStartedAt: null, finished: [], atLocation: null },
   data,
 );
 check("an empty board is an empty plan, not a throw",

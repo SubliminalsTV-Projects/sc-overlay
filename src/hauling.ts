@@ -182,6 +182,9 @@ export interface HaulingView {
   trackedMissionId: string | null;
   /** When this run's clock started — the first hauling event the app saw. Null before any. */
   runStartedAt: number | null;
+  /** Where the game last saw the player open an inventory — the router's origin, no longer asked
+   *  for by hand. `token` is the game's own id, e.g. "Stanton3b_ArcCorp_Area045". */
+  atLocation: { token: string; at: number } | null;
   /** Contracts that have FINISHED since the app started, oldest first. Deliberately NOT the ended
    *  entries of `contracts`, which are pruned after ten minutes — see the ledger note. */
   finished: { at: number; acceptedAt: number | null; missionId: string; contractKey: string; payout: number | null }[];
@@ -266,6 +269,8 @@ export class HaulingTracker extends EventEmitter {
   /** When this run's clock starts — the first hauling event the app ever saw. Set once and never
    *  cleared, for the same reason the ledger is not. */
   private runStartedAt: number | null = null;
+  /** The last place the game saw the player open an inventory, and when. */
+  private atLocation: { token: string; at: number } | null = null;
   /** Completions still waiting for their "Awarded N aUEC" line, newest last. */
   private awaitingPayout: { missionId: string; at: number }[] = [];
   /** Rewards that arrived before their completion (dev-replay does this), newest last. */
@@ -310,6 +315,13 @@ export class HaulingTracker extends EventEmitter {
         break;
       case "vehicleControl":
         this.onVehicle(ev);
+        break;
+      /* Where the player last opened an inventory — see the parser's `playerLocation` note. Kept
+         as a plain last-seen: nothing in the log fires when you LEAVE somewhere, and a slightly
+         stale origin is still enormously better than the none the router had. */
+      case "playerLocation":
+        this.atLocation = { token: ev.location, at: ts(ev.ts) ?? Date.now() };
+        this.touch(ev.ts);
         break;
       case "end":
         this.onEnd(ev);
@@ -648,6 +660,7 @@ export class HaulingTracker extends EventEmitter {
       untracked: contracts.filter((c) => !c.deliverSeen && c.endedAt == null).map((c) => c.missionId),
       trackedMissionId: this.trackedMissionId,
       runStartedAt: this.runStartedAt,
+      atLocation: this.atLocation,
       finished: [...this.ledger],
     };
   }

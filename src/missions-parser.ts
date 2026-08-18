@@ -224,6 +224,27 @@ export type MissionEvent =
   /** The player pressed a freight-elevator kiosk. Unambiguously OUR action, unlike a platform
    *  moving, which is why it is worth having separately: it brackets a real load. */
   | { kind: "cargoKiosk"; ts: string | null; terminal: string }
+  /**
+   * 🔴 WHERE THE PLAYER IS — the signal the router has been missing since it was written.
+   *
+   * `Player[IMC-SubliminaL] requested inventory for Location[Stanton3b_ArcCorp_Area045]`
+   *
+   * Until this was found, `PlanOptions.startAt` was documented as un-fillable: "no player-position
+   * signal has been found in the log, only mission-marker coordinates", and the player had to pick
+   * their location from a dropdown. Without it the optimiser has NO origin, and because travel is
+   * nearly free in the model (a 239 km hop costs ~0.02 min against ~25 s per box of handling) the
+   * order is decided by tie-breaks rather than distance. Sub, standing on Wala next to ArcCorp
+   * Mining Area 045, was told to fly to Baijini Point first; setting his location by hand fixed it.
+   *
+   * 🔑 It NAMES THE PLAYER, so unlike almost everything else in the log it cannot be a neighbour's
+   * event. And it fires whenever a local inventory is opened, which a hauler does at every stop —
+   * his trace tonight reads Area045 → Samson & Son's → Area048, which is exactly where he went.
+   *
+   * ⚠️ It is a LAST-SEEN, not a live position: nothing fires when you leave. That is the right
+   * semantics for a route origin anyway — a slightly stale origin beats the null the router has
+   * been working with — and the next stop's inventory refreshes it.
+   */
+  | { kind: "playerLocation"; ts: string | null; player: string; location: string }
   /** Entered/re-entered the persistent universe (login / server change) — the
    *  previous shard's tracked-mission selection no longer applies. */
   | { kind: "sessionStart"; ts: string | null }
@@ -398,6 +419,8 @@ const RE = {
   platformState: /Loading Platform Manager \[([A-Za-z0-9_]+)\] Platform state changed to ([A-Za-z]+)/,
   /* "[FreightElevatorKioskUIProvider] <Terminal>[123] - Processed bindings into transfer request" */
   kioskTerminal: /\[FreightElevatorKioskUIProvider\]\s*([A-Za-z0-9_]+)\[/,
+  /* "Player[IMC-SubliminaL] requested inventory for Location[Stanton3b_ArcCorp_Area045]" */
+  locationInventory: /Player\[([^\]]+)\] requested inventory for Location\[([^\]]+)\]/,
   blueprint: /^Received Blueprint:\s*(.+?):\s*$/,
   missionIdField: new RegExp(`MissionId:\\s*\\[(${UUID})\\]`),
   // CreateMarker fields (note: contractDefinitionId has NO space before its bracket)
@@ -628,6 +651,12 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
       // cargo went. Only the two travel states carry direction, so only they are reported.
       if (!direction) return null;
       return { kind: "cargoPlatform", ts: e.timestamp, direction, platform };
+    }
+
+    /* Where the player is — see the `playerLocation` note. */
+    case "RequestLocationInventory": {
+      const p = m.match(RE.locationInventory);
+      return p ? { kind: "playerLocation", ts: e.timestamp, player: p[1], location: p[2] } : null;
     }
 
     case "CEntityComponentFreightElevatorUIProvider::FillUnstowRequest": {

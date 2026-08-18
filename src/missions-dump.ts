@@ -69,6 +69,8 @@ const fmt = (e: MissionEvent): string => {
       return `CARGO    ${e.direction === "down" ? "OFFLOAD" : "LOAD   "} ${e.platform}`;
     case "cargoKiosk":
       return `KIOSK    ${e.terminal}`;
+    case "playerLocation":
+      return `WHEREAMI ${e.location}`;
     case "trackedMarker":
       return `MOBIGLAS [${short(e.missionId)}] ${e.added ? "TRACK  " : "untrack"} ${e.objectiveId}`;
   }
