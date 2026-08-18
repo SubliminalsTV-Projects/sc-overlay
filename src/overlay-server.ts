@@ -3312,6 +3312,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   }
   /** Name a place by hand — or clear it by sending an empty name. Keyed by the planner's location
    *  id, which IS the coordinates (see PlanOptions.placeNames). */
+  if (url === "/api/hauling/reset-rates" && req.method === "POST") {
+    // Measurement only — see HaulingTracker.resetRun. The board is deliberately left alone.
+    hauling.resetRun();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
   if (url === "/api/hauling/place" && req.method === "POST") {
     const body = (await readBody(req)) as Record<string, unknown>;
     const id = typeof body.locationId === "string" ? body.locationId : "";

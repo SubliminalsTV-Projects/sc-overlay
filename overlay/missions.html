@@ -525,19 +525,20 @@
   .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead,
   #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead,
   .widget.moving .whead, #panel.moving .whead { transform: translateY(0); pointer-events: auto; }
-  /* 🔴 EVERY BAR COMES OUT ONLY IN ARRANGE MODE. The reveal exists because a bar is the DROP TARGET
-     for stacking widgets, and the drag shield means the widget under the cursor never sees :hover to
-     show its own — so you need to see what you are aiming at. But stacking is an arrange-mode
-     gesture, and outside it the reveal was pure noise: Sub, dragging one widget with SC Feed and
-     Unlock Alerts open, watched their bars appear and asked the obvious question — "why when I
-     click and drag one widget does the bottom bar on all the other widgets appear? That doesn't
-     need to happen."
-     It does not. In arrange mode the cue stays, because there it is telling the truth about a drop
-     you can actually make. The widget being dragged still shows its own bar — that is how it was
-     grabbed. Bars stay inert either way; the shield owns the pointer for the whole gesture. */
-  body.dragging.arranging .widget .whead, body.dragging.arranging #panel .whead {
+  /* While a widget is being DRAGGED every bar comes out: the bar is the drop target, and the drag
+     shield means the widget under the cursor never sees :hover to reveal its own. You aim at
+     something you can see. They stay inert — the shield owns the pointer for the whole gesture.
+     Sub, 2026-08-18: grouping outside arrange mode is worth keeping, so this stays.
+
+     🔴 EXCEPT NOTIFIERS, WHICH ARE NOT GROUPABLE TARGETS. A notifier is a bare card that fires and
+     fades; stacking one behind another hides the very thing it exists to show, and you cannot tell
+     which of the two is underneath. Sub: "nobody's going to want to group a notification bar that's
+     invisible... all they would need to do is just simply set them on top of each other physically."
+     So their bars never come out as drop targets — the reveal only ever advertises a drop worth
+     making. They stay inert either way. */
+  body.dragging .widget:not(.notifier) .whead, body.dragging #panel .whead {
     transform: translateY(0); pointer-events: none; }
-  body.dragging .widget .whead, body.dragging #panel .whead { pointer-events: none; }
+  body.dragging .widget.notifier .whead { pointer-events: none; }
   /* ARRANGE MODE keeps the bar OUT and turns it into the grab handle: you drag a widget by its bar
      and drop it onto another widget's bar to stack them (Sub, 2026-07-25) — the same gesture as
      dragging a browser tab onto another window. Its buttons and tabs go inert so they can't

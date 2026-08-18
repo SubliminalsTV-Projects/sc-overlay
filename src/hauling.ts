@@ -719,6 +719,25 @@ export class HaulingTracker extends EventEmitter {
     }
   }
 
+  /**
+   * Start the earnings measurement again from now.
+   *
+   * 🔴 CLEARS THE MEASUREMENT, NOT THE BOARD. Contracts, tracking and stop progress are untouched —
+   * this only forgets how long the player has been at it and what has been banked, so aUEC/hour and
+   * rep/hour start fresh. Sub asked for it after sitting parked while we worked: even with the idle
+   * rule, a session that has been open all day carries an average nobody can shift.
+   *
+   * He also asked whether a reset could mislead. It can only ever make the figure MORE local — it
+   * is measured over a shorter window, which is the point — and the widget says so, so a rate read
+   * right after a reset is thin rather than wrong.
+   */
+  resetRun(): void {
+    this.activeMs = 0;
+    this.runStartedAt = this.lastAt || null;
+    this.ledger.length = 0;
+    this.emit("change");
+  }
+
   view(): HaulingView {
     const contracts = [...this.contracts.values()]
       .sort((a, b) => (a.acceptedAt ?? 0) - (b.acceptedAt ?? 0));

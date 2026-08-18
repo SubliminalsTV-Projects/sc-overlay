@@ -197,6 +197,9 @@
   .stop .nm .pen { flex: none; margin-left: 5px; font-size: 10px; color: var(--cyan-dim); opacity: 0.75; }
   .stop .nm.editable:hover .pen { color: var(--cyan-bright); opacity: 1; }
   .stop .nm.editable:hover .nmt { text-decoration: underline dotted rgba(var(--accent-rgb), 0.6); }
+  .ratereset { margin-left: 8px; background: transparent; border: none; padding: 0; cursor: pointer;
+    font-size: 9px; color: var(--faint); text-decoration: underline; }
+  .ratereset:hover { color: var(--cyan-bright); }
   .stop .pinbox { width: 46px; margin-left: 5px; font-family: var(--mono); font-size: 10px;
     text-align: right; color: var(--cyan-bright); background: rgba(0, 0, 0, 0.35);
     border: 1px solid rgba(var(--accent-rgb), 0.5); border-radius: 4px; padding: 0 3px; }
@@ -933,6 +936,25 @@
         + " estimated run time. It becomes a measured figure the moment you deliver."
         + (r.payoutModelled ? "  ⚠️ A contract here has a modelled payout, not a stated one." : "");
     bar.appendChild(money);
+    /* 🔴 A RESET, BECAUSE AN AVERAGE HAS NO WAY BACK. Even with idle time excluded, a session that
+       has been open all day carries a denominator nothing can shift — Sub, parked while we worked:
+       "I've been sitting here for a long time and it kind of screws up the counts."
+       Only offered on a MEASURED figure: there is nothing to reset about a forecast. */
+    if (measured) {
+      const rst = document.createElement("button");
+      rst.type = "button";
+      rst.className = "ratereset";
+      rst.textContent = "reset";
+      rst.title = "Start the earnings measurement again from now. Your contracts, tracking and"
+        + " progress are untouched — this only forgets the elapsed time and what has been banked,"
+        + " so the per-hour figures start fresh. The next reading will be over a short window.";
+      rst.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try { await fetch("/api/hauling/reset-rates", { method: "POST" }); } catch { /* sidecar down */ }
+        load();
+      });
+      bar.appendChild(rst);
+    }
 
     // Suppressed at zero rather than printed as "0/h": Master-rank Large and Bulk hauls genuinely
     // pay no reputation, and a zero there is a fact about the contract, not about the run.
@@ -974,7 +996,12 @@
     waiting: ["tracked", "Already tracked — nothing more for you to do here. The game states the tonnage only when it assigns the objective (at accept, or on spawn-in), and re-tracking does not replay it. Type the figure off your mobiGlas to pin it."],
     pinned: ["yours", "You typed this figure in. Clear the box to fall back to what the game files allow."],
   };
-  const trackStateOf = (c) => c.source === "pinned" ? "pinned" : c.trackedNow ? "waiting" : "todo";
+  /* 🔴 "WORKED OUT" IS ANSWERED TOO. Pin one pickup of a two-pickup contract and the other is
+     derived — the contract is then fully known, but this read only `pinned`, so the card went on
+     saying "Load not confirmed" and never collapsed. Sub: "the loadout not confirmed doesn't
+     collapse once I put in the number." Both sources came from him; one just took arithmetic. */
+  const trackStateOf = (c) => c.source === "pinned" || c.source === "derived" ? "pinned"
+    : c.trackedNow ? "waiting" : "todo";
   /** Has the player re-opened the collapsed "all answered" card to edit a figure? Reset whenever a
    *  row needs action again, so a new unanswered contract always arrives expanded. */
   let trackOpen = false;
@@ -1098,6 +1125,11 @@
         rng.className = "rng";
         const inp = document.createElement("input");
         inp.type = "number"; inp.min = "1"; inp.step = "1";
+        /* 🔴 BOUNDED. With no max, holding the spinner ran the figure to 20 on a contract whose
+           whole span was single digits — Sub: "it doesn't need to go any higher than the range or
+           lower than the range." A max also ends the click-and-hold ramp on its own, which is the
+           other half of the complaint, without giving up the tap-to-step he wants to keep. */
+        if (Number.isFinite(c.maxScu) && c.maxScu > 0) inp.max = String(c.maxScu);
         inp.placeholder = "SCU";
         inp.title = "Type the SCU total from your mobiGlas to pin it.";
         // Editing takes the canvas keyboard grab; the shell suspends the interact key while it is
@@ -1998,7 +2030,11 @@
                 chip.appendChild(d);
               } else {
                 const pi = document.createElement("input");
-                pi.type = "text";
+                pi.type = "number";
+                pi.step = "1";
+                // Bounded by what this pickup can possibly be — see the leg's min/max.
+                if (Number.isFinite(lg.min)) pi.min = String(lg.min);
+                if (Number.isFinite(lg.max)) pi.max = String(lg.max);
                 pi.className = "pinbox";
                 pi.value = pins[key] != null ? pins[key] : "";
                 pi.placeholder = lg.min != null && lg.max != null && lg.min !== lg.max ? lg.min + "–" + lg.max : "SCU";
@@ -2009,8 +2045,13 @@
                 pi.addEventListener("focus", () => grabOn(pi));
                 pi.addEventListener("blur", () => grabOff());
                 pi.addEventListener("change", () => {
-                  const v = Number(pi.value);
-                  if (Number.isFinite(v) && v > 0) pins[key] = Math.round(v); else delete pins[key];
+                  const raw = Number(pi.value);
+                  // Typing ignores min/max — only the spinner respects them — so clamp here too.
+                  const lo = Number.isFinite(lg.min) ? lg.min : 1;
+                  const hi = Number.isFinite(lg.max) ? lg.max : Infinity;
+                  const v = Math.min(Math.max(Math.round(raw), lo), hi);
+                  if (Number.isFinite(raw) && raw > 0) { pins[key] = v; pi.value = String(v); }
+                  else delete pins[key];
                   savePins();
                   load();
                 });
