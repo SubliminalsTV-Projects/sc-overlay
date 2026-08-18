@@ -752,7 +752,23 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
     }
     const tFg = Date.now();
     const fg = await foregroundWindow();
-    if (!/^StarCitizen$/i.test(fg.name)) { emitContext("idle"); return; } // only ever look at SC
+    if (!/^StarCitizen$/i.test(fg.name)) {
+      /* 🔑 ANSWER A PENDING SYNC EVEN THOUGH WE CANNOT READ. The read needs Star Citizen on screen,
+         so this early return is right — but silently returning leaves the button spinning for its
+         full timeout and then guessing at the reason. Telling the player which of the two
+         preconditions failed is the difference between a five-second fix and a mystery. */
+      if (locate) {
+        try {
+          await fetch(`http://localhost:${port}/api/hauling/locate-result`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ error: "Star Citizen was not the window in front — bring the game forward and press Sync again." }),
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
+        } catch { /* sidecar restarting; the widget times out and says so */ }
+      }
+      emitContext("idle");
+      return;                                                             // only ever look at SC
+    }
     busy = true;
     busyAt = Date.now();
     // Per-stage timings for THIS tick. The loop self-tunes off the tick's total cost
