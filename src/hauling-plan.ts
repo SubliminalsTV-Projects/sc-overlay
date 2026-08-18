@@ -956,6 +956,12 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         // twice: Sub's board reported 12 minutes of "travel" for 0.2 minutes of actual flying.
         // The route's own total is pure travel; handling is added on top in toTrip.
         stopMinutes: opts.stopMinutes ?? 0,
+        // 🔴 Travel is TIERED off the body each stop sits on, not derived from marker XYZ. The
+        // distance model priced a 239 km hop at 0.02 min, so "est. run" charged ~5 minutes of
+        // travel for a five-stop run whose measured floor is near 25 — and the rank tab's
+        // projected rep/hour inherited that, understating time-to-rank whenever nothing had
+        // completed yet. Constants and their measurement live in hauling-route.ts.
+        regionOf: (locationId) => regionByLoc.get(locationId) ?? null,
         startPos,
       })
     : { trips: [], stranded: [], totalMinutes: 0, payout: 0, auecPerHour: 0 };

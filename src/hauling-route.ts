@@ -72,6 +72,27 @@ export interface RouteOptions {
   stopMinutes?: number;
   /** Minutes charged for a leg where either end has no known position. */
   unknownLegMinutes?: number;
+  /**
+   * The body a location sits on, e.g. "ArcCorp". Supply this and leg cost is TIERED off the
+   * measured floors below instead of derived from marker XYZ.
+   *
+   * 🔴 WHY THIS EXISTS. Distance was worth nothing here: at 200,000 m/s a 239 km hop priced at
+   * 0.02 minutes, so a five-stop run was billed ~5 minutes of travel against a measured floor
+   * near 25 — and a four-drop contract scored almost as well per hour as a one-drop contract of
+   * the same payout. The advisor was over-rating exactly the spread-out work that eats an evening.
+   *
+   * Measured off Sub's own logs (2026-08-17) via `requested inventory for Location[...]`, taking
+   * the FASTEST observed value for each shape rather than the median — the measure brackets
+   * travel plus whatever else he was doing, so the slow samples are noise on a real floor.
+   * The same leg read 3m29s and 34m50s on one day.
+   *
+   * 🔑 The cost is dominated by getting UP and DOWN, not by distance: another body is only about
+   * a minute worse than the same one. That is the whole reason a distance model could never have
+   * been tuned into a right answer.
+   *
+   * Returns null when the body is not known; that leg is then charged as cross-body.
+   */
+  regionOf?: (locationId: string) => string | null;
   /** Where the run starts. Omit and the first stop is free to be anywhere. */
   startPos?: Vec3 | null;
   /** Ship hold in SCU. Omit for no capacity constraint. */
@@ -119,6 +140,18 @@ const DEFAULTS = {
   stopMinutes: 4,
   unknownLegMinutes: 6,
 };
+
+/* Measured floors, terminal to terminal. See `regionOf`.
+ *
+ * ⚠️ These EXCLUDE the per-stop base that hauling-plan adds as handling (STOP_BASE_MINUTES,
+ * "approach, park, and get to the kiosk"). The measurement is kiosk-to-kiosk, so it already
+ * contains that minute — charging both would double-count it. leg + base reproduces the floor:
+ *   same body   5 + 1 = 6 min   (Baijini <-> Wala outposts 5m32s-7m14s, outpost -> outpost 5m10s)
+ *   cross body  6 + 1 = 7 min   (48 cross-body trips in 18 months of logs; floor 6m59s)
+ * Cross-body is corroborated independently: Sub's size-3 drive covers the 59.46 Gm to microTech
+ * in 4m10s, and ~3 minutes of ascent, spool and descent lands on the same number. */
+const LEG_SAME_BODY_MINUTES = 5;
+const LEG_CROSS_BODY_MINUTES = 6;
 
 /** Above this many visits, exact enumeration stops being cheap and we fall back to a heuristic. */
 const EXACT_STOP_LIMIT = 14;
@@ -250,6 +283,16 @@ function buildCtx(stops: readonly RouteStop[], opts: RouteOptions): Ctx {
     legMinutes: (from, to) => {
       // Already standing there: the second visit is the same landing, so it is free.
       if (from !== null && locOf(stops[from]) === locOf(stops[to])) return 0;
+      // Tiered cost, when the caller can say which body each end is on. Preferred over distance:
+      // see the `regionOf` note. Absent it, the old XYZ path stands so existing callers and the
+      // route tests are unchanged.
+      if (opts.regionOf) {
+        if (from === null) return stopMin;
+        const ra = opts.regionOf(locOf(stops[from]));
+        const rb = opts.regionOf(locOf(stops[to]));
+        const same = ra !== null && rb !== null && ra === rb;
+        return (same ? LEG_SAME_BODY_MINUTES : LEG_CROSS_BODY_MINUTES) + stopMin;
+      }
       const a = from === null ? (opts.startPos ?? null) : (stops[from].pos ?? null);
       const b = stops[to].pos ?? null;
       if (from === null && a === null) return stopMin;
