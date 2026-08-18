@@ -111,10 +111,6 @@ let notepadFocusPending = false; // defer focusing the note field until a held i
 let moveMode = false; // arrange mode: show the drag banner/handles (VISUAL only — interactivity stays hover-based)
 let modalOpen = false; // a HUD modal (what's-new card / hub) is up — stay hover-interactive even if locked
 let dragging = false; // an active drag/resize gesture on THIS window — force it interactive so it can't drop
-// Mirrors the window's current focusable flag so applyFocusable() only calls into Electron on a
-// real change — applyMouse runs on every cursor poll that crosses a widget boundary.
-// 🔑 Starts TRUE, matching `focusable: true` on the BrowserWindow. See applyFocusable.
-let overlayFocusable = true;
 let dragLockWatchdog = null; // see overlay:drag-lock — a lock that is never lowered is unrecoverable
 // Mining Assistant — now folded INTO the overlay canvas as an iframe widget (no separate
 // window). The shell owns its VISIBILITY (so the tray, hotkey, hub toggle, and auto-show stay
@@ -840,43 +836,6 @@ function applyMouse() {
   // the game window's bounds, not the canvas — so every other display stays click-through.
   const interactive = dragging || (hovering && canHover);
   overlay.setIgnoreMouseEvents(!interactive);
-  applyFocusable();
-}
-
-/**
- * 🔴 CLICKING A WIDGET MUST NOT TAKE FOCUS OFF THE GAME.
- *
- * Sub, 2026-08-17, tractoring boxes out of a freight elevator: "I'm really tired of my dev app
- * clicking the widget and making it the focus." It is not a bug in any widget — it is Windows doing
- * the ordinary thing. The canvas is hover-interactive by default, so a cursor sweeping over the
- * hauling panel makes this window take the click, and a click on a focusable window ACTIVATES it.
- * Star Citizen loses focus mid-gesture and the drag dies.
- *
- * `focusable: false` sets WS_EX_NOACTIVATE, which is exactly the distinction wanted: the window
- * still RECEIVES mouse messages — buttons, tabs, the set-aside ✕ all keep working — it just stops
- * being activated by them. So the click lands and the game keeps focus.
- *
- * ⚠️ Why this is gated on the game being in front, and not simply left off:
- *   - A NOACTIVATE window is not in the Alt-Tab list, and Alt-Tabbing to the overlay is the
- *     documented way to use the widgets normally on the desktop (see the skipTaskbar note on the
- *     BrowserWindow). So the moment Star Citizen is NOT the foreground app, this window goes back
- *     to being an ordinary focusable one.
- *   - Three states genuinely need the keyboard or a sticky focus, and each already brackets itself:
- *     typing in a widget's field (editStart/editEnd → notepadEditing), an active drag or resize
- *     (dragLock), and arrange mode. Those re-enable activation for their duration.
- *
- * 🔑 The fallback is "focusable", never "not". If the foreground watcher has not answered yet we do
- * NOT know the game is in front, and a wrongly-NOACTIVATE overlay is a window the user cannot click
- * into at all — far worse than the annoyance this fixes.
- */
-function applyFocusable() {
-  if (!overlay || overlay.isDestroyed()) return;
-  const needsKeyboard = notepadEditing || dragging || moveMode;
-  const gameHasFocus = foreground.ready() && foreground.gameInFront();
-  const want = needsKeyboard || !gameHasFocus;
-  if (want === overlayFocusable) return;
-  overlayFocusable = want;
-  try { overlay.setFocusable(want); } catch { /* older Electron / platform without it */ }
 }
 
 // ── Cursor-poll hover detection (replaces setIgnoreMouseEvents forward:true) ──────
@@ -1940,11 +1899,6 @@ if (!app.requestSingleInstanceLock()) {
       if (c.holdToInteract === true) holdMode = true; // opt-in: require holding the interact key
     } catch { /* defaults */ }
     foreground.want("hold", holdMode); // only track the foreground app if something asks
-    // 🔑 A STANDING want, unlike the others. "Do not steal focus from the game" needs the same
-    // answer continuously and is not opt-in — see applyFocusable. Without this the watcher only
-    // runs when hold-to-interact or the cog asks, `ready()` stays false, and the overlay would
-    // quietly keep activating on every click for anyone who has those switched off. Which is Sub.
-    foreground.want("noactivate", true);
     registerOverlayHotkey(overlayKey);
     applyWidgetHotkeys(loadedCfg); // all 11 widgets, map first then the legacy fields
     registerInteractHotkey(interactKey);
@@ -2197,13 +2151,8 @@ if (!app.requestSingleInstanceLock()) {
     // this (setMoveMode); a corner-resize or a bar-drag outside arrange did not, which is where
     // it kept biting. Focus is not handed back: the user is mid-drag on the overlay, and the
     // notepad's typing mode has behaved this way since 0.1.33.
-    // 🔑 applyMouse FIRST. It is what re-enables activation (applyFocusable) — while the game is in
-    // front this window is deliberately WS_EX_NOACTIVATE, and calling focus() on a non-activatable
-    // window does nothing at all. Focusing before that ran would silently no-op and hand the drag
-    // straight back to the game's cursor recentring, which is the exact thing this block exists to
-    // stop. The old order was harmless only because the window was always focusable.
-    applyMouse();
     if (dragging && overlay && !overlay.isDestroyed() && !overlay.isFocused()) overlay.focus();
+    applyMouse();
   });
   // The cog's "Open settings…" opens the full config window.
   ipcMain.on("overlay:open-settings", () => openSettingsSurface());
