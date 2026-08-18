@@ -3227,6 +3227,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       boxes: r.effort.boxes,
       repRate: r.repRate,
       moneyRate: r.moneyRate,
+      /* 🔴 THESE MUST BE HERE. This projection is an explicit field list, so adding a figure to
+         ScoredContract does NOT make it reach the widget — and the per-hour line then called
+         .toFixed() on undefined, threw inside renderAdvisor, and the Rank tab rendered NOTHING.
+         Sub read it as "Hull A gets no recommended missions"; it was every ship, and it was this. */
+      minutes: r.minutes,
+      repPerHour: r.repPerHour,
+      moneyPerHour: r.moneyPerHour,
       locked: r.locked,
       standing: r.standing,
     }));

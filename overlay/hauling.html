@@ -1491,10 +1491,14 @@
          mistake." Per box is what the work FEELS like and is the right key; per hour is the only
          one you can hold against an evening. Both, so neither has to be guessed at. */
       const ph = document.createElement("div"); ph.className = "ph";
+      /* Guarded. A missing figure must cost this ONE line, not the whole tab: the first cut threw
+         on undefined here and the Rank tab came back empty with no error anyone could see. */
       const hourly = advisorGoal === "rep" ? c.repPerHour : c.moneyPerHour;
-      ph.textContent = "~" + (hourly >= 100 ? num(Math.round(hourly)) : hourly.toFixed(1))
-        + (advisorGoal === "rep" ? " rep/hr" : " aUEC/hr");
-      ph.title = "Estimated for one run: about " + Math.round(c.minutes) + " minutes of loading and"
+      ph.textContent = Number.isFinite(hourly)
+        ? "~" + (hourly >= 100 ? num(Math.round(hourly)) : hourly.toFixed(1))
+          + (advisorGoal === "rep" ? " rep/hr" : " aUEC/hr")
+        : "";
+      ph.title = "Estimated for one run: about " + Math.round(c.minutes || 0) + " minutes of loading and"
         + " flying, using the travel times measured from real runs. An estimate — a run that crosses"
         + " to another planet costs a little more per leg.";
       r.appendChild(ph);
