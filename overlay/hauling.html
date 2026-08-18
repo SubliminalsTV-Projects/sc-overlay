@@ -193,6 +193,10 @@
   .stop.dropoff .num { border-color: var(--gold); color: var(--gold); }
   .stop.same .num { border-style: dashed; }
   .stop .mid { flex: 1; min-width: 0; }
+  .stop .nminp { font-family: var(--sans); font-size: 12px; font-weight: 600; width: 150px;
+    color: var(--cyan-bright); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--cyan);
+    border-radius: 4px; padding: 1px 4px; }
+  .stop .nminp:focus { outline: none; }
   .stop .nm { font-size: 12px; font-weight: 600; color: var(--cyan-bright);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stop .acts { font-size: 10px; color: var(--cyan-dim); line-height: 1.5; margin-top: 1px; }
@@ -1141,6 +1145,16 @@
 
   function renderPlaces() {
     const el = $("places");
+    /* 🔴 GONE — naming happens on the STOP now. Sub: "That is a waste of UI space. We already have
+       the name of the place down there in one, two and three... Why can't I just click that and
+       then type in the name?"
+       He is right, and it was not only about space: the panel asked "name this place" with a bare
+       site id and a commodity, and on a two-pickup Waste contract BOTH rows read the same — there
+       was no way to tell which physical stop it meant. On the route row there is no ambiguity,
+       because the row IS the stop, in order, with its tonnage and its commodity beside it. */
+    el.style.display = "none";
+    return;
+    /* eslint-disable no-unreachable -- kept: savePlace/askPlaces below still serve the inline editor */
     const all = (plan && plan.unnamedPlaces) || [];
     /* 🔴 A QUESTION YOU HAVE ANSWERED IS NOT A QUESTION. The plan hands back places you named as
        well as places nobody has, so a wrong name stays correctable — but listing them by default
@@ -1719,7 +1733,19 @@
     syncing = false;
   }
 
+  /** contract group -> the commodity any of its legs names. Built per render: only the DROP-OFF
+   *  objective states it, so a pickup row has to borrow it from its own contract. */
+  let commodityOfGroup = new Map();
+
   function renderRoute() {
+    commodityOfGroup = new Map();
+    for (const t of (plan?.trips || [])) {
+      for (const st of t.stops) {
+        for (const a of (st.actions || [])) {
+          if (a.commodity && !commodityOfGroup.has(a.group)) commodityOfGroup.set(a.group, a.commodity);
+        }
+      }
+    }
     const body = $("body");
     body.textContent = "";
     for (const n of plan.notes) {
@@ -1822,8 +1848,39 @@
           mid.className = "mid";
           const nm = document.createElement("div");
           nm.className = "nm";
-          nm.textContent = step + ". " + g.verb + " — " + s.name;
-          if (sameLanding) nm.textContent += "  (same landing)";
+          const label = step + ". " + g.verb + " — " + s.name + (sameLanding ? "  (same landing)" : "");
+          nm.textContent = label;
+          /* 🔴 NAME IT WHERE YOU SEE IT. This replaces the "Name these places" panel outright: the
+             row already knows which stop it is, in what order, carrying what — so there is nothing
+             to disambiguate and nothing to scroll to. Click the name, type, Enter.
+             The keyboard grab is the SHARED one (grabOn/grabOff): without it every keystroke goes
+             to the game instead of the box. */
+          if (s.locationId) {
+            nm.title = "Click to name this place. It sticks to these coordinates.";
+            nm.style.cursor = "text";
+            nm.addEventListener("click", (e) => {
+              e.stopPropagation();
+              if (nm.querySelector("input")) return;
+              const inp = document.createElement("input");
+              inp.type = "text";
+              inp.className = "nminp";
+              inp.value = (plan.unnamedPlaces || []).find((x) => x.locationId === s.locationId)?.yours || "";
+              inp.placeholder = s.name;
+              nm.textContent = step + ". " + g.verb + " — ";
+              nm.appendChild(inp);
+              inp.addEventListener("focus", () => grabOn(inp));
+              inp.addEventListener("blur", () => grabOff());
+              inp.addEventListener("pointerdown", (ev) => { ev.stopPropagation(); wantFocus = inp; });
+              inp.addEventListener("keydown", (ev) => {
+                if (ev.key === "Enter") { ev.preventDefault(); savePlace(s.locationId, inp.value.trim()); }
+                // Escape puts the row back without saving — a mis-click must cost nothing.
+                else if (ev.key === "Escape") { ev.preventDefault(); inp.blur(); nm.textContent = label; }
+                ev.stopPropagation();
+              });
+              inp.focus();
+              inp.select();
+            });
+          }
           const acts = document.createElement("div");
           acts.className = "acts";
           for (const a of g.acts) {
@@ -1835,7 +1892,8 @@
             c.className = "c";
             // An untracked contract does not name its commodity, so the tonnage carries the row and
             // the contract's title goes in the tooltip rather than swamping the line.
-            c.textContent = (a.commodity ? a.commodity + " " : "") + num(a.scu) + " SCU";
+            const named = a.commodity || commodityOfGroup.get(a.group);
+            c.textContent = (named ? named + " " : "") + num(a.scu) + " SCU";
             chip.title = a.title || "";
             chip.appendChild(c);
             acts.appendChild(chip);
@@ -1849,7 +1907,12 @@
           const moved = g.acts.reduce((n, a) => n + (a.scu || 0), 0);
           const ld = document.createElement("div");
           ld.className = "ld";
-          ld.textContent = num(moved) + " SCU";
+          /* 🔴 A TONNAGE WITHOUT ITS COMMODITY IS A RIDDLE. Sub: "the number one pickup says 6 SCU,
+             but it doesn't tell me what of." A pickup leg often has no commodity of its own — only
+             the drop-off objective names it — so the name is inherited from the same contract's
+             other legs rather than left blank. */
+          const cargo = [...new Set(g.acts.map((a) => a.commodity || commodityOfGroup.get(a.group)).filter(Boolean))];
+          ld.textContent = num(moved) + " SCU" + (cargo.length === 1 ? " of " + cargo[0] : "");
           ld.title = g.kind === "dropoff" ? "Comes off here." : "Goes on here.";
           rt.appendChild(ld);
           // Where the hold ends up is a fact about the LANDING, not about this action, so it is

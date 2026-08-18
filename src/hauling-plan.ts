@@ -204,6 +204,9 @@ export interface PlannedContract {
 
 export interface PlanStop {
   id: string;
+  /** The PLACE. `id` is the node ("<place>:pickup"), so anything remembering something about where
+   *  the player is standing — a name they gave it — must key on this, not on `id`. */
+  locationId: string;
   name: string;
   kind: "pickup" | "dropoff";
   /** Minutes to get here from the previous stop, including the flat per-stop overhead. */
@@ -1350,6 +1353,10 @@ function toTrip(
     const locationId = stop?.locationId ?? id;
     return {
       id,
+      /** The PLACE, as distinct from `id`, which is the node ("<place>:pickup"). Anything that
+       *  remembers something about where you are standing — a name you gave it, for instance —
+       *  must key on this. */
+      locationId,
       name: nameOf(locationId),
       kind,
       minutes: leg?.minutes ?? 0,
