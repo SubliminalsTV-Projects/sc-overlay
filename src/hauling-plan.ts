@@ -125,6 +125,16 @@ export interface PlanOptions {
    *  binds the game's numeric location ids to readable tokens, which this module cannot do because
    *  the binding has to persist. See haulingWhereAmI in overlay-server. */
   atLocation?: { token: string; at: number } | null;
+  /**
+   * The player's position in the PLANET-FIXED frame, read off the debug overlay on demand.
+   *
+   * 🔑 This is the same coordinate space every mission marker uses, so it needs no name join at
+   * all — it snaps to the nearest stop by distance. That makes it the strongest position signal
+   * available: the terminal tokens say which SITE you last touched, this says where you ARE.
+   */
+  atPos?: { x: number; y: number; z: number; at: number } | null;
+  /** How near a marker a read must land to count as that place, in metres. */
+  snapMetres?: number;
 }
 
 export interface PlannedLeg {
@@ -294,6 +304,10 @@ export interface HaulingPlan {
     /** The place the LOG put the player, independent of any manual pick — null when the game's
      *  token matched nothing on this board, or matched ambiguously. */
     detected: string | null;
+    /** "coordinates" (the debug overlay, exact) or "terminal" (the last inventory you opened). */
+    detectedBy?: "coordinates" | "terminal" | null;
+    /** Distance from the snapped marker, when it came from coordinates. */
+    detectedMetres?: number | null;
     /** The game's own id, e.g. "Stanton3b_ArcCorp_Area045". Shown when it did NOT resolve, so a
      *  failed join is diagnosable instead of just being silence. */
     detectedToken: string | null;
@@ -867,7 +881,23 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // The caller's reading wins when it has one: only it can resolve the game's numeric location ids,
   // because that binding is learned over time and has to be persisted.
   const where = opts.atLocation ?? view.atLocation;
-  const seen = where ? matchLocationToken(where.token, knownNames, data) : null;
+  const byToken = where ? matchLocationToken(where.token, knownNames, data) : null;
+  /* 🔴 A COORDINATE BEATS A TOKEN. The debug overlay's CamPos is in the planet-fixed frame — the
+     same one the mission markers are in — so it does not need matching by name at all, only by
+     distance. It is also the only signal that says where you ARE rather than which terminal you
+     last touched, so when both exist and the coordinate is the fresher one, it wins. */
+  let byPos: string | null = null;
+  let byPosMetres: number | null = null;
+  if (opts.atPos) {
+    const snap = opts.snapMetres ?? 12_000;
+    for (const [id, p] of posByLoc) {
+      if (!p) continue;
+      const d = Math.hypot(p.x - opts.atPos.x, p.y - opts.atPos.y, p.z - opts.atPos.z);
+      if (d <= snap && (byPosMetres == null || d < byPosMetres)) { byPos = id; byPosMetres = d; }
+    }
+  }
+  const posIsFresher = !!opts.atPos && (!where || opts.atPos.at >= where.at);
+  const seen = (posIsFresher && byPos) || byToken || byPos;
   const startId = opts.startAt || seen;
   // Only a place the route already touches can be an origin — an id we have no coordinates for
   // would silently become "anywhere", which is the bug, not the fix.
@@ -883,6 +913,10 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     detected: seen,
     detectedToken: where?.token ?? null,
     detectedAt: where?.at ?? null,
+    /** How the position was established, so a surprising origin is diagnosable rather than magic. */
+    detectedBy: ((posIsFresher && byPos) ? "coordinates" : byToken ? "terminal" : byPos ? "coordinates" : null) as "coordinates" | "terminal" | null,
+    /** Metres from the marker the coordinate snapped to. Null unless it came from a coordinate. */
+    detectedMetres: (posIsFresher && byPos) || (!byToken && byPos) ? byPosMetres : null,
   };
 
   /**

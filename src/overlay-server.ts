@@ -245,6 +245,16 @@ interface Config {
    * are NOT moving cargo, exactly the gap the named signal leaves.
    */
   haulingPlaceIds: Record<string, string>;
+  /**
+   * When the player last pressed "sync location", as an epoch ms.
+   *
+   * 🔑 It lives in CONFIG rather than in memory because that is the only channel to the capture
+   * loop: `electron/capture.cjs` runs in the Electron main process and re-reads config.json off
+   * disk every few seconds. Writing a timestamp here is how a widget button reaches it. A stale
+   * value is harmless — capture ignores anything older than HAULING_LOCATE_TTL_MS, so a request
+   * cannot be served hours later by a restart.
+   */
+  haulingLocateAt: number;
   /* ⛔ NO haulingRank / haulingRep. A picker was built here and it was wrong twice over, both
      caught by Sub within minutes:
        1. The app ALREADY KNOWS. MissionTracker.repDiagnostics() carries every giver's witnessed
@@ -454,6 +464,7 @@ const DEFAULTS: Config = {
   haulingPlaces: {},
   haulingSeenPlaces: [],
   haulingPlaceIds: {},
+  haulingLocateAt: 0,
   webViewOpen: false,
   // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
   // it's the page most likely to be wanted beside the game, and it shows what the widget does.
@@ -1213,6 +1224,31 @@ function advisorContracts(): AdvisorContract[] {
   console.log(`[hauling] advisor: ${advisorRows.length} rankable contract types`);
   return advisorRows;
 }
+
+/**
+ * ── SYNC LOCATION: reading the player's position off the debug overlay ───────────────────────
+ *
+ * 🔑 WHY IT EXISTS. `r_DisplayInfo 1` prints `CamPos Planet Zone` — the player's position in the
+ * PLANET-FIXED frame, which is the same frame every mission marker uses. Checked against Sub's own
+ * screenshot: his CamPos was 2.26 km from Baijini Point's marker while he stood in Baijini's
+ * hangar, and the implied altitude matched the overlay's own figure to 17 m. So this is not an
+ * approximation of position, it IS the position, in the coordinates the router already speaks.
+ *
+ * ⛔ AND IT IS ON DEMAND ONLY, because Sub was clear: "I don't want the app to rely on having this
+ * up on screen… it takes up way too much of the screen." One press reads one frame and stops.
+ *
+ * 🔴 THE OCR REALITY, measured by running the app's own RapidOCR over his screenshot: every DIGIT
+ * came back perfect across all twelve significant figures, while LETTERS were mangled freely
+ * ("RR ARc LE0", "ooc Stanton 3", "Pa9e"). So the parse keys on the coordinates and ignores the
+ * text tokens entirely — the one thing needed is the one thing this engine is reliable at.
+ */
+const HAULING_LOCATE_TTL_MS = 20_000;
+/** How near a marker the read has to land to be called the same place. Generous: a station's
+ *  marker is one point and its hangars are spread over kilometres — Sub read 2.26 km standing
+ *  inside Baijini. Beyond this the answer is "somewhere else", never a guess at the nearest. */
+const HAULING_LOCATE_SNAP_M = 12_000;
+/** The last read the capture loop delivered, and its outcome, for the widget to collect. */
+let haulingLocate: { at: number; ok: boolean; pos?: { x: number; y: number; z: number }; error?: string } | null = null;
 
 /** How close together a numeric id and a readable token must appear to count as the same place.
  *  Generous: they come from different terminals at one site and a player wanders between the ASOP
@@ -3103,6 +3139,47 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     }));
     return;
   }
+  /**
+   * Ask the capture loop to read the player's position off the debug overlay — one shot.
+   *
+   * POST arms it (writing the timestamp to config, the only channel to the Electron main process).
+   * GET collects whatever came back. The widget polls the GET for a few seconds and gives up.
+   */
+  if (url === "/api/hauling/locate" && req.method === "POST") {
+    config.haulingLocateAt = Date.now();
+    haulingLocate = null;                      // a new press invalidates the previous answer
+    await saveConfig();                        // awaited: capture reads this file, so it must land
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, armed: true }));
+    return;
+  }
+  if (url === "/api/hauling/locate" && req.method === "GET") {
+    const pending = Date.now() - config.haulingLocateAt < HAULING_LOCATE_TTL_MS && !haulingLocate;
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, pending, result: haulingLocate }));
+    return;
+  }
+  /**
+   * The capture loop delivering a read. Body is either the parsed CamPos triple or a reason it
+   * could not be found — an explicit failure, because "nothing happened" is the one outcome the
+   * player cannot act on.
+   */
+  if (url === "/api/hauling/locate-result" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    const p = body.pos as { x?: unknown; y?: unknown; z?: unknown } | undefined;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const x = n(p?.x), y = n(p?.y), z = n(p?.z);
+    haulingLocate = x != null && y != null && z != null
+      ? { at: Date.now(), ok: true, pos: { x, y, z } }
+      : { at: Date.now(), ok: false, error: typeof body.error === "string" ? body.error : "no CamPos line found" };
+    // Serving the request closes it, so a later tick does not re-read for a press already answered.
+    config.haulingLocateAt = 0;
+    void saveConfig();
+    hauling.emit("change");                    // re-solve, so the origin lands immediately
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
   /** Name a place by hand — or clear it by sending an empty name. Keyed by the planner's location
    *  id, which IS the coordinates (see PlanOptions.placeNames). */
   if (url === "/api/hauling/place" && req.method === "POST") {
@@ -3154,6 +3231,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // Where the player is, with the game's numeric location ids resolved through the bindings
       // this process has learned. See haulingWhereAmI.
       atLocation: haulingWhereAmI(hauling.view()),
+      // The on-demand coordinate read, when one has landed. Same frame as the mission markers, so
+      // it snaps by distance rather than by name — see PlanOptions.atPos.
+      atPos: haulingLocate?.ok && haulingLocate.pos
+        ? { ...haulingLocate.pos, at: haulingLocate.at }
+        : null,
+      snapMetres: HAULING_LOCATE_SNAP_M,
     });
     // 🔑 LEARN EVERY NAME THE GAME STATES. locations.json does not carry city spaceports —
     // "Riker Memorial Spaceport" is not in its 1,968 rows — so the dataset alone cannot offer the
