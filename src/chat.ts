@@ -176,7 +176,17 @@ export function regionFamily(region: string | null): string | null {
 export function shardLabel(shard: string | null): string {
   if (!shard) return "Shard";
   const seg = shard.split("_");
-  return `Shard ${seg[seg.length - 1] ?? shard}`;
+  const n = seg[seg.length - 1] ?? shard;
+  /* 🔴 NAME THE REGION AND THE SHARD TOGETHER. "Shard 140" beside a tab called "US East 1B" read
+     as two different rooms, and the region one implied an audience it never had. Sub: "we are
+     calling it US East 1B, but you can't call it that... the server that I'm on is US East 1B 140.
+     That would be a better way to describe it... so that they don't think that they're talking to
+     everyone who is in any US East 1B, regardless of the shard."
+     A shard is what he calls the server, so the label names the server: region AND number. */
+  const region = regionOfShard(shard);
+  if (region) return `${regionLabel(region)} ${n}`;
+  // No region means this is not a public shard id — "local_shard" gave the useless "Shard shard".
+  return /^\d+$/.test(n) ? `Shard ${n}` : "Shard";
 }
 
 export class ChatClient extends EventEmitter {
@@ -392,8 +402,15 @@ export class ChatClient extends EventEmitter {
     // 🔑 The HASH goes on the wire, never the endpoint. The server keys the room on whatever
     // it is given, so if the raw ip:port ever left this process it would be published to every
     // user of the channel.
+    /* 🔴 NO REGION ROOM. Region membership could never differ from shard membership — both were
+       derived from the same shard string, so `regionOfShard(shard)` is a function OF the shard and
+       the two rooms always held exactly the same people. The region tab was a duplicate that
+       implied a wider audience than it had, which is the whole of Sub's complaint.
+       The tiers that mean something are: everyone using the app (global), your server (shard), and
+       the machine you are actually on (DGS). Sent as null rather than removed from the frame, so
+       the server contract is unchanged and this is one line to reverse. */
     this.wsSend({
-      t: "loc", region: regionOfShard(this.shard), shard: this.shard,
+      t: "loc", region: null, shard: this.shard,
       dgs: dgsKey(this.shard, this.dgs),
     });
   }
@@ -568,7 +585,10 @@ export class ChatClient extends EventEmitter {
     if (kind === "shard") return shardLabel(ch.slice("shard:".length));
     // The key is a digest, so it can't be rendered — and it would mean nothing to a player if
     // it could. What matters is what it MEANS: these are the people around you right now.
-    if (kind === "dgs") return "Nearby";
+    /* Sub asked for this tab to say DGS. "Nearby" described what it MEANS — the players physically
+       around you — but it shares the vagueness that made the region tab misleading: it does not say
+       how wide the room is. A DGS is a specific thing inside a shard and he uses the term. */
+    if (kind === "dgs") return "DGS";
     // A DM is titled with the OTHER person. The key holds both handles lowercased, so pick the
     // one that isn't you; the server's joined frame carries their real casing and overwrites it.
     if (kind === "dm") {
