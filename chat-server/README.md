@@ -5,9 +5,17 @@ Game.log:
 
 | channel | who | from |
 |---|---|---|
-| `global` | everyone using the app | always joined |
-| `region:use1b` | same region/AZ — "the server" in player speak | segment 2 of the shard id |
-| `shard:pub_use1b_12326004_040` | same universe instance — people you can actually meet | `<Join PU>` / `<Update Shard Id>` log lines |
+| `global` | everyone using the app, in game or not | always joined |
+| `shard:pub_use1b_12326004_040` | same universe instance — "the server" in player speak, and the people you can actually meet. Shown as **US East 1B 040** | `<Join PU>` / `<Update Shard Id>` log lines |
+| `dgs:<10-hex>` | the Dynamic Game Server you are on — who is around you right now | `sha256(shard\|ip:port)`, hashed client-side |
+
+> **There is no region room.** One existed until 2026-08-18 and was retired: a tab named "US East
+> 1B" claims an audience of every shard CIG runs in that region, which is not a group anyone can
+> meet up with. The shard is the coarsest tier a player can act on. `region` is still accepted in
+> the `loc` frame so older clients are not errors; it opens nothing.
+>
+> ⚠️ The DGS key is a HASH and must stay one — a room key is broadcast to everyone in the room, so
+> a raw `ip:port` would publish a live map of which CIG servers are up and who is on them.
 
 The **sidecar** (`src/chat.ts`) holds the one socket per app and fans out to the Chat widget
 over SSE. No socket exists unless the widget is open.
