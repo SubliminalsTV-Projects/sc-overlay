@@ -726,12 +726,19 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
     // arming the loop would burn OCR for nothing.
     const payout = cfg.payoutScan === true && !!cfg.contractRegion;
     /* 🔑 A pending "sync location" press arms the loop ON ITS OWN. Every other consumer here is an
-       opt-in feature, so a player with all of them off would otherwise have no capture loop for the
-       button to piggyback on — and that is exactly the player this button is for, since Sub's whole
-       requirement was not having to leave anything running. Expires on its own (see the TTL), so a
-       press that never gets served cannot keep the loop alive. */
-    const locateAt = Number(cfg.haulingLocateAt || 0);
-    const locate = locateAt > 0 && Date.now() - locateAt < LOCATE_TTL_MS;
+       opt-in feature, so a player with all of them off would have no capture loop for the button to
+       piggyback on — and that is exactly the player this is for, since the whole requirement was
+       not leaving anything running.
+       ⚠️ ASKED OVER HTTP, NOT READ FROM CONFIG. The first cut routed the press through config.json
+       because capture re-reads it each tick — but that channel is write-only from here and
+       impossible to observe, and when the button did nothing there was no way to tell whether the
+       request had ever arrived. This costs one localhost GET every few seconds and can be checked
+       with curl. */
+    let locate = false;
+    try {
+      const lr = await fetch(`http://localhost:${port}/api/hauling/locate`, { signal: AbortSignal.timeout(1500) });
+      if (lr.ok) locate = (await lr.json()).pending === true;
+    } catch { /* sidecar busy or restarting — just no request this tick */ }
     fgWatch.want("ocr", fab || miss || mining || claim || payout || locate);
     if (!fab && !miss && !mining && !claim && !payout && !locate) { emitContext("off"); return; }
     // Watchdog: a single hung await (e.g. a fetch to the sidecar while it's restarting during an

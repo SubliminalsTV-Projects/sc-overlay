@@ -245,16 +245,6 @@ interface Config {
    * are NOT moving cargo, exactly the gap the named signal leaves.
    */
   haulingPlaceIds: Record<string, string>;
-  /**
-   * When the player last pressed "sync location", as an epoch ms.
-   *
-   * 🔑 It lives in CONFIG rather than in memory because that is the only channel to the capture
-   * loop: `electron/capture.cjs` runs in the Electron main process and re-reads config.json off
-   * disk every few seconds. Writing a timestamp here is how a widget button reaches it. A stale
-   * value is harmless — capture ignores anything older than HAULING_LOCATE_TTL_MS, so a request
-   * cannot be served hours later by a restart.
-   */
-  haulingLocateAt: number;
   /* ⛔ NO haulingRank / haulingRep. A picker was built here and it was wrong twice over, both
      caught by Sub within minutes:
        1. The app ALREADY KNOWS. MissionTracker.repDiagnostics() carries every giver's witnessed
@@ -464,7 +454,6 @@ const DEFAULTS: Config = {
   haulingPlaces: {},
   haulingSeenPlaces: [],
   haulingPlaceIds: {},
-  haulingLocateAt: 0,
   webViewOpen: false,
   // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
   // it's the page most likely to be wanted beside the game, and it shows what the widget does.
@@ -1249,6 +1238,15 @@ const HAULING_LOCATE_TTL_MS = 20_000;
 const HAULING_LOCATE_SNAP_M = 12_000;
 /** The last read the capture loop delivered, and its outcome, for the widget to collect. */
 let haulingLocate: { at: number; ok: boolean; pos?: { x: number; y: number; z: number }; error?: string } | null = null;
+/**
+ * When the player last pressed Sync, in memory.
+ *
+ * ⚠️ NOT in config. The first cut wrote it to config.json because the capture loop re-reads that
+ * file each tick — but that channel is write-only from the sidecar's side and impossible to
+ * observe, so when the button did nothing there was no way to tell whether the request had even
+ * arrived. Capture now GETs this endpoint instead, which curl can check.
+ */
+let haulingLocateAt = 0;
 
 /** How close together a numeric id and a readable token must appear to count as the same place.
  *  Generous: they come from different terminals at one site and a player wanders between the ASOP
@@ -3146,15 +3144,14 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
    * GET collects whatever came back. The widget polls the GET for a few seconds and gives up.
    */
   if (url === "/api/hauling/locate" && req.method === "POST") {
-    config.haulingLocateAt = Date.now();
+    haulingLocateAt = Date.now();
     haulingLocate = null;                      // a new press invalidates the previous answer
-    await saveConfig();                        // awaited: capture reads this file, so it must land
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true, armed: true }));
     return;
   }
   if (url === "/api/hauling/locate" && req.method === "GET") {
-    const pending = Date.now() - config.haulingLocateAt < HAULING_LOCATE_TTL_MS && !haulingLocate;
+    const pending = Date.now() - haulingLocateAt < HAULING_LOCATE_TTL_MS && !haulingLocate;
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true, pending, result: haulingLocate }));
     return;
@@ -3173,8 +3170,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       ? { at: Date.now(), ok: true, pos: { x, y, z } }
       : { at: Date.now(), ok: false, error: typeof body.error === "string" ? body.error : "no CamPos line found" };
     // Serving the request closes it, so a later tick does not re-read for a press already answered.
-    config.haulingLocateAt = 0;
-    void saveConfig();
+    haulingLocateAt = 0;
     hauling.emit("change");                    // re-solve, so the origin lands immediately
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true }));
