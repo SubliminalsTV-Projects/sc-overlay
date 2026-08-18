@@ -229,5 +229,39 @@ const nonMonotone = real.filter((c) => c.boxesAtScuLo > c.boxesAtScuHi);
 check("the non-monotone partition case is present in shipped data", nonMonotone.length === 1,
   nonMonotone.map((c) => `${c.key} ${c.scuLo}scu=${c.boxesAtScuLo}box vs ${c.scuHi}scu=${c.boxesAtScuHi}box`).join("; "));
 
+// ── the hold is a gate ────────────────────────────────────────────────────────────────────────
+/* 🔴 REACHED SUB IN THE APP. He selected an Anvil Paladin — one grid, ~4 SCU, whose shape takes
+   nothing bigger than a 1 SCU container — and the board went on recommending contracts that ship
+   8 SCU boxes. Total capacity was never the right test: a container is indivisible, so the
+   question is whether ONE fits, and that is geometric. */
+{
+  const paladinish = 1;   // what largestBoxScu() returns for the real Anvil Paladin
+  const c2ish = 32;       // ...and for the real Crusader C2
+
+  const gated = rankContracts([big], { maxBoxScu: paladinish });
+  check("an 8+ SCU container is flagged oversize for a hold that takes 1 SCU boxes",
+    gated.length === 1 && gated[0].oversize === true,
+    gated.map((r) => r.contract.key + " oversize=" + r.oversize).join("; "));
+
+  const roomy = rankContracts([big], { maxBoxScu: c2ish });
+  check("...and is NOT flagged for a hull that can take it",
+    roomy.length === 1 && roomy[0].oversize === false, String(roomy[0]?.oversize));
+
+  /* Unknown hull must flag NOTHING: "we do not know what you are flying" reading as "it does not
+     fit" would quietly empty the board for every player who has not picked a ship. */
+  check("an unknown hull flags nothing", rankContracts([big], {}).every((r) => !r.oversize));
+
+  check("dropOversize removes them outright",
+    rankContracts([big], { maxBoxScu: paladinish, dropOversize: true }).length === 0);
+
+  /* Both sides asserted non-empty, or this passes on a board where nothing was gated at all. */
+  const mixed = rankContracts([big, jagged], { maxBoxScu: 4 });
+  const fits = mixed.filter((r) => !r.oversize);
+  const cannot = mixed.filter((r) => r.oversize);
+  check("cannot-fit sorts below can-fit", fits.length > 0 && cannot.length > 0
+    && mixed.findIndex((r) => r.oversize) === fits.length,
+    mixed.map((r) => r.contract.key + ":" + (r.oversize ? "no" : "yes")).join(" "));
+}
+
 console.log(failures ? `\n${failures} FAILED` : "\nall passed");
 process.exit(failures ? 1 : 0);

@@ -109,3 +109,48 @@ export function partitionBoxCount(partition: Partition): number {
 export function formatPartition(partition: Partition): string {
   return partition.boxes.map((b) => `${b.count}x${b.scu}`).join(" · ");
 }
+
+/** The shape of a cargo grid this module needs — structural, so it does not import the packer. */
+export interface BoxFitGrid {
+  w: number;
+  l: number;
+  h: number;
+  /** Per-axis `maxPermittedItemSize` in cells, when the grid states one. */
+  maxBox?: { x: number; y: number; z: number };
+}
+
+/**
+ * Does this box physically fit this grid? Yaw (x<->y) is the only re-orientation a box gets, so
+ * both footprints are tried; height never rotates.
+ */
+export function boxFitsGrid(box: BoxSpec, g: BoxFitGrid): boolean {
+  const [dx, dy, dz] = box.dims;
+  if (dz > g.h) return false;
+  const laysFlat = (x: number, y: number) => x <= g.w && y <= g.l;
+  if (!laysFlat(dx, dy) && !laysFlat(dy, dx)) return false;
+  if (g.maxBox) {
+    if (dz > g.maxBox.z) return false;
+    const withinCap = (x: number, y: number) => x <= g.maxBox!.x && y <= g.maxBox!.y;
+    if (!withinCap(dx, dy) && !withinCap(dy, dx)) return false;
+  }
+  return true;
+}
+
+/**
+ * The largest single container this ship can physically accept, in SCU — the max over every box
+ * size that fits at least one of its grids.
+ *
+ * 🔴 A HOLD'S TOTAL IS NOT WHAT DECIDES THIS. Sub picked an Anvil Paladin (4 SCU) and the board
+ * still offered him contracts that ship 8 SCU containers. You cannot take half a container, so
+ * total capacity was never the right test: the question is whether ONE box fits at all, and it is
+ * geometric. ships.json grids carry asymmetric `maxBox` caps, which is why the fit is per-axis and
+ * tried both ways round rather than compared against a volume.
+ *
+ * Returns null for a ship with no grids at all, which means "we cannot say" — never "nothing fits".
+ */
+export function largestBoxScu(grids: readonly BoxFitGrid[], set: readonly BoxSpec[] = DEFAULT_BOX_SET): number | null {
+  if (!grids.length) return null;
+  let best = 0;
+  for (const box of set) if (box.scu > best && grids.some((g) => boxFitsGrid(box, g))) best = box.scu;
+  return best || null;
+}

@@ -17,7 +17,8 @@ import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
 import { canAutoLoad } from "./hauling-autoload.js";
-import { buildHaulingPlan } from "./hauling-plan.js";
+import { buildHaulingPlan, gridsOf } from "./hauling-plan.js";
+import { largestBoxScu } from "./cargo-boxes.js";
 import {
   buildContracts, climbToNextRung, rankContracts, regimeFor, rungAt, HAULING_LADDER,
   type AdvisorContract,
@@ -3122,7 +3123,14 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
        wrong across four — so it is called with no standing at all (nothing locked) and the lock is
        applied here, against the giver each contract actually belongs to. A contract from a faction
        we have never worked for gates on 0, which is correct: that is exactly what the board shows. */
-    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true, missionType: wantType || null })
+    /* 🔴 THE HOLD IS A GATE, NOT A HINT. A 4 SCU Paladin was being offered contracts that ship
+       8 SCU containers, and a container cannot be split — so the board was recommending work the
+       selected ship physically cannot take. Resolved the same way the planner resolves it, so a
+       hull the planner understands is a hull this understands. Unknown hull => null => nothing
+       flagged, which is the only safe reading of "we do not know what you are flying". */
+    const hull = ship?.trim() ? haulingData.ship(ship.trim()) : null;
+    const maxBoxScu = hull ? largestBoxScu(gridsOf(hull)) : null;
+    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true, missionType: wantType || null, maxBoxScu })
       .map((r) => {
         const giver = r.contract.giver ?? "";
         const standing = standings.get(giver) ?? 0;
@@ -3132,8 +3140,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         const locked = idx >= 0 && HAULING_LADDER[idx].minRep > standing;
         return { ...r, locked, giver, standing };
       })
-      .sort((a, b) => Number(a.locked) - Number(b.locked) || b.score - a.score
-        || a.effort.stops - b.effort.stops || a.effort.boxes - b.effort.boxes);
+      /* Cannot-fit sinks below cannot-yet. This re-sort exists because `locked` is recomputed
+         per giver above, and it has to carry `oversize` too or rankContracts' ordering is lost. */
+      .sort((a, b) => Number(a.oversize) - Number(b.oversize) || Number(a.locked) - Number(b.locked)
+        || b.score - a.score || a.effort.stops - b.effort.stops || a.effort.boxes - b.effort.boxes);
     const regime = regimeFor(ship);
     // The rate to quote the climb against: what the player is actually managing, else the plan's
     // forecast. See haulingClimb — a modelled per-run time would be a floor, not an answer.

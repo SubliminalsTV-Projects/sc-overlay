@@ -377,7 +377,7 @@ export function boxSetFrom(boxes: Record<string, BoxSize>): readonly BoxSpec[] {
 }
 
 /** ships.json grids -> the packer's shape. Identical fields; the name is the hardpoint. */
-function gridsOf(ship: Ship): GridSpec[] {
+export function gridsOf(ship: Ship): GridSpec[] {
   return ship.grids.map((g, i) => ({
     name: g.port ?? `grid ${i + 1}`,
     w: g.w,

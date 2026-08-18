@@ -351,6 +351,13 @@ export interface RankOptions {
   includeLocked?: boolean;
   /** Restrict to one mission type ("Hauling - Planetary"), as the board groups them. */
   missionType?: string | null;
+  /** The largest single container this ship can accept, in SCU — see largestBoxScu(). Contracts
+   *  shipping a bigger box are flagged `oversize`. Omit when the ship is unknown: an absent value
+   *  flags nothing, because "we do not know the hull" must never read as "it does not fit". */
+  maxBoxScu?: number | null;
+  /** Drop oversize contracts instead of flagging them. Default false, matching `includeLocked`:
+   *  seeing what a bigger hull would unlock is the same kind of useful as seeing the next rung. */
+  dropOversize?: boolean;
 }
 
 export interface ScoredContract {
@@ -364,6 +371,8 @@ export interface ScoredContract {
   score: number;
   /** True when the contract's rung is above the player's standing. */
   locked: boolean;
+  /** True when one of this contract's containers is too big for the ship to take at all. */
+  oversize: boolean;
 }
 
 /**
@@ -390,10 +399,18 @@ export function rankContracts(contracts: AdvisorContract[], opts: RankOptions = 
     const idx = c.rank ? HAULING_LADDER.findIndex((r) => r.name === c.rank) : -1;
     const locked = reachIdx != null && idx >= 0 && idx > reachIdx;
     if (locked && opts.includeLocked === false) continue;
-    rows.push({ contract: c, effort, repRate, moneyRate, score: goal === "rep" ? repRate : moneyRate, locked });
+    /* 🔴 A CONTAINER IS INDIVISIBLE. Sub picked an Anvil Paladin, whose hold takes 4 SCU, and was
+       still offered contracts that ship 8 SCU boxes — he cannot take one, let alone the load. This
+       is a separate gate from `locked`: rank says you are not allowed, this says you cannot fit it
+       in the ship you are sitting in. Unknown hull flags nothing. */
+    const oversize = opts.maxBoxScu != null && c.maxContainerScu > opts.maxBoxScu;
+    if (oversize && opts.dropOversize) continue;
+    rows.push({ contract: c, effort, repRate, moneyRate, score: goal === "rep" ? repRate : moneyRate, locked, oversize });
   }
 
   rows.sort((a, b) =>
+    // Cannot-fit sinks below cannot-yet: a rung is a matter of time, a hold is a matter of fact.
+    Number(a.oversize) - Number(b.oversize) ||
     Number(a.locked) - Number(b.locked) ||
     b.score - a.score ||
     a.effort.stops - b.effort.stops ||
