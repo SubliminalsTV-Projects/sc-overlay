@@ -1460,7 +1460,7 @@
     n.className = "n";
     // The unit is not decoration — under a manual hull there IS no published per-box timing, so
     // the honest denominator is boxes, and saying so is what stops the number being read as time.
-    n.textContent = advisor.regime === "auto" ? "per second of loading" : "per box you move";
+    n.textContent = "per hour, loading and flying";
     n.title = advisor.regime === "auto"
       ? "This hull auto-loads, so the cost is the station arm's published seconds."
       : "You load this hull by hand, and the tractor-beam grind has no published timing — so the"
@@ -1511,11 +1511,15 @@
       }
       const r = document.createElement("div"); r.className = "r";
       const v = document.createElement("div"); v.className = "v";
+      /* The headline is the SORT key, and the sort is per hour — see rankContracts. Showing one
+         number and ordering by another is how a list looks broken. */
+      const hourly0 = advisorGoal === "rep" ? c.repPerHour : c.moneyPerHour;
       const rate = advisorGoal === "rep" ? c.repRate : c.moneyRate;
-      v.textContent = rate >= 100 ? Math.round(rate) : rate.toFixed(rate >= 10 ? 1 : 2);
+      v.textContent = Number.isFinite(hourly0)
+        ? (hourly0 >= 1000 ? Math.round(hourly0 / 1000) + "k" : Math.round(hourly0))
+        : (rate >= 100 ? Math.round(rate) : rate.toFixed(rate >= 10 ? 1 : 2));
       const u = document.createElement("div"); u.className = "u";
-      u.textContent = advisorGoal === "rep" ? "rep/box" : "aUEC/box";
-      if (advisor.regime === "auto") u.textContent = advisorGoal === "rep" ? "rep/s" : "aUEC/s";
+      u.textContent = advisorGoal === "rep" ? "rep/hr" : "aUEC/hr";
       r.append(v, u);
       /* 🔴 PER BOX IS THE SORT, PER HOUR IS THE SENSE. Ranked by rep/box the list opened with 41.7
          rep/box and Sub had to work out for himself that it was tiny 1 SCU boxes — "we need another
@@ -1525,14 +1529,15 @@
       const ph = document.createElement("div"); ph.className = "ph";
       /* Guarded. A missing figure must cost this ONE line, not the whole tab: the first cut threw
          on undefined here and the Rank tab came back empty with no error anyone could see. */
-      const hourly = advisorGoal === "rep" ? c.repPerHour : c.moneyPerHour;
-      ph.textContent = Number.isFinite(hourly)
-        ? "~" + (hourly >= 100 ? num(Math.round(hourly)) : hourly.toFixed(1))
-          + (advisorGoal === "rep" ? " rep/hr" : " aUEC/hr")
-        : "";
-      ph.title = "Estimated for one run: about " + Math.round(c.minutes || 0) + " minutes of loading and"
-        + " flying, using the travel times measured from real runs. An estimate — a run that crosses"
-        + " to another planet costs a little more per leg.";
+      ph.textContent = (rate >= 100 ? Math.round(rate) : rate.toFixed(rate >= 10 ? 1 : 2))
+        + (advisor.regime === "auto"
+             ? (advisorGoal === "rep" ? " rep/s loading" : " aUEC/s loading")
+             : (advisorGoal === "rep" ? " rep/box" : " aUEC/box"));
+      ph.title = "What the work feels like in the hand — per box you move (or per second of the"
+        + " station arm's published loading time, on a hull that loads itself)."
+        + "  The list is"
+        + " ordered by the per-hour figure above, which also counts the stops and the flying between"
+        + " them: about " + Math.round(c.minutes || 0) + " minutes for one run of this.";
       r.appendChild(ph);
       /* 🔴 THE ROW IS A LINK. Everything this widget can say about a contract type is already on
          the row; the rest — what it pays where, who gives it, what it looks like — lives on the

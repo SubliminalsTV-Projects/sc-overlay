@@ -429,6 +429,10 @@ export function rankContracts(contracts: AdvisorContract[], opts: RankOptions = 
     const effort = handlingEffort(c, regime);
     const repRate = c.rep / effort.cost;
     const moneyRate = c.payout / effort.cost;
+    const minutes = runMinutes(effort);
+    const hours = minutes / 60;
+    const repPerHour = hours > 0 ? c.rep / hours : 0;
+    const moneyPerHour = hours > 0 ? c.payout / hours : 0;
     // An unparseable title has no rung, so it cannot be gated — treat it as open.
     const idx = c.rank ? HAULING_LADDER.findIndex((r) => r.name === c.rank) : -1;
     const locked = reachIdx != null && idx >= 0 && idx > reachIdx;
@@ -439,12 +443,19 @@ export function rankContracts(contracts: AdvisorContract[], opts: RankOptions = 
        in the ship you are sitting in. Unknown hull flags nothing. */
     const oversize = opts.maxBoxScu != null && c.maxContainerScu > opts.maxBoxScu;
     if (oversize && opts.dropOversize) continue;
-    const minutes = runMinutes(effort);
-    const hours = minutes / 60;
-    rows.push({ contract: c, effort, repRate, moneyRate, score: goal === "rep" ? repRate : moneyRate,
-                locked, oversize, minutes,
-                repPerHour: hours > 0 ? c.rep / hours : 0,
-                moneyPerHour: hours > 0 ? c.payout / hours : 0 });
+    /* 🔴 THE SORT IS PER HOUR. It was per unit of HANDLING — rep per box under manual, rep per
+       second of loading under auto — on the reasoning that boxes are what the work feels like and
+       that manual has no published timing to divide by.
+       That reasoning expired the moment travel became measurable. Per-box implicitly prices flying
+       at zero, so it ranks a fiddly-but-close contract above a fat one, and Sub caught it on his
+       own board: `Member Rank - Direct Small Cargo Haul` at 3,214 rep/hr sat FOURTH, below three
+       contracts earning 1,400-2,200, purely because it moves 8 boxes instead of 4. He asked the
+       right question — "isn't our per hour algorithm factoring in the box sizes and quantity?" It
+       is, plus the stops and the travel between them, which is exactly why it is the better key.
+       Per-box is still shown, because it is still what the work feels like in the hand. */
+    rows.push({ contract: c, effort, repRate, moneyRate,
+                score: goal === "rep" ? repPerHour : moneyPerHour,
+                locked, oversize, minutes, repPerHour, moneyPerHour });
   }
 
   rows.sort((a, b) =>
