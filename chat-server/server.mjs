@@ -372,11 +372,16 @@ function roomSend(ch, frame) {
   const text = JSON.stringify(frame);
   for (const c of r.members) if (c.ws.readyState === 1) c.ws.send(text);
 }
-/** In the PU right now, as far as their own game.log is concerned. Membership of a `region:`
+/** In the PU right now, as far as their own game.log is concerned. Membership of a `shard:`
  *  room is the ONLY evidence of it the server has, and it is good evidence: the client joins one
- *  off a `Join PU` line and the sidecar drops it after 15 minutes of an untouched log. */
+ *  off a `Join PU` line and the sidecar drops it after 15 minutes of an untouched log.
+ *
+ *  ⚠️ This read `region:` until 2026-08-18. When the region tier was retired it silently became
+ *  permanently false — every player's "in game" dot would have vanished in every room, with
+ *  nothing in the location code looking wrong. The server test caught it; nothing else would
+ *  have. The evidence is the same evidence, it just lives under a different prefix now. */
 const inPu = (conn) => {
-  for (const ch of conn.channels) if (ch.startsWith("region:")) return true;
+  for (const ch of conn.channels) if (ch.startsWith("shard:")) return true;
   return false;
 };
 
@@ -410,7 +415,8 @@ function presence(ch) {
       // 🔴 There is deliberately NO "offline" here. Everyone in a presence list is connected by
       // definition; someone you cannot see is simply absent from the list, and saying "offline"
       // about them would be a confident lie about a person sitting in a room you never joined.
-      for (const ch of c.channels) if (ch.startsWith("region:")) { m.inGame = true; break; }
+      // Same evidence as inPu() — see its note. Was `region:` until the tier was retired.
+      for (const ch of c.channels) if (ch.startsWith("shard:")) { m.inGame = true; break; }
       seen.set(c.handleLower, m);
     }
     roomSend(ch, { t: "presence", ch, count: seen.size, members: [...seen.values()].slice(0, MEMBERS_CAP) });
@@ -673,16 +679,26 @@ function locChannels(loc) {
   const region = typeof loc.region === "string" ? loc.region.toLowerCase() : "";
   const shard = typeof loc.shard === "string" ? loc.shard : "";
   const dgs = typeof loc.dgs === "string" ? loc.dgs.toLowerCase() : "";
-  if (REGION_RE.test(region)) out.push(`region:${region}`);
-  // 🔑 NO shard room. Dropped 2026-08-09 on Sub's call. Two location tiers, not three:
-  //   region  use1b   everyone on US East 1B — the LETTER is part of the key, so 1A and 1B
-  //                   are different rooms and someone on 1A never sees this one
-  //   dgs     <hash>  the Dynamic Game Server actually running where you are — who is around
-  //                   you right now
-  // The shard sat between them with no meaning a player could act on: it is an implementation
-  // detail of how CIG splits a region, and it kept showing three people when only one was
-  // genuinely nearby. `shard` is still ACCEPTED in the frame because it salts the DGS hash and
-  // v1 clients send it; it just no longer opens a room of its own.
+  // 🔴 REVERSED 2026-08-18, on Sub's call — the tiers are now SHARD and DGS, not region and DGS.
+  //
+  // The 2026-08-09 reasoning was that a shard is an implementation detail of how CIG splits a
+  // region, with no meaning a player could act on. What that missed is the READING: a tab named
+  // "US East 1B" is a claim about who is listening, and it was wrong by a factor of however many
+  // shards CIG is running. Sub, seeing it against his own shard: "we are calling it US East 1B,
+  // but you can't call it that... so that they don't think that they're talking to everyone who
+  // is in any US East 1B, regardless of the shard."
+  //
+  // A shard IS actionable, in his own words the thing he calls the server: two people on one
+  // shard can meet in game; two people in one region generally cannot. So:
+  //   shard  pub_use1b_<build>_<nnn>   everyone on YOUR server — the room a player can act on
+  //   dgs    <hash>                    the Dynamic Game Server you are on — who is around you now
+  // Region no longer opens a room. It was never a tier anyone could use, and its label was the
+  // thing actively misleading people.
+  //
+  // ⚠️ `region` is still accepted and shape-checked in the frame so v1 clients are not errors;
+  // it simply opens nothing.
+  void region;
+  if (SHARD_RE.test(shard)) out.push(`shard:${shard}`);
   // 🔑 The client sends a HASH of ip:port, never the endpoint, so this server never learns and
   // never rebroadcasts a CIG address. Shape-checked so the key space stays exactly what the
   // client can produce and a crafted value cannot smuggle in a prefix.

@@ -743,14 +743,18 @@
   // Group headings for the left rail, in the same order the tabs run.
   const GROUPS = [
     { kind: "global", title: "Universe" },
-    { kind: "region", title: "Server" },
-    // No "Shard" group. It sat between the region and the DGS with nothing a player could do
-    // with it, and it reported three people when one was actually nearby (Sub, 2026-08-09).
-    // The kind is still handled everywhere else so a client that somehow lands in a leftover
-    // shard room can still read it — it just is not a heading any more.
-    // The DGS - the server actually running where you are. Finest of the three location
-    // tiers, and the only one that means "people I could physically run into right now".
-    { kind: "dgs", title: "Nearby" },
+    /* 🔴 THE SERVER GROUP IS THE SHARD, NOT THE REGION — reversed 2026-08-18 on Sub's call.
+       It was the other way round from 2026-08-09, on the reasoning that a shard was an
+       implementation detail with nothing a player could act on. What that missed is that the
+       heading is a CLAIM about who is listening: "Server" over a region room meant every shard in
+       US East 1B, and Sub read it exactly that way — "people won't know that they can't actually
+       meet up with everyone that is in a US East 1B shard."
+       A shard is what he calls the server, and it is the tier you can act on: two people on one
+       shard can meet in game. The region room no longer exists at either end. */
+    { kind: "shard", title: "Server" },
+    // The DGS - the server actually running where you are. The finer of the two location tiers,
+    // and the one that means "people I could physically run into right now".
+    { kind: "dgs", title: "DGS" },
     { kind: "org", title: "Organisation" },
     { kind: "custom", title: "Your channels" },
     // 🔴 SEPARATE from "Your channels". These two used to share one group, so the directory of

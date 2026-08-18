@@ -121,14 +121,16 @@ try {
   bad.send({ t: "hello", handle: "x" });
   await bad.next((f) => f.t === "error" && f.code === "bad_auth", "junk handle refused");
 
-  // ── Location → TWO tiers: region (US East 1B) and the DGS. No shard room. ──
-  // 🔑 The AZ LETTER is part of the region key, so use1b and use1a are different rooms — this
-  // is already "everyone specifically on US East 1B", which is why the shard tier was dropped.
+  // ── Location → TWO tiers: the SHARD (your server) and the DGS. No region room. ──
+  // 🔴 This asserted the exact opposite until 2026-08-18 — region rooms, no shard tier. Reversed on
+  // Sub's call: a tab named "US East 1B" claims an audience of every shard in the region, which is
+  // wrong by however many CIG is running, and a shard is the tier a player can actually act on
+  // (two people on one shard can meet; two people in one region generally cannot).
   a.send({ t: "loc", region: "use1b", shard: "pub_use1b_12326004_040", dgs: "aaaa111122" });
-  await a.next((f) => f.t === "joined" && f.ch === "region:use1b", "A joins its region");
+  await a.next((f) => f.t === "joined" && f.ch === "shard:pub_use1b_12326004_040", "A joins its shard");
   await wait(250);
-  assert(!a.frames.some((f) => f.t === "joined" && String(f.ch).startsWith("shard:")),
-    "no shard room is created at all — the tier is gone, not merely hidden");
+  assert(!a.frames.some((f) => f.t === "joined" && String(f.ch).startsWith("region:")),
+    "no region room is created at all — the tier is gone, not merely hidden");
 
   // Second client, same region — must see A's message; a third in another region must not.
   const b = client();
@@ -136,17 +138,17 @@ try {
   b.send({ t: "hello", handle: "WingmanTest" });
   await b.next((f) => f.t === "welcome", "welcome B");
   b.send({ t: "loc", region: "use1b", shard: "pub_use1b_12326004_040", dgs: "aaaa111122" });
-  await b.next((f) => f.t === "joined" && f.ch === "region:use1b", "B joins the same region");
+  await b.next((f) => f.t === "joined" && f.ch === "shard:pub_use1b_12326004_040", "B joins the same shard");
 
   const c = client();
   await c.open();
   c.send({ t: "hello", handle: "StrangerTest" });
   await c.next((f) => f.t === "welcome", "welcome C");
   c.send({ t: "loc", region: "usw2a", shard: "pub_usw2a_12326004_007", dgs: "cccc333344" });
-  await c.next((f) => f.t === "joined" && f.ch === "region:usw2a", "C joins its own region");
+  await c.next((f) => f.t === "joined" && f.ch === "shard:pub_usw2a_12326004_007", "C joins its own shard");
 
-  a.send({ t: "msg", ch: "region:use1b", text: "meet at Seraphim?" });
-  const got = await b.next((f) => f.t === "msg" && f.ch === "region:use1b", "B hears A");
+  a.send({ t: "msg", ch: "shard:pub_use1b_12326004_040", text: "meet at Seraphim?" });
+  const got = await b.next((f) => f.t === "msg" && f.ch === "shard:pub_use1b_12326004_040", "B hears A");
   assert.equal(got.text, "meet at Seraphim?");
   assert.equal(got.from.handle, "SubTest");
   assert.equal(got.from.verified, true);
@@ -155,20 +157,21 @@ try {
   a.send({ t: "msg", ch: "global", text: "hello universe" });
   await c.next((f) => f.t === "msg" && f.ch === "global" && f.text === "hello universe", "C hears global");
   // ...but C never saw the shard message (it was never a member).
-  assert(!c.frames.some((f) => f.t === "msg" && f.ch === "region:use1b"), "region chat must not leak across regions");
+  assert(!c.frames.some((f) => f.t === "msg" && f.ch === "shard:pub_use1b_12326004_040"),
+    "shard chat must not leak to another shard");
 
   // Sending into a channel you're not in is refused.
-  c.send({ t: "msg", ch: "region:use1b", text: "sneaky" });
-  await c.next((f) => f.t === "error" && f.code === "not_member", "cross-region send refused");
+  c.send({ t: "msg", ch: "shard:pub_use1b_12326004_040", text: "sneaky" });
+  await c.next((f) => f.t === "error" && f.code === "not_member", "cross-shard send refused");
 
-  // ── Region hop: a new loc replaces the old location rooms, keeps global ──
+  // ── Shard hop: a new loc replaces the old location rooms, keeps global ──
   b.send({ t: "loc", region: "usw2a", shard: "pub_usw2a_12326004_007", dgs: "bbbb222233" });
-  await b.next((f) => f.t === "left" && f.ch === "region:use1b", "B leaves the old region");
-  await b.next((f) => f.t === "joined" && f.ch === "region:usw2a", "B joins the new one");
+  await b.next((f) => f.t === "left" && f.ch === "shard:pub_use1b_12326004_040", "B leaves the old shard");
+  await b.next((f) => f.t === "joined" && f.ch === "shard:pub_usw2a_12326004_007", "B joins the new one");
 
   // Leaving the PU (menu/quit): loc with nulls drops the location rooms, keeps global.
   b.send({ t: "loc", region: null, shard: null, dgs: null });
-  await b.next((f) => f.t === "left" && f.ch === "region:usw2a", "B leaves region on menu");
+  await b.next((f) => f.t === "left" && f.ch === "shard:pub_usw2a_12326004_007", "B leaves the shard on menu");
 
   // ── History: a late joiner sees the scrollback ──
   const late = client();
@@ -236,9 +239,9 @@ try {
   await o.next((f) => f.t === "error" && f.code === "bad_channel", "org room refuses leave");
   // Location churn must NOT drop org/custom membership.
   o.send({ t: "loc", region: "use1b", shard: "pub_use1b_12326004_040", dgs: "eeee555566" });
-  await o.next((f) => f.t === "joined" && f.ch === "region:use1b", "org client lands in its region");
+  await o.next((f) => f.t === "joined" && f.ch === "shard:pub_use1b_12326004_040", "org client lands on its shard");
   o.send({ t: "loc", region: null, shard: null, dgs: null });
-  await o.next((f) => f.t === "left" && f.ch === "region:use1b", "loc churn drops region");
+  await o.next((f) => f.t === "left" && f.ch === "shard:pub_use1b_12326004_040", "loc churn drops the shard");
   o.send({ t: "msg", ch: "org:irregs", text: "still here" });
   await o.next((f) => f.t === "msg" && f.ch === "org:irregs" && f.text === "still here", "org membership survived loc churn");
 
@@ -544,13 +547,13 @@ try {
   await loc.next((f) => f.t === "welcome", "welcome traveller");
   loc.send({ t: "loc", region: "use1b", shard: "pub_use1b_12326004_040", dgs: "a3f9c21e04" });
   await loc.next((f) => f.t === "joined" && f.ch === "dgs:a3f9c21e04", "joined the DGS room");
-  await loc.next((f) => f.t === "joined" && f.ch === "region:use1b", "and the region");
+  await loc.next((f) => f.t === "joined" && f.ch === "shard:pub_use1b_12326004_040", "and the shard");
 
   // Meshing hands you to another DGS WITHIN the same shard - the finest room must follow.
   loc.send({ t: "loc", region: "use1b", shard: "pub_use1b_12326004_040", dgs: "bb11cc22dd" });
   await loc.next((f) => f.t === "left" && f.ch === "dgs:a3f9c21e04", "left the old DGS");
   await loc.next((f) => f.t === "joined" && f.ch === "dgs:bb11cc22dd", "joined the new one");
-  assert(loc.frames.every((f) => !(f.t === "left" && f.ch === "region:use1b")),
+  assert(loc.frames.every((f) => !(f.t === "left" && f.ch === "shard:pub_use1b_12326004_040")),
     "...without churning the region room, which did not change");
 
   // Anything that is not exactly what dgsKey() emits is not a DGS key. This is what stops a
@@ -1044,7 +1047,7 @@ try {
   gh.send({ t: "hello", handle: "GhostTest" });
   await gh.next((f) => f.t === "joined" && f.ch === "global", "GhostTest joins global");
   gh.send({ t: "loc", region: "use1b", shard: "pub_use1b_99999999_040", dgs: "ff11223344" });
-  await gh.next((f) => f.t === "joined" && f.ch === "region:use1b", "...and lands in the region room");
+  await gh.next((f) => f.t === "joined" && f.ch === "shard:pub_use1b_99999999_040", "...and lands in the shard room");
 
   const conns0 = await (await fetch(`http://127.0.0.1:${PORT}/admin/conns`)).json();
   const ghRow = conns0.find((c) => c.handle === "GhostTest");
@@ -1056,7 +1059,7 @@ try {
     body: JSON.stringify({ handle: "GhostTest" }),
   })).json();
   assert(ghEvict.cleared >= 1, "the eviction reports what it removed");
-  await gh.next((f) => f.t === "left" && f.ch === "region:use1b", "they are out of the region room");
+  await gh.next((f) => f.t === "left" && f.ch === "shard:pub_use1b_99999999_040", "they are out of the shard room");
   const conns1 = await (await fetch(`http://127.0.0.1:${PORT}/admin/conns`)).json();
   assert.equal(conns1.find((c) => c.handle === "GhostTest").inPu, false, "...and no longer read as in the PU");
   // 🔑 Still connected, still in global. This is not a ban and not a disconnect.
@@ -1074,7 +1077,7 @@ try {
   // 🔑 But a genuinely NEW location is believed again: that is a client that has actually moved,
   // and the override was about one stale value, not about the person.
   gh.send({ t: "loc", region: "euw1b", shard: "pub_euw1b_12121212_010", dgs: "aa99887766" });
-  await gh.next((f) => f.t === "joined" && f.ch === "region:euw1b", "a real move is believed again");
+  await gh.next((f) => f.t === "joined" && f.ch === "shard:pub_euw1b_12121212_010", "a real move is believed again");
 
   console.log("chat-server tests passed");
 } finally {

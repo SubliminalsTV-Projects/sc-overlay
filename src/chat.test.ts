@@ -31,7 +31,14 @@ const connected = (c: ChatClient) => until(c, (f) => f.type === "state" && f.vie
 assert.equal(regionLabel("use1b"), "US East 1B");
 assert.equal(regionLabel("usw2a"), "US West 2A");
 assert.equal(regionLabel("euw1b"), "EU West 1B");
-assert.equal(shardLabel(SHARD), "Shard 040");
+/* The shard tab names the SERVER: region and number together. It said "Shard 040" until
+   2026-08-18, next to a separate tab called "US East 1B" — two labels for what a player thinks of
+   as one thing, and the region one claimed an audience it never had. */
+assert.equal(shardLabel(SHARD), "US East 1B 040");
+assert.equal(shardLabel("pub_euw1b_12326004_120"), "EU West 1B 120");
+// Not a public shard id: better to say nothing than "Shard shard".
+assert.equal(shardLabel("local_shard"), "Shard");
+assert.equal(shardLabel(null), "Shard");
 
 // ── custom backend ──────────────────────────────────────────────────────────
 async function testCustom(): Promise<void> {
@@ -78,21 +85,29 @@ async function testCustom(): Promise<void> {
     b.configure(opts("WingmanTest"), true);
     await wb;
     // TWO location tiers, not three (2026-08-09): the region key carries the AZ letter, so
-    // "region:use1b" already means everyone on US East 1B specifically. The shard sat between
-    // that and the DGS with nothing a player could act on.
+    /* 🔴 REVERSED 2026-08-18. This used to read that "region:use1b" already means everyone on US
+       East 1B specifically, and that the shard sat between it and the DGS with nothing a player
+       could act on. Both halves were wrong in the way that matters: a region holds MANY shards, so
+       the room was far wider than its name suggested, and a shard is precisely the tier you can
+       act on — two people on one shard can meet in game, two in one region generally cannot. */
     a.applyShard(SHARD, "1.2.3.4:64304");
     b.applyShard(SHARD, "1.2.3.4:64304");
 
     await until(a, (f) => f.type === "state" && f.view.channels.some((c: any) => c.kind === "dgs"), "A in the DGS channel");
     await until(b, (f) => f.type === "state" && f.view.channels.some((c: any) => c.kind === "dgs"), "B in the DGS channel");
     const va = a.view();
-    assert.deepEqual(va.channels.map((c) => c.kind), ["global", "region", "dgs"], "hierarchy order");
-    assert.equal(va.channels[1].label, "US East 1B");
-    assert.equal(va.channels[2].label, "Nearby");
-    assert(!va.channels.some((c) => c.kind === "shard"), "no shard channel exists any more");
+    assert.deepEqual(va.channels.map((c) => c.kind), ["global", "shard", "dgs"], "hierarchy order");
+    // The middle tab names the SERVER — region AND shard number, so it cannot be read as
+    // "everyone in US East 1B".
+    assert.equal(va.channels[1].label, "US East 1B 040");
+    assert.equal(va.channels[2].label, "DGS");
+    /* Inverted 2026-08-18: it is the REGION tier that no longer exists, not the shard. The
+       assertion is kept pointing at whichever one is retired, because "the tab we removed is
+       really gone" is the property worth guarding either way. */
+    assert(!va.channels.some((c) => c.kind === "region"), "no region channel exists any more");
 
-    const heard = until(b, (f) => f.type === "msg" && f.msg.text === "meet at Seraphim?", "B hears A in the region");
-    assert.equal(a.send("region:use1b", "meet at Seraphim?").ok, true);
+    const heard = until(b, (f) => f.type === "msg" && f.msg.text === "meet at Seraphim?", "B hears A on the shard");
+    assert.equal(a.send(`shard:${SHARD}`, "meet at Seraphim?").ok, true);
     const got = await heard;
     assert.equal(got.msg.from.handle, "SubTest");
 
