@@ -12,7 +12,7 @@ import { PartyTracker, ownHandleFromLog } from "./party.js";
 import { MissionTracker } from "./missions.js";
 import { collectLogPaths } from "./log-paths.js";
 import { MiningTracker } from "./mining.js";
-import { HaulingTracker } from "./hauling.js";
+import { HaulingTracker, type HaulingView } from "./hauling.js";
 import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
@@ -234,6 +234,17 @@ interface Config {
    * hauling contract are by definition real hauling stops, so they rank above the dataset.
    */
   haulingSeenPlaces: string[];
+  /**
+   * The game's NUMERIC location ids bound to the readable tokens seen at the same place —
+   * `{"3490636373": "RR_ARC_LEO"}`.
+   *
+   * 🔑 Nothing in the log states this pairing. The ASOP terminal, an inventory move and the freight
+   * kiosk all report a bare number; only `RequestLocationInventory` reports a name. Observing both
+   * within a short window at one place is what binds them, and once bound the number alone is a
+   * position fix — which matters because ASOP and item-moves are the terminals you touch when you
+   * are NOT moving cargo, exactly the gap the named signal leaves.
+   */
+  haulingPlaceIds: Record<string, string>;
   /* ⛔ NO haulingRank / haulingRep. A picker was built here and it was wrong twice over, both
      caught by Sub within minutes:
        1. The app ALREADY KNOWS. MissionTracker.repDiagnostics() carries every giver's witnessed
@@ -442,6 +453,7 @@ const DEFAULTS: Config = {
   haulingShip: "",
   haulingPlaces: {},
   haulingSeenPlaces: [],
+  haulingPlaceIds: {},
   webViewOpen: false,
   // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
   // it's the page most likely to be wanted beside the game, and it shows what the widget does.
@@ -527,13 +539,14 @@ function loadConfig(): Config {
           // name) — so the defaults object would accumulate this session's data and any later
           // load would inherit it. Also normalises a config written before the fields existed.
           haulingPlaces: { ...(raw?.haulingPlaces ?? {}) },
+          haulingPlaceIds: { ...(raw?.haulingPlaceIds ?? {}) },
           haulingSeenPlaces: Array.isArray(raw?.haulingSeenPlaces) ? [...raw.haulingSeenPlaces] : [] };
       }
     } catch {
       /* corrupt — try the next source */
     }
   }
-  return { ...DEFAULTS, haulingPlaces: {}, haulingSeenPlaces: [] };
+  return { ...DEFAULTS, haulingPlaces: {}, haulingPlaceIds: {}, haulingSeenPlaces: [] };
 }
 // 🔑 Whether this is a genuinely FIRST run, decided BEFORE anything can write a config —
 // the setup wizard takes over the screen, so it must never fire at someone who has been
@@ -1199,6 +1212,42 @@ function advisorContracts(): AdvisorContract[] {
   advisorRows = buildContracts(missions as never, orders as never);
   console.log(`[hauling] advisor: ${advisorRows.length} rankable contract types`);
   return advisorRows;
+}
+
+/** How close together a numeric id and a readable token must appear to count as the same place.
+ *  Generous: they come from different terminals at one site and a player wanders between the ASOP
+ *  and the freight lift over minutes. Too tight and nothing ever binds; unbounded and a quantum hop
+ *  would bind a number to the place just left. */
+const PLACE_BIND_WINDOW_MS = 5 * 60_000;
+
+/**
+ * Bind the game's numeric location ids to the readable tokens seen at the same place, and return
+ * the freshest positional evidence available.
+ *
+ * 🔴 THE NUMBER NAMES NOTHING BY ITSELF. `3490636373` is Baijini Point only because `RR_ARC_LEO`
+ * was observed at the same site — the log never states the pairing anywhere. So this learns the
+ * binding when both appear together, persists it, and afterwards lets the number alone stand in.
+ *
+ * 🔑 Why it earns its keep: the named signal fires only at a LOCATION inventory — a freight lift or
+ * storage. The numeric one also fires at the ASOP terminal and on any item moved to or from local
+ * storage, which are exactly the things a player does when they are NOT touching cargo. Sub named
+ * the gap himself: "you might be somewhere and not hit that panel."
+ *
+ * ⚠️ An UNBOUND number resolves to nothing, never to a guess — the same rule as the name join.
+ */
+function haulingWhereAmI(view: HaulingView): { token: string; at: number } | null {
+  const named = view.atLocation;
+  const numeric = view.atLocationId;
+  if (named && numeric && Math.abs(named.at - numeric.at) <= PLACE_BIND_WINDOW_MS
+      && config.haulingPlaceIds[numeric.id] !== named.token) {
+    config.haulingPlaceIds[numeric.id] = named.token;
+    void saveConfig();
+  }
+  // Whichever evidence is FRESHER wins — carrying the position forward at terminals the named
+  // signal never fires at is the entire point.
+  const fromId = numeric ? config.haulingPlaceIds[numeric.id] : undefined;
+  if (fromId && numeric && (!named || numeric.at > named.at)) return { token: fromId, at: numeric.at };
+  return named;
 }
 
 /**
@@ -3102,6 +3151,9 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // Places the player named by hand. See ConfigShape.haulingPlaces — keyed by coordinates, so
       // an answer given once holds for good.
       placeNames: config.haulingPlaces,
+      // Where the player is, with the game's numeric location ids resolved through the bindings
+      // this process has learned. See haulingWhereAmI.
+      atLocation: haulingWhereAmI(hauling.view()),
     });
     // 🔑 LEARN EVERY NAME THE GAME STATES. locations.json does not carry city spaceports —
     // "Riker Memorial Spaceport" is not in its 1,968 rows — so the dataset alone cannot offer the

@@ -121,6 +121,10 @@ export interface PlanOptions {
   /** locationId -> the name the PLAYER gave that place. Beats the "Site N" fallback and loses to a
    *  name the game itself stated, which is the only source that cannot be a typo. */
   placeNames?: Record<string, string>;
+  /** Where the player is, when the caller has better evidence than `view.atLocation` alone — it
+   *  binds the game's numeric location ids to readable tokens, which this module cannot do because
+   *  the binding has to persist. See haulingWhereAmI in overlay-server. */
+  atLocation?: { token: string; at: number } | null;
 }
 
 export interface PlannedLeg {
@@ -851,7 +855,10 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // trips are solved, and the origin has to be known before them.
   const knownNames = new Map<string, string>(nameByLoc);
   for (const [id, n] of Object.entries(opts.placeNames ?? {})) if (n.trim() && !knownNames.has(id)) knownNames.set(id, n.trim());
-  const seen = view.atLocation ? matchLocationToken(view.atLocation.token, knownNames, data) : null;
+  // The caller's reading wins when it has one: only it can resolve the game's numeric location ids,
+  // because that binding is learned over time and has to be persisted.
+  const where = opts.atLocation ?? view.atLocation;
+  const seen = where ? matchLocationToken(where.token, knownNames, data) : null;
   const startId = opts.startAt || seen;
   // Only a place the route already touches can be an origin — an id we have no coordinates for
   // would silently become "anywhere", which is the bug, not the fix.
@@ -865,8 +872,8 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     /** What the LOG said, independently of what the player picked — so the widget can show it and
      *  a mis-detection is visible rather than silently steering the route. */
     detected: seen,
-    detectedToken: view.atLocation?.token ?? null,
-    detectedAt: view.atLocation?.at ?? null,
+    detectedToken: where?.token ?? null,
+    detectedAt: where?.at ?? null,
   };
   const run = stops.length
     ? planRun(stops, routeContracts, {

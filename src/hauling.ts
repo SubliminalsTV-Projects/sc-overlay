@@ -185,6 +185,9 @@ export interface HaulingView {
   /** Where the game last saw the player open an inventory — the router's origin, no longer asked
    *  for by hand. `token` is the game's own id, e.g. "Stanton3b_ArcCorp_Area045". */
   atLocation: { token: string; at: number } | null;
+  /** Where the player was last seen, as the game's NUMERIC location id. Names nothing on its own;
+   *  the caller binds it to a token it saw at the same place. */
+  atLocationId: { id: string; at: number } | null;
   /** Contracts that have FINISHED since the app started, oldest first. Deliberately NOT the ended
    *  entries of `contracts`, which are pruned after ten minutes — see the ledger note. */
   finished: { at: number; acceptedAt: number | null; missionId: string; contractKey: string; payout: number | null }[];
@@ -271,6 +274,8 @@ export class HaulingTracker extends EventEmitter {
   private runStartedAt: number | null = null;
   /** The last place the game saw the player open an inventory, and when. */
   private atLocation: { token: string; at: number } | null = null;
+  /** The same, as the game's numeric location id — see the parser's `playerLocationId`. */
+  private atLocationId: { id: string; at: number } | null = null;
   /** Completions still waiting for their "Awarded N aUEC" line, newest last. */
   private awaitingPayout: { missionId: string; at: number }[] = [];
   /** Rewards that arrived before their completion (dev-replay does this), newest last. */
@@ -321,6 +326,13 @@ export class HaulingTracker extends EventEmitter {
          stale origin is still enormously better than the none the router had. */
       case "playerLocation":
         this.atLocation = { token: ev.location, at: ts(ev.ts) ?? Date.now() };
+        this.touch(ev.ts);
+        break;
+      /* The numeric form of the same fact, from the ASOP terminal, an inventory move, or the
+         freight kiosk. Useless alone — see `playerLocationId` — so it is simply carried, and the
+         binding to a readable token happens where the persisted map lives. */
+      case "playerLocationId":
+        this.atLocationId = { id: ev.locationId, at: ts(ev.ts) ?? Date.now() };
         this.touch(ev.ts);
         break;
       case "end":
@@ -661,6 +673,7 @@ export class HaulingTracker extends EventEmitter {
       trackedMissionId: this.trackedMissionId,
       runStartedAt: this.runStartedAt,
       atLocation: this.atLocation,
+      atLocationId: this.atLocationId,
       finished: [...this.ledger],
     };
   }

@@ -71,6 +71,8 @@ const fmt = (e: MissionEvent): string => {
       return `KIOSK    ${e.terminal}`;
     case "playerLocation":
       return `WHEREAMI ${e.location}`;
+    case "playerLocationId":
+      return `WHEREAMI #${e.locationId}`;
     case "trackedMarker":
       return `MOBIGLAS [${short(e.missionId)}] ${e.added ? "TRACK  " : "untrack"} ${e.objectiveId}`;
   }

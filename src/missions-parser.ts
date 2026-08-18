@@ -245,6 +245,21 @@ export type MissionEvent =
    * been working with — and the next stop's inventory refreshes it.
    */
   | { kind: "playerLocation"; ts: string | null; player: string; location: string }
+  /**
+   * The same "where am I" fact, but as the game's NUMERIC location id rather than a readable token.
+   *
+   * 🔑 THREE UNRELATED SURFACES EMIT IT, and they are the ones a player touches when they are NOT
+   * moving cargo — which is exactly the gap `playerLocation` leaves:
+   *   - the ASOP terminal  (`… at location [3490636373]`)
+   *   - moving an item to or from local storage (`… Location:3490636373`)
+   *   - the freight kiosk  (`… Location: 3490636373`)
+   *
+   * ⚠️ ON ITS OWN IT NAMES NOTHING. 3490636373 is Baijini Point only because the readable token
+   * `RR_ARC_LEO` was seen at the same place; nothing in the log states the pairing. So this event
+   * is useful only once something has bound it, and an unbound id must resolve to nothing rather
+   * than to a guess — see the binding in overlay-server.
+   */
+  | { kind: "playerLocationId"; ts: string | null; locationId: string }
   /** Entered/re-entered the persistent universe (login / server change) — the
    *  previous shard's tracked-mission selection no longer applies. */
   | { kind: "sessionStart"; ts: string | null }
@@ -421,6 +436,10 @@ const RE = {
   kioskTerminal: /\[FreightElevatorKioskUIProvider\]\s*([A-Za-z0-9_]+)\[/,
   /* "Player[IMC-SubliminaL] requested inventory for Location[Stanton3b_ArcCorp_Area045]" */
   locationInventory: /Player\[([^\]]+)\] requested inventory for Location\[([^\]]+)\]/,
+  /* Two spellings of the same numeric id: ASOP's "at location [3490636373]" and the inventory
+     system's "204772220757:Location:3490636373". ⚠️ The second alternative deliberately requires
+     the `Location:` prefix — a bare number would match entity ids, which are everywhere. */
+  numericLocation: /at location \[(\d+)\]|:Location:(\d+)/,
   blueprint: /^Received Blueprint:\s*(.+?):\s*$/,
   missionIdField: new RegExp(`MissionId:\\s*\\[(${UUID})\\]`),
   // CreateMarker fields (note: contractDefinitionId has NO space before its bracket)
@@ -662,6 +681,14 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
     case "CEntityComponentFreightElevatorUIProvider::FillUnstowRequest": {
       const t = m.match(RE.kioskTerminal);
       return t ? { kind: "cargoKiosk", ts: e.timestamp, terminal: t[1] } : null;
+    }
+
+    /* The numeric form of "where am I" — see `playerLocationId`. The ASOP terminal writes
+       "at location [N]"; inventory moves and the freight kiosk write "Location:N". */
+    case "OnRequestFetchVehicles":
+    case "Add Inventory Management Move": {
+      const n = m.match(RE.numericLocation);
+      return n ? { kind: "playerLocationId", ts: e.timestamp, locationId: n[1] ?? n[2] } : null;
     }
 
     case "CMissionLogEntry::UpdateActiveObjective": {
