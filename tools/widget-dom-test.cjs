@@ -4485,12 +4485,33 @@ const HAULING = `(async () => {
   ok("🔴 a RANGED contract prints both ends, never the worst case alone",
      byTitle("Untracked Haul").querySelector(".amt").textContent === "40–56 SCU",
      byTitle("Untracked Haul").querySelector(".amt").textContent);
-  ok("...and says where that came from", byTitle("Untracked Haul").querySelector(".badge").textContent === "range");
+  /* PROVENANCE IS A COLOUR NOW, not a pill. 25f26a2 moved it onto the figure itself and this
+     suite went on asking for the removed .badge element. querySelector returned null and the whole
+     run threw on .textContent BEFORE its first assertion, so NOTHING in this file was checked for
+     hours while it reported only "FAILED (1)". Assert the class AND the tooltip: the widget's own
+     note is that a hue nobody can name is not provenance, so the wording is the half a
+     colour-blind player actually gets, and it is the half worth pinning. */
+  ok("...and says where that came from, in the colour",
+     byTitle("Untracked Haul").querySelector(".amt").classList.contains("src-range"),
+     byTitle("Untracked Haul").querySelector(".amt").className);
+  ok("...with the wording kept on the figure as a tooltip",
+     /only bound this contract/.test(byTitle("Untracked Haul").querySelector(".amt").title),
+     byTitle("Untracked Haul").querySelector(".amt").title);
   ok("a TRACKED contract prints the game's own figure",
      byTitle("Tracked Haul").querySelector(".amt").textContent === "81 SCU",
      byTitle("Tracked Haul").querySelector(".amt").textContent);
-  ok("...badged as coming from the log", byTitle("Tracked Haul").querySelector(".badge").textContent === "stated");
-  ok("every contract carries a provenance badge", cards.every((c) => c.querySelector(".badge")));
+  ok("...coloured as coming from the log",
+     byTitle("Tracked Haul").querySelector(".amt").classList.contains("src-log"),
+     byTitle("Tracked Haul").querySelector(".amt").className);
+  ok("...with the log's wording on it",
+     /stated this tonnage/.test(byTitle("Tracked Haul").querySelector(".amt").title),
+     byTitle("Tracked Haul").querySelector(".amt").title);
+  /* Non-emptiness is asserted too: every() over an empty list is true, so a board that rendered
+     no cards at all would have satisfied the old form of this. */
+  ok("every contract's figure carries provenance", cards.length > 0 && cards.every((c) => {
+       const a = c.querySelector(".amt");
+       return !!a && /src-[a-z]+/.test(a.className) && !!a.title;
+     }), cards.length + " cards");
   ok("a modelled box split is labelled modelled",
      [...byTitle("Tracked Haul").querySelectorAll(".chips .badge")].some((b) => b.textContent === "modelled"));
 
@@ -4529,9 +4550,12 @@ const HAULING = `(async () => {
   ok("🔴 ...and the heading stops being an instruction nothing can satisfy",
      document.getElementById("trackK").textContent === "Load not confirmed",
      document.getElementById("trackK").textContent);
+  /* The four-line WHY block became an (i) affordance carrying the same sentence as its tooltip,
+     so read the title rather than the removed element's text. The wording is what matters and it
+     is unchanged; the assertion should follow it, not the markup it used to live in. */
   ok("🔴 ...and the explanation says why there is nothing left to do",
-     /re-tracking does not replay/.test(document.getElementById("trackWhy").textContent),
-     document.getElementById("trackWhy").textContent);
+     /re-tracking does not replay/.test(document.getElementById("trackInfo").title),
+     document.getElementById("trackInfo").title);
   ok("...while the row still offers the box to type the figure into",
      !!trow.querySelector("input"));
   ok("...and the contract is still listed, not hidden",
