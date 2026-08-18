@@ -33,6 +33,7 @@ import { packCargo, shipCapacityScu, type GridSpec, type PackItem, type PackResu
 import { planRun, type RouteContract, type RoutePlan, type RouteStop, type Vec3 } from "./hauling-route.js";
 import type { HaulingView, HaulContract, HaulStopState } from "./hauling.js";
 import type { BoxSize, HaulingDataStore, Ship } from "./hauling-data.js";
+import { canAutoLoad, rankAutoLoads } from "./hauling-autoload.js";
 
 /** Where a load figure came from. Rendered as a badge — never dropped. */
 export type ScuSource =
@@ -340,6 +341,12 @@ export interface HaulingPlan {
     projected: { auecPerHour: number; repPerHour: number; minutes: number; auec: number; rep: number } | null;
     payoutModelled: boolean;
   };
+  /**
+   * Whether the station's arm will actually load THIS board, not just whether the hull could.
+   * `hull` is the ship's capability; `eligible` counts the live contracts whose rank qualifies.
+   * See AUTOLOAD_MIN_RANK — the rank rule is reported by a player, not read from the data.
+   */
+  autoLoad: { hull: boolean; eligible: number; live: number };
   totals: {
     /** SCU still to move across every live, plannable contract. */
     scu: number;
@@ -1221,6 +1228,18 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     aboardScu,
     onPadScu,
     rates,
+    /* 🔴 THE HULL IS ONLY HALF THE QUESTION. The stow tab claimed "Hull A loads itself" for every
+       contract on Sub's board; he caught it — automated loading is a property of the CONTRACT as
+       well as the ship. So the widget gets both numbers and can say which of the two is missing
+       instead of asserting a capability the player will not get. */
+    autoLoad: (() => {
+      const live = contracts.filter((c) => !c.ended && !c.hidden);
+      return {
+        hull: canAutoLoad(hull?.className),
+        eligible: live.filter((c) => rankAutoLoads(c.board?.rank ?? null)).length,
+        live: live.length,
+      };
+    })(),
     totals: {
       scu: openLegs.reduce((s, { leg }) => s + (leg.scu ?? 0), 0),
       capacityScu,

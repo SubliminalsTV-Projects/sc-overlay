@@ -41,6 +41,34 @@ export const AUTOLOAD_SHIP_CLASSES: ReadonlySet<string> = new Set([
   "CNOU_Nomad",
 ]);
 
+/**
+ * ⚠️ REPORTED, NOT MEASURED — and it must stay labelled that way.
+ *
+ * The stow tab told Sub "Hull A loads itself" for every contract on his board, and he caught it:
+ * "it's lying to us. It only loads itself on specific missions." His understanding is that
+ * automated loading is a perk of the higher hauling contracts, from Experienced upward.
+ *
+ * 🔴 THERE IS NO FLAG FOR THIS ANYWHERE IN THE DATA. `hauling-orders.json` carries no auto-load
+ * field, the ship data carries none either (see AUTOLOAD_SHIP_CLASSES, hand-maintained for exactly
+ * the same reason), and nothing in the log announces it. So this is one player's reading of the
+ * game, encoded so the widget stops making a claim it cannot support — NOT a fact extracted from
+ * CIG's files. If it turns out to be wrong, this constant is the single place to change.
+ */
+export const AUTOLOAD_MIN_RANK = "Experienced";
+
+/** Rank tiers, lowest first — the order the min-rank rule is judged against. Kept here rather than
+ *  imported so this module stays free of the advisor. */
+const RANK_ORDER: readonly string[] = ["Trainee", "Rookie", "Junior", "Member", "Experienced", "Senior", "Master"];
+
+/** Does a contract at this board rank get the station arm? Unknown rank => false: claiming a
+ *  capability we cannot check is the bug this exists to fix. */
+export function rankAutoLoads(rank: string | null | undefined): boolean {
+  if (!rank) return false;
+  const i = RANK_ORDER.indexOf(rank);
+  const min = RANK_ORDER.indexOf(AUTOLOAD_MIN_RANK);
+  return i >= 0 && i >= min;
+}
+
 export function canAutoLoad(shipClass: string | null | undefined): boolean {
   return !!shipClass && AUTOLOAD_SHIP_CLASSES.has(shipClass);
 }

@@ -336,6 +336,34 @@ export function handlingEffort(c: AdvisorContract, regime: Regime): Effort {
   return { regime, boxes, seconds, cost: Math.max(1, seconds), stops };
 }
 
+/* Measured floors from Sub's own logs — see hauling-route.ts, where the same numbers price a real
+   route. Repeated as one figure here because the advisor scores CONTRACT TYPES, not routes: there
+   is no board yet, so no bodies to compare, and same-body is the common case. */
+const TRAVEL_MINUTES_PER_STOP = 6;
+/** One lift, measured off a 12-minute load of Sub's. Used for the manual regime, which has no
+ *  published timing — an hour figure has to assume something, and this is the only number here
+ *  that was measured rather than guessed. */
+const MANUAL_SECONDS_PER_BOX = 25;
+
+/**
+ * Minutes for ONE run of this contract, door to door — loading plus getting there.
+ *
+ * 🔴 WHY THE LIST NEEDED THIS. Ranked by rep per box, Sub's board opened with a contract paying
+ * 41.7 rep/box, and he had to work out for himself that it was tiny 1 SCU boxes: "we need another
+ * number to quantify that so that the user doesn't think that there's some sort of a mistake."
+ * Per-box is the right SORT key — it is what the work feels like — but it is not a rate anyone can
+ * compare to their evening. Per hour is, and it is what makes a fiddly-but-quick contract and a
+ * slow-but-fat one commensurable.
+ *
+ * ⚠️ An ESTIMATE, and labelled as one in the UI. Travel is the same-body floor per stop; a run
+ * that crosses to another body costs about a minute more per leg, and one that dawdles costs
+ * whatever it dawdles.
+ */
+export function runMinutes(effort: Effort): number {
+  const loadingSec = effort.seconds ?? effort.boxes * MANUAL_SECONDS_PER_BOX * 2;
+  return loadingSec / 60 + effort.stops * TRAVEL_MINUTES_PER_STOP;
+}
+
 // ── Ranking ───────────────────────────────────────────────────────────────────────────────
 
 export type AdvisorGoal = "rep" | "money";
@@ -373,6 +401,12 @@ export interface ScoredContract {
   locked: boolean;
   /** True when one of this contract's containers is too big for the ship to take at all. */
   oversize: boolean;
+  /** Estimated minutes for one run of this contract — see runMinutes. */
+  minutes: number;
+  /** Reputation an hour at that estimate. The number that makes per-box comparable to an evening. */
+  repPerHour: number;
+  /** aUEC an hour, same estimate. */
+  moneyPerHour: number;
 }
 
 /**
@@ -405,7 +439,12 @@ export function rankContracts(contracts: AdvisorContract[], opts: RankOptions = 
        in the ship you are sitting in. Unknown hull flags nothing. */
     const oversize = opts.maxBoxScu != null && c.maxContainerScu > opts.maxBoxScu;
     if (oversize && opts.dropOversize) continue;
-    rows.push({ contract: c, effort, repRate, moneyRate, score: goal === "rep" ? repRate : moneyRate, locked, oversize });
+    const minutes = runMinutes(effort);
+    const hours = minutes / 60;
+    rows.push({ contract: c, effort, repRate, moneyRate, score: goal === "rep" ? repRate : moneyRate,
+                locked, oversize, minutes,
+                repPerHour: hours > 0 ? c.rep / hours : 0,
+                moneyPerHour: hours > 0 ? c.payout / hours : 0 });
   }
 
   rows.sort((a, b) =>

@@ -404,6 +404,9 @@
   /* Locked = above your rung, so it is not on your board at all. Kept in the list because seeing
      what the next rank unlocks is half the reason to grind toward it. */
   .arow.locked { opacity: 0.45; }
+  .arow .ph { font-size: 9px; color: var(--cyan-dim); white-space: nowrap; }
+  .arow.clickable { cursor: pointer; }
+  .arow.clickable:hover { background: rgba(var(--accent-rgb), 0.07); }
 
   .arow .n { flex: none; width: 18px; font-family: var(--mono); font-size: 10px; color: var(--faint); }
   .arow .mid { flex: 1; min-width: 0; }
@@ -438,9 +441,12 @@
       <span class="dia"></span>
       <span class="h-title">Hauling</span>
       <span class="tabs">
-        <button id="tabRoute" class="hbtn on" type="button" title="What order to fly the stops">Route</button>
+        <!-- 🔴 RANK LEADS. It is the tab you are on BEFORE you have a board — you read it to decide
+             what to accept, and the other two only mean anything once you have accepted something.
+             Sub asked for it first; the order now matches the order of the decisions. -->
+        <button id="tabAdvisor" class="hbtn on" type="button" title="Which contracts to go looking for, and how far the next rank is">Rank</button>
+        <button id="tabRoute" class="hbtn" type="button" title="What order to fly the stops">Route</button>
         <button id="tabLayout" class="hbtn" type="button" title="What to load first, and where it goes on your ship">Stow</button>
-        <button id="tabAdvisor" class="hbtn" type="button" title="Which contracts to go looking for, and how far the next rank is">Rank</button>
       </span>
     </div>
 
@@ -536,7 +542,7 @@
 
   let plan = null;
   let ships = [];
-  let view = "route";
+  let view = "advisor";
   let objective = "auec-per-hour";
   let showDone = false;
   let shipPick = "";          // "" = trust the log
@@ -1130,12 +1136,32 @@
   /** locationId -> the suggestions currently showing, and which one arrow keys have landed on. */
   let sugFor = null, sugList = [], sugIndex = -1;
 
+  /** Show the places you already named, so a wrong one can be corrected. Off by default. */
+  let placesEditMine = false;
+
   function renderPlaces() {
     const el = $("places");
-    const list = (plan && plan.unnamedPlaces) || [];
-    if (!list.length) { el.style.display = "none"; return; }
+    const all = (plan && plan.unnamedPlaces) || [];
+    /* 🔴 A QUESTION YOU HAVE ANSWERED IS NOT A QUESTION. The plan hands back places you named as
+       well as places nobody has, so a wrong name stays correctable — but listing them by default
+       filled the panel with rows that had nothing to ask. Sub: "the names are already filled in,
+       I don't understand why that's in there in the UI clouding up space for nothing."
+       So: unanswered by default, and the answered ones behind a count you can click. */
+    const mine = all.filter((p) => p.yours);
+    const list = placesEditMine ? all : all.filter((p) => !p.yours);
+    if (!list.length && !mine.length) { el.style.display = "none"; return; }
     el.style.display = "";
-    $("placesN").textContent = list.length + (list.length > 1 ? " places" : " place");
+    $("placesN").textContent = list.length
+      ? list.length + (list.length > 1 ? " places" : " place")
+      : mine.length + " named by you";
+    /* The count is the way back to a name you got wrong. Only clickable when there is something
+       behind it, so it never looks like a control that does nothing. */
+    const nEl = $("placesN");
+    nEl.style.cursor = mine.length ? "pointer" : "";
+    nEl.title = mine.length
+      ? (placesEditMine ? "Hide the ones you have already named." : mine.length + " named by you — click to correct one.")
+      : "";
+    nEl.onclick = mine.length ? (e) => { e.stopPropagation(); placesEditMine = !placesEditMine; renderPlaces(); } : null;
     $("placesInfo").title = "The game only names a place when it states a delivery objective, so"
       + " pickups and untracked legs arrive anonymous. Type the name and it sticks to those"
       + " coordinates — you will not be asked about this place again.";
@@ -1412,6 +1438,32 @@
       u.textContent = advisorGoal === "rep" ? "rep/box" : "aUEC/box";
       if (advisor.regime === "auto") u.textContent = advisorGoal === "rep" ? "rep/s" : "aUEC/s";
       r.append(v, u);
+      /* 🔴 PER BOX IS THE SORT, PER HOUR IS THE SENSE. Ranked by rep/box the list opened with 41.7
+         rep/box and Sub had to work out for himself that it was tiny 1 SCU boxes — "we need another
+         number to quantify that so that the user doesn't think that there's some sort of a
+         mistake." Per box is what the work FEELS like and is the right key; per hour is the only
+         one you can hold against an evening. Both, so neither has to be guessed at. */
+      const ph = document.createElement("div"); ph.className = "ph";
+      const hourly = advisorGoal === "rep" ? c.repPerHour : c.moneyPerHour;
+      ph.textContent = "~" + (hourly >= 100 ? num(Math.round(hourly)) : hourly.toFixed(1))
+        + (advisorGoal === "rep" ? " rep/hr" : " aUEC/hr");
+      ph.title = "Estimated for one run: about " + Math.round(c.minutes) + " minutes of loading and"
+        + " flying, using the travel times measured from real runs. An estimate — a run that crosses"
+        + " to another planet costs a little more per leg.";
+      r.appendChild(ph);
+      /* 🔴 THE ROW IS A LINK. Everything this widget can say about a contract type is already on
+         the row; the rest — what it pays where, who gives it, what it looks like — lives on the
+         site, which has the whole dataset and room to show it. Opened in the real browser rather
+         than in the overlay, because reading a page over the game is not what the overlay is for. */
+      row.classList.add("clickable");
+      row.title = "Open this contract on subliminal.gg";
+      row.addEventListener("click", () => {
+        const url = "https://subliminal.gg/missions/" + encodeURIComponent(c.key);
+        // `openUrl` is the bridge every other widget uses (chat, battaglia) — it hands the link to
+        // the OS browser. Standalone has no host, so fall back to window.open there.
+        if (host()?.openUrl) host().openUrl(url);
+        else window.open(url, "_blank", "noopener");
+      });
       row.append(nEl, mid, r);
       body.appendChild(row);
     });
@@ -2056,18 +2108,40 @@
     /* ⛔ Open haulers load themselves — the station's arm places every box and the player never
        touches one. A stowage diagram for a Hull C describes work that does not exist, so it is not
        drawn at all rather than drawn and ignored. */
-    if (m.autoLoad) {
+    /* 🔴 THE HULL IS ONLY HALF THE QUESTION, and this claimed the whole of it. Sub, on a Hull A:
+       "it's lying to us. It says the hull A loads itself. It only loads itself on specific
+       missions." Automated loading needs an open hauler AND a contract that offers it, and the
+       widget cannot promise the second thing just because it can see the first.
+       So the no-plan card is only drawn when EVERY live contract qualifies. A mixed board still
+       gets a stowage diagram — because some of it really does have to be stowed by hand — with a
+       line saying which part the arm will take. */
+    const al = plan.autoLoad || { hull: false, eligible: 0, live: 0 };
+    const allAuto = m.autoLoad && al.live > 0 && al.eligible === al.live;
+    if (allAuto) {
       const d = document.createElement("div");
       d.className = "noplan";
       const k = document.createElement("div"); k.className = "k";
       k.textContent = (plan.ship.displayName || plan.ship.className) + " loads itself.";
       const why = document.createElement("div"); why.className = "why";
-      why.textContent = "It is an open hauler, so the station's loading arm places every box for you"
-        + " — there is nothing to stow by hand and no order to load in. Use the Route tab for where"
-        + " to fly.";
+      why.textContent = "It is an open hauler and every contract on your board is a rank that offers"
+        + " automated loading, so the station's arm places every box for you — nothing to stow by"
+        + " hand and no order to load in. Use the Route tab for where to fly.";
       d.append(k, why);
       body.appendChild(d);
       return;
+    }
+    if (m.autoLoad && al.eligible > 0) {
+      const n = document.createElement("div"); n.className = "droprow";
+      n.textContent = "The station's arm will load " + al.eligible + " of your " + al.live
+        + " contracts. The rest are below the rank that offers it, so they are stowed by hand — that"
+        + " is what this diagram is for.";
+      body.appendChild(n);
+    } else if (m.autoLoad) {
+      const n = document.createElement("div"); n.className = "droprow";
+      n.textContent = (plan.ship.displayName || plan.ship.className) + " can be loaded by the"
+        + " station's arm, but none of these contracts are a rank that offers it — so this load is"
+        + " yours to stow.";
+      body.appendChild(n);
     }
 
     if (!m.boxes.length) {
