@@ -363,17 +363,23 @@ function gridsOf(ship: Ship): GridSpec[] {
 /**
  * 🔴 `RR_<BODY>_LEO` IS THAT PLANET'S ORBITAL STATION, and nothing in the data says so.
  *
- * Sub, standing in Baijini Point with the terminal open, asked the fair question: can you tell I am
- * here yet? The answer was no — Baijini's token is `RR_ARC_LEO`, which shares not one letter with
- * "Baijini Point", so the name join returned null and the router still had no origin.
+ * 🔑 THE NAMING, decoded by Sub: **RR = Rest & Relax** (the in-fiction operator of the stations and
+ * rest stops) and **LEO = Low Earth Orbit**. So the family reads as "the R&R station in low orbit
+ * around <body>", which makes the whole `RR_` namespace predictable rather than a set of magic
+ * strings: `RR_CRU_L1` is the R&R stop at Crusader's first Lagrange point, `RR_JP_NyxPyro` the one
+ * at the Nyx–Pyro jump point, and `RR_ARC_LEO` the one in orbit around ArcCorp — Baijini Point.
  *
- * ⚠️ It cannot be derived. Every one of these planets carries several `Manmade` children that are
- * all QT destinations with no code — ArcCorp has Baijini Point, Comm Array ST3-90 and Orbital Relay
- * AC-421, and nothing in the row distinguishes the station you can land at from the relay you
- * cannot. So this is an explicit table, which is honest, and it is four lines.
+ * Sub, standing in Baijini with the terminal open, asked the fair question: can you tell I am here
+ * yet? The answer was no. Baijini's token shares not one letter with "Baijini Point", so the name
+ * join returned null and the router still had no origin. Every token tested before that was a
+ * mining area or a salvage centre, where log and dataset happen to spell the place alike — the
+ * orbital stations are the case that breaks it, and they are where a hauler spends half their time.
  *
- * The other `RR_` families need no table: `RR_CRU_L1` and friends resolve through locations.json's
- * own alias map once the prefix is stripped.
+ * ⚠️ Only the LEO leg needs a table, and it genuinely cannot be derived. Each of these planets
+ * carries several `Manmade` children that are all QT destinations with no code — ArcCorp has
+ * Baijini Point, Comm Array ST3-90 and Orbital Relay AC-421 as siblings — and nothing in the row
+ * distinguishes the station you can land at from the relay you cannot. The other `RR_` families
+ * need nothing: they resolve through locations.json's own alias map once the prefix is stripped.
  */
 const LEO_STATION: Record<string, string> = {
   arc: "Baijini Point",
