@@ -277,7 +277,14 @@ export interface HaulingPlan {
   /** Pickups the game has already completed — cargo aboard, not yet delivered. NOT routed (there
    *  is nowhere to fly), but shown greyed ahead of the live steps so a contract reads
    *  start-to-finish instead of the list opening mid-sentence. */
-  completedPickups: { group: string; missionId: string; title: string | null; locationId: string | null; scu: number | null; commodity: string | null }[];
+  completedPickups: {
+    group: string; missionId: string; title: string | null; locationId: string | null;
+    scu: number | null; commodity: string | null;
+    /** 🔴 "onPad" = the game released it to the freight lift and you are STILL THERE, so it is not
+     *  in the ship yet. "aboard" = you have since moved, so it came with you. A completed pickup
+     *  objective means the former, not the latter — see where this is decided. */
+    where?: "onPad" | "aboard";
+  }[];
   /** What the player asked for as an origin, and what it resolved to. Reported because "I set a
    *  start and the order did not change" has two very different causes — an ignored option, or an
    *  optimiser that genuinely sees no better order — and guessing between them costs a session. */
@@ -299,6 +306,8 @@ export interface HaulingPlan {
   pack: PackResult | null;
   /** SCU already aboard: legs whose pickup completed but whose drop-off has not. */
   aboardScu: number;
+  /** Of `aboardScu`, how much is still sitting on the freight lift where you collected it. */
+  onPadScu: number;
   /**
    * What the run is earning, per hour, in both currencies the player cares about.
    *
@@ -783,7 +792,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   /** Drop-offs, held back until every pickup node exists — see where they are pushed. */
   const pendingDrops: { leg: PlannedLeg; stillToLoad: boolean }[] = [];
   /** Pickups the game has already completed: display-only, never routed. */
-  const completedPickups: { group: string; missionId: string; title: string | null; locationId: string | null; scu: number | null; commodity: string | null }[] = [];
+  const completedPickups: { group: string; missionId: string; title: string | null; locationId: string | null; scu: number | null; commodity: string | null; where?: "onPad" | "aboard" }[] = [];
   for (const { c, leg } of openLegs) {
     if (!leg.toLocation) {
       unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, toLocation: leg.toLocation, reason: "the log has not placed this drop-off yet" });
@@ -875,6 +884,34 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     detectedToken: where?.token ?? null,
     detectedAt: where?.at ?? null,
   };
+
+  /**
+   * 🔴 A COMPLETED PICKUP DOES NOT MEAN "ABOARD". The game finishes the objective the instant it
+   * releases the cargo to the freight lift. Measured on Sub's own run, 2026-08-17:
+   *
+   *   20:50:02  kiosk pressed
+   *   20:50:05  pickup -> COMPLETED     the widget said "aboard" HERE
+   *   20:50:16  RaisingPlatform         the boxes have not left the floor yet
+   *
+   * Eleven seconds before the platform even starts to rise, and minutes before any of it is
+   * tractored in. He put it plainly: "I have silicon and tin saying on board, but in actuality all
+   * I did was just pull it up the freight elevator."
+   *
+   * 🔑 So the honest test is WHERE YOU ARE, which the log now answers. Still standing where you
+   * collected it → it is on the pad. Somewhere else → it came with you, so it is aboard. Nothing
+   * in the log ever states the tractor-beam move itself, and inventing a moment for it would be
+   * the same mistake in a new place.
+   *
+   * ⚠️ Position unknown falls back to "aboard" — the old behaviour. Claiming "on the pad" without
+   * knowing where the player is would strand cargo on a floor they left an hour ago.
+   */
+  for (const cp of completedPickups) {
+    const here = seen != null && cp.locationId != null && cp.locationId === seen;
+    cp.where = here ? "onPad" : "aboard";
+  }
+  const onPadScu = completedPickups
+    .filter((cp) => cp.where === "onPad")
+    .reduce((n, cp) => n + (cp.scu ?? 0), 0);
   const run = stops.length
     ? planRun(stops, routeContracts, {
         objective: opts.objective ?? "auec-per-hour",
@@ -1142,6 +1179,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     unrouted,
     pack,
     aboardScu,
+    onPadScu,
     rates,
     totals: {
       scu: openLegs.reduce((s, { leg }) => s + (leg.scu ?? 0), 0),

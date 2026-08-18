@@ -118,6 +118,20 @@
     border-radius: 5px; padding: 2px 4px; }
   .trow input:focus { outline: none; border-color: var(--cyan); }
 
+  /* ── Before you leave ─────────────────────────────────────────────────────
+     A prompt, not a warning: nothing is wrong, there is just free money in checking the board
+     before you burn the fuel. Gold because it is an opportunity, and quiet enough to ignore. */
+  .depart { flex: none; padding: 7px 12px 8px; border-bottom: 1px solid var(--divider);
+    background: rgba(var(--value-rgb), 0.07); position: relative; z-index: 4; }
+  .depart .k { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--gold); }
+  .depart .t { margin-top: 3px; font-size: 11px; line-height: 1.5; color: var(--cyan-text); }
+  .depart .t b { font-weight: 600; color: var(--cyan-bright); }
+  .depart .x { position: absolute; top: 5px; right: 7px; width: 16px; height: 16px; padding: 0;
+    line-height: 1; border: 1px solid rgba(var(--accent-rgb), 0.3); border-radius: 4px;
+    background: transparent; color: var(--faint); font-size: 10px; cursor: pointer; }
+  .depart .x:hover { color: var(--cyan-bright); border-color: var(--cyan); }
+
   /* ── Naming a place ───────────────────────────────────────────────────────
      Reuses .track's frame so it reads as the same kind of question as the load checklist, tinted
      cyan rather than gold because it is not a warning — nothing is wrong, the game simply never
@@ -450,6 +464,12 @@
          is exactly the right instinct: it is the same kind of question and belongs in the same
          kind of row. Only a TRACKED drop-off is ever named by the game, so pickups are almost
          always anonymous and this is the only way they ever get a name. -->
+    <!-- 🔴 BEFORE YOU LEAVE. Sub: "I'm very forgetful, and I'm sure people using this might be
+         too… before I leave a place, remind me to look for missions that pick up from here and
+         drop off somewhere I'm already going." It only became buildable once the log gave us the
+         player's location — until then the widget could not know you were anywhere. -->
+    <div class="depart" id="depart" style="display:none"></div>
+
     <div class="track places" id="places" style="display:none">
       <div class="th">
         <span class="k">Name these places</span><span class="whyinfo" id="placesInfo">ⓘ</span><span class="n" id="placesN"></span>
@@ -472,6 +492,10 @@
            toggle back and forth on to see what the difference is — it shouldn't be hidden behind a
            menu that's not visible all the time." Right: it is a comparison control, not a setting.
            It sits on the Rank tab itself. -->
+      <div class="ws-sec">Reminders</div>
+      <div class="ws-row">
+        <button id="departBtn" class="hbtn" type="button" title="Before you leave a stop, remind me to check the board for a load going the same way.">Departure reminder</button>
+      </div>
       <div class="ws-sec">Contracts</div>
       <div class="ws-row">
         <button id="doneBtn" class="hbtn" type="button" title="Show contracts that have already ended">Show finished</button>
@@ -768,7 +792,12 @@
     const t = plan.totals;
     const bits = [];
     bits.push(["to move", num(t.scu) + " SCU", false]);
-    if (plan.aboardScu > 0) bits.push(["aboard", num(plan.aboardScu) + " SCU", false]);
+    /* 🔴 SPLIT "aboard" FROM "on the pad". They were one figure, and that difference is the whole
+       complaint: the game completes a pickup when it releases cargo to the lift, so a number
+       labelled "aboard" was counting boxes still sitting on the floor beside the ship. */
+    const inHold = plan.aboardScu - (plan.onPadScu || 0);
+    if (inHold > 0) bits.push(["aboard", num(inHold) + " SCU", false]);
+    if (plan.onPadScu > 0) bits.push(["on the pad", num(plan.onPadScu) + " SCU", false]);
     bits.push(["contracts", String(t.liveContracts), false]);
     if (plan.trips.length) {
       const landings = plan.trips.reduce((s, x) => s + x.landings, 0);
@@ -1450,6 +1479,68 @@
     return d;
   }
 
+  /**
+   * 🔴 BEFORE YOU LEAVE — check the board for a load going your way.
+   *
+   * Sub asked for this and gave the reason: "I'm very forgetful, and I'm sure people who are using
+   * this maybe might be too." An empty leg is the most expensive thing in hauling, and the moment
+   * to fix it is while you are still standing at a terminal.
+   *
+   * 🔑 It could not be built until the log gave up the player's position. The widget had no idea
+   * you were anywhere, so it had nothing to be "about to leave" FROM. Now that
+   * `RequestLocationInventory` (and the numeric ids bound to it) place you, the prompt can name
+   * where you are and where you are already going.
+   *
+   * ⚠️ It never claims a contract EXISTS. The board is not in the log — only accepted contracts
+   * are — so this is a reminder to look, phrased as one. Sub's own fallback wording: "just
+   * generically say, before you leave double check to make sure that there aren't any missions
+   * that take cargo from your current location."
+   */
+  const DEPART_KEY = "sc-hauling-depart-off";
+  let departOff = (() => { try { return localStorage.getItem(DEPART_KEY) === "1"; } catch { return false; } })();
+
+  function renderDepart() {
+    const el = $("depart");
+    el.textContent = "";
+    const sr = (plan && plan.startResolved) || {};
+    const here = sr.detected;
+    // Only while we actually know where you are, and only on the Route tab — the Stow and Rank
+    // tabs are not about leaving.
+    if (departOff || !here || view !== "route") { el.style.display = "none"; return; }
+    const names = locNames();
+    // Where you are still going, in route order, minus the place you are standing.
+    const ahead = [];
+    for (const t of plan.trips) for (const st of t.stops) {
+      const loc = String(st.id || "").replace(/:(pickup|dropoff)$/, "");
+      if (loc === here) continue;
+      if (!ahead.includes(st.name)) ahead.push(st.name);
+    }
+    if (!ahead.length) { el.style.display = "none"; return; }
+    el.style.display = "";
+    const k = document.createElement("div");
+    k.className = "k";
+    k.textContent = "Before you leave " + (names[here] || "here");
+    const t = document.createElement("div");
+    t.className = "t";
+    t.appendChild(document.createTextNode("Check the board for anything loading here and dropping at "));
+    ahead.slice(0, 4).forEach((n, i, a) => {
+      const b = document.createElement("b");
+      b.textContent = n;
+      t.appendChild(b);
+      if (i < a.length - 1) t.appendChild(document.createTextNode(i === a.length - 2 ? " or " : ", "));
+    });
+    t.appendChild(document.createTextNode(" — you are going there anyway."));
+    const x = document.createElement("button");
+    x.type = "button"; x.className = "x"; x.textContent = "✕";
+    x.title = "Stop reminding me. Turn it back on in the widget's settings.";
+    x.addEventListener("click", () => {
+      departOff = true;
+      try { localStorage.setItem(DEPART_KEY, "1"); } catch { /* private mode */ }
+      render();
+    });
+    el.append(k, t, x);
+  }
+
   function renderRoute() {
     const body = $("body");
     body.textContent = "";
@@ -1499,7 +1590,14 @@
           const numEl = document.createElement("div");
           numEl.className = "num";
           numEl.textContent = "✓";
-          numEl.title = "Already collected — it is in your hold.";
+          /* 🔴 "Collected" is not "aboard". The game finishes a pickup objective the moment it
+             releases the cargo to the freight lift — eleven seconds before the platform even starts
+             rising, on Sub's own measured run. So the row says which it is: still on the pad where
+             you are standing, or genuinely with you because you have since moved on. */
+          const onPad = cp.where === "onPad";
+          numEl.title = onPad
+            ? "The game has released this to the freight lift — it is on the pad here, not in your ship yet."
+            : "Collected, and you have moved on since — so it is in your hold.";
           const mid = document.createElement("div");
           mid.className = "mid";
           const nm = document.createElement("div");
@@ -1513,7 +1611,8 @@
           chip.appendChild(dot);
           const c = document.createElement("span");
           c.className = "c";
-          c.textContent = (cp.commodity ? cp.commodity + " " : "") + num(cp.scu) + " SCU  ·  aboard";
+          c.textContent = (cp.commodity ? cp.commodity + " " : "") + num(cp.scu) + " SCU  ·  "
+            + (onPad ? "on the pad here" : "aboard");
           chip.title = cp.title || "";
           chip.appendChild(c);
           acts.appendChild(chip);
@@ -2070,6 +2169,8 @@
     $("tabAdvisor").classList.toggle("on", view === "advisor");
     $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
     $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
+    $("departBtn").textContent = departOff ? "Reminder off" : "Reminder on";
+    $("departBtn").classList.toggle("on", !departOff);
     $("spinBtn").textContent = stowSpin ? "Turned around" : "Turn around";
     $("spinBtn").classList.toggle("on", stowSpin);
     $("doneBtn").classList.toggle("on", showDone);
@@ -2083,6 +2184,7 @@
     renderStartPicker();
     renderTrack();
     renderPlaces();
+    renderDepart();
     /* 🔑 AFTER those two, because each sets its own display. The naming and load checklists belong
        to the board you are flying; the advisor is about contracts you have NOT taken. Leaving them
        up opened the Rank tab two screens below its own heading. */
@@ -2101,6 +2203,11 @@
     load();
   });
   $("doneBtn").addEventListener("click", () => { showDone = !showDone; render(); });
+  $("departBtn").addEventListener("click", () => {
+    departOff = !departOff;
+    try { localStorage.setItem(DEPART_KEY, departOff ? "1" : "0"); } catch { /* private mode */ }
+    render();
+  });
   $("shipPick").addEventListener("change", () => {
     shipPick = $("shipPick").value;
     saveShip(shipPick);

@@ -188,6 +188,8 @@ export interface HaulingView {
   /** Where the player was last seen, as the game's NUMERIC location id. Names nothing on its own;
    *  the caller binds it to a token it saw at the same place. */
   atLocationId: { id: string; at: number } | null;
+  /** The last freight-elevator movement — `down` = offloading, `up` = loading. Null until one. */
+  cargoMove: { direction: "down" | "up"; platform: string; at: number } | null;
   /** Contracts that have FINISHED since the app started, oldest first. Deliberately NOT the ended
    *  entries of `contracts`, which are pruned after ten minutes — see the ledger note. */
   finished: { at: number; acceptedAt: number | null; missionId: string; contractKey: string; payout: number | null }[];
@@ -276,6 +278,16 @@ export class HaulingTracker extends EventEmitter {
   private atLocation: { token: string; at: number } | null = null;
   /** The same, as the game's numeric location id — see the parser's `playerLocationId`. */
   private atLocationId: { id: string; at: number } | null = null;
+  /**
+   * The last freight-elevator movement, and which way the cargo went.
+   *
+   * 🔴 THIS IS WHAT "ABOARD" WAS MISSING. The game completes a pickup objective the instant it
+   * releases cargo to the lift — measured on Sub's own run, eleven seconds BEFORE the platform even
+   * begins to rise, and minutes before any of it is tractored in. So a completed pickup means the
+   * cargo is on the pad, not in the ship, and only the platform says which way it is travelling.
+   * `down` is offloading, `up` is loading.
+   */
+  private cargoMove: { direction: "down" | "up"; platform: string; at: number } | null = null;
   /** Completions still waiting for their "Awarded N aUEC" line, newest last. */
   private awaitingPayout: { missionId: string; at: number }[] = [];
   /** Rewards that arrived before their completion (dev-replay does this), newest last. */
@@ -331,6 +343,10 @@ export class HaulingTracker extends EventEmitter {
       /* The numeric form of the same fact, from the ASOP terminal, an inventory move, or the
          freight kiosk. Useless alone — see `playerLocationId` — so it is simply carried, and the
          binding to a readable token happens where the persisted map lives. */
+      case "cargoPlatform":
+        this.cargoMove = { direction: ev.direction, platform: ev.platform, at: ts(ev.ts) ?? Date.now() };
+        this.touch(ev.ts);
+        break;
       case "playerLocationId":
         this.atLocationId = { id: ev.locationId, at: ts(ev.ts) ?? Date.now() };
         this.touch(ev.ts);
@@ -674,6 +690,7 @@ export class HaulingTracker extends EventEmitter {
       runStartedAt: this.runStartedAt,
       atLocation: this.atLocation,
       atLocationId: this.atLocationId,
+      cargoMove: this.cargoMove,
       finished: [...this.ledger],
     };
   }
