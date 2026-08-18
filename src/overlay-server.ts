@@ -3130,7 +3130,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
        flagged, which is the only safe reading of "we do not know what you are flying". */
     const hull = ship?.trim() ? haulingData.ship(ship.trim()) : null;
     const maxBoxScu = hull ? largestBoxScu(gridsOf(hull)) : null;
-    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true, missionType: wantType || null, maxBoxScu })
+    /* 🔴 HIDDEN, NOT GREYED — Sub's ruling: "If the person has a ship that can't pick up the box,
+       hide it. I don't know why you'd want to keep them visible." He is right: a locked contract is
+       something you can work towards, an oversize one is not a goal, it is noise on a list whose
+       whole job is to say what to fly next. And with no ship known we show NOTHING and say so,
+       rather than ranking a board against a hold we cannot check. */
+    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true, missionType: wantType || null, maxBoxScu, dropOversize: true })
       .map((r) => {
         const giver = r.contract.giver ?? "";
         const standing = standings.get(giver) ?? 0;
@@ -3219,10 +3224,14 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({
       ok: true, goal, regime,
+      /** No hull => no board. `needShip` is the widget's cue to ask instead of listing. */
+      needShip: maxBoxScu == null,
+      shipName: hull?.displayName ?? hull?.className ?? (ship?.trim() || null),
+      maxBoxScu,
       type: wantType || null,
       types: [...types.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
       ladder: HAULING_LADDER,
-      contracts: top,
+      contracts: maxBoxScu == null ? [] : top,
       climbs,
       /** Measured, from his own finished runs — see haulingRunMinutes. */
       runMinutes: haulingRunMinutes(),

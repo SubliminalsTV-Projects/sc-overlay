@@ -404,4 +404,34 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
     "the key says SmallGrade while the board says Extra Small — the suffix is not the band");
 }
 
+// ── the clock stops when the player does ──────────────────────────────────────────────────────
+/* 🔴 REACHED SUB. He signed back in after ELEVEN HOURS away and his aUEC/hour and rep/hour had
+   collapsed. The run clock was wall-to-wall — first hauling event to latest — so the whole night
+   counted as hauling. A wall-clock rate cannot recover from a break; it only ever falls. */
+{
+  const t = new HaulingTracker();
+  feed(t, [
+    `<2026-08-16T15:18:28.982Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [275d8ca8-c591-4147-9058-e052d6a22d7e], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Processed_Stims_Stanton3_SupplyGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [pickup_4d907890-87c7-4d71-8484-85d8936d18d4_0], markerEntityId [12897], zoneHostId [742554712000], position [x: -771960.562500, y: -321347.218750, z: -359509.343750] [Team_MissionFeatures][Missions]`,
+    `<2026-08-16T15:23:28.982Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [275d8ca8-c591-4147-9058-e052d6a22d7e], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Processed_Stims_Stanton3_SupplyGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [dropoff_4d907890-87c7-4d71-8484-85d8936d18d4_0], markerEntityId [12897], zoneHostId [742554712000], position [x: -771960.562500, y: -321347.218750, z: -359509.343750] [Team_MissionFeatures][Missions]`,
+  ]);
+  const short = t.view().activeMs;
+  assert.ok(short > 0, "two events five minutes apart with a contract open must accrue time");
+  assert.equal(Math.round(short / 60_000), 5, "five minutes of work is five minutes");
+
+  // ...and now eleven hours pass with nothing happening.
+  feed(t, [
+    `<2026-08-17T02:23:28.982Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [275d8ca8-c591-4147-9058-e052d6a22d7e], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Processed_Stims_Stanton3_SupplyGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [dropoff_4d907890-87c7-4d71-8484-85d8936d18d4_1], markerEntityId [12897], zoneHostId [742554712000], position [x: -771960.562500, y: -321347.218750, z: -359509.343750] [Team_MissionFeatures][Missions]`,
+  ]);
+  assert.equal(t.view().activeMs, short,
+    "an eleven-hour absence must add NOTHING — this is the bug that reached him");
+
+  /* The wall-clock figure the old code used is still in the view, so assert the two genuinely
+     disagree. Without this the test would pass even if activeMs were quietly wall-clock again. */
+  const v = t.view();
+  const wall = v.runStartedAt != null ? v.updatedAt - v.runStartedAt : 0;
+  assert.ok(wall > v.activeMs * 100,
+    `wall clock ${wall}ms should dwarf active ${v.activeMs}ms`);
+}
+
+
 console.log("hauling tests passed");

@@ -61,6 +61,13 @@ import { parseBoardTitle, type BoardTitle } from "./hauling-advisor.js";
  *  GoblinG 322, Covalex 41, RedWind 2. */
 const HAUL_MARKERS = ["haul", "cargo"];
 
+/**
+ * A quiet stretch longer than this is a pause, not work. 20 minutes is comfortably longer than a
+ * real leg (the measured floors are 5-7 minutes) and far shorter than a meal, a stream break, or
+ * a night's sleep — the case that started this.
+ */
+const IDLE_GAP_MS = 20 * 60_000;
+
 /** How long an ended contract stays in the view, so the widget can show the run that just
  *  finished (and its payout, which lands ~40–140ms AFTER the mission ends). */
 const KEEP_ENDED_MS = 10 * 60_000;
@@ -182,6 +189,9 @@ export interface HaulingView {
   trackedMissionId: string | null;
   /** When this run's clock started — the first hauling event the app saw. Null before any. */
   runStartedAt: number | null;
+  /** Milliseconds the player was actually hauling: intervals with an open contract and no long
+   *  pause. This is what a per-hour rate must divide by — NOT `updatedAt - runStartedAt`. */
+  activeMs: number;
   /** Where the game last saw the player open an inventory — the router's origin, no longer asked
    *  for by hand. `token` is the game's own id, e.g. "Stanton3b_ArcCorp_Area045". */
   atLocation: { token: string; at: number } | null;
@@ -274,6 +284,8 @@ export class HaulingTracker extends EventEmitter {
   /** When this run's clock starts — the first hauling event the app ever saw. Set once and never
    *  cleared, for the same reason the ledger is not. */
   private runStartedAt: number | null = null;
+  /** Time the player was actually hauling — see accrueActive. Never wall-clock. */
+  private activeMs = 0;
   /** The last place the game saw the player open an inventory, and when. */
   private atLocation: { token: string; at: number } | null = null;
   /** The same, as the game's numeric location id — see the parser's `playerLocationId`. */
@@ -659,11 +671,41 @@ export class HaulingTracker extends EventEmitter {
   /** Advance the clock and announce a change. `lastAt` follows the LOG's clock, not the wall
    *  clock, so a seed read of an old file doesn't claim to be current. */
   private touch(evTs: string | null): void {
+    const before = this.lastAt;
     this.lastAt = Math.max(this.lastAt, ts(evTs) ?? 0);
     // The run clock opens at the first hauling event and never restarts — see runStartedAt.
     if (this.runStartedAt == null && this.lastAt > 0) this.runStartedAt = this.lastAt;
+    this.accrueActive(before, this.lastAt);
     this.prune();
     this.emit("change");
+  }
+
+  /**
+   * 🔴 A RATE MUST NOT COUNT TIME THE PLAYER WAS NOT PLAYING.
+   *
+   * Sub signed back in after ELEVEN HOURS away and his aUEC/hour and rep/hour had collapsed. The
+   * clock was wall-to-wall: first hauling event to latest event, with everything in between
+   * counted as haulinghours — sleep included. A rate built that way falls forever and never
+   * recovers, so the number the rank tab quotes is worthless the moment anyone takes a break.
+   *
+   * Two things stop the clock, and both are needed:
+   *   - NO OPEN CONTRACT. Sub's own framing: "know when the player has paused, when they don't
+   *     have any open hauling contracts". Between boards you are not hauling, so it does not count.
+   *   - A GAP LONGER THAN `IDLE_GAP_MS`. An open contract you walked away from is still a pause,
+   *     and a log that goes quiet for hours cannot be someone working. Bounding each interval also
+   *     means a stale seed read cannot dump a whole day into the total in one step.
+   *
+   * Accrued forward per event rather than derived at read time, because the OPEN-CONTRACT state
+   * is only knowable as it happens — by the time you are reading the view, an interval's contracts
+   * may all have ended.
+   */
+  private accrueActive(from: number, to: number): void {
+    if (!(from > 0) || !(to > from)) return;
+    const gap = to - from;
+    if (gap > IDLE_GAP_MS) return;
+    // State as it was DURING the interval: a contract that ended at `to` was open for all of it.
+    const open = [...this.contracts.values()].some((c) => c.endedAt == null || c.endedAt >= to);
+    if (open) this.activeMs += gap;
   }
 
   private prune(): void {
@@ -688,6 +730,7 @@ export class HaulingTracker extends EventEmitter {
       untracked: contracts.filter((c) => !c.deliverSeen && c.endedAt == null).map((c) => c.missionId),
       trackedMissionId: this.trackedMissionId,
       runStartedAt: this.runStartedAt,
+      activeMs: this.activeMs,
       atLocation: this.atLocation,
       atLocationId: this.atLocationId,
       cargoMove: this.cargoMove,

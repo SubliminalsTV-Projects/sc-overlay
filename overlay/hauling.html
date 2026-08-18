@@ -237,6 +237,17 @@
     border: 1px solid rgba(var(--accent-rgb), 0.3); border-radius: 5px; background: transparent;
     color: var(--faint); font-size: 11px; cursor: pointer; }
   .card .cardx:hover { color: var(--red); border-color: var(--red); }
+  /* The tick sits at the FRONT of the row, where a list of things you are doing wants it, and the
+     ✕ stays at the end where a destructive control belongs. */
+  .card .cardtick { flex: none; margin-right: 2px; width: 15px; height: 15px; padding: 0;
+    border: 1px solid rgba(var(--accent-rgb), 0.45); border-radius: 4px; background: transparent;
+    color: var(--cyan-bright); font-size: 10px; line-height: 1; cursor: pointer; }
+  .card .cardtick:hover { border-color: var(--cyan); }
+  .card.setaside .cardtick { color: var(--faint); }
+  .droprow { display: flex; align-items: center; gap: 8px; padding: 3px 12px 6px;
+    font-size: 9.5px; color: var(--faint); }
+  .droprow button { background: transparent; border: none; padding: 0; cursor: pointer;
+    color: var(--cyan-dim); font-size: 9.5px; text-decoration: underline; }
   .card.setaside .cardx:hover { color: var(--cyan-bright); border-color: var(--cyan); }
   .card .top { display: flex; align-items: baseline; gap: 6px; }
   .card .t { flex: 1; min-width: 0; font-size: 11.5px; color: var(--cyan-text);
@@ -393,14 +404,7 @@
   /* Locked = above your rung, so it is not on your board at all. Kept in the list because seeing
      what the next rank unlocks is half the reason to grind toward it. */
   .arow.locked { opacity: 0.45; }
-  /* 🔴 A HOLD IS A MATTER OF FACT, a rung is a matter of time — so this reads harder than locked.
-     Sub's Anvil Paladin takes nothing bigger than a 1 SCU container and the board kept offering
-     him 8 SCU work; a container cannot be split, so that is not a stretch goal, it is impossible
-     in the ship he is sitting in. */
-  .arow.oversize { opacity: 0.32; }
-  .arow.oversize .t { color: var(--faint); text-decoration: line-through; }
-  .fitpill { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--red); margin-left: 6px; }
+
   .arow .n { flex: none; width: 18px; font-family: var(--mono); font-size: 10px; color: var(--faint); }
   .arow .mid { flex: 1; min-width: 0; }
   .arow .t { font-size: 11.5px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
@@ -548,6 +552,16 @@
   const HIDE_KEY = "sc-hauling-hidden";
   let hidden = (() => { try { return JSON.parse(localStorage.getItem(HIDE_KEY) || "[]"); } catch { return []; } })();
   function saveHidden() { try { localStorage.setItem(HIDE_KEY, JSON.stringify(hidden)); } catch { /* private mode */ } }
+  /* 🔴 TWO DIFFERENT "NO"S, and they are not the same question.
+     The CHECKBOX is "not this run" — the contract stays on the board, greyed, and drops out of the
+     route so you can SEE what the route costs without it. Sub's framing: grab five, be unsure
+     about one, untick it and watch the plan change. That is a comparison, not a decision.
+     The ✕ is "get this off my screen" — for a contract the log never closed out, so it sits there
+     forever and cannot be done. That one is a stuck-record escape hatch, not a planning tool.
+     Both are reversible; neither touches the game. */
+  const DROP_KEY = "sc-hauling-dropped";
+  let dropped = (() => { try { return JSON.parse(localStorage.getItem(DROP_KEY) || "[]"); } catch { return []; } })();
+  function saveDropped() { try { localStorage.setItem(DROP_KEY, JSON.stringify(dropped)); } catch { /* private mode */ } }
   /* The contracts list folded away. It is reference, not instruction — the route tells you what to
      do — so on a small overlay it is the first thing worth reclaiming. */
   const FOLD_KEY = "sc-hauling-fold-contracts";
@@ -656,7 +670,9 @@
     try {
       const r = await fetch("/api/hauling/plan", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ ship: shipPick, objective, pins, startAt: startPick, hidden }),
+        // Both kinds leave the route: unticked is "not this run", dropped is "not at all".
+        body: JSON.stringify({ ship: shipPick, objective, pins, startAt: startPick,
+                               hidden: hidden.concat(dropped) }),
       });
       if (!r.ok) return;
       plan = await r.json();
@@ -669,6 +685,10 @@
       const restored = plan.contracts.filter((c) => c.trackedNow && hidden.includes(c.missionId)).map((c) => c.missionId);
       const next = hidden.filter((id) => live.has(id) && !restored.includes(id));
       if (next.length !== hidden.length) { hidden = next; saveHidden(); }
+      // A dropped contract that has left the board is not dropped any more, it is gone. Keeping
+      // the id would silently swallow a NEW contract that happened to reuse it.
+      const keptDrop = dropped.filter((id) => live.has(id));
+      if (keptDrop.length !== dropped.length) { dropped = keptDrop; saveDropped(); }
       // A start the plan no longer knows about is a place from a finished board. Silently keeping
       // it would route from somewhere that is not on the map any more.
       // 🔴 BUT ONLY ONCE THERE IS A BOARD TO CHECK AGAINST. This ran unguarded and erased the
@@ -962,10 +982,16 @@
     }, 0);
   }
   /** Every listed contract carries a figure the player typed. Recomputed rather than remembered:
-   *  the board changes underneath this widget constantly. */
+   *  the board changes underneath this widget constantly.
+   *
+   *  🔴 UNTICKED AND REMOVED CONTRACTS ARE NOT ASKED ABOUT. Telling a player to go track something
+   *  in mobiGlas that they have already said they are not flying is pure noise — and Sub's ruling
+   *  on the abandoned case was that it is not even a question: "If they drop the mission, that
+   *  should immediately come out of there. You don't even need my call for that." */
   function allPinnedNow() {
     if (!plan) return false;
-    const live = plan.contracts.filter((c) => !c.ended && (!c.deliverSeen || c.source === "range" || c.source === "unknown"));
+    const live = plan.contracts.filter((c) => !c.ended && !c.hidden && !dropped.includes(c.missionId)
+      && (!c.deliverSeen || c.source === "range" || c.source === "unknown"));
     return live.length > 0 && live.every((c) => trackStateOf(c) === "pinned");
   }
 
@@ -974,7 +1000,8 @@
    *  type the real figure into. */
   function renderTrack() {
     const el = $("track");
-    const live = plan ? plan.contracts.filter((c) => !c.ended && (!c.deliverSeen || c.source === "range" || c.source === "unknown")) : [];
+    const live = plan ? plan.contracts.filter((c) => !c.ended && !c.hidden && !dropped.includes(c.missionId)
+      && (!c.deliverSeen || c.source === "range" || c.source === "unknown")) : [];
     if (!live.length) { el.style.display = "none"; return; }
     el.style.display = "";
     // The heading is an instruction ONLY while at least one row can act on it.
@@ -1286,6 +1313,20 @@
       loadAdvisor();
       return;
     }
+    /* 🔴 NO SHIP, NO BOARD. Every number on this list is per unit of WORK, and the work depends on
+       what your hold can take — so ranking a board without knowing the hull is guessing and then
+       printing the guess as advice. Sub's ruling: "If we don't know what ship they're in, then
+       show them nothing and tell them you need to specify a ship or get in one." */
+    if (advisor.needShip) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = "Pick your ship, or climb into one.";
+      const w = document.createElement("div"); w.className = "empty sub";
+      w.textContent = "This list ranks contracts by what they cost YOU to fly, and that depends on"
+        + " your hold — which boxes fit, and how many trips they take. Without a hull it would be a"
+        + " guess dressed up as advice.";
+      body.appendChild(d); body.appendChild(w);
+      return;
+    }
     body.appendChild(renderStanding());
     body.appendChild(renderTypeFilter());
     const sec = document.createElement("div");
@@ -1337,7 +1378,7 @@
         body.appendChild(s);
       }
       const row = document.createElement("div");
-      row.className = "arow" + (c.locked ? " locked" : "") + (c.oversize ? " oversize" : "");
+      row.className = "arow" + (c.locked ? " locked" : "");
       const nEl = document.createElement("div"); nEl.className = "n"; nEl.textContent = String(i + 1);
       const mid = document.createElement("div"); mid.className = "mid";
       const t = document.createElement("div"); t.className = "t";
@@ -1355,15 +1396,6 @@
       if (c.variants > 1) bits.push(c.variants + " variants");
       m.textContent = bits.join("  ·  ");
       mid.append(t, m);
-      if (c.oversize) {
-        const fp = document.createElement("span");
-        fp.className = "fitpill";
-        fp.textContent = "  won't fit your hold";
-        fp.title = "This contract ships containers bigger than anything your hold can take, and a"
-          + " container cannot be split — so no amount of it fits. Pick a bigger hull to see it"
-          + " ranked normally.";
-        m.appendChild(fp);
-      }
       if (c.locked) {
         const lp = document.createElement("span");
         lp.className = "lockpill";
@@ -1829,7 +1861,20 @@
     });
     body.appendChild(sec);
     if (foldContracts) return;
-    for (const c of list) {
+    const shown = list.filter((c) => !dropped.includes(c.missionId));
+    if (dropped.length) {
+      /* Never a one-way door. A contract removed because it looked stuck is exactly the one you
+         will want back when it turns out it was not. */
+      const dr = document.createElement("div"); dr.className = "droprow";
+      const lbl = document.createElement("span");
+      lbl.textContent = dropped.length + " removed from this list";
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = "put them back";
+      b.addEventListener("click", () => { dropped = []; saveDropped(); load(); });
+      dr.append(lbl, b);
+      body.appendChild(dr);
+    }
+    for (const c of shown) {
       const card = document.createElement("div");
       card.className = "card" + (c.ended ? " done" : "") + (c.hidden ? " setaside" : "");
       const top = document.createElement("div");
@@ -1842,6 +1887,26 @@
       amt.className = "amt src-" + (c.source || "unknown");
       amt.textContent = fmtScu(c);
       amt.title = (BADGE[c.source] || BADGE.unknown)[1];
+      /* Ticked = in the plan. Unticking greys the card and pulls it out of the route WITHOUT
+         removing it, which is the whole point: you are asking "what does this run look like
+         without that one", and you need to still see it to ask again. */
+      if (!c.ended) {
+        const tick = document.createElement("button");
+        tick.type = "button";
+        tick.className = "cardtick";
+        tick.textContent = c.hidden ? "" : "✓";
+        tick.title = c.hidden
+          ? "Not in the plan. Tick to put it back in the route."
+          : "In the plan. Untick to see the route without it — the contract stays on the board.";
+        tick.setAttribute("aria-pressed", c.hidden ? "false" : "true");
+        tick.addEventListener("click", (e) => {
+          e.stopPropagation();
+          hidden = c.hidden ? hidden.filter((id) => id !== c.missionId) : hidden.concat([c.missionId]);
+          saveHidden();
+          load();
+        });
+        top.appendChild(tick);
+      }
       top.append(t, amt);
       /* 🔴 SET ASIDE. A player decides to skip a contract long before they open mobiGlas to abandon
          it, and until then it drags the route and the hold around with it. The game reports a real
@@ -1852,14 +1917,14 @@
         const x = document.createElement("button");
         x.type = "button";
         x.className = "cardx";
-        x.textContent = c.hidden ? "＋" : "✕";
-        x.title = c.hidden
-          ? "Put this contract back in the plan."
-          : "Set aside — drop it from the route and the hold. Track it in mobiGlas to bring it back.";
+        x.textContent = "✕";
+        x.title = "Remove this contract from the list entirely. For one the game never closed out,"
+          + " so it sits here forever and cannot be done. Reversible — a line appears at the top of"
+          + " the list to put them back.";
         x.addEventListener("click", (e) => {
           e.stopPropagation();
-          hidden = c.hidden ? hidden.filter((id) => id !== c.missionId) : hidden.concat([c.missionId]);
-          saveHidden();
+          dropped = dropped.concat([c.missionId]);
+          saveDropped();
           load();
         });
         top.appendChild(x);

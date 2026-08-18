@@ -1268,7 +1268,12 @@ function buildRates(
 
   // ── measured ───────────────────────────────────────────────────────────────
   let actual: HaulingPlan["rates"]["actual"] = null;
-  const elapsedMin = view.runStartedAt != null ? (view.updatedAt - view.runStartedAt) / 60_000 : 0;
+  /* 🔴 ACTIVE time, not wall time. This read `updatedAt - runStartedAt`, so every hour the player
+     was asleep, at work, or simply not hauling divided into the same numerator. Sub came back
+     after ELEVEN HOURS away and his rates had collapsed — and a wall-clock rate never recovers,
+     it only falls. See HaulingTracker.accrueActive: intervals count only while a contract is open
+     and only when the log did not go quiet. */
+  const elapsedMin = view.activeMs / 60_000;
   // 🔑 A minute of elapsed time is the floor. Two contracts completing in the same second is a
   // real thing (Sub delivers a mixed hold in one lift), and dividing by ~0 would report millions
   // of aUEC an hour — a number that is arithmetically correct and a lie about the run.
