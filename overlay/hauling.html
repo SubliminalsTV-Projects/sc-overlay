@@ -194,15 +194,26 @@
   .stop.same .num { border-style: dashed; }
   .stop .mid { flex: 1; min-width: 0; }
   .stop .nm.editable > span:first-child, .stop .nm.editable { }
-  .stop .nm .pen { margin-left: 5px; font-size: 10px; color: var(--cyan-dim); opacity: 0.75; }
+  .stop .nm .pen { flex: none; margin-left: 5px; font-size: 10px; color: var(--cyan-dim); opacity: 0.75; }
   .stop .nm.editable:hover .pen { color: var(--cyan-bright); opacity: 1; }
-  .stop .nm.editable:hover { text-decoration: underline dotted rgba(var(--accent-rgb), 0.6); }
+  .stop .nm.editable:hover .nmt { text-decoration: underline dotted rgba(var(--accent-rgb), 0.6); }
+  .stop .pinbox { width: 46px; margin-left: 5px; font-family: var(--mono); font-size: 10px;
+    text-align: right; color: var(--cyan-bright); background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(var(--accent-rgb), 0.5); border-radius: 4px; padding: 0 3px; }
+  .stop .pinbox:focus { outline: none; border-color: var(--cyan); }
+  .stop .pinderived { margin-left: 5px; font-size: 8.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--cyan); }
   .stop .nminp { font-family: var(--sans); font-size: 12px; font-weight: 600; width: 150px;
     color: var(--cyan-bright); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--cyan);
     border-radius: 4px; padding: 1px 4px; }
   .stop .nminp:focus { outline: none; }
-  .stop .nm { font-size: 12px; font-weight: 600; color: var(--cyan-bright);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 🔴 THE PENCIL MUST NOT BE WHAT GETS CUT. `.nm` truncated as one string, so narrowing the
+     widget ate the pencil first and the row stopped looking editable exactly when there was least
+     room to guess. The row is a flex line now: the TITLE shrinks and ellipsises, the pencil is
+     flex:none and always present. */
+  .stop .nm { display: flex; align-items: baseline; gap: 0;
+    font-size: 12px; font-weight: 600; color: var(--cyan-bright); position: relative; }
+  .stop .nm .nmt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stop .acts { font-size: 10px; color: var(--cyan-dim); line-height: 1.5; margin-top: 1px; }
   .stop .acts .c { color: var(--cyan-text); }
   .stop .rt { flex: none; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--faint); }
@@ -601,7 +612,13 @@
   function savePins() { try { localStorage.setItem(PIN_KEY, JSON.stringify(pins)); } catch { /* private mode */ } }
   function prunePins(liveIds) {
     let changed = false;
-    for (const id of Object.keys(pins)) if (!liveIds.has(id)) { delete pins[id]; changed = true; }
+    /* 🔴 A PER-PICKUP PIN IS KEYED "<missionId>#pN". Pruning on an exact match would delete every
+       one of them on the next poll, which is how the first cut of per-pickup figures silently
+       forgot everything the player typed. Judge the mission part. */
+    for (const id of Object.keys(pins)) {
+      const mission = id.split("#")[0];
+      if (!liveIds.has(mission)) { delete pins[id]; changed = true; }
+    }
     if (changed) savePins();
   }
 
@@ -1752,9 +1769,18 @@
   /** contract group -> the commodity any of its legs names. Built per render: only the DROP-OFF
    *  objective states it, so a pickup row has to borrow it from its own contract. */
   let commodityOfGroup = new Map();
+  /** leg group -> the leg, plus its contract's missionId. Lets a route row reach its own leg's
+   *  pickup index and bounds without walking the contract list again. */
+  let legByGroupUI = new Map();
 
   function renderRoute() {
     commodityOfGroup = new Map();
+    legByGroupUI = new Map();
+    for (const c of (plan?.contracts || [])) {
+      for (const l of (c.legs || [])) {
+        legByGroupUI.set(l.group, { ...l, missionId: c.missionId });
+      }
+    }
     for (const t of (plan?.trips || [])) {
       for (const st of t.stops) {
         for (const a of (st.actions || [])) {
@@ -1865,7 +1891,10 @@
           const nm = document.createElement("div");
           nm.className = "nm";
           const label = step + ". " + g.verb + " — " + s.name + (sameLanding ? "  (same landing)" : "");
-          nm.textContent = label;
+          const nmt = document.createElement("span");
+          nmt.className = "nmt";
+          nmt.textContent = label;
+          nm.appendChild(nmt);
           /* 🔴 NAME IT WHERE YOU SEE IT. This replaces the "Name these places" panel outright: the
              row already knows which stop it is, in what order, carrying what — so there is nothing
              to disambiguate and nothing to scroll to. Click the name, type, Enter.
@@ -1892,16 +1921,29 @@
               inp.className = "nminp";
               inp.value = (plan.unnamedPlaces || []).find((x) => x.locationId === s.locationId)?.yours || "";
               inp.placeholder = s.name;
-              nm.textContent = step + ". " + g.verb + " — ";
-              nm.appendChild(inp);
+              nmt.textContent = step + ". " + g.verb + " — ";
+              nmt.appendChild(inp);
               const restore = () => {
-                nm.textContent = label;
-                nm.appendChild(pen);
+                closeSug(s.locationId);
+                placeRows.delete(s.locationId);
+                nmt.textContent = label;
               };
-              inp.addEventListener("focus", () => grabOn(inp));
-              inp.addEventListener("blur", () => grabOff());
+              /* 🔴 IT HAS TO SUGGEST, OR IT CANNOT BE USED. Sub, on the first cut of this: "it
+                 doesn't auto correct it for me... I can't put the exact name in there." He is
+                 right — these are proper nouns out of the game ("Riker Memorial Spaceport"), and a
+                 free-text box asks him to spell something he only ever saw on a screen.
+                 The suggestion list is the SAME machinery the old panel used; registering this
+                 editor in `placeRows` under the locationId is all it needs, so ask/close/arrow-keys
+                 all work unchanged and there is no second implementation to drift. */
+              placeRows.set(s.locationId, { row: nm, inp });
+              inp.addEventListener("focus", () => { grabOn(inp); askPlaces(s.locationId, inp.value, nm); });
+              inp.addEventListener("blur", () => { grabOff(); setTimeout(() => closeSug(s.locationId), 120); });
               inp.addEventListener("pointerdown", (ev) => { ev.stopPropagation(); wantFocus = inp; });
+              inp.addEventListener("input", () => askPlaces(s.locationId, inp.value, nm));
               inp.addEventListener("keydown", (ev) => {
+                // Arrows/Enter over the suggestion list first — it owns those keys while it is open.
+                onSugKey(ev, s.locationId, inp, nm);
+                if (ev.defaultPrevented) { ev.stopPropagation(); return; }
                 if (ev.key === "Enter") { ev.preventDefault(); savePlace(s.locationId, inp.value.trim()); }
                 // Escape puts the row back without saving — a mis-click must cost nothing.
                 else if (ev.key === "Escape") { ev.preventDefault(); inp.blur(); restore(); }
@@ -1923,9 +1965,59 @@
             // An untracked contract does not name its commodity, so the tonnage carries the row and
             // the contract's title goes in the tooltip rather than swamping the line.
             const named = a.commodity || commodityOfGroup.get(a.group);
-            c.textContent = (named ? named + " " : "") + num(a.scu) + " SCU";
+            const lg = legByGroupUI.get(a.group);
+            const split = lg && lg.pickupCount > 1 && g.kind === "pickup";
+            /* A split pickup shows the SPREAD, not a share dressed up as a figure — see the plan's
+               MORE PICKUPS THAN DROP-OFFS note. The exact ones (pinned, or worked out from the
+               others) print as one number like anything else. */
+            c.textContent = (named ? named + " " : "")
+              + (split && !lg.exact && lg.min != null && lg.max != null && lg.min !== lg.max
+                   ? lg.min + "–" + lg.max
+                   : num(split ? lg.scu : a.scu))
+              + " SCU";
             chip.title = a.title || "";
             chip.appendChild(c);
+            /* 🔴 THE BOX GOES WHERE THE ANSWER IS. Nothing states how much comes from each pickup —
+               and Sub's point settles that it never will: a 1–5 SCU spread in the game data is a
+               RANDOM roll per instance, re-rolled if the contract is taken again. So the figure can
+               only come from him, standing at the elevator looking at it.
+               One box per pickup, and the LAST one is never asked for — it is the total less the
+               others. Two pickups means one number, ever. */
+            if (split) {
+              const key = lg.missionId + "#p" + lg.pickupIndex;
+              if (lg.source === "derived") {
+                const d = document.createElement("span");
+                d.className = "pinderived";
+                d.textContent = "worked out";
+                d.title = "The contract total less what you typed at the other pickups, so this one"
+                  + " did not need asking about.";
+                chip.appendChild(d);
+              } else {
+                const pi = document.createElement("input");
+                pi.type = "text";
+                pi.className = "pinbox";
+                pi.value = pins[key] != null ? pins[key] : "";
+                pi.placeholder = lg.min != null && lg.max != null && lg.min !== lg.max ? lg.min + "–" + lg.max : "SCU";
+                pi.title = "How much you actually pick up here. Type one and the other pickup is"
+                  + " worked out for you.";
+                pi.addEventListener("pointerdown", (ev) => { ev.stopPropagation(); wantFocus = pi; });
+                pi.addEventListener("click", (ev) => ev.stopPropagation());
+                pi.addEventListener("focus", () => grabOn(pi));
+                pi.addEventListener("blur", () => grabOff());
+                pi.addEventListener("change", () => {
+                  const v = Number(pi.value);
+                  if (Number.isFinite(v) && v > 0) pins[key] = Math.round(v); else delete pins[key];
+                  savePins();
+                  load();
+                });
+                pi.addEventListener("keydown", (ev) => {
+                  if (ev.key === "Enter") { ev.preventDefault(); pi.blur(); }
+                  else if (ev.key === "Escape") { ev.preventDefault(); pi.value = pins[key] != null ? pins[key] : ""; pi.blur(); }
+                  ev.stopPropagation();
+                });
+                chip.appendChild(pi);
+              }
+            }
             acts.appendChild(chip);
             acts.appendChild(document.createTextNode("   "));
           }
