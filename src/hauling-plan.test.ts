@@ -163,12 +163,21 @@ check("no box is placed outside its grid", (all.pack?.placements ?? []).every((p
    the door. Cargo collected at different stops is governed by the stronger physical rule (you load
    through the door, so later pickups cannot be buried) and is excluded here. */
 {
+  /* ⚠️ ONE NUMBER PER LANDING. This model used to number each ACTION, which made two loads
+     collected on the SAME visit look like different collection times — so it judged them by the
+     collection rule and never applied the delivery rule at all. That is precisely the bug Sub found
+     on 2026-08-18 (Scrap at the ramp, Silicon and Tin buried), and the test's own model shared it,
+     which is why it went green over a broken stow order. The assertion below never changed; what
+     was wrong was this definition of "collected before". */
   const pickupSeq = new Map<string, number>();
   const dropSeq = new Map<string, number>();
   let seq = 0;
-  for (const t of all.trips) for (const st of t.stops) for (const a of st.actions) {
-    if (a.kind === "pickup") { if (!pickupSeq.has(a.group)) pickupSeq.set(a.group, seq++); }
-    else if (!dropSeq.has(a.group)) dropSeq.set(a.group, seq++);
+  for (const t of all.trips) for (const st of t.stops) {
+    const at = seq++;
+    for (const a of st.actions) {
+      if (a.kind === "pickup") { if (!pickupSeq.has(a.group)) pickupSeq.set(a.group, at); }
+      else if (!dropSeq.has(a.group)) dropSeq.set(a.group, at);
+    }
   }
   const minY = new Map<string, number>();
   for (const pl of all.pack?.placements ?? []) {

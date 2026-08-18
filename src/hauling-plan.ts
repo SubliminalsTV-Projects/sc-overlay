@@ -1046,13 +1046,26 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // So: collection order first, and only then depth. Everything gathered at the first pickup is
   // loaded before anything gathered at the second, and WITHIN one pickup the load dropped LAST
   // goes in deepest — which is the ramp rule, now applied where it actually holds.
+  /* 🔴 ONE NUMBER PER LANDING, NOT PER ACTION. `seq++` used to sit inside the ACTION loop, so three
+     commodities collected at the SAME stop got three different pickup numbers (Silicon 0, Tin 1,
+     Scrap 2). The sort below then saw `pa !== pb`, fired the COLLECTION rule on what is physically
+     a tie, and never reached the DELIVERY rule at all — the one that actually decides this case.
+     Sorted descending, that put whichever commodity happened to be listed last at the door: Scrap,
+     which drops LAST, with the Silicon and Tin he unloads FIRST buried behind it.
+
+     Sub caught it on his own board, 2026-08-18: "it has scrap right near the door… what should be
+     nearest the door would be the silicon and tin." Exactly the failure the delivery rule exists to
+     prevent, and the comment below already described the answer it was not reaching.
+
+     A LANDING is the unit that matters: you cannot collect one commodity "before" another when both
+     come up the same lift on the same visit. */
   const pickupAt = new Map<string, number>();
   const dropAt = new Map<string, number>();
   let seq = 0;
   for (const trip of trips) {
     for (const s of trip.stops) {
+      const at = seq++;
       for (const a of s.actions) {
-        const at = seq++;
         if (a.kind === "pickup") { if (!pickupAt.has(a.group)) pickupAt.set(a.group, at); }
         else if (!dropAt.has(a.group)) dropAt.set(a.group, at);
       }
