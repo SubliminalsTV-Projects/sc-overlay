@@ -361,35 +361,80 @@ function gridsOf(ship: Ship): GridSpec[] {
 }
 
 /**
- * Join the game's own location token to a place on this board.
+ * 🔴 `RR_<BODY>_LEO` IS THAT PLANET'S ORBITAL STATION, and nothing in the data says so.
  *
- * `Stanton3b_ArcCorp_Area045` has to reach `@-283,14,11`, which the board calls "ArcCorp Mining
- * Area 045". There is no id in common — locations.json carries neither the token as a code nor as
- * a slug — so the join is on the NAME, letters and digits only, in either direction as a
- * subsequence. That handles the word the two spellings disagree about: the log writes
- * `ArcCorp_Area045` and the dataset writes "ArcCorp **Mining** Area 045".
+ * Sub, standing in Baijini Point with the terminal open, asked the fair question: can you tell I am
+ * here yet? The answer was no — Baijini's token is `RR_ARC_LEO`, which shares not one letter with
+ * "Baijini Point", so the name join returned null and the router still had no origin.
  *
- * ⚠️ Subsequence, not substring, and deliberately requiring the DIGITS to survive: "Area045" and
- * "Area048" differ in one character, and a looser match would put the player at the wrong outpost
- * — which is worse than not knowing, because the router would then confidently order around it.
+ * ⚠️ It cannot be derived. Every one of these planets carries several `Manmade` children that are
+ * all QT destinations with no code — ArcCorp has Baijini Point, Comm Array ST3-90 and Orbital Relay
+ * AC-421, and nothing in the row distinguishes the station you can land at from the relay you
+ * cannot. So this is an explicit table, which is honest, and it is four lines.
+ *
+ * The other `RR_` families need no table: `RR_CRU_L1` and friends resolve through locations.json's
+ * own alias map once the prefix is stripped.
  */
-function matchLocationToken(token: string, names: ReadonlyMap<string, string>): string | null {
+const LEO_STATION: Record<string, string> = {
+  arc: "Baijini Point",
+  hur: "Everus Harbor",
+  cru: "Seraphim Station",
+  mic: "Port Tressler",
+};
+
+/**
+ * Join the game's own location token to a place on this board, best evidence first.
+ *
+ *   1. locations.json's ALIAS table, which already knows `Stanton2_Orison` → Orison,
+ *      `Nyx_Levski` → Levski and `cru_l1` → CRU L1. Exact, and it covers most tokens.
+ *   2. The LEO table above, for the four orbital stations the alias map has no entry for.
+ *   3. A NAME match, letters and digits only, as a subsequence in either direction — because the
+ *      log writes `ArcCorp_Area045` where the dataset writes "ArcCorp **Mining** Area 045", and
+ *      `SamsonSonsSalvageCenter` where the board says "Samson & Son's Salvage Center".
+ *
+ * ⚠️ Subsequence, not substring, and the DIGITS have to survive: "Area045" and "Area048" differ by
+ * one character. An ambiguous match resolves to NOTHING — putting the player at the wrong outpost
+ * is worse than not knowing, because the router would then confidently order around it.
+ */
+function matchLocationToken(
+  token: string,
+  names: ReadonlyMap<string, string>,
+  data: HaulingDataStore,
+): string | null {
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  // Drop the leading body code ("Stanton3b"); it names the moon, not the site.
-  const tail = norm(token.split("_").slice(1).join(""));
-  if (!tail) return null;
   const isSub = (a: string, b: string) => {
     let i = 0;
     for (const c of b) { if (c === a[i]) i++; if (i === a.length) return true; }
     return i === a.length;
   };
-  const hits: string[] = [];
-  for (const [id, name] of names) {
-    const n = norm(name);
-    if (n && (isSub(tail, n) || isSub(n, tail))) hits.push(id);
+  /** Board ids whose name matches `want`; null unless exactly one does. */
+  const onBoard = (want: string): string | null => {
+    const w = norm(want);
+    if (!w) return null;
+    const hits: string[] = [];
+    for (const [id, name] of names) {
+      const n = norm(name);
+      if (n && (isSub(w, n) || isSub(n, w))) hits.push(id);
+    }
+    return hits.length === 1 ? hits[0] : null;
+  };
+
+  // 1 — the dataset's own alias map, on the whole token and on the RR_-stripped form.
+  for (const probe of [token, token.replace(/^RR_/i, "")]) {
+    const named = data.byCode(probe).map((l) => l.name).filter((n): n is string => !!n);
+    for (const n of named) {
+      const hit = onBoard(n);
+      if (hit) return hit;
+    }
   }
-  // Ambiguity is a reason to say nothing. Two candidates means we cannot tell Area045 from Area048.
-  return hits.length === 1 ? hits[0] : null;
+  // 2 — the orbital stations, which the alias map does not carry.
+  const leo = /^RR_([A-Za-z0-9]+)_LEO$/i.exec(token);
+  if (leo) {
+    const station = LEO_STATION[leo[1].toLowerCase()];
+    if (station) return onBoard(station);
+  }
+  // 3 — the raw token's own words. Drop the leading body code; it names the moon, not the site.
+  return onBoard(token.split("_").slice(1).join(""));
 }
 
 /** Position -> a stable location id. Rounded to the kilometre so a marker re-emitted on spawn-in
@@ -800,7 +845,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // trips are solved, and the origin has to be known before them.
   const knownNames = new Map<string, string>(nameByLoc);
   for (const [id, n] of Object.entries(opts.placeNames ?? {})) if (n.trim() && !knownNames.has(id)) knownNames.set(id, n.trim());
-  const seen = view.atLocation ? matchLocationToken(view.atLocation.token, knownNames) : null;
+  const seen = view.atLocation ? matchLocationToken(view.atLocation.token, knownNames, data) : null;
   const startId = opts.startAt || seen;
   // Only a place the route already touches can be an origin — an id we have no coordinates for
   // would silently become "anywhere", which is the bug, not the fix.
