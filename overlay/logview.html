@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Log</title>
+<script>/* AMD compatibility: apply the lite skin BEFORE first paint (no flash) when the shell asks for it. */
+  if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
+  /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
+  { const q = new URLSearchParams(location.search); const r = document.documentElement;
+    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
+    /* ?bg=RRGGBB paints an opaque backdrop, for embedding in a THIRD-PARTY host (GameGlass
+       and friends). Hex digits only, and applied through CSSOM — a value that is not a colour
+       is rejected by the engine rather than landing anywhere it could be read as markup. */
+    const b = q.get("bg"); if (b && /^[0-9a-f]{3,8}$/i.test(b)) { r.style.setProperty("--wbg", "#" + b); r.dataset.bg = ""; } }</script>
+<link rel="stylesheet" href="/widget-theme.css" />
+<style>
+  /* Log View: a live tail of game.log, on screen, while playing. Fed by the /logview/events SSE
+     channel (see src/overlay-server.ts). Theme tokens come from the shared /widget-theme.css, so
+     this widget retints with the flown ship like every other one.
+
+     🔑 It is a DIAGNOSTIC INSTRUMENT, not a console. Everything here serves one question — "is X
+     even logged, and what exactly does the line say?" — which is why the text is monospaced, the
+     line is never abbreviated, and the raw text is what lands on the clipboard. */
+  * { box-sizing: border-box; }
+  * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb), 0.28) transparent; }
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
+
+  #panel {
+    display: flex; flex-direction: column;
+    width: 520px; height: 420px; margin: 20px auto;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    position: relative;
+  }
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  body.embedded { overflow: visible; background: transparent; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+
+  .head { min-height: 38px; gap: 6px; }
+  .hbtn { font-family: var(--sans); font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.14); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; cursor: pointer; white-space: nowrap; }
+  .hbtn:hover { background: rgba(var(--accent-rgb), 0.24); border-color: var(--cyan); }
+  /* Paused reads as the ALERT colour, not the accent one: a frozen log looks exactly like a quiet
+     log, and mistaking the two is how you conclude the game stopped writing. */
+  .hbtn.on { background: rgba(var(--value-rgb), 0.22); border-color: var(--amber); color: var(--amber); }
+
+  /* The filter takes the leftover room. It is the control that makes the widget usable at all —
+     the log runs to hundreds of lines a minute and reading it unfiltered is not a thing a person
+     can do mid-flight — so it gets the space, not a corner. */
+  #filter { flex: 1; min-width: 40px; font-family: var(--mono); font-size: 11px;
+    color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.07);
+    border: 1px solid var(--divider); border-radius: 6px; padding: 4px 7px; outline: none; }
+  #filter:focus { border-color: var(--cyan); background: rgba(var(--accent-rgb), 0.13); }
+  #filter::placeholder { color: var(--faint); }
+  #filter.hit { border-color: var(--cyan); }
+  #filter.miss { border-color: var(--red); color: var(--red); }
+
+  /* ── The lines ─────────────────────────────────────────────────────────────
+     Wrapped, never clipped: a log viewer that hides the end of the line defeats its own purpose,
+     and the end of the line is usually where the interesting token is. */
+  #rows { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.45; padding: 3px 0 6px; }
+  .row { display: block; width: 100%; text-align: left; padding: 1px 10px 1px 10px;
+    border: 0; background: transparent; color: var(--cyan-text); font: inherit;
+    cursor: pointer; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .row:hover { background: rgba(var(--accent-rgb), 0.10); }
+  .row .ts { color: var(--faint); }
+  /* A copied line flashes so the click is acknowledged without stealing a corner of the panel. */
+  .row.flash { background: rgba(var(--value-rgb), 0.22); }
+
+  .empty { padding: 24px 16px; text-align: center; color: var(--faint); font-size: 11.5px; line-height: 1.7; }
+
+  /* ── Status ────────────────────────────────────────────────────────────────
+     Carries the two things that tell an empty panel apart from a broken one — whether we are
+     watching a log at all, and whether a burst cost us lines. */
+  .foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px 6px;
+    border-top: 1px solid var(--divider); position: relative; z-index: 4;
+    font-family: var(--mono); font-size: 9.5px; color: var(--faint); letter-spacing: 0.03em; }
+  #stat { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #warn { flex: none; color: var(--amber); }
+  #note { flex: none; color: var(--green); opacity: 0; transition: opacity 0.18s; }
+  #note.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <!-- `selectable`: reading and lifting text out is the entire point of this widget. -->
+  <div id="panel" class="wpanel selectable">
+    <div class="head">
+      <span class="dia"></span>
+      <span class="h-title">Log</span>
+      <input id="filter" type="text" placeholder="filter…" spellcheck="false" autocomplete="off" maxlength="120" />
+      <button id="pauseBtn" class="hbtn" type="button" title="Freeze the view so a line can't scroll away">⏸ Pause</button>
+    </div>
+
+    <div id="rows"></div>
+
+    <div class="foot">
+      <span id="stat">Connecting…</span>
+      <span id="warn"></span>
+      <span id="note">copied</span>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const EMBEDDED = new URLSearchParams(location.search).has("embedded");
+  if (EMBEDDED) document.body.classList.add("embedded");
+  // Same-origin bridge to the parent canvas (present only when embedded on the overlay).
+  const host = () => (EMBEDDED && window.parent) ? window.parent.__logViewHost : null;
+
+  // 🔴 THREE CAPS, and they are the difference between a diagnostic and a frozen overlay.
+  //   RING   — how far back the filter can reach. Held as strings, not DOM: typing a word must
+  //            search the recent past, not only what happens to be rendered, or the widget can
+  //            only answer "is X logged" for lines that arrive AFTER you thought to ask.
+  //   ROWS   — how many rows may exist in the DOM at once. The overlay is always-on-top and
+  //            composited over the game; an unbounded list is how you melt it.
+  //   FLASH  — how long a copied line stays lit.
+  const RING = 2000;
+  const ROWS = 500;
+  const FLASH_MS = 450;
+
+  /** @type {{n:number,t:number,s:string}[]} newest last */
+  let ring = [];
+  let paused = false;
+  let heldWhilePaused = 0;   // lines that arrived behind the freeze
+  let dropped = 0;           // lines the SERVER shed during a burst — never hidden
+  let watching = false, logPath = "";
+  let filterText = "";
+  let stick = true;          // follow the tail unless the reader has scrolled up
+
+  const norm = (s) => s.toLowerCase();
+  const matches = (line) => !filterText || norm(line.s).includes(filterText);
+
+  // ── rendering ───────────────────────────────────────────────────────────────
+  // The engine prefixes most lines with <2026-08-17T…Z>. It is dimmed rather than removed: it is
+  // how you line a line up with "the thing I just did", and this widget shows the line the game
+  // wrote, not our edit of it. The clipboard always gets the untouched original.
+  const TS = /^(<[^>]{10,40}>)([\s\S]*)$/;
+
+  function rowEl(line) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "row";
+    el.dataset.n = String(line.n);
+    el._raw = line.s;
+    const m = TS.exec(line.s);
+    if (m) {
+      const ts = document.createElement("span");
+      ts.className = "ts";
+      ts.textContent = m[1];
+      el.append(ts, document.createTextNode(m[2]));
+    } else {
+      el.textContent = line.s;
+    }
+    return el;
+  }
+
+  function trimRows() {
+    const box = $("rows");
+    while (box.childElementCount > ROWS) box.removeChild(box.firstElementChild);
+  }
+  function scrollTail() { if (stick) $("rows").scrollTop = $("rows").scrollHeight; }
+
+  /** Full rebuild — filter changed, or the freeze lifted. */
+  function render() {
+    const box = $("rows");
+    box.textContent = "";
+    const shown = ring.filter(matches);
+    if (!shown.length) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = ring.length
+        ? "No line matches that filter."
+        : watching ? "Waiting for the game to write…" : "Not watching a log yet.";
+      box.appendChild(e);
+    } else {
+      const frag = document.createDocumentFragment();
+      for (const line of shown.slice(-ROWS)) frag.appendChild(rowEl(line));
+      box.appendChild(frag);
+    }
+    // The filter box says whether it found anything, so an empty panel is never ambiguous
+    // between "nothing matched" and "nothing arrived".
+    $("filter").classList.toggle("hit", !!filterText && shown.length > 0);
+    $("filter").classList.toggle("miss", !!filterText && shown.length === 0);
+    scrollTail();
+    status();
+  }
+
+  /** Incremental append — the hot path. Never rebuilds. */
+  function appendLines(lines) {
+    const box = $("rows");
+    const first = box.firstElementChild;
+    if (first && first.className === "empty") box.textContent = "";
+    let frag = null;
+    for (const line of lines) {
+      if (!matches(line)) continue;
+      (frag || (frag = document.createDocumentFragment())).appendChild(rowEl(line));
+    }
+    if (frag) { box.appendChild(frag); trimRows(); scrollTail(); }
+  }
+
+  function status() {
+    const shown = $("rows").querySelectorAll(".row").length;
+    const where = logPath ? logPath.split(/[\\/]/).pop() : "no log path";
+    const bits = [`${ring.length} held`, `${shown} shown`];
+    if (paused) bits.push(heldWhilePaused ? `PAUSED · ${heldWhilePaused} new` : "PAUSED");
+    bits.push(watching ? where : `not watching (${where})`);
+    $("stat").textContent = bits.join(" · ");
+    // 🔑 A dropped line is SAID, never swallowed. This widget exists to answer "is X logged?",
+    // and an instrument that quietly omits lines answers that question wrongly and confidently.
+    $("warn").textContent = dropped ? `⚠ ${dropped} dropped` : "";
+  }
+
+  // ── the feed ────────────────────────────────────────────────────────────────
+  function push(lines) {
+    if (!lines || !lines.length) return;
+    ring.push(...lines);
+    if (ring.length > RING) ring.splice(0, ring.length - RING);
+    if (paused) { heldWhilePaused += lines.length; status(); return; }
+    appendLines(lines);
+    status();
+  }
+
+  let es = null;
+  function connect() {
+    try { es?.close(); } catch { /* first run */ }
+    es = new EventSource("/logview/events");
+    es.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.kind === "backfill") {
+        watching = !!msg.watching; logPath = msg.path || "";
+        ring = Array.isArray(msg.lines) ? msg.lines.slice() : [];
+        heldWhilePaused = 0;
+        render();
+      } else if (msg.kind === "lines") {
+        if (msg.dropped) dropped += msg.dropped;
+        push(msg.lines);
+      }
+    };
+    // EventSource reconnects on its own; the next backfill re-seeds the ring, so a sidecar
+    // restart heals without the reader touching anything.
+    es.onerror = () => { $("stat").textContent = "Reconnecting…"; };
+  }
+
+  // ── pause ───────────────────────────────────────────────────────────────────
+  // Freeze the VIEW, never the feed: lines keep landing in the ring behind it, so unpausing
+  // shows what you missed instead of a hole. Sub's reason for wanting it is exactly this — a line
+  // he has spotted must not scroll away before he has read it.
+  function setPaused(on) {
+    paused = !!on;
+    const b = $("pauseBtn");
+    b.classList.toggle("on", paused);
+    b.textContent = paused ? "▶ Resume" : "⏸ Pause";
+    b.title = paused ? "Resume the live tail" : "Freeze the view so a line can't scroll away";
+    if (!paused) { heldWhilePaused = 0; stick = true; render(); } else status();
+  }
+
+  // ── copy ────────────────────────────────────────────────────────────────────
+  // The row's stored `_raw`, not what is rendered. They are the same string TODAY — the only thing
+  // the renderer does is wrap the timestamp in a dim span, which textContent puts back. It is kept
+  // separate for the first decoration anyone adds (a highlight, a repeat count, an ellipsis), at
+  // which point textContent silently stops being what the game wrote and Sub pastes our edit of a
+  // log line into a conversation about what that log line said.
+  // execCommand is the fallback: the overlay is not always a secure context.
+  function copyRow(el) {
+    const text = el._raw || el.textContent || "";
+    const done = () => {
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), FLASH_MS);
+      const n = $("note"); n.classList.add("show");
+      clearTimeout(copyRow._t); copyRow._t = setTimeout(() => n.classList.remove("show"), 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, () => legacyCopy(text, done));
+    } else legacyCopy(text, done);
+  }
+  function legacyCopy(text, done) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+      done();
+    } catch { /* nothing we can do; the text is selectable by hand */ }
+  }
+
+  // ── the shared keyboard grab ────────────────────────────────────────────────
+  // 🔴 The grab is CANVAS-WIDE: while it is held, no click on any display reaches the game. So it
+  // is taken by a deliberate act (clicking into the filter box) and released the moment focus
+  // leaves it — plus on Escape, and on the widget being hidden, because hiding UNLOADS this page
+  // and a grab stranded that way can never be lowered by anything on screen.
+  const filterEl = $("filter");
+  filterEl.addEventListener("focus", () => { try { host()?.editStart?.(); } catch { /* standalone */ } });
+  filterEl.addEventListener("blur", () => { try { host()?.editEnd?.(); } catch { /* standalone */ } });
+  filterEl.addEventListener("input", () => {
+    filterText = norm(filterEl.value.trim());
+    stick = true;
+    render();
+  });
+  filterEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    if (filterEl.value) { filterEl.value = ""; filterText = ""; render(); }
+    else filterEl.blur();
+  });
+
+  $("pauseBtn").addEventListener("click", () => setPaused(!paused));
+
+  // Click a line to lift it. Delegated, so 500 rows cost one listener.
+  $("rows").addEventListener("click", (e) => {
+    const row = e.target.closest(".row");
+    if (row) copyRow(row);
+  });
+  // Following the tail is what you want until you scroll up to read something — at which point
+  // yanking the view back to the bottom is precisely the behaviour this widget exists to prevent.
+  $("rows").addEventListener("scroll", () => {
+    const box = $("rows");
+    stick = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+  });
+
+  // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
+  document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
+
+  // The shell's hand-back once the held interact key is released — safe to focus now.
+  window.__logViewFocus = () => { try { filterEl.focus(); } catch { /* gone */ } };
+  /* 🔴 Hiding the widget with the filter box focused would strand the canvas-wide keyboard grab:
+     the panel goes away, the interact key stays suspended, and every click on every display stops
+     reaching the game with nothing on screen to explain it. Same rule as notepad/party/chat. */
+  window.__logViewExitTyping = () => {
+    try { document.activeElement?.blur?.(); } catch { /* nothing focused */ }
+    try { host()?.editEnd?.(); } catch { /* not embedded */ }
+  };
+
+  connect();
+  render();
+  try { host()?.ready?.(); } catch { /* not embedded */ }
+</script>
+</body>
+</html>

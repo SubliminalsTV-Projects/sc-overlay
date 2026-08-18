@@ -57,10 +57,10 @@ const GROUPING = `(async () => {
     saveWidget: (id, l) => saved.push([id, JSON.parse(JSON.stringify(l))]),
   });
 
-  // 13 = the 11 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
+  // 14 = the 12 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
   // Bump this deliberately when a widget is added — it is the one assertion that notices a
   // registry entry going missing, which would otherwise just look like a widget quietly absent.
-  ok("registry has 13 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 13, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
+  ok("registry has 14 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 14, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
   ok("starts ungrouped", GROUPS.length === 0, GROUPS.length);
   const party = WBY.party, mining = WBY.mining, notepad = WBY.notepad;
   ok("test widgets shown", shown(party) && shown(mining) && shown(notepad));
@@ -2238,6 +2238,188 @@ const LIFECYCLE = `(async () => {
 // leaks with no page left to lower it. notepad/party/chat always did this via onHide; twitchChat
 // and webView defined the release function and the canvas never called it. Negative-controlled:
 // removing twitchChat's onHide turns "hiding it releases the grab" red.
+// ── Suite: Log View releases the canvas grab ─────────────────────────────────
+// Its own suite rather than a third key in TYPINGGRAB, because that loop drives a "type mode"
+// BUTTON and this widget has none — focus is taken by clicking into the filter box, which is the
+// deliberate act. Same danger though, and it is the worst one in the widget: while the grab is
+// held no click on any display reaches the game, and hiding UNLOADS the page so a grab stranded
+// that way can never be lowered by anything on screen.
+// Negative-controlled: removing logView's onHide turns "hiding it releases the grab" red.
+const LOGVIEWGRAB = `(async () => {
+  ${PRELUDE}
+  window.__editing = false;
+  const w = WBY.logView;
+  ok("Log View is in the registry", !!w, w ? w.key : "MISSING");
+  setWidgetVisible(w, true);
+  await sleep(400);
+  let box = null;
+  try { box = document.getElementById("wf-logView").contentWindow.document.getElementById("filter"); }
+  catch { /* frame never loaded */ }
+  ok("the page has a filter box", !!box);
+  if (box) {
+    // 🔑 A HIDDEN BrowserWindow NEVER FIRES THE focus EVENT. Measured: after box.focus() the
+    // element really is document.activeElement, and the grab still does not arm — the harness
+    // drives an offscreen window, which has no focus to give, so the event the page listens for
+    // is never dispatched. Same family as rAF and CSS transitions not advancing here.
+    // So: assert focus() really lands on the box (that part IS observable), then dispatch the
+    // event the browser would have. Everything past that point is the page's own handler and the
+    // real host bridge — only Chromium's dispatch is stood in for, because it cannot be had.
+    box.focus();
+    await sleep(60);
+    ok("focus lands on the filter box", box.ownerDocument.activeElement === box,
+       box.ownerDocument.activeElement ? box.ownerDocument.activeElement.id || box.ownerDocument.activeElement.tagName : "none");
+    box.dispatchEvent(new (box.ownerDocument.defaultView.Event)("focus"));
+    await sleep(60);
+    ok("focusing the filter arms the canvas grab", window.__editing === true);
+    setWidgetVisible(w, false);
+    await sleep(200);
+    ok("hiding it releases the grab", window.__editing === false);
+  }
+  return out;
+})()`;
+
+// ── Suite: Log View — raw lines, the caps, the filter, the freeze ────────────
+// This widget's whole reason for existing is to answer "is X even logged?", so the assertions
+// that matter are the ones about NOT losing a line and NOT lying about one: the DOM cap, the ring
+// reaching further back than the DOM, a dropped line being said out loud, and the clipboard
+// getting the RAW text rather than what we rendered.
+// Driven through the page's own push()/render() rather than a live game, so it asserts behaviour
+// instead of whatever Sub happened to be flying.
+const LOGVIEW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400); // let the page's own connect()/render() settle before driving it
+
+  const rowCount = () => document.querySelectorAll("#rows .row").length;
+  const rowText = () => [...document.querySelectorAll("#rows .row")].map((r) => r.textContent);
+  const mk = (n, s) => ({ n, t: Date.now(), s });
+
+  // Start from a known state. The page is talking to the LIVE sidecar, which is tailing a real
+  // game.log — asserting against whatever it has streamed would be asserting on Sub's evening.
+  ring = []; dropped = 0; filterText = ""; document.getElementById("filter").value = "";
+  setPaused(false);
+  render();
+
+  const stamp = "<2026-08-17T22:00:00.000Z>";
+  push([mk(1, stamp + " [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> marker one"),
+        mk(2, stamp + " [Notice] <CSCItemNavigation> routing from Pyro System to Orbituary")]);
+  await sleep(40);
+  ok("a line the game wrote appears", rowCount() === 2, rowCount());
+  ok("...carrying the whole raw line, timestamp included",
+     rowText()[0].indexOf("AddToPlayerDataBank") > -1 && rowText()[0].indexOf(stamp) === 0,
+     rowText()[0].slice(0, 60));
+  // The timestamp is DIMMED, not removed. Removing it would be editing the log; a widget whose job
+  // is to say what the game said may not quietly reformat it.
+  ok("...with the timestamp dimmed rather than stripped",
+     !!document.querySelector("#rows .row .ts"),
+     document.querySelector("#rows .row .ts") ? document.querySelector("#rows .row .ts").textContent : "none");
+
+  // 🔴 THE MELT GUARD. The overlay is always-on-top and composited over the game; an unbounded
+  // row list is how you take the frame rate down with it. 900 pushed, at most 500 kept.
+  const many = [];
+  for (let i = 0; i < 900; i++) many.push(mk(100 + i, stamp + " [Notice] <Filler> bulk line " + i));
+  push(many);
+  await sleep(80);
+  ok("the DOM is capped however loud the log gets", rowCount() <= 500, rowCount());
+  ok("...keeping the NEWEST lines, not the oldest",
+     rowText()[rowText().length - 1].indexOf("bulk line 899") > -1,
+     rowText()[rowText().length - 1].slice(-30));
+
+  // 🔑 The ring must outreach the DOM. Typing a word has to search the recent past, not only what
+  // survived the row cap — otherwise the widget can only answer "is X logged" for lines that
+  // arrive after you thought to ask, which is the wrong half of the question.
+  const buried = "AddToPlayerDataBank";
+  ok("a line pushed off the DOM is still held for the filter",
+     ring.some((l) => l.s.indexOf(buried) > -1) && !rowText().some((t) => t.indexOf(buried) > -1),
+     "ring " + ring.length + " / rows " + rowCount());
+
+  const filterTo = async (v) => {
+    const el = document.getElementById("filter");
+    el.value = v;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(60);
+  };
+  await filterTo(buried);
+  ok("...and the filter reaches back and finds it", rowCount() === 1, rowCount());
+  ok("...showing only what matched", rowText()[0].indexOf(buried) > -1, rowText()[0].slice(0, 60));
+  ok("the filter is case-insensitive, because nobody types engine casing",
+     (await filterTo("addtoplayerdatabank"), rowCount()) === 1, rowCount());
+
+  // A miss is SAID. Otherwise "no line matched" and "nothing has arrived" render identically, and
+  // the reader concludes the game is silent when it is the filter that is wrong.
+  await filterTo("qqzzx-no-such-token");
+  ok("a filter that matches nothing says so on the control",
+     document.getElementById("filter").classList.contains("miss"));
+  ok("...and explains the empty panel in words",
+     document.querySelector("#rows .empty") && /No line matches/.test(document.querySelector("#rows .empty").textContent),
+     document.querySelector("#rows .empty") ? document.querySelector("#rows .empty").textContent : "no empty state");
+  await filterTo("");
+  ok("clearing the filter drops the miss marking", !document.getElementById("filter").classList.contains("miss"));
+
+  // ── the freeze ────────────────────────────────────────────────────────────
+  // Pause freezes the VIEW, never the feed. Sub wants it so a line he has spotted cannot scroll
+  // away; a pause that also dropped the lines arriving behind it would trade one lost line for
+  // many, which is the opposite of the point.
+  const before = rowCount();
+  setPaused(true);
+  push([mk(9001, stamp + " [Notice] <Frozen> arrived behind the freeze")]);
+  await sleep(60);
+  ok("pausing freezes the view", rowCount() === before, rowCount() + " vs " + before);
+  ok("...while the feed keeps running behind it",
+     ring.some((l) => l.s.indexOf("arrived behind the freeze") > -1));
+  ok("...and says how many are waiting", /PAUSED . 1 new/.test(document.getElementById("stat").textContent),
+     document.getElementById("stat").textContent);
+  setPaused(false);
+  await sleep(60);
+  ok("resuming shows what arrived while frozen",
+     rowText().some((t) => t.indexOf("arrived behind the freeze") > -1));
+
+  // 🔴 A dropped line is SAID, never swallowed. An instrument that quietly omits lines answers
+  // "is X logged?" with a confident, wrong no — which is the exact failure this widget exists to
+  // stop, so silence here would be worse than not shipping it.
+  dropped = 0;
+  ok("nothing is claimed dropped when nothing was", document.getElementById("warn").textContent === "",
+     document.getElementById("warn").textContent);
+  dropped = 7; status();
+  ok("a burst the server shed is admitted out loud", /7 dropped/.test(document.getElementById("warn").textContent),
+     document.getElementById("warn").textContent);
+  dropped = 0; status();
+
+  // ── click to copy ─────────────────────────────────────────────────────────
+  // ⚠️ Every row keeps the untouched server string on _raw, and the copy reads THAT rather than
+  // the rendered text. Today the two are identical — so "the clipboard is not the rendered text"
+  // is a claim this suite cannot falsify, and it is not made. What IS asserted is the mechanism:
+  // the row carries the exact string the server sent, and that exact string is what the clipboard
+  // gets. Negative-controlled by deleting the _raw assignment, which turns both red.
+  // (The reason _raw exists at all is the first decoration anyone adds — a highlight, a repeat
+  // count, an ellipsis — at which point textContent silently stops being what the game wrote, and
+  // Sub pastes our edit of a log line into a conversation about what the log line said.)
+  let copied = null;
+  const realClip = navigator.clipboard;
+  try {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true, value: { writeText: (t) => { copied = t; return Promise.resolve(); } },
+    });
+  } catch { /* left as the real one; the assertion below will say so */ }
+  await filterTo(buried);
+  const row = document.querySelector("#rows .row");
+  const sent = ring.filter((l) => l.s.indexOf(buried) > -1)[0];
+  ok("there is a line to click", !!row && !!sent);
+  if (row && sent) {
+    ok("the row holds the untouched string the server sent", row._raw === sent.s, String(row._raw).slice(0, 60));
+    row.click();
+    await sleep(60);
+    ok("clicking a line copies it", typeof copied === "string" && copied.length > 0, String(copied).slice(0, 50));
+    ok("...exactly as the game wrote it, timestamp and all", copied === sent.s, String(copied).slice(0, 60));
+    ok("...and the row acknowledges the click", row.classList.contains("flash"));
+  }
+  try { Object.defineProperty(navigator, "clipboard", { configurable: true, value: realClip }); } catch { /* fine */ }
+
+  await filterTo("");
+  return out;
+})()`;
+
 const TYPINGGRAB = `(async () => {
   ${PRELUDE}
   window.__editing = false;
@@ -4746,6 +4928,13 @@ app.whenReady().then(async () => {
     fails += await run("chrome anchoring + latches", ANCHOR, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("lifecycle: closed = idle", LIFECYCLE, null);
     fails += await run("typing grab: hiding releases it", TYPINGGRAB, path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    // ⚠️ Deliberately ahead of the hauling suites. A THROW inside a suite kills the whole run where
+    // it stands, and `hauling: honest loads, whole route` currently throws on main (it reads
+    // #trackWhy, which 0b3c06f replaced with a #trackInfo popover) — so anything registered after
+    // it is not merely failing, it is never executed at all.
+    fails += await run("logView: the filter box releases the canvas grab", LOGVIEWGRAB,
+      path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    fails += await run("logView: raw lines, the caps, the filter, the freeze", LOGVIEW, null, null, "logview.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);

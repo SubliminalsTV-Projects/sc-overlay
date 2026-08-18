@@ -131,6 +131,7 @@ let unlockAlertVisible = true;
 let partyVisible = false; // is the in-canvas Party split widget currently shown
 let battagliaVisible = false; // is the in-canvas Battaglia grind tracker currently shown
 let haulingVisible = false; // is the in-canvas Hauling optimiser currently shown
+let logViewVisible = false; // is the in-canvas Log View (raw game.log tail) currently shown
 let chatVisible = false; // is the in-canvas social Chat widget shown (also gates the sidecar's chat socket)
 // Fade the whole overlay while you're actually playing. 1 = the feature is OFF, which is the
 // default, so no existing user's overlay changes appearance until they ask for it.
@@ -719,6 +720,7 @@ function createOverlay() {
     sendPartyVisible({ on: partyVisible, initial: true });
     sendBattagliaVisible({ on: battagliaVisible, initial: true });
     sendHaulingVisible({ on: haulingVisible, initial: true });
+    sendLogViewVisible({ on: logViewVisible, initial: true });
     sendChatVisible({ on: chatVisible, initial: true });
     sendConfigWidgetVisible({ on: configWidgetVisible, initial: true });
     sendWebViewVisible({ on: webViewVisible, initial: true });
@@ -979,7 +981,7 @@ function sendMiningVisible(state) {
 }
 // Push widget on/off state to the in-overlay hub checkboxes (kept in sync with the tray).
 function pushWidgetStates() {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, hauling: haulingVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }); }
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, hauling: haulingVisible, logView: logViewVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }); }
   catch { /* renderer gone */ }
 }
 // The Notepad widget is a plain in-canvas iframe (no auto-show / SSE), so its visibility is a
@@ -1101,6 +1103,23 @@ function setHaulingVisible(on) {
   refreshTray();
 }
 function toggleHauling() { setHaulingVisible(!haulingVisible); }
+
+// Log View - the raw game.log tail as a placeable widget. Same shell-owned visibility as the
+// widgets above. It carries a text field (the filter box), so hiding it has to release the
+// canvas keyboard grab; that happens in the renderer's registry entry (onHide ->
+// __logViewExitTyping), the same rule as notepad/party/chat/hauling.
+function sendLogViewVisible(state) {
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:logView-visible", state); }
+  catch { /* renderer gone */ }
+}
+function setLogViewVisible(on) {
+  logViewVisible = !!on;
+  sendLogViewVisible({ on: logViewVisible });
+  postConfig({ logViewOpen: logViewVisible }); // remember open/closed for next launch
+  pushWidgetStates();
+  refreshTray();
+}
+function toggleLogView() { setLogViewVisible(!logViewVisible); }
 
 // Settings as a canvas widget — same shell-owned visibility contract as every widget above.
 // The standalone settings WINDOW (openConfig) stays: the first-run wizard deep-links into it and
@@ -1281,6 +1300,7 @@ const WIDGET_TOGGLES = {
   party: () => toggleParty(),
   battaglia: () => toggleBattaglia(),
   hauling: () => toggleHauling(),
+  logView: () => toggleLogView(),
   chat: () => toggleChat(),
   webView: () => toggleWebView(),
   bindingChart: () => toggleBindingChart(),
@@ -1778,6 +1798,7 @@ function refreshTray() {
       { label: "Loot Split", type: "checkbox", checked: partyVisible, click: toggleParty },
       { label: "Event Tracker", type: "checkbox", checked: battagliaVisible, click: toggleBattaglia },
       { label: "Hauling", type: "checkbox", checked: haulingVisible, click: toggleHauling },
+      { label: "Log", type: "checkbox", checked: logViewVisible, click: toggleLogView },
       { label: "Chat", type: "checkbox", checked: chatVisible, click: toggleChat },
       { label: "Web Page", type: "checkbox", checked: webViewVisible, click: toggleWebView },
       { label: "Infographic Viewer", type: "checkbox", checked: bindingChartVisible, click: toggleBindingChart },
@@ -1948,6 +1969,7 @@ if (!app.requestSingleInstanceLock()) {
       partyVisible = c.partyOpen === true;
       battagliaVisible = c.battagliaOpen === true;
       haulingVisible = c.haulingOpen === true;
+      logViewVisible = c.logViewOpen === true;
       chatVisible = c.chatOpen === true;
       webViewVisible = c.webViewOpen === true;
       bindingChartVisible = c.bindingChartOpen === true;
@@ -2251,7 +2273,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     return { x: canvasOffset.x, y: canvasOffset.y, scale: canvasScale };
   });
-  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, hauling: haulingVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }));
+  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, hauling: haulingVisible, logView: logViewVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }));
   ipcMain.on("app:set-mining", (_e, on) => {
     if (on) { miningAutoSuppress = 0; setMiningVisible(true); }
     else setMiningVisible(false, { manual: true });
@@ -2263,6 +2285,7 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("app:set-party", (_e, on) => setPartyVisible(!!on));
   ipcMain.on("app:set-battaglia", (_e, on) => setBattagliaVisible(!!on));
   ipcMain.on("app:set-hauling", (_e, on) => setHaulingVisible(!!on));
+  ipcMain.on("app:set-logview", (_e, on) => setLogViewVisible(!!on));
   ipcMain.on("app:set-chat", (_e, on) => setChatVisible(!!on));
   ipcMain.on("app:set-config", (_e, on) => setConfigWidgetVisible(!!on));
   // SC Feed alert tone picker, mirroring mining:pick-tone (renderers can't open OS dialogs).
