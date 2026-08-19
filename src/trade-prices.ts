@@ -170,6 +170,34 @@ function price(v: unknown): number | null {
   return n && n > 0 ? n : null;
 }
 
+/**
+ * 🔴 IN UEX'S INVENTORY COLUMNS, ZERO MEANS "NOBODY REPORTED IT", NOT "THERE IS NONE" - and
+ * reading it the other way silently deleted most of the route table.
+ *
+ * Measured over the real payload: `scu_sell` is 0 on **1,628 of 1,882** sell rows while
+ * `scu_sell_stock` is populated on 1,550 of them. A sample row makes it unambiguous - TDD Area 18
+ * buying Aluminum reads `scu_sell: 0` beside `scu_sell_stock: 1034` and `scu_sell_avg: 4357`. A
+ * field that is zero four times out of five, next to siblings in the thousands, is a sparse
+ * reading and not a terminal that will take nothing.
+ *
+ * The bug this fixes: `num(scu_sell) ?? num(scu_sell_stock)` never fell through, because `??`
+ * passes on null and NOT on 0. Every one of those 1,628 rows therefore arrived with
+ * `demandScu: 0`, the finder capped the run at 0 SCU and dropped it - so four fifths of all sell
+ * terminals silently removed their own routes. It surfaced only because the lookup view printed
+ * "0 SCU wanted" against every terminal and that read as obviously false.
+ *
+ * ⚠️ So `TradeQuote`'s contract is unchanged and still says `0` means a known zero - it is the
+ * NORMALISER that must stop manufacturing zeros out of a sparse source. Anything that genuinely
+ * knows a shelf is empty may still write 0 and have it respected.
+ */
+function inventory(...vs: unknown[]): number | null {
+  for (const v of vs) {
+    const n = num(v);
+    if (n !== null && n > 0) return n;
+  }
+  return null;
+}
+
 export class TradePriceStore {
   private opts: TradePriceOptions;
   private table: TradeTable;
@@ -255,11 +283,12 @@ export class TradePriceStore {
         place: t ? placeOf(t) : null,
         buy,
         sell,
-        stockScu: num(p.scu_buy),
-        // 🔑 Two different demand fields and they are not interchangeable: `scu_sell` is what has
-        // been sold INTO the terminal, `scu_sell_stock` what it is holding. Prefer the first and
-        // fall back, rather than adding them - that would double-count.
-        demandScu: num(p.scu_sell) ?? num(p.scu_sell_stock),
+        stockScu: inventory(p.scu_buy),
+        // 🔑 `scu_sell_stock` FIRST: it is the populated column (1,550 of 1,882 rows) while
+        // `scu_sell` is 0 four times in five. Never added together - they describe the same shelf
+        // from two angles and summing them would double-count it. See `inventory()` for why a
+        // zero here is read as silence.
+        demandScu: inventory(p.scu_sell_stock, p.scu_sell),
         maxContainerScu: typeof t?.max_container_size === "number" ? t.max_container_size : null,
         asOf: typeof p.date_modified === "number" && p.date_modified > 0 ? p.date_modified : null,
       });

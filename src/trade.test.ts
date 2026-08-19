@@ -274,5 +274,118 @@ console.log("\n-- lookup: ranges, never one number --");
   check("...with a null sell summary rather than a zero", lookupCommodity(quotes, "Titanium (Ore)", "live", NOW)?.sell === null);
 }
 
+// ── The normaliser: sparse UEX inventory columns ────────────────────────────
+//
+// 🔴 The regression this guards is the one that deleted four fifths of the route table. UEX writes
+// 0 into `scu_sell` on 1,628 of 1,882 sell rows while `scu_sell_stock` carries the real figure, so
+// reading that 0 as "this terminal will take nothing" capped those runs at 0 SCU and dropped them.
+
+import { TradePriceStore } from "./trade-prices.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as pjoin } from "node:path";
+
+// 🔴 EVERY STORE GETS ITS OWN stateDir. The first draft shared one, so the refresh cache written
+// by the first block was read back as a "cache" source by the next two and turned three correct
+// assertions red for reasons that had nothing to do with them. Same shape as the handover suite
+// leaving game.log files in %TEMP% and reddening the log-paths suite: a test that writes to a
+// shared location decides other suites results by run order.
+const tmpDirs: string[] = [];
+const freshDir = () => { const d = mkdtempSync(pjoin(tmpdir(), "sc-trade-test-")); tmpDirs.push(d); return d; };
+const cleanupTmp = () => { for (const d of tmpDirs) { try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } } };
+
+const remote = (rows: unknown[], terminals: unknown[]) =>
+  (async () => new Response(JSON.stringify({ prices: rows, terminals, fetchedAt: NOW }), {
+    status: 200, headers: { "Content-Type": "application/json" },
+  })) as unknown as typeof fetch;
+
+const TERMS = [
+  { id: 1, name: "Admin - A", nickname: "A", star_system_name: "Stanton", planet_name: "ArcCorp", is_available_live: 1, max_container_size: 32 },
+  { id: 2, name: "Admin - B", nickname: "B", star_system_name: "Stanton", planet_name: "Hurston", is_available_live: 1, max_container_size: 24 },
+  { id: 3, name: "Admin - Gone", nickname: "Gone", star_system_name: "Pyro", planet_name: "Pyro I", is_available_live: 0, max_container_size: 32 },
+];
+
+async function storeWith(rows: unknown[]) {
+  const s = new TradePriceStore({
+    dataDir: ".", stateDir: freshDir(), url: "http://stub/",
+    bundled: () => ({}), places: () => new Map(), fetchImpl: remote(rows, TERMS),
+  });
+  return s.refresh();
+}
+
+console.log("\n-- the normaliser --");
+{
+  const t = await storeWith([
+    // The real shape: scu_sell is a sparse 0, scu_sell_stock carries the figure.
+    { id_terminal: 2, commodity_name: "Aluminum", price_sell: 8300, scu_sell: 0, scu_sell_stock: 1034, date_modified: daysAgo(1) },
+    { id_terminal: 1, commodity_name: "Aluminum", price_buy: 5000, scu_buy: 400, date_modified: daysAgo(1) },
+    // A terminal the game does not currently have.
+    { id_terminal: 3, commodity_name: "Aluminum", price_sell: 99_999, scu_sell_stock: 50, date_modified: daysAgo(1) },
+  ]);
+  check("the live table is built", t.source === "live" && t.quotes.length > 0, `${t.source} ${t.quotes.length}`);
+  const sell = t.quotes.find((x) => x.terminal === "Admin - B");
+  check("a sparse scu_sell falls through to scu_sell_stock", sell?.demandScu === 1034, String(sell?.demandScu));
+  check("...and is NOT reported as a demand of zero", sell?.demandScu !== 0);
+  const buy = t.quotes.find((x) => x.terminal === "Admin - A");
+  check("buy-side stock is carried", buy?.stockScu === 400, String(buy?.stockScu));
+  check("terminal hierarchy resolves to a body", buy?.body === "ArcCorp", String(buy?.body));
+  check("max container size is carried", buy?.maxContainerScu === 32, String(buy?.maxContainerScu));
+
+  // ⚠️ A must-not-contain assertion is free when the set is empty, so assert the set first.
+  check("an offline terminal is dropped", t.droppedOffline === 1, String(t.droppedOffline));
+  check("...and its quote is not in the table", !t.quotes.some((x) => x.terminal === "Admin - Gone"));
+
+  // 🔴 A ZERO IN A UEX INVENTORY COLUMN IS SILENCE, AND MUST BECOME null RATHER THAN 0.
+  // Without this the fixture above never exercises the rule - `scu_sell_stock` carries a real
+  // figure there, so the leading argument is never the zero and a broken `inventory()` passes.
+  // The consequence of getting it wrong is not cosmetic: `stockScu: 0` deletes the route, while
+  // `stockScu: null` keeps it and labels it "stock unknown", which is the true statement.
+  const zeros = await storeWith([
+    { id_terminal: 1, commodity_name: "Quartz", price_buy: 100, scu_buy: 0, date_modified: daysAgo(1) },
+    { id_terminal: 2, commodity_name: "Quartz", price_sell: 400, scu_sell_stock: 0, scu_sell: 0, date_modified: daysAgo(1) },
+  ]);
+  const zBuy = zeros.quotes.find((x) => x.commodity === "Quartz" && x.buy !== null);
+  const zSell = zeros.quotes.find((x) => x.commodity === "Quartz" && x.sell !== null);
+  check("a zero scu_buy reads as unreported, not as an empty shelf", zBuy?.stockScu === null, String(zBuy?.stockScu));
+  check("a zero in BOTH demand columns reads as unreported", zSell?.demandScu === null, String(zSell?.demandScu));
+  const zRoutes = findRoutes(zeros.quotes, { capacityScu: 64, now: NOW });
+  check("...so the route survives instead of being deleted", zRoutes.length === 1, String(zRoutes.length));
+  check("...and is honestly labelled unknown", zRoutes[0]?.scuBound === "unknown", String(zRoutes[0]?.scuBound));
+
+  // 🔴 The end-to-end consequence: the route must survive, at the FULL hold.
+  const routes = findRoutes(t.quotes, { capacityScu: 64, now: NOW });
+  check("the route is not deleted by a sparse demand column", routes.length === 1, String(routes.length));
+  check("...and it is not capped to zero", routes[0]?.moveScu === 64, String(routes[0]?.moveScu));
+  check("...and demand is not the named bound", routes[0]?.scuBound === "hold", String(routes[0]?.scuBound));
+}
+
+console.log("\n-- the source chain never goes blank --");
+{
+  const failing = new TradePriceStore({
+    dataDir: ".", stateDir: freshDir(), url: "http://stub/",
+    bundled: () => ({ x: { name: "Bundled Thing", prices: [{ terminal: "T", buy: 5, sell: 9 }] } }),
+    places: () => new Map(),
+    fetchImpl: (async () => { throw new Error("ECONNREFUSED"); }) as unknown as typeof fetch,
+  });
+  const before = failing.current();
+  check("it starts on the bundled snapshot", before.source === "bundled" && before.quotes.length === 1, before.source);
+  const after = await failing.refresh();
+  check("a failed refresh keeps the previous table", after.quotes.length === 1, String(after.quotes.length));
+  check("...and records WHY, not just that", (after.lastError ?? "").includes("ECONNREFUSED"), String(after.lastError));
+  check("...and does not claim to be live", after.source === "bundled", after.source);
+
+  // 🔴 A 200 carrying nothing is not a success. Replacing a good table with zero quotes and
+  // reporting "live" is the worst outcome, because it looks healthy.
+  const empty = new TradePriceStore({
+    dataDir: ".", stateDir: freshDir(), url: "http://stub/",
+    bundled: () => ({ x: { name: "Bundled Thing", prices: [{ terminal: "T", buy: 5, sell: 9 }] } }),
+    places: () => new Map(), fetchImpl: remote([], TERMS),
+  });
+  const e = await empty.refresh();
+  check("an empty 200 does not replace a good table", e.quotes.length === 1, String(e.quotes.length));
+  check("...and says so", (e.lastError ?? "").includes("empty"), String(e.lastError));
+}
+
+cleanupTmp();
 console.log(failures ? `\n${failures} FAILED\n` : "\nall passed\n");
 process.exit(failures ? 1 : 0);
