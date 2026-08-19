@@ -51,7 +51,8 @@
     "test:stow": "tsx src/cargo-stow.test.ts",
     "test:haulplan": "tsx src/hauling-plan.test.ts",
     "hauling-demo": "node tools/hauling-demo.mjs",
-    "test:advisor": "tsx src/hauling-advisor.test.ts"
+    "test:advisor": "tsx src/hauling-advisor.test.ts",
+    "test:trade": "tsx src/trade.test.ts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
