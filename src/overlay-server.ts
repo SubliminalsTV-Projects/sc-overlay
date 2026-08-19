@@ -32,7 +32,7 @@ import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSig
 import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
-import { maybeShareLog } from "./log-share.js";
+import { maybeShareLog, clearSkippedBackups } from "./log-share.js";
 
 const overlayDir = assetDir(import.meta.url, "overlay");
 const bundledDataDir = assetDir(import.meta.url, "data");
@@ -3882,8 +3882,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // Re-arm chat (widget toggled, backend switched, identity changed). Internally compares
     // its config and only tears the socket down on a REAL change, so it needs no touched* gate.
     chatConfigure();
-    // If log-sharing was just turned on, upload the current session now.
-    if (touchedShareLogs) void maybeShareLog(config, APP_VERSION, sharedLogStatePath);
+    // If log-sharing was just turned on, upload the current session now. Turning it off and back
+    // on is also the only recovery gesture the settings page offers, so honour it: re-offer the
+    // backups that were skipped for being from another game patch (never the ones already sent).
+    if (touchedShareLogs) {
+      if (config.shareLogs) clearSkippedBackups(sharedLogStatePath);
+      void maybeShareLog(config, APP_VERSION, sharedLogStatePath);
+    }
     // Push prefs (e.g. the time-format toggle) to any open overlay immediately.
     broadcastMissions();
     res.writeHead(200, { "Content-Type": "application/json" });
