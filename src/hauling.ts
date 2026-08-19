@@ -32,15 +32,21 @@
  *
  * ── What it does NOT give us ───────────────────────────────────────────────────────────────
  *
- * • Live progress is per-DESTINATION, not per-box: `ObjectiveUpserted …
- *   MISSION_OBJECTIVE_STATE_COMPLETED` fires when a whole drop-off is satisfied, and nothing
- *   fires per box in between.
+ * • Progress is per-DROP-OFF, not per-box — but it is better than "completed / not completed".
  *   ⚠️ Earlier research said "the delivery counter NEVER ticks" because all 480 of Sub's logs
- *   showed `0/N`. **That is wrong** — it was an artifact of him always tracking a contract at
- *   accept, when the progress really is zero. A shared log from another player carries
- *   `Deliver 3/5 SCU …`, emitted 5ms after its CreateMarker on a spawn-in re-emission. The
- *   numerator is real; see `HaulStop.delivered`. It is only ever observed at a (re)track, so it
- *   is a checkpoint, not a live feed.
+ *   showed `0/N`. **That is wrong**, and so was the first correction to it. Cryojenikx's 152-log
+ *   corpus settles what actually emits a `Deliver` line (90 of them):
+ *
+ *     56  at accept, within 1s of "Contract Accepted"   ← the tracking gate
+ *     17  standalone                                     ← a manual TRACK, mid-run
+ *     10  within 0.5s of a drop-off ObjectiveUpserted COMPLETED
+ *      7  within 0.5s of a drop-off ObjectiveUpserted INPROGRESS   ← a PARTIAL delivery
+ *
+ *   **Every non-zero numerator in the corpus came from that last group.** A drop-off that goes
+ *   INPROGRESS means boxes were handed over but the leg is not finished, and the game re-announces
+ *   the objective ~3ms later with the running total: `Deliver 48/81 SCU of Scrap …`.
+ *   So partial progress arrives on its own for a contract actively being delivered — no tracking
+ *   needed. Tracking only matters for learning the tonnage BEFORE the first drop.
  * • Box breakdowns for SCU hauls are not logged at all. `SMarkerHandler_Hauling::OnItemRegistered`
  *   enumerates every box, but only for mission-ITEM hauls (Hockrow delve, Battaglia, HeadHunters
  *   recover-cargo). Covalex, RedWind and GoblinG emit nothing — verified across the whole corpus.
@@ -100,11 +106,11 @@ export interface HaulStop {
    * How much of `need` the game says is already delivered.
    *
    * 🔑 Earlier research concluded "the delivery counter NEVER ticks" — every `N/M` in Sub's 480
-   * logs had N=0. That was an artifact of Sub always tracking a contract at accept, when the
-   * progress genuinely IS zero. A shared log from punk_hiji (2026-08-05) carries
-   * `Deliver 3/5 SCU of Recycled Material Composite to Levski` emitted 5ms after its CreateMarker
-   * — a spawn-in re-emission of an already-part-delivered contract. So the number is real, and
-   * throwing it away loses the one signal that says how much is still in the hold.
+   * logs had N=0, because he always tracks at accept, when progress genuinely IS zero. It does
+   * tick. The clearest case, from Cryojenikx's corpus (mission `922ce48a`, 2026-06-28): the
+   * drop-off went `INPROGRESS` at 23:07:34.277 and `Deliver 48/81 SCU of Scrap` landed 3ms later,
+   * then the leg COMPLETED at 23:10:59 and paid 73,000 aUEC in full. Partial deliveries are
+   * announced, and this is the only number that says how much is still in the hold.
    *
    * ⛔ This is NOT partial-turn-in modelling, which Sub ruled out: that is about a contract handed
    * in short at the END. This is in-flight progress on an open contract.
