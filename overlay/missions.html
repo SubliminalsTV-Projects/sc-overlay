@@ -4749,7 +4749,9 @@
       // Wider and taller than its neighbours by default because it draws a to-scale cell map of a
       // cargo grid — a C2's main hold is 8 cells across and 15 deep, and squeezing that into a
       // 360px column makes the one thing the widget exists to show unreadable.
-      key: "hauling", page: "hauling.html", title: "Hauling",
+      // The title carries the warning too: the hub list and the tray are where someone TURNS IT ON,
+      // which is before they ever see the widget's own badge.
+      key: "hauling", page: "hauling.html", title: "Hauling (experimental)",
       def: { x: 420, y: 200 }, size: { w: 440, h: 620, minW: 320, maxW: 1200, minH: 260, maxH: 1400 },
       focusFn: "__haulingFocus", // the SCU pin box needs the shared keyboard grab
       // Don't strand the keyboard grab: hiding mid-edit would leave the interact key suspended,
