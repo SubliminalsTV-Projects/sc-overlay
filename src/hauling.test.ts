@@ -451,7 +451,7 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
     `<2026-06-28T22:12:53.858Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${MID}], generator name [Covalex_Hauling], contract [HaulCargo_AToB_Waste_Scrap_Stanton3_SupplyGrade], contractDefinitionId[1440f8e2-ec3e-483c-9f48-cb1e7e71f92b], objectiveId [pickup_${OBJ}_0], markerEntityId [2], zoneHostId [742554712000], position [x: 9.0, y: 8.0, z: 7.0] [Team_MissionFeatures][Missions]`,
     `<2026-06-28T22:12:53.862Z> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Accepted:  Junior Rank - Direct Medium Cargo Haul: " [4] to queue. New queue size: 1, MissionId: [${MID}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
   ]);
-  assert.equal(t.view().contracts[0].tracked, false, "accepted untracked — no Deliver line yet");
+  assert.equal(t.view().contracts[0].deliverSeen, false, "accepted untracked — no Deliver line yet");
   assert.deepEqual(t.view().untracked, [MID]);
 
   feed(t, [
@@ -461,7 +461,7 @@ assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_
   ]);
   const mid = t.view().contracts[0];
   const drop = mid.stops.find((s) => s.role === "dropoff")!;
-  assert.equal(mid.tracked, true, "a mid-run Deliver line still counts as tracked");
+  assert.equal(mid.deliverSeen, true, "a mid-run Deliver line states the tonnage, tracking or not");
   assert.equal(drop.need, 81);
   assert.equal(drop.delivered, 48, "a partial delivery reports its running total");
   assert.equal(drop.state, "inprogress", "INPROGRESS on a drop-off means boxes moved but the leg is unfinished");
