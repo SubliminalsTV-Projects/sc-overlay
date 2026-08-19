@@ -28,12 +28,12 @@
         "text": "The middle chat tab used to say \"US East 1B\" — which is every shard in that region, not the people you could actually meet. It now reads your real shard, like \"US East 1B 140\", and the region-wide room is gone. Alongside it, the DGS tab is the players on the same game server as you right now, and Global is everyone using the app whether they are in game or not."
       },
       {
-        "kind": "fix",
+        "kind": "fixed",
         "label": "Your earnings rate stops counting the time you were away",
         "text": "Leave the app open overnight and the per-hour figures used to collapse, because the clock ran wall-to-wall from your first contract. It now counts only time with a contract open and no long idle gap, and there is a reset on the earnings bar if you want to start the measurement again from now."
       },
       {
-        "kind": "fix",
+        "kind": "fixed",
         "label": "Dragging one widget no longer lights up all the others",
         "text": "Dragging a widget revealed every other widget's drag bar as a drop target. That is still true while you are arranging — stacking widgets is what those bars are for — but notification widgets like SC Feed and Unlock Alerts are left alone, since hiding one behind another defeats the point of a notification."
       }
