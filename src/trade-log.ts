@@ -35,17 +35,28 @@
  * -- 🔴 THE BLIND SPOT, AND WHY THE CRASH WAS THE USEFUL PART ---------------------------------
  *
  * After Sub's game crashed and he logged back in, the new `Game.log` contained **zero**
- * `CommodityUI` lines. The purchase is NOT replayed on reconnect - it exists only in the moment
- * it happened, in whichever log file was open at the time.
+ * `CommodityUI` lines. The purchase is NOT restated on reconnect - it exists only in the moment it
+ * happened, in whichever log file was open at the time.
  *
- * So: the app can track a trade run **it witnessed**, and it cannot reconstruct one it did not.
- * That is the same family as the mission-accept gap that silently produced merged, permanently
- * incomplete pools, and it must be handled the same way - by being SAID rather than papered over:
+ * 🔑 BUT THAT IS RECOVERABLE, AND AN EARLIER DRAFT OF THIS COMMENT OVERSTATED IT. The sidecar
+ * already runs `seedFromRotatedLog()` at startup, which replays the newest file in `logbackups/`
+ * when it is within `BACKUP_SEED_MAX_AGE_MS` - written for exactly this class of loss, after the
+ * same crash pattern ate Sub's mission state on 2026-08-17. Sub's own purchase IS in that file and
+ * the seed did replay it this session. So the honest statement is narrower:
  *
- *   - What is seen is persisted immediately, so a later crash does not lose it.
- *   - What was never seen is reported as unknown. The widget must never present an inferred hold
- *     as a known one. "I did not see you buy anything" is a true and useful answer; a confidently
- *     empty cargo list is neither.
+ *   - A purchase in the CURRENT log, or in the most recent and still-recent rotated one, is
+ *     recoverable. That covers the crash case, which is the common one.
+ *   - A purchase older than that window, or from before the app was installed, is not.
+ *
+ * ⚠️ NEITHER PATH IS WIRED YET. `seedFromRotatedLog()`'s loop calls `parseMissionEvent` only, and
+ * the live watcher likewise. This parser needs a call in both - the same one-line shape the Log
+ * View widget's second `watcher.on("line")` listener uses. Deliberately left for the tower to land
+ * rather than spent from this flight's budget for edits to `overlay-server.ts`, which is being
+ * restructured concurrently. See the flight strip's landing notes.
+ *
+ * Whatever is wired, the rule stands: what was never seen is reported as UNKNOWN. The widget must
+ * never present an inferred hold as a known one. "I did not see you buy anything" is a true and
+ * useful answer; a confidently empty cargo list is neither.
  *
  * ⚠️ THE SELL VERB IS NOT YET CONFIRMED. Only buys have been captured. `SendCommoditySellRequest`
  * is the obvious symmetric name and is accepted here, but it is a GUESS until a real sell is on

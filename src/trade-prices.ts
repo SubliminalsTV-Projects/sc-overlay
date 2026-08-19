@@ -102,8 +102,8 @@ export interface TradeTable {
 }
 
 /** The bundled snapshot's per-terminal row. */
-interface BundledPrice { terminal?: string | null; location?: string | null; buy?: number | null; sell?: number | null; stock?: number | null }
-interface BundledCommodity { name?: string | null; kind?: string | null; prices?: BundledPrice[] }
+export interface BundledPrice { terminal?: string | null; location?: string | null; buy?: number | null; sell?: number | null; stock?: number | null }
+export interface BundledCommodity { name?: string | null; kind?: string | null; prices?: BundledPrice[] }
 
 /** What the remote endpoint is expected to serve. Deliberately a THIN passthrough of UEX's own
  *  shape plus a terminal table, so the site can proxy without inventing a schema. */

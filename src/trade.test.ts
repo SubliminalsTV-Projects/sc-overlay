@@ -266,7 +266,7 @@ console.log("\n-- lookup: ranges, never one number --");
     JSON.stringify([l?.buy?.freshestDays, l?.buy?.stalestDays]));
   // 🔴 Exact match only: "Titanium (Ore)" is a different commodity at a different price, and
   // answering a Titanium question with it is the bug /api/commodity-price had to be repaired for.
-  check("a suffixed variant is NOT folded in", l?.buyAt.every((e) => e.terminal !== "E"), JSON.stringify(l?.buyAt.map((e) => e.terminal)));
+  check("a suffixed variant is NOT folded in", !!l?.buyAt.every((e) => e.terminal !== "E"), JSON.stringify(l?.buyAt.map((e) => e.terminal)));
   check("buy terminals are cheapest first", l?.buyAt[0].price === 100, String(l?.buyAt[0].price));
   check("sell terminals are dearest first", l?.sellAt[0].price === 300, String(l?.sellAt[0].price));
   check("an unknown commodity is null, not an empty shell", lookupCommodity(quotes, "Unobtainium", "live", NOW) === null);

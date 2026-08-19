@@ -18,6 +18,7 @@ import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
 import { canAutoLoad } from "./hauling-autoload.js";
 import { buildHaulingPlan, gridsOf } from "./hauling-plan.js";
+import { tradeRoutes } from "./trade-routes.js";
 import { largestBoxScu } from "./cargo-boxes.js";
 import {
   buildContracts, climbToNextRung, rankContracts, regimeFor, rungAt, HAULING_LADDER,
@@ -1960,6 +1961,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     req.on("close", () => missionClients.delete(res));
     return;
   }
+
+  // Commodity trading (hauling phase 2). Every route, default and piece of state for that
+  // subsystem lives in trade-routes.ts on purpose — this is its ONLY hook into this file.
+  if (tradeRoutes(url, req, res, { dataDir, userDir, economy, haulingData })) return;
 
   // Current mission/blueprint view (snapshot).
   if (url === "/api/missions" && req.method === "GET") {
