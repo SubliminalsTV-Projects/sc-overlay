@@ -100,6 +100,76 @@ console.log("\n-- shop inventory lines --");
     JSON.stringify(o?.boxSizes) === JSON.stringify([1, 2, 4, 8, 16, 24, 32]), JSON.stringify(o?.boxSizes));
 }
 
+// The other half of the same round trip, captured an hour later at the far end. Real line.
+const SELL_REAL =
+  "<2026-08-19T18:40:48.440Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+  "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[762986059617] " +
+  "shopName[SCShop_Admin_lt_base_g] kioskId[762986059616] amount[1506.000000] " +
+  "resourceGUID[accacd33-3a1a-4ec7-8b4a-14b9f028047c] autoLoading[1] quantity[1] " +
+  "transactionMode[ResourceContainer] Cargo Box Data:  [boxSize[1] | unitAmount[1]] " +
+  "[Team_CoreGameplayFeatures][Shops][UI]";
+
+console.log("\n-- the sell line, which is NOT the buy line mirrored --");
+{
+  const p = parseTradeLine(SELL_REAL)?.purchase;
+  check("a sell line parses", !!p);
+  check("kind is sell", p?.kind === "sell", String(p?.kind));
+  // 🔴 The 100x trap. `quantity[1]` here is ONE CONTAINER, not 1 cSCU. Dividing by 100 the way the
+  // buy line requires would report this 1 SCU sale as 0.01 SCU.
+  check("quantity[1] with no unit is containers, not centiSCU", p?.scu === 1, String(p?.scu));
+  check("the total comes from amount[], not price[]", p?.total === 1506, String(p?.total));
+  // No shopPricePerCentiSCU on a sell, so this one is derived.
+  check("per-SCU is derived when the line does not state it", p?.pricePerScu === 1506, String(p?.pricePerScu));
+  check("transactionMode is kept", p?.transactionMode === "ResourceContainer", String(p?.transactionMode));
+  check("box size survives the nested Cargo Box Data brackets", p?.boxScu === 1, String(p?.boxScu));
+  check("the shop is named", p?.shopName === "SCShop_Admin_lt_base_g", String(p?.shopName));
+}
+
+console.log("\n-- the round trip joins on resourceGUID alone --");
+{
+  const bought = parseTradeLine(BUY_AUTOLOAD)?.purchase;
+  const sold = parseTradeLine(SELL_REAL)?.purchase;
+  check("both ends name the same commodity", bought?.resourceGuid === sold?.resourceGuid, String(sold?.resourceGuid));
+  check("...and it is the Processed Food uuid",
+    sold?.resourceGuid === "accacd33-3a1a-4ec7-8b4a-14b9f028047c", String(sold?.resourceGuid));
+  check("bought at 1202/SCU", Math.round(bought?.pricePerScu ?? 0) === 1202, String(bought?.pricePerScu));
+  check("sold at 1506/SCU", Math.round(sold?.pricePerScu ?? 0) === 1506, String(sold?.pricePerScu));
+  // The whole point of the subsystem, computable from two log lines and nothing else.
+  const profit = ((sold?.pricePerScu ?? 0) - (bought?.pricePerScu ?? 0)) * (sold?.scu ?? 0);
+  check("a real profit falls out of the two lines", Math.round(profit) === 304, String(profit));
+  check("...and it is positive, not merely defined", profit > 0);
+  // 🔑 The buy line and the sell line must not be parsed by one set of assumptions - assert they
+  // genuinely differ, so a future "simplification" that unifies them fails here.
+  check("the two lines really do carry different keys",
+    BUY_AUTOLOAD.includes("shopPricePerCentiSCU") && !SELL_REAL.includes("shopPricePerCentiSCU"));
+  check("...and different quantity units",
+    BUY_AUTOLOAD.includes("cSCU") && !SELL_REAL.includes("cSCU"));
+}
+
+console.log("\n-- containers x box size, corroborated on the buy lines --");
+{
+  // 🔑 WHY THIS BLOCK EXISTS. Sub's real sell carries `boxSize[1]`, so `quantity x boxScu` and
+  // `quantity` alone give the same answer and no assertion over that line can tell the two apart -
+  // the negative control proved it by staying green. The BUY lines settle it on real data,
+  // because they state the volume BOTH ways: a cSCU quantity and a box breakdown. Where both are
+  // present they must agree, and that agreement is what licenses the container formula on a sell.
+  for (const [label, line] of [["TDD, 1 SCU box", BUY_AUTOLOAD], ["Shubin, 4 SCU box", BUY_SHUBIN]] as const) {
+    const p = parseTradeLine(line)?.purchase;
+    const viaBoxes = (p?.unitAmount ?? 0) * (p?.boxScu ?? 0);
+    check(`${label}: boxes x box size equals the centiSCU volume`, viaBoxes === p?.scu, `${viaBoxes} vs ${p?.scu}`);
+    check(`${label}: ...and that volume is not zero`, (p?.scu ?? 0) > 0, String(p?.scu));
+  }
+
+  // A container-mode line with a box bigger than 1, so the multiplication is load-bearing.
+  // ⚠️ CONSTRUCTED from the real sell above by changing only quantity and boxSize - labelled as
+  // such rather than passed off as a capture. The formula it checks is the one corroborated above.
+  const twoBigBoxes = SELL_REAL.replace("quantity[1]", "quantity[2]").replace("boxSize[1]", "boxSize[4]");
+  const p = parseTradeLine(twoBigBoxes)?.purchase;
+  check("2 containers of 4 SCU is 8 SCU, not 2", p?.scu === 8, String(p?.scu));
+  check("...and the derived per-SCU divides by the real volume",
+    Math.abs((p?.pricePerScu ?? 0) - 1506 / 8) < 0.01, String(p?.pricePerScu));
+}
+
 console.log("\n-- what the parser must NOT do --");
 {
   check("a non-commodity line is ignored entirely", parseTradeLine(NOT_OURS) === null);

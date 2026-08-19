@@ -58,11 +58,35 @@
  * never present an inferred hold as a known one. "I did not see you buy anything" is a true and
  * useful answer; a confidently empty cargo list is neither.
  *
- * ⚠️ THE SELL VERB IS NOT YET CONFIRMED. Only buys have been captured. `SendCommoditySellRequest`
- * is the obvious symmetric name and is accepted here, but it is a GUESS until a real sell is on
- * record - so this parser reports any unrecognised `CommodityUIProvider` method through
- * `unknownMethods` rather than dropping it. Absence of the word we guessed is not absence of the
- * signal; this project has been wrong that way three times, twice reaching a user.
+ * -- ✅ THE SELL, CAPTURED 2026-08-19 - AND IT IS NOT THE BUY LINE MIRRORED -------------------
+ *
+ *   <...> <CEntityComponentCommodityUIProvider::SendCommoditySellRequest>
+ *   Sending SShopCommoditySellRequest - playerId[...] shopId[762986059617]
+ *   shopName[SCShop_Admin_lt_base_g] kioskId[762986059616] amount[1506.000000]
+ *   resourceGUID[accacd33-3a1a-4ec7-8b4a-14b9f028047c] autoLoading[1] quantity[1]
+ *   transactionMode[ResourceContainer] Cargo Box Data:  [boxSize[1] | unitAmount[1]]
+ *
+ * The verb name was the obvious guess and the obvious guess was right. THREE OTHER THINGS WERE
+ * NOT, and every one of them would have shipped a wrong number:
+ *
+ * 🔴 1. `quantity` CHANGES UNIT BETWEEN THE TWO LINES. A buy says `quantity[100.000000 cSCU]`
+ *       (centiSCU, so 1 SCU). A sell says `quantity[1]` with NO unit, meaning one CONTAINER, and
+ *       flags it with the new `transactionMode[ResourceContainer]`. Dividing by 100 regardless -
+ *       which is what the buy-only parser did - reports a 1 SCU sale as **0.01 SCU**, a 100x
+ *       error in every figure downstream. So the unit is read off the FIELD TEXT, not assumed.
+ * 🔴 2. The total is `amount[...]`, not `price[...]`. Same meaning, different key.
+ * 🔴 3. There is NO `shopPricePerCentiSCU` on a sell, so the per-SCU figure has to be derived
+ *       from total / SCU rather than read.
+ *
+ * 🔑 The captured round trip validates the whole chain: bought at 1,202/SCU, sold at 1,506/SCU,
+ * same `resourceGUID` both ends (Processed Food), against a bundled snapshot that predicted 1,500
+ * at that destination.
+ *
+ * ⚠️ Two further methods are on record and deliberately NOT modelled yet, because nothing is known
+ * about what they should do: `LoadSelectedShipBindings` (a `VehicleCargoDataRequest` naming a
+ * `vehicleEntityId` - plausibly the route to reading the real hold) and `AddPlayerCommodityItem`
+ * with an empty `commodityName[]`, which describes a box the PLAYER brought. They surface through
+ * `unknownMethod`/`offer` rather than being dropped.
  */
 
 /** One `key[value]` field off a CommodityUIProvider line. */
@@ -105,6 +129,9 @@ export interface CommodityPurchase {
   /** SCU per box. */
   boxScu: number | null;
   unitAmount: number | null;
+  /** `ResourceContainer` on a sell, absent on a buy. It is what tells you whether `quantity`
+   *  counted centiSCU or containers, so it is kept rather than collapsed away. */
+  transactionMode: string | null;
   /** 🔑 True = straight into the ship. False = waiting on the freight elevator. Proven, not
    *  inferred - see the file header. Null when the field was absent. */
   autoLoaded: boolean | null;
@@ -150,9 +177,30 @@ export function parseTradeLine(line: string): TradeLogEvent | null {
   const f = fields(line);
 
   if (name === "SendCommodityBuyRequest" || name === "SendCommoditySellRequest") {
-    const cSCU = fnum(f, "quantity");
-    const perCenti = fnum(f, "shopPricePerCentiSCU");
     const auto = f.get("autoLoading");
+    const boxScu = fnum(f, "boxScu") ?? fnum(f, "boxSize");
+    const unitAmount = fnum(f, "unitAmount");
+
+    // 🔴 THE UNIT IS READ, NEVER ASSUMED. A buy writes `quantity[100.000000 cSCU]`; a sell writes
+    // `quantity[1]` meaning one container. Assuming centiSCU on both turns a 1 SCU sale into
+    // 0.01 SCU. The raw field text is the only thing that says which, so keep it.
+    const rawQty = f.get("quantity");
+    const qty = rawQty === undefined ? null : Number.parseFloat(rawQty);
+    const inCentiScu = !!rawQty && /cscu/i.test(rawQty);
+    let scu: number | null = null;
+    if (qty !== null && Number.isFinite(qty)) {
+      // Containers x SCU-per-container. Falls back to the count itself when the box size is
+      // absent, which is better than silently reporting nothing.
+      scu = inCentiScu ? qty / 100 : boxScu !== null ? qty * boxScu : qty;
+    }
+
+    // A buy states the per-SCU price outright; a sell does not, so derive it. Never the other way
+    // round - a stated figure always beats one of ours.
+    const perCenti = fnum(f, "shopPricePerCentiSCU");
+    const total = fnum(f, "price") ?? fnum(f, "amount");
+    let pricePerScu: number | null = perCenti === null ? null : perCenti * 100;
+    if (pricePerScu === null && total !== null && scu !== null && scu > 0) pricePerScu = total / scu;
+
     return {
       purchase: {
         at,
@@ -160,12 +208,13 @@ export function parseTradeLine(line: string): TradeLogEvent | null {
         shopName: f.get("shopName") ?? null,
         shopId: f.get("shopId") ?? null,
         resourceGuid: f.get("resourceGUID") ?? null,
-        // 100 cSCU = 1 SCU.
-        scu: cSCU === null ? null : cSCU / 100,
-        pricePerScu: perCenti === null ? null : perCenti * 100,
-        total: fnum(f, "price"),
-        boxScu: fnum(f, "boxSize"),
-        unitAmount: fnum(f, "unitAmount"),
+        scu,
+        pricePerScu,
+        total,
+        boxScu,
+        unitAmount,
+        /** Present on a sell only, e.g. `ResourceContainer`. It is what makes `quantity` legible. */
+        transactionMode: f.get("transactionMode") ?? null,
         autoLoaded: auto === undefined ? null : auto === "1",
       },
     };
