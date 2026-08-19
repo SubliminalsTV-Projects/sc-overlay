@@ -1964,7 +1964,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
 
   // Commodity trading (hauling phase 2). Every route, default and piece of state for that
   // subsystem lives in trade-routes.ts on purpose — this is its ONLY hook into this file.
-  if (tradeRoutes(url, req, res, { dataDir, userDir, economy, haulingData })) return;
+  if (tradeRoutes(url, req, res, { dataDir, userDir, economy, haulingData, system: currentSystem })) return;
 
   // Current mission/blueprint view (snapshot).
   if (url === "/api/missions" && req.method === "GET") {

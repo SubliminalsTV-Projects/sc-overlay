@@ -40,14 +40,123 @@
   .hbtn:hover { background: rgba(var(--accent-rgb), 0.24); border-color: var(--cyan); }
   .hbtn.on { background: rgba(var(--accent-rgb), 0.3); border-color: var(--cyan); }
   .tabs { display: flex; gap: 4px; margin-left: auto; }
+  /* Stow is shared by both modes, so it sits third in the markup for Hauling's sake (Rank, Route,
+     Stow) and has to be re-ordered for Trading, where Runs is the tab you actually open. `order`
+     rather than moving the node, because moving it would mean two buttons for one renderer. */
+  .tabs.trading #tabTrade { order: 1; }
+  .tabs.trading #tabLookup { order: 2; }
+  .tabs.trading #tabLayout { order: 3; }
 
-  /* The Trade tab's right-hand column: what the run clears, and the rate.
-     ⚠️ MEASURED, not guessed. Reusing `.cap` gave an 86px box holding 88px of wrapped text —
-     "3.68M/hr · 64 SCU" broke across three lines and read as a rendering fault. Everything that
-     is not these two figures belongs in the chip row, which wraps on purpose. */
-  .tdcap { flex: none; min-width: 92px; text-align: right; white-space: nowrap; }
-  .tdprofit { font-size: 15px; color: var(--cyan-bright, #7fe7ff); line-height: 1.2; }
-  .tdrate { font-size: 11px; opacity: 0.72; line-height: 1.3; }
+  /* ── Trade tab ──────────────────────────────────────────────────────────────
+     Rebuilt 2026-08-19 against Sub's review of the first cut. Four of his notes were real BUGS
+     rather than taste, and each is fixed here:
+
+     1. The control pills were different SIZES. `.goalseg .hbtn` overrides padding to 1px 6px and
+        font-size to 9px, so segment buttons measured 15px tall against a standalone button's 22px.
+        This bar therefore does NOT use `.goalseg` — every control is a plain `.hbtn` sibling and
+        `.tdbar .hbtn` pins one height, so nothing can drift again.
+     2. The commodity input was wrapped in `.psug`, which is `position:absolute; top:100%` — a
+        DROPDOWN container. It was being positioned below the panel, which is exactly why Sub had
+        to scroll to reach a field that should be the first thing on the screen.
+     3. The provenance was two `.note` paragraphs costing 65px before any content appeared. It is
+        one pill plus an ⓘ now.
+     4. Every chip was the same faint colour, so nothing stood out. Age and warnings now carry
+        their meaning in their colour. */
+
+  /* The mode bar: which of the widget's two jobs you are doing. Pinned below the scrolling body,
+     so it is always reachable however long the list gets. */
+  .modebar { flex: none; display: flex; align-items: center; gap: 4px; padding: 5px 12px;
+    border-top: 1px solid var(--divider); background: rgba(var(--accent-rgb), 0.05); }
+  .modebar .hbtn { height: 20px; padding: 0 10px; display: inline-flex; align-items: center;
+    font-size: 9.5px; }
+  /* Attribution, not a button that does work — quiet by default, and it only appears on the side
+     of the widget their data actually feeds. */
+  .uexbadge { margin-left: auto; background: none; border: 0; padding: 0 2px; cursor: pointer;
+    font-family: var(--sans); font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--faint); }
+  .uexbadge b { color: var(--cyan-dim); font-weight: 700; }
+  .uexbadge:hover b { color: var(--cyan-bright, #7fe7ff); }
+  .uexbadge[hidden] { display: none; }
+
+  .tdbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    padding: 6px 12px 4px; border-bottom: 1px solid var(--divider); }
+  /* One height for every control on this tab, whatever its label length. */
+  .tdbar .hbtn { height: 21px; padding: 0 8px; display: inline-flex; align-items: center;
+    font-size: 9.5px; text-transform: none; letter-spacing: 0.02em; }
+  .tdbar .sep { width: 1px; height: 14px; background: var(--divider); margin: 0 2px; }
+  .tdbar .lbl { font-size: 9px; color: var(--faint); letter-spacing: 0.06em;
+    text-transform: uppercase; }
+
+  /* The source pill. Three states, three colours — "we chose offline", "we tried and failed" and
+     "this is fresh" must not look alike. */
+  .tdsrc { height: 21px; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px;
+    border-radius: 6px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; border: 1px solid; }
+  .tdsrc.live { color: var(--green, #7de6a0); border-color: rgba(120, 230, 160, 0.5);
+    background: rgba(120, 230, 160, 0.12); }
+  .tdsrc.cache { color: var(--gold, #e8c56a); border-color: rgba(var(--value-rgb), 0.5);
+    background: rgba(var(--value-rgb), 0.12); }
+  .tdsrc.bundled { color: var(--red, #eb7878); border-color: rgba(235, 120, 120, 0.5);
+    background: rgba(235, 120, 120, 0.12); }
+  .tdsrc .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+  /* ⓘ — drawn from a plain ASCII letter in a CSS circle, never a real ⓘ character and never an
+     icon font. It is a real <button> driving a POPOVER, because a native `title` cannot be opened
+     from script: Sub clicked the first version of an info affordance and nothing happened.
+     `title` stays for hover, which costs nothing and cannot regress. */
+  .tdi { width: 14px; height: 14px; flex: none; border-radius: 50%; padding: 0;
+    border: 1px solid rgba(var(--accent-rgb), 0.55); background: transparent;
+    color: var(--cyan-bright, #7fe7ff); font-family: var(--sans); font-size: 9px;
+    font-weight: 700; line-height: 1; cursor: pointer; display: inline-flex;
+    align-items: center; justify-content: center; }
+  .tdi:hover { background: rgba(var(--accent-rgb), 0.22); border-color: var(--cyan); }
+  /* Top layer, so no ancestor's overflow can clip it and it costs nothing in layout. Pinned in
+     CSS rather than measured: rAF and ResizeObserver do not fire in a hidden window, and two
+     earlier measured popovers in this app died on exactly that. */
+  .tdpop { max-width: 290px; margin: 0; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--cyan); background: var(--menu-bg); color: var(--cyan-text);
+    font-size: 10.5px; line-height: 1.45; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.6); }
+  .tdpop:popover-open { position: fixed; inset: auto; left: 12px; bottom: 40px; }
+
+  /* The commodity field. A normal in-flow input — see note 2 above. */
+  .tdfind { display: flex; gap: 5px; padding: 8px 12px 4px; }
+  .tdfind input { flex: 1; min-width: 0; height: 24px; padding: 0 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: rgba(var(--accent-rgb), 0.10);
+    color: var(--cyan-text); font-family: var(--sans); font-size: 11.5px; }
+  .tdfind input:focus { outline: none; border-color: var(--cyan);
+    background: rgba(var(--accent-rgb), 0.18); }
+  .tdfind input::placeholder { color: var(--faint); }
+
+  /* A run. `.arow` supplies the frame; these are the parts it has no equivalent for. */
+  .tdrow .money { display: flex; align-items: baseline; gap: 5px; margin-top: 2px;
+    font-family: var(--mono); font-size: 10.5px; white-space: nowrap; }
+  .tdrow .money .k { font-family: var(--sans); font-size: 8.5px; color: var(--faint);
+    letter-spacing: 0.06em; text-transform: uppercase; }
+  /* 🔴 THE PAIR SUB COULD NOT FIND. The first cut showed what a run COST and never what it sold
+     for, so the only way to know the sell price was to subtract. Money out reads as cost, money
+     in reads as income. */
+  .tdrow .money .buy { color: var(--gold, #e8c56a); }
+  .tdrow .money .sell { color: var(--green, #7de6a0); }
+  .tdrow .money .arrow { color: var(--faint); }
+  .tdrow .money .qty { margin-left: auto; color: var(--cyan-dim); font-size: 10px;
+    font-family: var(--sans); }
+
+  /* The right column: the number, and — the fix for "is that profit?" — a word saying so. */
+  .tdcap { flex: none; min-width: 84px; text-align: right; white-space: nowrap; }
+  .tdprofit { font-size: 15px; color: var(--cyan-bright, #7fe7ff); line-height: 1.15;
+    font-family: var(--mono); }
+  .tdcaplbl { font-size: 8px; color: var(--faint); letter-spacing: 0.1em;
+    text-transform: uppercase; line-height: 1.4; }
+  .tdrate { font-size: 9.5px; color: var(--cyan-dim); line-height: 1.3; }
+
+  /* Chips that mean something. An age you cannot judge at a glance is an age nobody reads. */
+  .badge.age0 { color: var(--green, #7de6a0); border-color: rgba(120, 230, 160, 0.45); }
+  .badge.age1 { color: var(--gold, #e8c56a); border-color: rgba(var(--value-rgb), 0.45); }
+  .badge.age2 { color: var(--red, #eb7878); border-color: rgba(235, 120, 120, 0.5); }
+  .badge.warn { color: var(--gold, #e8c56a); border-color: rgba(var(--value-rgb), 0.55);
+    background: rgba(var(--value-rgb), 0.10); }
+  .badge.xsys { color: var(--red, #eb7878); border-color: rgba(235, 120, 120, 0.45); }
+  .badge.calm { color: var(--cyan-dim); border-color: var(--border); }
 
   /* ── The ship, and how much of it is used ─────────────────────────────────
      The capacity bar is per GRID, not one pool: a C2 is 8x15x4 plus 6x9x4, and a box that fits
@@ -487,9 +596,13 @@
         <button id="tabAdvisor" class="hbtn on" type="button" title="Which contracts to go looking for, and how far the next rank is">Rank</button>
         <button id="tabRoute" class="hbtn" type="button" title="What order to fly the stops">Route</button>
         <button id="tabLayout" class="hbtn" type="button" title="What to load first, and where it goes on your ship">Stow</button>
-        <!-- Trade is LAST because it is the only tab that is not about the contracts you are
-             already carrying — it is the one you open when the board is empty. -->
-        <button id="tabTrade" class="hbtn" type="button" title="Buy low somewhere, sell high somewhere else">Trade</button>
+        <!-- 🔑 TRADING'S OWN SUB-TABS. Sub's structure (2026-08-19): the widget has two MODES at
+             the bottom — contract hauling and commodity trading — and each mode's own tabs live
+             up here. Which of these five are shown is decided by `mode`; Stow appears under both
+             and is rendered by the SAME `renderStow()`, so the tab is in two places and the code
+             is in one. -->
+        <button id="tabTrade" class="hbtn" type="button" title="Runs worth flying right now">Runs</button>
+        <button id="tabLookup" class="hbtn" type="button" title="Look up one commodity: what it costs, where it sells">Look up</button>
       </span>
     </div>
 
@@ -551,6 +664,19 @@
 
     <div id="body"><div class="empty" id="emptyState">Waiting for a hauling contract…</div></div>
 
+    <!-- 🔑 THE MODE BAR. Two things this widget does, and they are different jobs: fly the
+         contracts the game gave you, or buy and sell on your own account. Sub's call to split
+         them rather than let Trade sit as a fourth peer of Rank/Route/Stow — those three are all
+         about one board, and Trade is not about a board at all.
+         The UEX credit lives here because this is where their data is on screen: it shows only in
+         Trading mode, since nothing on the hauling side comes from them. -->
+    <div id="modebar" class="modebar">
+      <button id="modeHaul" class="hbtn on" type="button" title="The contracts you have accepted">Hauling</button>
+      <button id="modeTrade" class="hbtn" type="button" title="Buy low somewhere, sell high somewhere else">Trading</button>
+      <button id="uexCredit" class="uexbadge" type="button" hidden
+        title="Commodity prices are community-reported through UEX. Open uexcorp.space">Powered by <b>UEX</b></button>
+    </div>
+
     <div id="wsettings" class="wsettings">
       <div class="ws-sec">Plan for</div>
       <div class="ws-row">
@@ -589,6 +715,11 @@
   let objective = "auec-per-hour";
   let showDone = false;
   let shipPick = "";          // "" = trust the log
+  /* Which of the widget's two jobs is on screen: "hauling" (the contracts you accepted) or
+     "trading" (buying and selling on your own account). Remembered, because a player works one
+     of them for hours at a time. */
+  const MODE_KEY = "sc-hauling-mode";
+  let mode = (() => { try { return localStorage.getItem(MODE_KEY) === "trading" ? "trading" : "hauling"; } catch { return "hauling"; } })();
   // Where the player says they are. localStorage, not config: it is a fact about right now, and a
   // stale one is worse than none — so it is dropped the moment the plan stops containing it.
   const START_KEY = "sc-hauling-start";
@@ -1291,10 +1422,25 @@
   const cargoOf = (leg) => leg && leg.commodity ? leg.commodity : leg && leg.scu != null ? num(leg.scu) + " SCU" : "cargo";
 
   function render() {
+    /* 🔑 TWO MODES, ONE SET OF RENDERERS. `mode` decides which tabs are on offer; `view` still
+       decides what gets drawn, exactly as before. Stow is listed under BOTH modes and is drawn by
+       the same `renderStow()` — the tab is in two places, the code is in one. */
+    const trading = mode === "trading";
+    $("tabAdvisor").hidden = trading;
+    $("tabRoute").hidden = trading;
+    $("tabTrade").hidden = !trading;
+    $("tabLookup").hidden = !trading;
+    $("modeHaul").classList.toggle("on", !trading);
+    $("modeTrade").classList.toggle("on", trading);
+    /* Credit UEX only where their data is on screen. */
+    $("uexCredit").hidden = !trading;
+    document.querySelector(".tabs").classList.toggle("trading", trading);
+
     $("tabRoute").classList.toggle("on", view === "route");
     $("tabLayout").classList.toggle("on", view === "layout");
     $("tabAdvisor").classList.toggle("on", view === "advisor");
-    $("tabTrade").classList.toggle("on", view === "trade");
+    $("tabTrade").classList.toggle("on", view === "trade" && tradeMode === "routes");
+    $("tabLookup").classList.toggle("on", view === "trade" && tradeMode === "commodity");
     $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
     $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
     $("departBtn").textContent = departOff ? "Reminder off" : "Reminder on";
@@ -1329,7 +1475,37 @@
   $("tabRoute").addEventListener("click", () => { view = "route"; render(); });
   $("tabLayout").addEventListener("click", () => { view = "layout"; render(); });
   $("tabAdvisor").addEventListener("click", () => { view = "advisor"; if (!advisor) loadAdvisor(); render(); });
-  $("tabTrade").addEventListener("click", () => { view = "trade"; if (!tradeData) loadTrade(); render(); });
+  $("tabTrade").addEventListener("click", () => {
+    view = "trade"; tradeMode = "routes"; if (!tradeData) openTrade(); render();
+  });
+  $("tabLookup").addEventListener("click", () => {
+    view = "trade"; tradeMode = "commodity"; loadTradeNames(); if (!tradeStatus) loadTradeStatus(); render();
+  });
+
+  /* ── mode switching ───────────────────────────────────────────────────────
+     🔑 Each mode remembers a SENSIBLE view rather than the last one you were on. Landing in
+     Trading on the Stow tab — which is about contract cargo — would look like the switch had
+     failed, so Trading opens on Runs unless Stow was deliberately chosen from within it. */
+  function setMode(next) {
+    if (mode === next) return;
+    mode = next;
+    try { localStorage.setItem(MODE_KEY, mode); } catch { /* private mode */ }
+    if (mode === "trading") {
+      if (view !== "layout") { view = "trade"; tradeMode = tradeMode || "routes"; }
+      if (!tradeData) openTrade();
+    } else if (view === "trade") {
+      view = "advisor";
+      if (!advisor) loadAdvisor();
+    }
+    render();
+  }
+  $("modeHaul").addEventListener("click", () => setMode("hauling"));
+  $("modeTrade").addEventListener("click", () => setMode("trading"));
+  /* https only, through the shell — never a bare target=_blank, which would put a second
+     always-on-top window over the game. */
+  $("uexCredit").addEventListener("click", () => {
+    try { overlayApi.openUrl("https://uexcorp.space"); } catch { /* standalone: no shell */ }
+  });
   $("objBtn").addEventListener("click", () => {
     objective = objective === "fewest-stops" ? "auec-per-hour" : "fewest-stops";
     load();

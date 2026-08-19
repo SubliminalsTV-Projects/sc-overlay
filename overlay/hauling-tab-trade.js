@@ -2,26 +2,43 @@
  * HAULING - THE TRADE TAB: buy low somewhere, haul it, sell high somewhere else.
  *
  * Phase 2. The Route/Stow/Rank tabs are all about CONTRACTS the game gave you; this one is about
- * cargo you choose to buy with your own money, which is why it is a tab and not a section of Route.
- * Nothing here comes from the log - it is the one tab that works with the game closed.
+ * cargo you choose to buy with your own money, which is why it is a tab and not a section of
+ * Route. Nothing here comes from the log - it is the one tab that works with the game closed.
  *
  * Same file conventions as its siblings: a classic script sharing one lexical scope with
  * hauling.html, so every name here is prefixed `trade`/`td` and nothing is exported.
  *
- * 🔴 THE STANDING CONSTRAINT, AND IT IS THE REASON HALF THIS FILE EXISTS: prices are per-terminal
- * and they move. There is no such thing as "the price of Titanium". So:
+ * 🔴 THE STANDING CONSTRAINT, AND THE REASON HALF THIS FILE EXISTS: prices are per-terminal and
+ * they move. There is no such thing as "the price of Titanium". So the commodity view prints a
+ * RANGE with its terminal count and age spread; every route row carries its own age, which is the
+ * OLDER of its two quotes; and where stock is unreported the profit is a CEILING, marked with a
+ * `≤`, never a bare number.
  *
- *   - The COMMODITY view never prints one number. It prints a range, the terminal count behind it,
- *     and the age spread, and only then lists individual terminals.
- *   - Every ROUTE row carries its own age, and that age is the OLDER of its two quotes.
- *   - The provenance strip is always on screen, never a tooltip. Sub's requirement was explicit:
- *     the user needs to know when they are looking at the fallback. Silence is the failure mode.
+ * -- Rebuilt 2026-08-19 after Sub reviewed the first cut ------------------------------------
  *
- * 🔑 AND THE `unknown` BADGE IS THE MOST IMPORTANT THING ON THE ROW. On the bundled snapshot stock
- * is reported for only ~13% of routes, so a hold-filling profit figure is a CEILING rather than a
- * recommendation - measured: 8 of 8 top routes come back `unknown` on bundled data and 0 of 8 on
- * live. A row that quietly showed "674,560 aUEC" for cargo that may not be on the shelf is exactly
- * the false precision this widget is not allowed to have.
+ * Four of his seven notes were real bugs, not taste, and they are worth recording because three
+ * of them were invisible to every test that passed:
+ *
+ * 1. 🔴 **The run showed what it COST and never what it SOLD FOR.** "I don't know where it really
+ *    says how much you're going to get when you sell it." Correct - the row carried a buy-side
+ *    capital figure and a margin, so the sell price could only be recovered by arithmetic. The
+ *    money line now states `BUY x → SELL y` outright. This is the most important fix here.
+ * 2. 🔴 **The big number was unlabelled.** "Is that profit? Because that's not clear." It is, and
+ *    it now says so underneath. A number with no noun is a number nobody can act on.
+ * 3. 🔴 **The stock toggle changed its LABEL between states**, so "Any stock" could equally have
+ *    been the current state or the button's effect - genuinely unreadable. The label is now fixed
+ *    ("Confirmed stock") and only the lit state changes. A toggle must never rename itself.
+ * 4. 🔴 **The commodity input sat inside `.psug`**, an absolutely-positioned dropdown container,
+ *    so it rendered below the panel and had to be scrolled to. It is an ordinary in-flow field.
+ *
+ * And the one that changes what the tab is FOR:
+ *
+ * 🔑 **A SYSTEM FILTER IS NOT A NICETY.** Sub: "Fallow Field, where I can buy Bexalite, is in
+ * Pyro. But I'm in Stanton." A ranked list whose top rows are in another system is not a
+ * recommendation, it is a trap - the travel cost is real and the tiered model already charges 25
+ * minutes for the jump. The filter defaults to the system the log says you are in, and falls back
+ * to showing everything when the log has not said, because guessing wrong would silently hide the
+ * routes you can actually fly.
  */
 
   /* ── state ──────────────────────────────────────────────────────────────── */
@@ -29,16 +46,18 @@
   let tradeData = null;        // last /api/trade/routes response
   let tradeLookup = null;      // last /api/trade/commodity response
   let tradeNames = null;       // autocomplete list
+  let tradeStatus = null;      // last provenance block, for first paint before any query
   let tradeBusy = false;
   let tradeErr = "";
-  /** "routes" | "commodity" - the two halves Sub asked for. Backhaul is a FILTER on routes rather
-   *  than a third mode, because it is the same question with the destination pinned. */
+  /** "routes" | "commodity". Backhaul is a FILTER on routes rather than a third mode, because it
+   *  is the same question with the destination pinned. */
   let tradeMode = "routes";
-  /** Pinned destination for the backhaul case: null = anywhere. */
   let tradeToBody = null;
   let tradeQuery = "";
+  /** "" = every system. Defaulted from the log once, then it is the player's choice. */
+  let tradeSystem = null;      // null = not yet defaulted
   const TD_STOCK_KEY = "sc-trade-known-stock";
-  /** Hide routes whose stock nobody has reported. Remembered because it is a stance, not a mood. */
+  const TD_SYS_KEY = "sc-trade-system";
   let tradeKnownOnly = (() => { try { return localStorage.getItem(TD_STOCK_KEY) === "1"; } catch { return false; } })();
 
   /* ── helpers ────────────────────────────────────────────────────────────── */
@@ -50,8 +69,13 @@
     const h = Math.round(days * 24);
     return h >= 1 ? h + "h" : "just now";
   }
+  /** Sub asked for the age to be "weighted with a colour". Three bands, because a quote you have
+   *  to think about is a quote you do not read. */
+  function tdAgeClass(days) {
+    if (days === null || days === undefined) return "warn";
+    return days < 2 ? "age0" : days < 7 ? "age1" : "age2";
+  }
 
-  /** aUEC, shortened only where the magnitude is the point. */
   function tdMoney(n) {
     const v = Math.round(Number(n) || 0);
     if (Math.abs(v) >= 1_000_000) return (v / 1_000_000).toFixed(2).replace(/\.?0+$/, "") + "M";
@@ -67,45 +91,97 @@
     return s;
   }
 
-  /**
-   * The provenance strip. Always drawn, and it says three different things for three genuinely
-   * different states, because "we are offline by choice", "we tried and failed" and "this is
-   * fresh" must not read alike.
-   */
-  function tdProvenance(host, d) {
-    const row = document.createElement("div");
-    row.className = "note";
-    if (!d) { row.textContent = "Prices: loading…"; host.appendChild(row); return; }
-    let text;
-    if (d.source === "live") {
-      const mins = d.fetchedAt ? Math.round((Date.now() - d.fetchedAt) / 60000) : null;
-      text = "Prices: live" + (mins !== null ? ", our copy refreshed " + (mins < 1 ? "just now" : mins + "m ago") : "");
-    } else if (d.source === "cache") {
-      const mins = d.fetchedAt ? Math.round((Date.now() - d.fetchedAt) / 60000) : null;
-      text = "Prices: last good copy" + (mins !== null ? " from " + (mins > 90 ? Math.round(mins / 60) + "h" : mins + "m") + " ago" : "")
-        + (d.lastError ? " — UEX unreachable (" + d.lastError + ")" : "");
-    } else if (!d.canRefresh) {
-      text = "Prices: bundled snapshot" + (d.version ? " (" + d.version + ")" : "") + " — live updates are switched off";
-    } else {
-      text = "Prices: bundled snapshot" + (d.version ? " (" + d.version + ")" : "")
-        + " — " + (d.lastError ? "UEX unreachable (" + d.lastError + ")" : "no live copy yet");
-    }
-    row.textContent = text;
-    host.appendChild(row);
+  function tdBtn(parent, label, on, title, fn) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "hbtn" + (on ? " on" : "");
+    b.textContent = label;
+    if (title) b.title = title;
+    b.addEventListener("click", fn);
+    parent.appendChild(b);
+    return b;
+  }
 
-    // 🔑 A crowd-sourced table is not the live game, and saying the refresh interval would imply
-    // it is. The honest sentence names the per-row ages instead, which are on every row anyway.
-    const sub = document.createElement("div");
-    sub.className = "note";
-    sub.textContent = d.source === "bundled"
-      ? "Stock is unreported for most routes in the bundled snapshot — profit figures marked “stock unknown” are ceilings, not estimates."
-      : "Community-reported, so each row shows its own age. " + (d.droppedOffline ? d.droppedOffline + " terminals hidden: priced by UEX but not in the game right now." : "");
-    if (sub.textContent.trim()) host.appendChild(sub);
+  /** The provenance strip: one pill and an ⓘ, replacing the two paragraphs of the first cut.
+   *  🔑 THREE STATES, THREE COLOURS, because "offline by choice", "tried and failed" and "fresh"
+   *  are different facts and must not read alike. */
+  function tdProvenance(bar, d) {
+    const pill = document.createElement("span");
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    pill.appendChild(dot);
+    const txt = document.createElement("span");
+
+    let tip;
+    if (!d) {
+      pill.className = "tdsrc cache";
+      txt.textContent = "loading";
+      tip = "Fetching the price table.";
+    } else if (d.source === "live") {
+      pill.className = "tdsrc live";
+      txt.textContent = "live";
+      const mins = d.fetchedAt ? Math.round((Date.now() - d.fetchedAt) / 60000) : null;
+      tip = "Live prices, community-reported through UEX."
+        + (mins !== null ? " Our copy was refreshed " + (mins < 1 ? "just now" : mins < 90 ? mins + " minutes ago" : Math.round(mins / 60) + " hours ago") + "." : "")
+        + " Reports come from players, so each row shows its OWN age — that is the number worth"
+        + " trusting, not how recently we refreshed."
+        + (d.droppedOffline ? " " + d.droppedOffline + " terminals are hidden: UEX has prices for them but they are not in the game right now." : "");
+    } else if (d.source === "cache") {
+      pill.className = "tdsrc cache";
+      txt.textContent = "last known";
+      const mins = d.fetchedAt ? Math.round((Date.now() - d.fetchedAt) / 60000) : null;
+      tip = "Showing the last good copy of the price table"
+        + (mins !== null ? ", from " + (mins > 90 ? Math.round(mins / 60) + " hours" : mins + " minutes") + " ago" : "")
+        + ". " + (d.lastError ? "The live feed is unreachable (" + d.lastError + ")." : "The live feed has not answered yet.")
+        + " Prices are still real, just older than usual.";
+    } else if (!d.canRefresh) {
+      pill.className = "tdsrc bundled";
+      txt.textContent = "offline";
+      tip = "Live price updates are switched off, so these are the prices bundled with the app"
+        + (d.version ? " (" + d.version + ")" : "")
+        + ". They work with no network at all, but most routes will not know how much stock is on"
+        + " the shelf — those profit figures are ceilings, not estimates.";
+    } else {
+      pill.className = "tdsrc bundled";
+      txt.textContent = "not live";
+      tip = "The live price feed is unreachable"
+        + (d.lastError ? " (" + d.lastError + ")" : "")
+        + ", so these are the prices bundled with the app"
+        + (d.version ? " (" + d.version + ")" : "")
+        + ". Most routes will not know how much stock is on the shelf — those profit figures are"
+        + " ceilings, not estimates.";
+    }
+    pill.appendChild(txt);
+    pill.title = tip;
+    bar.appendChild(pill);
+
+    // 🔑 A real <button> + popover: `title` alone cannot be opened by clicking, and Sub has
+    // already hit that once on a different info affordance and reported it as doing nothing.
+    const info = document.createElement("button");
+    info.type = "button";
+    info.className = "tdi";
+    info.textContent = "i";
+    info.title = tip;
+    info.setAttribute("popovertarget", "tdInfoPop");
+    bar.appendChild(info);
+
+    let pop = document.getElementById("tdInfoPop");
+    if (!pop) {
+      pop = document.createElement("div");
+      pop.id = "tdInfoPop";
+      pop.className = "tdpop";
+      pop.setAttribute("popover", "");
+      document.body.appendChild(pop);
+    }
+    // ⚠️ Filled on open and cleared on close, so the explanation is never also sitting inside the
+    // pill's own textContent.
+    pop.addEventListener("beforetoggle", (e) => {
+      pop.textContent = e.newState === "open" ? tip : "";
+    });
   }
 
   /* ── loading ────────────────────────────────────────────────────────────── */
 
-  /** The hold to plan against. Prefers the picker, falls back to whatever the plan detected. */
   function tdCapacity() {
     if (plan && plan.shipScu) return plan.shipScu;
     return null;
@@ -119,20 +195,44 @@
       const p = new URLSearchParams();
       if (cap) p.set("capacity", String(cap));
       else if (shipPick) p.set("ship", shipPick);
-      else p.set("capacity", "64"); // nothing known yet; the strip says so and the picker fixes it
+      else p.set("capacity", "64");
+      if (tradeSystem) p.set("fromSystem", tradeSystem);
       if (tradeToBody) p.set("toBody", tradeToBody);
       if (tradeKnownOnly) p.set("knownStock", "1");
       p.set("limit", "25");
       const r = await fetch("/api/trade/routes?" + p.toString(), { cache: "no-store" });
       const j = await r.json();
-      if (!r.ok) { tradeErr = j && j.error ? j.error : "HTTP " + r.status; tradeData = j; }
-      else tradeData = j;
-    } catch (e) {
+      tradeData = j;
+      tradeStatus = j;
+      if (!r.ok) tradeErr = j && j.error ? j.error : "HTTP " + r.status;
+    } catch {
       // 🔴 Keep whatever we had. A trade board that blanks on a hiccup is worse than a stale one.
       tradeErr = "sidecar unreachable";
     }
     tradeBusy = false;
     if (view === "trade") render();
+  }
+
+  /** Provenance + the system list, before any query has been run. Also the one place the system
+   *  filter gets its default, which is why it runs before the first `loadTrade()`. */
+  async function loadTradeStatus() {
+    try {
+      const r = await fetch("/api/trade/status", { cache: "no-store" });
+      if (!r.ok) return;
+      tradeStatus = await r.json();
+      if (tradeSystem === null) {
+        let saved = null;
+        try { saved = localStorage.getItem(TD_SYS_KEY); } catch { /* private mode */ }
+        if (saved !== null) tradeSystem = saved;
+        else {
+          // 🔑 Default to where the log says you are — but only if that system actually has
+          // somewhere to buy, or the first thing the player sees is an empty board.
+          const here = (tradeStatus.here || "").toLowerCase();
+          const match = (tradeStatus.systems || []).find((s) => s.toLowerCase() === here);
+          tradeSystem = match || "";
+        }
+      }
+    } catch { /* the routes call reports its own failure */ }
   }
 
   async function loadTradeNames() {
@@ -149,11 +249,18 @@
     try {
       const r = await fetch("/api/trade/commodity?name=" + encodeURIComponent(name), { cache: "no-store" });
       const j = await r.json();
-      tradeLookup = r.ok ? j : { error: (j && j.error) || "HTTP " + r.status, commodity: name, ...j };
+      tradeLookup = r.ok ? j : Object.assign({ error: (j && j.error) || "HTTP " + r.status, commodity: name }, j);
+      tradeStatus = j;
     } catch {
       tradeLookup = { error: "sidecar unreachable", commodity: name };
     }
     if (view === "trade") render();
+  }
+
+  /** Kick everything the tab needs, in the order that makes the first paint correct. */
+  async function openTrade() {
+    await loadTradeStatus();
+    await loadTrade();
   }
 
   /* ── the routes view ────────────────────────────────────────────────────── */
@@ -177,8 +284,10 @@
     if (!d.routes.length) {
       const e = document.createElement("div"); e.className = "empty";
       e.textContent = tradeKnownOnly
-        ? "Nothing with confirmed stock right now. Turn off “confirmed stock only” to see the rest."
-        : "No profitable run found for this hold.";
+        ? "Nothing with confirmed stock here. Turn off “Confirmed stock” to see the rest."
+        : tradeSystem
+          ? "No profitable run starting in " + tradeSystem + " for this hold. Try “All systems”."
+          : "No profitable run found for this hold.";
       body.appendChild(e);
       return;
     }
@@ -186,7 +295,7 @@
     const sec = document.createElement("div");
     sec.className = "sec";
     const h = document.createElement("span");
-    h.textContent = tradeToBody ? "Worth carrying to " + tradeToBody : "Worth carrying";
+    h.textContent = tradeToBody ? "On your way to " + tradeToBody : "Worth carrying";
     const n = document.createElement("span");
     n.className = "n";
     n.textContent = (d.ship ? d.ship + " · " : "") + num(d.capacityScu) + " SCU hold";
@@ -195,7 +304,7 @@
 
     d.routes.forEach((r, i) => {
       const row = document.createElement("div");
-      row.className = "arow";
+      row.className = "arow tdrow";
       const nEl = document.createElement("div"); nEl.className = "n"; nEl.textContent = String(i + 1);
       const mid = document.createElement("div"); mid.className = "mid";
 
@@ -203,45 +312,48 @@
       t.textContent = r.commodity;
       mid.appendChild(t);
 
-      // Where from, where to - the short names a player reads off the board.
       const m = document.createElement("div"); m.className = "m";
       m.textContent = r.from.terminalShort + "  →  " + r.to.terminalShort;
       mid.appendChild(m);
 
+      // 🔴 THE MONEY LINE. What you pay, what you get, and how much of it — the three facts the
+      // first cut made you derive.
+      const money = document.createElement("div");
+      money.className = "money";
+      const bk = document.createElement("span"); bk.className = "k"; bk.textContent = "buy";
+      const bv = document.createElement("span"); bv.className = "buy"; bv.textContent = num(Math.round(r.from.price));
+      const ar = document.createElement("span"); ar.className = "arrow"; ar.textContent = "→";
+      const sk = document.createElement("span"); sk.className = "k"; sk.textContent = "sell";
+      const sv = document.createElement("span"); sv.className = "sell"; sv.textContent = num(Math.round(r.to.price));
+      const qt = document.createElement("span"); qt.className = "qty"; qt.textContent = "× " + num(r.moveScu) + " SCU";
+      money.append(bk, bv, ar, sk, sv, qt);
+      mid.appendChild(money);
+
       const chips = document.createElement("div"); chips.className = "m";
-      tdChip(chips, "+" + num(Math.round(r.marginPerScu)) + "/SCU");
-      // 🔴 The bound, always, and named. "You can move 48" is not actionable; "the seller only has
-      // 48 on the shelf" is - it tells the player what to change.
-      if (r.scuBound === "unknown") {
-        tdChip(chips, "stock unknown", "cap");
-      } else if (r.scuBound === "stock") {
-        tdChip(chips, num(r.moveScu) + " SCU on the shelf");
-      } else if (r.scuBound === "demand") {
-        tdChip(chips, "buyer takes " + num(r.moveScu) + " SCU");
-      } else {
-        tdChip(chips, "fills your hold");
-      }
       const age = tdAge(r.ageDays);
-      // An untimestamped quote says so rather than looking fresh by omission.
-      tdChip(chips, age ? "quoted " + age + " ago" : "age unknown");
-      if (r.crossSystem) tdChip(chips, "cross-system");
-      // ⚠️ Capital and load live down here, NOT in the right-hand column. Measured: that column is
-      // 86px on a 420px widget, and three lines of figures wrapped into an 88px block that read as
-      // broken text. Chips wrap by design; a fixed narrow column does not.
-      tdChip(chips, "costs " + tdMoney(r.capitalRequired));
+      tdChip(chips, age ? age + " old" : "age unknown", tdAgeClass(r.ageDays));
+      if (r.scuBound === "unknown") tdChip(chips, "stock unknown", "warn");
+      else if (r.scuBound === "stock") tdChip(chips, num(r.moveScu) + " on the shelf", "calm");
+      else if (r.scuBound === "demand") tdChip(chips, "buyer takes " + num(r.moveScu), "calm");
+      else tdChip(chips, "fills your hold", "calm");
+      // The system pair, and it is loud when they differ — that is the 25-minute jump.
+      if (r.crossSystem) tdChip(chips, (r.from.system || "?") + " → " + (r.to.system || "?"), "xsys");
+      else if (r.from.system) tdChip(chips, r.from.system, "calm");
+      tdChip(chips, "costs " + tdMoney(r.capitalRequired), "calm");
       mid.appendChild(chips);
 
-      // Two lines only, both nowrap: what the run clears, and the rate it clears it at.
       const right = document.createElement("div"); right.className = "tdcap";
       const profit = document.createElement("div");
       profit.className = "tdprofit";
-      // 🔑 "≤" is not decoration. With stock unreported this figure is a ceiling derived from the
-      // hold, and printing it bare would be the false precision this widget exists to avoid.
+      // 🔑 "≤" is not decoration. With stock unreported this is a ceiling off the hold alone.
       profit.textContent = (r.scuBound === "unknown" ? "≤ " : "") + tdMoney(r.profit);
+      const lbl = document.createElement("div");
+      lbl.className = "tdcaplbl";
+      lbl.textContent = "profit";
       const per = document.createElement("div");
       per.className = "tdrate";
       per.textContent = tdMoney(r.profitPerHour) + "/hr";
-      right.append(profit, per);
+      right.append(profit, lbl, per);
 
       row.append(nEl, mid, right);
       body.appendChild(row);
@@ -250,7 +362,6 @@
 
   /* ── the commodity view ─────────────────────────────────────────────────── */
 
-  /** One side's range. 🔴 Never a lone number - the range and the count are the answer. */
   function tdRenderSide(body, label, s, ends, kind) {
     const sec = document.createElement("div");
     sec.className = "sec";
@@ -273,13 +384,6 @@
       : num(s.low) + " – " + num(s.high) + " aUEC/SCU (middle " + num(s.median) + ")";
     body.appendChild(range);
 
-    if (s.stalestDays !== null && s.stalestDays !== undefined) {
-      const ages = document.createElement("div");
-      ages.className = "note";
-      ages.textContent = "Quotes range from " + tdAge(s.freshestDays) + " to " + tdAge(s.stalestDays) + " old.";
-      body.appendChild(ages);
-    }
-
     for (const e of ends.slice(0, 8)) {
       const row = document.createElement("div");
       row.className = "trow";
@@ -287,12 +391,14 @@
       nm.textContent = e.terminalShort + (e.system ? "  · " + e.system : "");
       const val = document.createElement("div");
       val.className = "cap";
-      const age = tdAge(e.asOf === null || e.asOf === undefined ? null : (Date.now() - e.asOf * 1000) / 86400000);
+      const days = e.asOf === null || e.asOf === undefined ? null : (Date.now() - e.asOf * 1000) / 86400000;
       const scu = e.scu === null || e.scu === undefined
         ? "stock unknown"
         : num(e.scu) + " SCU " + (kind === "buy" ? "in stock" : "wanted");
-      val.textContent = num(e.price) + "  ·  " + scu + (age ? "  ·  " + age : "");
+      val.textContent = num(e.price) + "  ·  " + scu;
       row.append(nm, val);
+      const a = tdAge(days);
+      if (a) tdChip(val, a, tdAgeClass(days));
       body.appendChild(row);
     }
     if (ends.length > 8) {
@@ -328,7 +434,6 @@
     tdRenderSide(body, "Buy it at", l.buy, l.buyAt || [], "buy");
     tdRenderSide(body, "Sell it at", l.sell, l.sellAt || [], "sell");
 
-    // The one derived number worth stating, and only when both ends are real.
     if (l.buy && l.sell && l.sell.high > l.buy.low) {
       const best = document.createElement("div");
       best.className = "note";
@@ -345,66 +450,67 @@
     const body = $("body");
     body.textContent = "";
 
-    tdProvenance(body, tradeData || tradeLookup);
-
-    // Mode + filters. Same `goalseg` treatment the Rank tab uses for its goal switch.
+    // One bar, one control height. See the CSS note: this deliberately avoids `.goalseg`, whose
+    // override is what made the first cut's pills three different sizes.
     const bar = document.createElement("div");
-    bar.className = "sec";
-    const seg = document.createElement("span");
-    seg.className = "goalseg";
-    for (const [id, label] of [["routes", "Runs"], ["commodity", "Look up"]]) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "hbtn" + (tradeMode === id ? " on" : "");
-      b.textContent = label;
-      b.addEventListener("click", () => {
-        tradeMode = id;
-        if (id === "commodity") loadTradeNames();
-        render();
-      });
-      seg.appendChild(b);
-    }
-    bar.appendChild(seg);
+    bar.className = "tdbar";
+    tdProvenance(bar, tradeStatus);
 
+    // ⚠️ Runs / Look up used to be buttons in here. They are TOP TABS now (Sub's two-mode
+    // structure), so this bar carries only the filters that belong to whichever one is showing.
     if (tradeMode === "routes") {
-      const stock = document.createElement("button");
-      stock.type = "button";
-      stock.className = "hbtn" + (tradeKnownOnly ? " on" : "");
-      stock.textContent = tradeKnownOnly ? "Confirmed stock only" : "Any stock";
-      stock.title = "Hide runs where nobody has reported how much is actually on the shelf";
-      stock.addEventListener("click", () => {
-        tradeKnownOnly = !tradeKnownOnly;
-        try { localStorage.setItem(TD_STOCK_KEY, tradeKnownOnly ? "1" : "0"); } catch { /* private mode */ }
-        loadTrade();
-      });
-      bar.appendChild(stock);
+      const sep2 = document.createElement("span"); sep2.className = "sep"; bar.appendChild(sep2);
+      // 🔑 THE SYSTEM FILTER. Built from the systems that actually have a buy terminal, so it can
+      // never offer a choice that only ever returns nothing.
+      const systems = (tradeStatus && tradeStatus.systems) || [];
+      if (systems.length > 1) {
+        const lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = "buy in";
+        bar.appendChild(lbl);
+        const pick = (s) => {
+          tradeSystem = s;
+          try { localStorage.setItem(TD_SYS_KEY, s); } catch { /* private mode */ }
+          loadTrade();
+        };
+        tdBtn(bar, "All", tradeSystem === "", "Every system", () => pick(""));
+        for (const s of systems) {
+          const isHere = tradeStatus && tradeStatus.here
+            && s.toLowerCase() === String(tradeStatus.here).toLowerCase();
+          tdBtn(bar, s, tradeSystem === s, isHere ? "Where the log says you are" : "Buy in " + s,
+            () => pick(s));
+        }
+      }
 
-      // 🔑 THE BACKHAUL. Only offered when the route plan actually has somewhere to be - an empty
-      // dropdown of destinations you are not flying to is worse than no dropdown.
+      const sep3 = document.createElement("span"); sep3.className = "sep"; bar.appendChild(sep3);
+      // 🔴 A FIXED LABEL. The first cut swapped between "Any stock" and "Confirmed stock only",
+      // which made it impossible to tell the state from the action.
+      tdBtn(bar, "Confirmed stock", tradeKnownOnly,
+        "Only show runs where someone has reported how much is actually on the shelf", () => {
+          tradeKnownOnly = !tradeKnownOnly;
+          try { localStorage.setItem(TD_STOCK_KEY, tradeKnownOnly ? "1" : "0"); } catch { /* private mode */ }
+          loadTrade();
+        });
+
       const dest = tdPlanDestination();
       if (dest) {
-        const bh = document.createElement("button");
-        bh.type = "button";
-        bh.className = "hbtn" + (tradeToBody ? " on" : "");
-        bh.textContent = tradeToBody ? "Anywhere" : "On my way to " + dest;
-        bh.title = "You are already flying there — what is worth carrying along?";
-        bh.addEventListener("click", () => { tradeToBody = tradeToBody ? null : dest; loadTrade(); });
-        bar.appendChild(bh);
+        tdBtn(bar, "Backhaul", !!tradeToBody,
+          "You are already flying to " + dest + " — what is worth carrying along?", () => {
+            tradeToBody = tradeToBody ? null : dest;
+            loadTrade();
+          });
       }
     }
     body.appendChild(bar);
 
     if (tradeMode === "commodity") {
       const wrap = document.createElement("div");
-      wrap.className = "psug";
+      wrap.className = "tdfind";
       const input = document.createElement("input");
       input.type = "text";
       input.id = "tradeQ";
-      input.placeholder = "Commodity name";
+      input.placeholder = "Commodity name — try Titanium";
       input.value = tradeQuery;
       input.setAttribute("list", "tradeNames");
-      // ⚠️ A text field on a widget takes the canvas-wide keyboard grab, which is why this one is
-      // wired to the page's existing typing helpers rather than calling focus() on its own.
+      input.setAttribute("autocomplete", "off");
       input.addEventListener("change", () => loadTradeCommodity(input.value.trim()));
       wrap.appendChild(input);
       if (tradeNames && tradeNames.length) {

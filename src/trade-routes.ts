@@ -25,7 +25,7 @@
  */
 import type { ServerResponse } from "node:http";
 import { TradePriceStore, type PlaceInfo, type BundledCommodity } from "./trade-prices.js";
-import { findRoutes, lookupCommodity, tradableNames } from "./trade-finder.js";
+import { findRoutes, lookupCommodity, tradableNames, buyableSystems } from "./trade-finder.js";
 
 /** How often the sidecar re-asks the endpoint. The endpoint itself is what polls UEX; this is
  *  only how fast our copy of ITS copy turns over, so it does not need to be aggressive.
@@ -61,6 +61,9 @@ export interface TradeDeps {
   haulingData: HaulingLike;
   /** Endpoint override. `null` disables refreshing, which is a supported configuration. */
   url?: string | null;
+  /** What system the player is in, when the log has said. Used only to DEFAULT the filter -- the
+   *  widget always sends an explicit choice, so a wrong guess here can never silently filter. */
+  system?: () => string | null;
 }
 
 let store: TradePriceStore | null = null;
@@ -102,7 +105,7 @@ const json = (res: ServerResponse, code: number, body: unknown): void => {
 };
 
 /** The provenance block every response carries. */
-function provenance(s: TradePriceStore) {
+function provenance(s: TradePriceStore, deps?: TradeDeps) {
   const t = s.current();
   return {
     source: t.source,
@@ -115,6 +118,12 @@ function provenance(s: TradePriceStore) {
     /** True when a refresh is even possible. False means "configured offline", which the widget
      *  must word differently from "we tried and failed". */
     canRefresh: s.canRefresh(),
+    /** Systems with at least one BUY terminal, biggest first. The widget builds its filter from
+     *  this rather than a hardcoded list, so a new system in a patch needs no code change - and
+     *  it can never offer a choice that only ever returns nothing. */
+    systems: buyableSystems(t.quotes),
+    /** Where the log says the player is, or null. Only ever a DEFAULT for the filter. */
+    here: deps?.system?.() ?? null,
   };
 }
 
@@ -148,12 +157,12 @@ export function tradeRoutes(
   const p = qs(req.url ?? "/");
 
   if (url === "/api/trade/status") {
-    json(res, 200, provenance(s));
+    json(res, 200, provenance(s, deps));
     return true;
   }
 
   if (url === "/api/trade/names") {
-    json(res, 200, { names: tradableNames(table.quotes), ...provenance(s) });
+    json(res, 200, { names: tradableNames(table.quotes), ...provenance(s, deps) });
     return true;
   }
 
@@ -161,8 +170,8 @@ export function tradeRoutes(
     const name = strParam(p, "name");
     if (!name) { json(res, 400, { error: "name_required" }); return true; }
     const hit = lookupCommodity(table.quotes, name, table.source);
-    if (!hit) { json(res, 404, { error: "unknown_commodity", name, ...provenance(s) }); return true; }
-    json(res, 200, { ...hit, ...provenance(s) });
+    if (!hit) { json(res, 404, { error: "unknown_commodity", name, ...provenance(s, deps) }); return true; }
+    json(res, 200, { ...hit, ...provenance(s, deps) });
     return true;
   }
 
@@ -177,13 +186,13 @@ export function tradeRoutes(
       // 🔑 An unresolved hull gets its OWN error. Falling through to "capacity_required" would
       // blame the caller for omitting something it did send, and the real fault - a hull name we
       // do not carry - would never be visible.
-      if (!hull && capacityScu === null) { json(res, 404, { error: "unknown_ship", ship, ...provenance(s) }); return true; }
+      if (!hull && capacityScu === null) { json(res, 404, { error: "unknown_ship", ship, ...provenance(s, deps) }); return true; }
       if (hull) { capacityScu = capacityScu ?? hull.totalScu; shipName = hull.displayName ?? ship; }
     }
     if (!capacityScu || capacityScu <= 0) {
       // 🔑 No silent default. A made-up hold size silently changes every number on the screen,
       // and the widget has a real one to send.
-      json(res, 400, { error: "capacity_required", ...provenance(s) });
+      json(res, 400, { error: "capacity_required", ...provenance(s, deps) });
       return true;
     }
     const routes = findRoutes(table.quotes, {
@@ -197,7 +206,7 @@ export function tradeRoutes(
       maxAgeDays: numParam(p, "maxAgeDays"),
       limit: numParam(p, "limit") ?? 30,
     });
-    json(res, 200, { routes, capacityScu, ship: shipName, ...provenance(s) });
+    json(res, 200, { routes, capacityScu, ship: shipName, ...provenance(s, deps) });
     return true;
   }
 

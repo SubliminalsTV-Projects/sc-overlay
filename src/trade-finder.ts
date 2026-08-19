@@ -230,6 +230,14 @@ export function tradableNames(quotes: readonly TradeQuote[]): string[] {
   return [...s].sort((a, b) => a.localeCompare(b));
 }
 
+/** Systems that actually have a terminal you can BUY at, so the filter never offers a choice that
+ *  can only ever return nothing. Sorted by how many buy terminals each has, biggest first. */
+export function buyableSystems(quotes: readonly TradeQuote[]): string[] {
+  const n = new Map<string, number>();
+  for (const q of quotes) if (q.buy !== null && q.system) n.set(q.system, (n.get(q.system) ?? 0) + 1);
+  return [...n.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s);
+}
+
 /**
  * Buy somewhere, sell somewhere else, ranked by what the run actually clears.
  *
@@ -256,25 +264,24 @@ export function findRoutes(
     return a === null || a <= maxAge;
   };
 
+  // 🔑 CASE-INSENSITIVE, because the two sources spell a system differently and the caller may be
+  // passing either. UEX says "Stanton"; the app's own SystemWatcher derives "stanton" from body
+  // codes like `stanton2a`. An exact compare silently filters everything out - which looks
+  // identical to "there are no routes" and is the worst possible failure for a filter.
+  const sameName = (a: string | null, b: string | null | undefined): boolean =>
+    !b || (!!a && a.toLowerCase() === b.toLowerCase());
+
   const buys = new Map<string, TradeQuote[]>();
   const sells = new Map<string, TradeQuote[]>();
   for (const q of quotes) {
     if (!fresh(q)) continue;
-    if (q.buy !== null) {
-      if (opts.fromSystem && q.system !== opts.fromSystem) { /* filtered */ }
-      else if (opts.fromBody && q.body !== opts.fromBody) { /* filtered */ }
-      else {
-        const arr = buys.get(q.commodity);
-        if (arr) arr.push(q); else buys.set(q.commodity, [q]);
-      }
+    if (q.buy !== null && sameName(q.system, opts.fromSystem) && sameName(q.body, opts.fromBody)) {
+      const arr = buys.get(q.commodity);
+      if (arr) arr.push(q); else buys.set(q.commodity, [q]);
     }
-    if (q.sell !== null) {
-      if (opts.toSystem && q.system !== opts.toSystem) { /* filtered */ }
-      else if (opts.toBody && q.body !== opts.toBody) { /* filtered */ }
-      else {
-        const arr = sells.get(q.commodity);
-        if (arr) arr.push(q); else sells.set(q.commodity, [q]);
-      }
+    if (q.sell !== null && sameName(q.system, opts.toSystem) && sameName(q.body, opts.toBody)) {
+      const arr = sells.get(q.commodity);
+      if (arr) arr.push(q); else sells.set(q.commodity, [q]);
     }
   }
 
