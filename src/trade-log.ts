@@ -1,0 +1,189 @@
+/**
+ * TRADE - READING A REAL PURCHASE OUT OF `game.log`.
+ *
+ * Captured 2026-08-19 from Sub's own session: he stood at the Area 18 TDD and bought the SAME
+ * commodity twice, once straight onto the ship and once to the freight elevator, specifically so
+ * both shapes would be on record. Then the game crashed, which turned out to be the most useful
+ * part of the experiment - see the blind spot at the bottom.
+ *
+ * -- The line, verbatim ---------------------------------------------------------------------
+ *
+ *   <2026-08-19T17:43:31.000Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommodityBuyRequest>
+ *   Sending SShopCommodityBuyRequest - playerId[204772220757] shopId[762985455925]
+ *   shopName[TDD_SCShop-001] kioskId[762985455920] price[1202.000000]
+ *   shopPricePerCentiSCU[12.019500] resourceGUID[accacd33-3a1a-4ec7-8b4a-14b9f028047c]
+ *   autoLoading[1] quantity[100.000000 cSCU] Cargo Box Data: boxSize[1.000000] | unitAmount[1]
+ *   [Team_CoreGameplayFeatures][Shops][UI]
+ *
+ * 🔑 `autoLoading` IS THE FLAG, AND IT WAS PROVEN RATHER THAN INFERRED. The two buys above are 16
+ * seconds apart, identical in every field except this one: `1` on the purchase that went straight
+ * into the hold, `0` on the one that went to the freight elevator. That is not a reading of the
+ * field name, it is Sub buying it both ways on purpose so the difference had exactly one place to
+ * show up. It matters because an `autoLoading[0]` purchase is cargo the player still has to go and
+ * collect - the Stow tab's problem - while `autoLoading[1]` is already aboard.
+ *
+ * 🔑 `resourceGUID` JOINS STRAIGHT TO `data/commodities.json`, WHICH IS KEYED BY THE SAME UUID.
+ * `accacd33-...` is Processed Food; `60f116f4-...` is Tungsten. No name matching, no normalising,
+ * no dialect problem - the one clean join in this whole subsystem. Do NOT switch it for a name.
+ *
+ * 🔑 UNITS. `quantity` is in **cSCU** (centiSCU): 100 cSCU = 1 SCU. `shopPricePerCentiSCU` x 100
+ * is the aUEC/SCU price. `price` is the total for the transaction. On both captured buys the
+ * derived per-SCU figure matched the bundled snapshot's `bestBuy` for that terminal EXACTLY
+ * (1202 for Processed Food, 8265 for Tungsten) a full month after the snapshot was taken -
+ * which is real evidence that BUY prices are shop-set and barely drift, unlike sell prices.
+ *
+ * -- 🔴 THE BLIND SPOT, AND WHY THE CRASH WAS THE USEFUL PART ---------------------------------
+ *
+ * After Sub's game crashed and he logged back in, the new `Game.log` contained **zero**
+ * `CommodityUI` lines. The purchase is NOT replayed on reconnect - it exists only in the moment
+ * it happened, in whichever log file was open at the time.
+ *
+ * So: the app can track a trade run **it witnessed**, and it cannot reconstruct one it did not.
+ * That is the same family as the mission-accept gap that silently produced merged, permanently
+ * incomplete pools, and it must be handled the same way - by being SAID rather than papered over:
+ *
+ *   - What is seen is persisted immediately, so a later crash does not lose it.
+ *   - What was never seen is reported as unknown. The widget must never present an inferred hold
+ *     as a known one. "I did not see you buy anything" is a true and useful answer; a confidently
+ *     empty cargo list is neither.
+ *
+ * ⚠️ THE SELL VERB IS NOT YET CONFIRMED. Only buys have been captured. `SendCommoditySellRequest`
+ * is the obvious symmetric name and is accepted here, but it is a GUESS until a real sell is on
+ * record - so this parser reports any unrecognised `CommodityUIProvider` method through
+ * `unknownMethods` rather than dropping it. Absence of the word we guessed is not absence of the
+ * signal; this project has been wrong that way three times, twice reaching a user.
+ */
+
+/** One `key[value]` field off a CommodityUIProvider line. */
+function fields(line: string): Map<string, string> {
+  const out = new Map<string, string>();
+  // Deliberately not a single regex over the whole line: `Cargo Box Data:` and the trailing
+  // `[Team_...][Shops][UI]` tags are also bracketed, and a greedy pattern picks them up as fields.
+  const re = /([A-Za-z][A-Za-z0-9]*)\[([^\]]*)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    if (!out.has(m[1])) out.set(m[1], m[2]);
+  }
+  return out;
+}
+
+/** A number out of a field, tolerating the unit suffix inside the bracket (`100.000000 cSCU`). */
+function fnum(f: Map<string, string>, key: string): number | null {
+  const raw = f.get(key);
+  if (raw === undefined) return null;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+export interface CommodityPurchase {
+  /** ISO timestamp off the log line. */
+  at: string;
+  /** "buy" | "sell". */
+  kind: "buy" | "sell";
+  /** The game's own shop token, e.g. `TDD_SCShop-001`, `SCShop_Admin_Area18`. */
+  shopName: string | null;
+  shopId: string | null;
+  /** Joins directly to `data/commodities.json`'s top-level key. */
+  resourceGuid: string | null;
+  /** SCU, converted from the log's centiSCU. */
+  scu: number | null;
+  /** aUEC per SCU, from `shopPricePerCentiSCU` x 100. */
+  pricePerScu: number | null;
+  /** Total aUEC for the transaction, as the log states it. */
+  total: number | null;
+  /** SCU per box. */
+  boxScu: number | null;
+  unitAmount: number | null;
+  /** 🔑 True = straight into the ship. False = waiting on the freight elevator. Proven, not
+   *  inferred - see the file header. Null when the field was absent. */
+  autoLoaded: boolean | null;
+}
+
+/** What a shop offers, off `AddingCommodityBox`. An IN-GAME source of the box sizes a terminal
+ *  actually handles, which is finer than UEX's single `max_container_size`. */
+export interface ShopOffer {
+  at: string;
+  shopName: string | null;
+  shopId: string | null;
+  /** As the game writes it, e.g. `ResourceType.Waste`. */
+  commodityToken: string | null;
+  boxSizes: number[];
+}
+
+export interface TradeLogEvent {
+  purchase?: CommodityPurchase;
+  offer?: ShopOffer;
+  /** A CommodityUIProvider method this parser does not model. Surfaced so a new verb announces
+   *  itself instead of being silently discarded. */
+  unknownMethod?: string;
+}
+
+const TS = /^<([^>]+)>/;
+const METHOD = /<CEntityComponentCommodityUIProvider::([A-Za-z0-9_]+)/;
+
+/** Methods we deliberately ignore: pure UI churn with nothing to record. */
+const IGNORED = new Set([
+  "ClSetSelectedPlayerLocationInfo",
+  "CreateAmmoResourceContainerEntity",
+]);
+
+/**
+ * Parse one log line. Returns null for anything that is not a CommodityUIProvider line, so this
+ * is cheap to call on every line of the watcher's stream.
+ */
+export function parseTradeLine(line: string): TradeLogEvent | null {
+  const method = METHOD.exec(line);
+  if (!method) return null;
+  const name = method[1];
+  const at = TS.exec(line)?.[1] ?? "";
+  const f = fields(line);
+
+  if (name === "SendCommodityBuyRequest" || name === "SendCommoditySellRequest") {
+    const cSCU = fnum(f, "quantity");
+    const perCenti = fnum(f, "shopPricePerCentiSCU");
+    const auto = f.get("autoLoading");
+    return {
+      purchase: {
+        at,
+        kind: name === "SendCommodityBuyRequest" ? "buy" : "sell",
+        shopName: f.get("shopName") ?? null,
+        shopId: f.get("shopId") ?? null,
+        resourceGuid: f.get("resourceGUID") ?? null,
+        // 100 cSCU = 1 SCU.
+        scu: cSCU === null ? null : cSCU / 100,
+        pricePerScu: perCenti === null ? null : perCenti * 100,
+        total: fnum(f, "price"),
+        boxScu: fnum(f, "boxSize"),
+        unitAmount: fnum(f, "unitAmount"),
+        autoLoaded: auto === undefined ? null : auto === "1",
+      },
+    };
+  }
+
+  if (name === "LoadShopInventoryData" || name === "AddPlayerCommodityItem") {
+    // ⚠️ `boxSize` repeats on these lines ("Available Box Sizes: boxSize[1] boxSize[2] ..."), and
+    // `fields()` keeps only the first of a repeated key on purpose - so collect them separately.
+    const sizes: number[] = [];
+    const re = /boxSize\[([0-9.]+)\]/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      const n = Number.parseFloat(m[1]);
+      if (Number.isFinite(n) && n > 0) sizes.push(n);
+    }
+    const token = f.get("commodityName") ?? null;
+    return {
+      offer: {
+        at,
+        shopName: f.get("shopName") ?? null,
+        shopId: f.get("shopId") ?? null,
+        // An empty `commodityName[]` is normal on `AddPlayerCommodityItem` - it describes a box
+        // the PLAYER brought, not something the shop stocks. Keep it null rather than "".
+        commodityToken: token ? token : null,
+        boxSizes: sizes,
+      },
+    };
+  }
+
+  if (IGNORED.has(name)) return null;
+  return { unknownMethod: name };
+}
