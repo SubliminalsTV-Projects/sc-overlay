@@ -57,6 +57,11 @@
   /** "" = every system. Defaulted from the log once, then it is the player's choice. */
   let tradeSystem = null;      // null = not yet defaulted
   const TD_STOCK_KEY = "sc-trade-known-stock";
+  const TD_UNIT_KEY = "sc-trade-unit";
+  /** "run" = what the whole trip clears. "scu" = what one unit is worth carrying. Two real
+   *  answers to two different questions, and the second is what stays comparable across rows
+   *  whose hold fills differ. */
+  let tradeUnit = (() => { try { return localStorage.getItem(TD_UNIT_KEY) === "scu" ? "scu" : "run"; } catch { return "run"; } })();
   const TD_SYS_KEY = "sc-trade-system";
   let tradeKnownOnly = (() => { try { return localStorage.getItem(TD_STOCK_KEY) === "1"; } catch { return false; } })();
 
@@ -316,8 +321,8 @@
       m.textContent = r.from.terminalShort + "  →  " + r.to.terminalShort;
       mid.appendChild(m);
 
-      // 🔴 THE MONEY LINE. What you pay, what you get, and how much of it — the three facts the
-      // first cut made you derive.
+      // 🔴 THE MONEY LINE. What you pay, what you get, the return on it, and how much of it —
+      // the four facts the first cut made you derive.
       const money = document.createElement("div");
       money.className = "money";
       const bk = document.createElement("span"); bk.className = "k"; bk.textContent = "buy";
@@ -325,8 +330,13 @@
       const ar = document.createElement("span"); ar.className = "arrow"; ar.textContent = "→";
       const sk = document.createElement("span"); sk.className = "k"; sk.textContent = "sell";
       const sv = document.createElement("span"); sv.className = "sell"; sv.textContent = num(Math.round(r.to.price));
+      // 🔑 The percentage is the figure that makes two rows comparable when their prices are
+      // orders of magnitude apart — a 12,444 margin on Bexalite and a 298 on Processed Food are
+      // 53% and 25%, and the second is the one whose capital you get back fastest.
+      const pc = document.createElement("span"); pc.className = "pct";
+      pc.textContent = "(" + Math.round(r.marginPct) + "% margin)";
       const qt = document.createElement("span"); qt.className = "qty"; qt.textContent = "× " + num(r.moveScu) + " SCU";
-      money.append(bk, bv, ar, sk, sv, qt);
+      money.append(bk, bv, ar, sk, sv, pc, qt);
       mid.appendChild(money);
 
       const chips = document.createElement("div"); chips.className = "m";
@@ -345,14 +355,22 @@
       const right = document.createElement("div"); right.className = "tdcap";
       const profit = document.createElement("div");
       profit.className = "tdprofit";
-      // 🔑 "≤" is not decoration. With stock unreported this is a ceiling off the hold alone.
-      profit.textContent = (r.scuBound === "unknown" ? "≤ " : "") + tdMoney(r.profit);
+      // 🔑 PER RUN vs PER SCU. Both are real answers to different questions: "what does this trip
+      // clear" and "what is each unit worth carrying". Per-SCU is also the only figure that stays
+      // comparable when two rows have wildly different hold fills, which is why it is offered
+      // rather than derived in the player's head.
+      // "≤" is not decoration — with stock unreported the per-run figure is a ceiling off the
+      // hold alone. The per-SCU figure is exact either way, so it never carries one.
+      const perScu = tradeUnit === "scu";
+      profit.textContent = perScu
+        ? num(Math.round(r.marginPerScu))
+        : (r.scuBound === "unknown" ? "≤ " : "") + tdMoney(r.profit);
       const lbl = document.createElement("div");
       lbl.className = "tdcaplbl";
-      lbl.textContent = "profit";
+      lbl.textContent = perScu ? "per scu" : "profit";
       const per = document.createElement("div");
       per.className = "tdrate";
-      per.textContent = tdMoney(r.profitPerHour) + "/hr";
+      per.textContent = perScu ? tdMoney(r.profit) + " total" : tdMoney(r.profitPerHour) + "/hr";
       right.append(profit, lbl, per);
 
       row.append(nEl, mid, right);
@@ -490,6 +508,15 @@
           loadTrade();
         });
 
+      const sep4 = document.createElement("span"); sep4.className = "sep"; bar.appendChild(sep4);
+      const setUnit = (u) => {
+        tradeUnit = u;
+        try { localStorage.setItem(TD_UNIT_KEY, u); } catch { /* private mode */ }
+        render();   // a display choice; the data is unchanged, so no refetch
+      };
+      tdBtn(bar, "Per run", tradeUnit === "run", "What the whole trip clears", () => setUnit("run"));
+      tdBtn(bar, "Per SCU", tradeUnit === "scu", "What one SCU is worth carrying", () => setUnit("scu"));
+
       const dest = tdPlanDestination();
       if (dest) {
         tdBtn(bar, "Backhaul", !!tradeToBody,
@@ -527,6 +554,208 @@
       tdRenderCommodity(body);
     } else {
       tdRenderRoutes(body);
+    }
+  }
+
+  /* ── the log: what you actually did ─────────────────────────────────────────
+     🔴 THE DISTINCTION THAT MAKES THIS TAB WORTH HAVING. Runs is a FORECAST off crowd-reported
+     prices; this is a RECORD, where every figure came out of the game's own log. So it is allowed
+     to be exact, and it is the only screen here that is.
+
+     And the rule it must never break: a sale is only profit if we saw the purchase. A sale whose
+     buy was never in any log we read has no cost basis, so it is reported as REVENUE in its own
+     group and never folded into a profit total. */
+
+  let tradeJournal = null;
+
+  async function loadJournal() {
+    try {
+      const r = await fetch("/api/trade/journal", { cache: "no-store" });
+      if (r.ok) tradeJournal = await r.json();
+    } catch { /* keep whatever we had */ }
+    if (view === "journal") render();
+  }
+
+  /** "57m" / "2h 14m". Minutes, because a trade run is a minutes-scale thing. */
+  function tdDur(mins) {
+    const m = Math.max(0, Math.round(Number(mins) || 0));
+    if (m < 60) return m + "m";
+    return Math.floor(m / 60) + "h " + (m % 60) + "m";
+  }
+
+  /** Terminal tokens as the LOG writes them (`TDD_SCShop-001`, `SCShop_Admin_Area18`). Nothing
+   *  joins these to the price table's terminal names yet, so they are tidied rather than
+   *  translated — inventing a mapping would be the confidently-wrong kind of wrong. */
+  function tdShop(token) {
+    if (!token) return "somewhere";
+    return String(token).replace(/^SCShop[_-]?/i, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim() || "somewhere";
+  }
+
+  function tdTotalsRow(body, label, t) {
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    const h = document.createElement("span"); h.textContent = label;
+    const n = document.createElement("span"); n.className = "n";
+    n.textContent = t.runs + (t.runs === 1 ? " run" : " runs");
+    sec.append(h, n);
+    body.appendChild(sec);
+
+    const big = document.createElement("div");
+    big.className = "tdtot";
+    const v = document.createElement("span");
+    v.className = "v " + (t.profit >= 0 ? "up" : "down");
+    v.textContent = (t.profit >= 0 ? "+" : "") + num(Math.round(t.profit));
+    const k = document.createElement("span"); k.className = "k"; k.textContent = "aUEC profit";
+    big.append(v, k);
+    body.appendChild(big);
+
+    const chips = document.createElement("div");
+    chips.className = "m tdtotchips";
+    tdChip(chips, num(Math.round(t.scu)) + " SCU moved", "calm");
+    tdChip(chips, tdDur(t.minutes) + " in cargo", "calm");
+    if (t.profitPerHour !== null && t.profitPerHour !== undefined) {
+      tdChip(chips, tdMoney(t.profitPerHour) + "/hr", "calm");
+    }
+    tdChip(chips, "turned " + tdMoney(t.cost) + " into " + tdMoney(t.revenue), "calm");
+    // 🔴 Never inside the profit figure. Surfaced so it cannot be mistaken for missing money.
+    if (t.unpricedSales) {
+      tdChip(chips, tdMoney(t.unpricedRevenue) + " unpriced", "warn");
+    }
+    body.appendChild(chips);
+  }
+
+  function renderJournal() {
+    const body = $("body");
+    body.textContent = "";
+
+    const bar = document.createElement("div");
+    bar.className = "tdbar";
+    tdProvenance(bar, tradeStatus);
+    const sep = document.createElement("span"); sep.className = "sep"; bar.appendChild(sep);
+    tdBtn(bar, "Refresh", false, "Re-read the journal", () => loadJournal());
+    body.appendChild(bar);
+
+    const j = tradeJournal;
+    if (!j) {
+      const e = document.createElement("div"); e.className = "empty";
+      e.textContent = "Reading your trade log…";
+      body.appendChild(e);
+      return;
+    }
+    if (!j.runs.length && !j.open.length && !j.unmatched.length) {
+      const e = document.createElement("div"); e.className = "empty";
+      e.textContent = "Nothing recorded yet.";
+      body.appendChild(e);
+      const w = document.createElement("div"); w.className = "empty sub";
+      // 🔑 Say WHY it can be empty, because "the app is broken" is the other reading and it is
+      // the wrong one. Purchases are only seen while the app is running or in a recent log.
+      w.textContent = "Buys and sells are picked up from the game log while the app is running. "
+        + "A trade made before you started it — or long enough ago that its log has rotated away — "
+        + "cannot be recovered.";
+      body.appendChild(w);
+      return;
+    }
+
+    tdTotalsRow(body, "Today", j.today);
+    if (j.allTime.runs > j.today.runs) tdTotalsRow(body, "All time", j.allTime);
+
+    if (j.runs.length) {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      const h = document.createElement("span"); h.textContent = "Runs";
+      sec.appendChild(h);
+      body.appendChild(sec);
+
+      for (const r of j.runs.slice(0, 40)) {
+        const row = document.createElement("div");
+        row.className = "arow tdrow";
+        const mid = document.createElement("div"); mid.className = "mid";
+
+        const t = document.createElement("div"); t.className = "t";
+        t.textContent = r.commodity || "Unknown commodity";
+        mid.appendChild(t);
+
+        const m = document.createElement("div"); m.className = "m";
+        m.textContent = tdShop(r.buyShop) + "  →  " + tdShop(r.sellShop);
+        mid.appendChild(m);
+
+        const money = document.createElement("div");
+        money.className = "money";
+        const bk = document.createElement("span"); bk.className = "k"; bk.textContent = "buy";
+        const bv = document.createElement("span"); bv.className = "buy"; bv.textContent = num(Math.round(r.buyPricePerScu));
+        const ar = document.createElement("span"); ar.className = "arrow"; ar.textContent = "→";
+        const sk = document.createElement("span"); sk.className = "k"; sk.textContent = "sell";
+        const sv = document.createElement("span"); sv.className = "sell"; sv.textContent = num(Math.round(r.sellPricePerScu));
+        const pc = document.createElement("span"); pc.className = "pct";
+        pc.textContent = "(" + Math.round(r.marginPct) + "% margin)";
+        const qt = document.createElement("span"); qt.className = "qty"; qt.textContent = "× " + num(r.scu) + " SCU";
+        money.append(bk, bv, ar, sk, sv, pc, qt);
+        mid.appendChild(money);
+
+        const chips = document.createElement("div"); chips.className = "m";
+        tdChip(chips, "took " + tdDur(r.minutes), "calm");
+        if (r.profitPerHour !== null && r.profitPerHour !== undefined) {
+          tdChip(chips, tdMoney(r.profitPerHour) + "/hr", "calm");
+        }
+        tdChip(chips, new Date(r.soldAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }), "calm");
+        mid.appendChild(chips);
+
+        const right = document.createElement("div"); right.className = "tdcap";
+        const p = document.createElement("div");
+        p.className = "tdprofit " + (r.profit >= 0 ? "up" : "down");
+        p.textContent = (r.profit >= 0 ? "+" : "") + tdMoney(r.profit);
+        const lbl = document.createElement("div"); lbl.className = "tdcaplbl"; lbl.textContent = "profit";
+        right.append(p, lbl);
+
+        row.append(mid, right);
+        body.appendChild(row);
+      }
+    }
+
+    if (j.open.length) {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      const h = document.createElement("span"); h.textContent = "Still aboard";
+      const n = document.createElement("span"); n.className = "n";
+      n.textContent = num(j.open.reduce((a, o) => a + o.scu, 0)) + " SCU held";
+      sec.append(h, n);
+      body.appendChild(sec);
+      for (const o of j.open.slice(0, 20)) {
+        const row = document.createElement("div");
+        row.className = "trow";
+        const nm = document.createElement("div");
+        nm.textContent = (o.commodity || "Unknown") + " · " + num(o.scu) + " SCU";
+        const val = document.createElement("div"); val.className = "cap";
+        val.textContent = "cost " + num(Math.round(o.pricePerScu)) + "/SCU · " + tdShop(o.shopName);
+        row.append(nm, val);
+        // 🔑 Where it physically IS decides what you do next — the freight elevator is a walk.
+        if (o.autoLoaded === false) tdChip(val, "on the elevator", "warn");
+        else if (o.autoLoaded === true) tdChip(val, "in the hold", "calm");
+        body.appendChild(row);
+      }
+    }
+
+    if (j.unmatched.length) {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      const h = document.createElement("span"); h.textContent = "Sold — cost unknown";
+      sec.appendChild(h);
+      body.appendChild(sec);
+      const why = document.createElement("div");
+      why.className = "note";
+      why.textContent = "We did not see these bought, so there is no cost to subtract. "
+        + "Shown as revenue, and deliberately left out of the profit above.";
+      body.appendChild(why);
+      for (const u of j.unmatched.slice(0, 20)) {
+        const row = document.createElement("div");
+        row.className = "trow";
+        const nm = document.createElement("div");
+        nm.textContent = (u.commodity || "Unknown") + " · " + num(u.scu) + " SCU";
+        const val = document.createElement("div"); val.className = "cap";
+        val.textContent = num(Math.round(u.revenue)) + " revenue · " + tdShop(u.sellShop);
+        row.append(nm, val);
+        body.appendChild(row);
+      }
     }
   }
 

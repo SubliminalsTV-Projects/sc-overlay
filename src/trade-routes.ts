@@ -24,8 +24,12 @@
  * that `/api/twitch/*` uses. See references/security.md.
  */
 import type { ServerResponse } from "node:http";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { TradePriceStore, type PlaceInfo, type BundledCommodity } from "./trade-prices.js";
 import { findRoutes, lookupCommodity, tradableNames, buyableSystems } from "./trade-finder.js";
+import { TradeJournal } from "./trade-journal.js";
+import { parseTradeLine } from "./trade-log.js";
 
 /** How often the sidecar re-asks the endpoint. The endpoint itself is what polls UEX; this is
  *  only how fast our copy of ITS copy turns over, so it does not need to be aggressive.
@@ -64,10 +68,100 @@ export interface TradeDeps {
   /** What system the player is in, when the log has said. Used only to DEFAULT the filter -- the
    *  widget always sends an explicit choice, so a wrong guess here can never silently filter. */
   system?: () => string | null;
+  /** The configured game.log path, used to find `logbackups/` for the journal catch-up. */
+  logPath?: () => string | null;
 }
 
 let store: TradePriceStore | null = null;
 let timer: NodeJS.Timeout | null = null;
+let journal: TradeJournal | null = null;
+
+/**
+ * Feed one raw log line to the trade subsystem. Besides the route handler this is the ONLY thing
+ * `overlay-server.ts` calls, and it is deliberately shaped to drop into both the live watcher and
+ * the rotated-log seed with no other change.
+ *
+ * 🔑 Safe on every line of the log: one regex test, then an immediate return for anything that is
+ * not a CommodityUIProvider line — which is all but a handful per session.
+ */
+export function tradeLogLine(line: string, deps: TradeDeps): void {
+  const ev = parseTradeLine(line);
+  if (!ev?.purchase) return;
+  const j = ensureJournal(deps);
+  if (j.apply(ev.purchase)) j.save();
+}
+
+/** How far back the one-time catch-up looks. A day, because "what did I do today" is the question
+ *  the journal answers and anything older is not what the player opened it for. */
+const BACKFILL_HOURS = 24;
+/** Hard cap on files read, so a folder with hundreds of backups cannot stall startup. */
+const BACKFILL_FILES = 12;
+let backfilled = false;
+
+/**
+ * 🔑 THE SEED ONLY REPLAYS THE NEWEST ROTATED LOG, AND A TRADING SESSION SPANS SEVERAL.
+ *
+ * `seedFromRotatedLog()` takes exactly one backup, which is right for mission state — that is
+ * idempotent and restated constantly. A purchase is neither: it appears once, in whichever file
+ * happened to be open, and Sub's own round trip landed the buy in the 11:09 backup and the sell in
+ * the 12:48 one. With only the newest file replayed, the journal came up empty for a trade he had
+ * just made, which reads as the feature being broken.
+ *
+ * So this walks the last day of backups ONCE per process, OLDEST FIRST — the order matters,
+ * because FIFO matching needs a buy to be seen before the sell that closes it.
+ *
+ * ⚠️ Bounded on both axes (a 24h window and 12 files) so it can never become a startup stall, and
+ * safe to run beside the normal seed because `TradeJournal.apply` is idempotent per log line.
+ */
+function backfillFromBackups(deps: TradeDeps, j: TradeJournal): void {
+  if (backfilled) return;
+  backfilled = true;
+  const logPath = deps.logPath?.();
+  if (!logPath) return;
+  try {
+    const dir = join(dirname(logPath), "logbackups");
+    if (!existsSync(dir)) return;
+    const cutoff = Date.now() - BACKFILL_HOURS * 3600_000;
+    const files = readdirSync(dir)
+      .filter((f) => f.toLowerCase().endsWith(".log"))
+      .map((f) => join(dir, f))
+      .map((p) => ({ p, at: statSync(p).mtimeMs }))
+      .filter((f) => f.at >= cutoff)
+      .sort((a, b) => a.at - b.at)      // oldest first: a buy must precede its sell
+      .slice(-BACKFILL_FILES);
+    let found = 0;
+    for (const f of files) {
+      for (const line of readFileSync(f.p, "utf8").split(/\r?\n/)) {
+        // Cheap prefilter: the marker is a fixed substring, so most lines cost one indexOf.
+        if (!line.includes("CommodityUIProvider::Send")) continue;
+        const ev = parseTradeLine(line);
+        if (ev?.purchase && j.apply(ev.purchase)) found++;
+      }
+    }
+    if (found) {
+      j.save();
+      console.log(`[trade] journal caught up: ${found} purchases/sales from ${files.length} recent log(s)`);
+    }
+  } catch (e) {
+    console.log(`[trade] journal catch-up skipped: ${(e as Error).message}`);
+  }
+}
+
+function ensureJournal(deps: TradeDeps): TradeJournal {
+  if (journal) return journal;
+  // resourceGUID -> name, straight off the bundled commodity map, which is keyed by the very same
+  // uuid the log writes. The one clean join in this subsystem.
+  const names = new Map<string, string>();
+  try {
+    for (const [uuid, c] of Object.entries(deps.economy.commodities() as Record<string, BundledCommodity>)) {
+      const n = (c?.name ?? "").trim();
+      if (n) names.set(uuid.toLowerCase(), n);
+    }
+  } catch { /* no dataset: the journal still records, just without names */ }
+  journal = new TradeJournal(deps.userDir, (g) => names.get(g.toLowerCase()) ?? null);
+  backfillFromBackups(deps, journal);
+  return journal;
+}
 
 /** Build the store once, and start the refresh tick. Idempotent. */
 function ensure(deps: TradeDeps): TradePriceStore {
@@ -155,6 +249,12 @@ export function tradeRoutes(
   const s = ensure(deps);
   const table = s.current();
   const p = qs(req.url ?? "/");
+
+  // What you actually did: real purchases and sales out of the log, with realised profit.
+  if (url === "/api/trade/journal") {
+    json(res, 200, ensureJournal(deps).view());
+    return true;
+  }
 
   if (url === "/api/trade/status") {
     json(res, 200, provenance(s, deps));

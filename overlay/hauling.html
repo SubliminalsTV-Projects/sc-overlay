@@ -33,7 +33,27 @@
   body.embedded { overflow: visible; background: transparent; }
   body.embedded #panel { width: 100%; height: 100%; margin: 0; }
 
-  .head { min-height: 40px; }
+  .head { min-height: 40px; flex-wrap: wrap; }
+
+  /* 🔴 NARROW IS THE NORMAL CASE, NOT THE EDGE ONE. Sub runs this widget about as narrow as a
+     phone, and at that width the head is title + EXPERIMENTAL + five tabs on one non-wrapping
+     row — so the tabs ran off the edge and were simply unreachable. Widget pages are their own
+     documents sized to their frame, so a plain width query is the right tool here; there is no
+     parent page whose width could confuse it.
+
+     Below the breakpoint the EXPERIMENTAL badge drops to its own line (Sub: "move that down to
+     another line when stuff starts to collapse"), which buys the tabs the whole first row back.
+     The badge is the right thing to move because it is the only element here that is never
+     interacted with — losing a tab off-screen costs you the feature, losing a caption a line. */
+  @media (max-width: 360px) {
+    .expbadge { order: 10; flex-basis: 100%; margin-left: 0; margin-top: 3px; text-align: center; }
+    .tabs { flex-wrap: wrap; justify-content: flex-end; row-gap: 3px; }
+  }
+  /* Narrower still: the tabs get their own row entirely, and the title keeps the first one. */
+  @media (max-width: 290px) {
+    .tabs { flex-basis: 100%; margin-left: 0; justify-content: flex-start; order: 9; }
+    .expbadge { order: 10; }
+  }
   .hbtn { font-family: var(--sans); font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
     color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.14); border: 1px solid var(--border);
     border-radius: 6px; padding: 4px 7px; cursor: pointer; white-space: nowrap; }
@@ -45,7 +65,8 @@
      rather than moving the node, because moving it would mean two buttons for one renderer. */
   .tabs.trading #tabTrade { order: 1; }
   .tabs.trading #tabLookup { order: 2; }
-  .tabs.trading #tabLayout { order: 3; }
+  .tabs.trading #tabJournal { order: 3; }
+  .tabs.trading #tabLayout { order: 4; }
 
   /* ── Trade tab ──────────────────────────────────────────────────────────────
      Rebuilt 2026-08-19 against Sub's review of the first cut. Four of his notes were real BUGS
@@ -138,6 +159,7 @@
   .tdrow .money .buy { color: var(--gold, #e8c56a); }
   .tdrow .money .sell { color: var(--green, #7de6a0); }
   .tdrow .money .arrow { color: var(--faint); }
+  .tdrow .money .pct { color: var(--cyan-dim); font-family: var(--sans); font-size: 9.5px; }
   .tdrow .money .qty { margin-left: auto; color: var(--cyan-dim); font-size: 10px;
     font-family: var(--sans); }
 
@@ -148,6 +170,17 @@
   .tdcaplbl { font-size: 8px; color: var(--faint); letter-spacing: 0.1em;
     text-transform: uppercase; line-height: 1.4; }
   .tdrate { font-size: 9.5px; color: var(--cyan-dim); line-height: 1.3; }
+
+  /* The Log tab's headline: what today made. Given size because it is the one number the player
+     opened this tab for. */
+  .tdtot { padding: 6px 12px 2px; display: flex; align-items: baseline; gap: 6px; }
+  .tdtot .v { font-family: var(--mono); font-size: 22px; line-height: 1.1; }
+  .tdtot .v.up { color: var(--green, #7de6a0); }
+  .tdtot .v.down { color: var(--red, #eb7878); }
+  .tdtot .k { font-size: 9px; color: var(--faint); letter-spacing: 0.08em; text-transform: uppercase; }
+  .tdtotchips { padding: 0 12px 7px; }
+  .tdprofit.up { color: var(--green, #7de6a0); }
+  .tdprofit.down { color: var(--red, #eb7878); }
 
   /* Chips that mean something. An age you cannot judge at a glance is an age nobody reads. */
   .badge.age0 { color: var(--green, #7de6a0); border-color: rgba(120, 230, 160, 0.45); }
@@ -603,6 +636,7 @@
              is in one. -->
         <button id="tabTrade" class="hbtn" type="button" title="Runs worth flying right now">Runs</button>
         <button id="tabLookup" class="hbtn" type="button" title="Look up one commodity: what it costs, where it sells">Look up</button>
+        <button id="tabJournal" class="hbtn" type="button" title="What you actually bought and sold, and what it made">Log</button>
       </span>
     </div>
 
@@ -1430,6 +1464,7 @@
     $("tabRoute").hidden = trading;
     $("tabTrade").hidden = !trading;
     $("tabLookup").hidden = !trading;
+    $("tabJournal").hidden = !trading;
     $("modeHaul").classList.toggle("on", !trading);
     $("modeTrade").classList.toggle("on", trading);
     /* Credit UEX only where their data is on screen. */
@@ -1441,6 +1476,7 @@
     $("tabAdvisor").classList.toggle("on", view === "advisor");
     $("tabTrade").classList.toggle("on", view === "trade" && tradeMode === "routes");
     $("tabLookup").classList.toggle("on", view === "trade" && tradeMode === "commodity");
+    $("tabJournal").classList.toggle("on", view === "journal");
     $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
     $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
     $("departBtn").textContent = departOff ? "Reminder off" : "Reminder on";
@@ -1464,9 +1500,10 @@
        up opened the Rank tab two screens below its own heading. */
     /* Trade hides the contract furniture for the same reason Rank does: neither tab is about
        the board you are currently flying. */
-    if (view === "advisor" || view === "trade") { $("track").style.display = "none"; $("places").style.display = "none"; }
+    if (view === "advisor" || view === "trade" || view === "journal") { $("track").style.display = "none"; $("places").style.display = "none"; }
     if (view === "advisor") renderAdvisor();
     else if (view === "trade") renderTrade();
+    else if (view === "journal") renderJournal();
     else if (view === "layout") renderStow();
     else renderRoute();
   }
@@ -1481,6 +1518,7 @@
   $("tabLookup").addEventListener("click", () => {
     view = "trade"; tradeMode = "commodity"; loadTradeNames(); if (!tradeStatus) loadTradeStatus(); render();
   });
+  $("tabJournal").addEventListener("click", () => { view = "journal"; loadJournal(); render(); });
 
   /* ── mode switching ───────────────────────────────────────────────────────
      🔑 Each mode remembers a SENSIBLE view rather than the last one you were on. Landing in
@@ -1491,9 +1529,9 @@
     mode = next;
     try { localStorage.setItem(MODE_KEY, mode); } catch { /* private mode */ }
     if (mode === "trading") {
-      if (view !== "layout") { view = "trade"; tradeMode = tradeMode || "routes"; }
+      if (view !== "layout" && view !== "journal") { view = "trade"; tradeMode = tradeMode || "routes"; }
       if (!tradeData) openTrade();
-    } else if (view === "trade") {
+    } else if (view === "trade" || view === "journal") {
       view = "advisor";
       if (!advisor) loadAdvisor();
     }

@@ -7,7 +7,7 @@
 // freight elevator - plus a Shubin buy and a shop inventory line). Synthetic fixtures would have
 // agreed with whatever the parser happened to do; these agree with the game.
 
-import { parseTradeLine } from "./trade-log.js";
+import { parseTradeLine, type CommodityPurchase } from "./trade-log.js";
 import { findRoutes, lookupCommodity, legMinutes, type TradeRoute } from "./trade-finder.js";
 import type { TradeQuote } from "./trade-prices.js";
 
@@ -454,6 +454,141 @@ console.log("\n-- the source chain never goes blank --");
   const e = await empty.refresh();
   check("an empty 200 does not replace a good table", e.quotes.length === 1, String(e.quotes.length));
   check("...and says so", (e.lastError ?? "").includes("empty"), String(e.lastError));
+}
+
+// ── The journal: what you actually did ──────────────────────────────────────
+//
+// Driven by Sub's REAL round trip: two buys of Processed Food at the Area 18 TDD (one auto-loaded,
+// one to the freight elevator) and one sale of 1 SCU at the far end. The partial fill is not an
+// edge case here — it is literally what happened.
+
+import { TradeJournal } from "./trade-journal.js";
+
+const NAMES: Record<string, string> = { "accacd33-3a1a-4ec7-8b4a-14b9f028047c": "Processed Food" };
+const nameOf = (g: string): string | null => NAMES[g.toLowerCase()] ?? null;
+/** Parse a known-good fixture. Throws rather than returning undefined, so a broken fixture fails
+ *  loudly here instead of silently making every journal assertion vacuous. */
+const buyOf = (line: string): CommodityPurchase => {
+  const p = parseTradeLine(line)?.purchase;
+  if (!p) throw new Error("fixture did not parse as a purchase: " + line.slice(0, 60));
+  return p;
+};
+
+console.log("\n-- the journal --");
+{
+  const j = new TradeJournal(freshDir(), nameOf);
+  j.apply(buyOf(BUY_AUTOLOAD));   // 1 SCU @ 1201.95, 17:43:31
+  j.apply(buyOf(BUY_ELEVATOR));   // 1 SCU @ 1201.95, 17:43:47
+  j.apply(buyOf(SELL_REAL));      // sells 1 SCU @ 1506, 18:40:48
+  const v = j.view(new Date("2026-08-19T19:00:00Z"));
+
+  check("the sale closed exactly one run", v.runs.length === 1, String(v.runs.length));
+  check("...of 1 SCU, not the whole 2", v.runs[0]?.scu === 1, String(v.runs[0]?.scu));
+  // 🔑 The number Sub wanted to see.
+  check("...with the real profit on it", Math.round(v.runs[0]?.profit ?? 0) === 304, String(v.runs[0]?.profit));
+  check("...and the margin", Math.round(v.runs[0]?.marginPct ?? 0) === 25, String(v.runs[0]?.marginPct));
+  check("...naming both ends", v.runs[0]?.buyShop === "TDD_SCShop-001" && v.runs[0]?.sellShop === "SCShop_Admin_lt_base_g",
+    `${v.runs[0]?.buyShop} -> ${v.runs[0]?.sellShop}`);
+  check("...and the commodity", v.runs[0]?.commodity === "Processed Food", String(v.runs[0]?.commodity));
+  // 17:43:31 -> 18:40:48 is 57.28 minutes.
+  check("elapsed time is the real span", Math.round(v.runs[0]?.minutes ?? 0) === 57, String(v.runs[0]?.minutes));
+  check("...and a rate falls out of it", Math.round(v.runs[0]?.profitPerHour ?? 0) === 318, String(v.runs[0]?.profitPerHour));
+
+  // 🔴 The remainder is still aboard. Losing it would under-report what the player is holding.
+  check("the unsold SCU stays an open position", v.open.length === 1 && v.open[0].scu === 1,
+    JSON.stringify(v.open.map((o) => o.scu)));
+  check("nothing became an unpriced sale", v.unmatched.length === 0, String(v.unmatched.length));
+  check("today's totals count the run", v.today.runs === 1 && Math.round(v.today.profit) === 304,
+    JSON.stringify(v.today));
+}
+
+console.log("\n-- the journal: a sale we cannot price --");
+{
+  const j = new TradeJournal(freshDir(), nameOf);
+  j.apply(buyOf(SELL_REAL));      // sold, but no purchase was ever seen
+  const v = j.view(new Date("2026-08-19T19:00:00Z"));
+  // 🔴 THE RULE. Revenue is a fact; profit without a cost basis is fiction.
+  check("an unmatched sale is recorded", v.unmatched.length === 1, String(v.unmatched.length));
+  check("...as revenue", Math.round(v.unmatched[0]?.revenue ?? 0) === 1506, String(v.unmatched[0]?.revenue));
+  check("...and NOT as a closed run", v.runs.length === 0, String(v.runs.length));
+  check("...so profit stays zero", v.today.profit === 0, String(v.today.profit));
+  check("...but the revenue is still surfaced, not swallowed", Math.round(v.today.unpricedRevenue) === 1506,
+    String(v.today.unpricedRevenue));
+  check("...and counted", v.today.unpricedSales === 1, String(v.today.unpricedSales));
+}
+
+console.log("\n-- the journal: FIFO across lots at different prices --");
+{
+  const j = new TradeJournal(freshDir(), nameOf);
+  const cheap = BUY_AUTOLOAD;                                        // 1 SCU @ 1201.95
+  const dear = BUY_AUTOLOAD.replace("shopPricePerCentiSCU[12.019500]", "shopPricePerCentiSCU[20.000000]")
+    .replace("17:43:31", "17:44:31");                                // 1 SCU @ 2000
+  const sellBoth = SELL_REAL.replace("quantity[1]", "quantity[2]");  // 2 containers of 1 SCU
+  j.apply(buyOf(cheap)); j.apply(buyOf(dear)); j.apply(buyOf(sellBoth));
+  const v = j.view(new Date("2026-08-19T19:00:00Z"));
+  check("two lots close as two runs", v.runs.length === 2, String(v.runs.length));
+  // 🔑 FIFO, not average cost: the oldest lot is consumed first and the two runs keep their own
+  // buy prices. Averaging would smear a good buy into a bad one.
+  const byTime = [...v.runs].sort((a, b) => Date.parse(a.boughtAt) - Date.parse(b.boughtAt));
+  check("the OLDEST lot went first", Math.round(byTime[0].buyPricePerScu) === 1202, String(byTime[0].buyPricePerScu));
+  check("...and the dearer one second", Math.round(byTime[1].buyPricePerScu) === 2000, String(byTime[1].buyPricePerScu));
+  check("their profits differ, because their costs did",
+    Math.round(byTime[0].profit) !== Math.round(byTime[1].profit),
+    `${byTime[0].profit} vs ${byTime[1].profit}`);
+  check("nothing is left open", v.open.length === 0, String(v.open.length));
+  check("totals add both runs", Math.round(v.today.profit) === Math.round(byTime[0].profit + byTime[1].profit),
+    String(v.today.profit));
+}
+
+console.log("\n-- the journal: selling PART of a bigger lot --");
+{
+  // 🔑 WHY THIS BLOCK EXISTS. Every other journal fixture uses 1 SCU lots, so `min(lot, remaining)`
+  // and `lot` give the same answer and no assertion over them can tell a partial take from a
+  // whole-lot take — the negative control proved it by staying green. This buys FOUR and sells one.
+  const TUNGSTEN = "60f116f4-c02a-45b2-9ded-333747795124";
+  const sellOne = SELL_REAL.replace("accacd33-3a1a-4ec7-8b4a-14b9f028047c", TUNGSTEN);
+  const j = new TradeJournal(freshDir(), () => "Tungsten");
+  j.apply(buyOf(BUY_SHUBIN));   // 4 SCU @ 8265
+  j.apply(buyOf(sellOne));      // sells 1 SCU @ 1506
+  const v = j.view(new Date("2026-08-19T19:00:00Z"));
+  check("one SCU closed", v.runs.length === 1 && v.runs[0].scu === 1, JSON.stringify(v.runs.map((r) => r.scu)));
+  // 🔴 The remainder must SURVIVE at its own price. Consuming the whole lot would silently book a
+  // 4 SCU loss and leave the player holding cargo the app says they sold.
+  check("three SCU stay open", v.open.length === 1 && v.open[0].scu === 3, JSON.stringify(v.open.map((o) => o.scu)));
+  check("...at the price they were bought for", Math.round(v.open[0].pricePerScu) === 8265, String(v.open[0].pricePerScu));
+  check("the closed run costs ONE SCU, not four", Math.round(v.runs[0].cost) === 8265, String(v.runs[0].cost));
+}
+
+console.log("\n-- the journal: a buy and sell in the same instant --");
+{
+  // A rate over zero elapsed minutes is not a rate. Without a fixture where the two timestamps
+  // match, nothing can distinguish `null` from `Infinity`.
+  const j = new TradeJournal(freshDir(), nameOf);
+  j.apply(buyOf(BUY_AUTOLOAD));
+  j.apply(buyOf(SELL_REAL.replace("18:40:48.440", "17:43:31.000")));
+  const v = j.view(new Date("2026-08-19T19:00:00Z"));
+  check("the run is still recorded", v.runs.length === 1, String(v.runs.length));
+  check("elapsed is zero", v.runs[0].minutes === 0, String(v.runs[0].minutes));
+  check("...and the rate is null, not Infinity", v.runs[0].profitPerHour === null, String(v.runs[0].profitPerHour));
+  check("...and the totals do not carry an Infinity either",
+    v.today.profitPerHour === null || Number.isFinite(v.today.profitPerHour), String(v.today.profitPerHour));
+}
+
+console.log("\n-- the journal: replaying the same log twice must not double-count --");
+{
+  const j = new TradeJournal(freshDir(), nameOf);
+  // 🔴 The sidecar reads the current log AND replays the newest rotated one at startup, and a
+  // player restarts the app freely. Without a seen-key this books the same sale every time.
+  for (let i = 0; i < 3; i++) { j.apply(buyOf(BUY_AUTOLOAD)); j.apply(buyOf(SELL_REAL)); }
+  const v = j.view(new Date("2026-08-19T19:00:00Z"));
+  check("one run, not three", v.runs.length === 1, String(v.runs.length));
+  check("...and the profit is not tripled", Math.round(v.today.profit) === 304, String(v.today.profit));
+  check("...and it IS recorded, rather than everything being dropped", v.runs.length > 0);
+  // The two buys differ only by autoLoading, and must still be two distinct lots.
+  const k = new TradeJournal(freshDir(), nameOf);
+  k.apply(buyOf(BUY_AUTOLOAD)); k.apply(buyOf(BUY_ELEVATOR));
+  check("two genuinely different buys are both kept", k.view().open.length === 2,
+    String(k.view().open.length));
 }
 
 cleanupTmp();
