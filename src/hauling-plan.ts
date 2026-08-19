@@ -692,8 +692,76 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
    * is free to put it anywhere. Its load goes NEGATIVE in the raw model, and that is deliberate —
    * see `freeCapacity` and `loadAfterScu`, where `aboardScu` is added back to make both exact.
    */
+  /**
+   * 🔴 TWO IDS, ONE PLACE — and it made the router plan two stops at the same spaceport.
+   *
+   * `posKey` rounds a marker to the kilometre, so two markers for the SAME terminal can land on
+   * opposite sides of a rounding boundary and become different location ids. Measured on Sub's own
+   * PTU board (2026-08-19): both Orison Relief contracts drop at August Dunlow Spaceport, and their
+   * markers keyed as `@5297,-873,5280` and `@5297,-872,5281`. The router therefore built a stop for
+   * each and produced pickup → drop → pickup → drop, flying back and forth across the system for
+   * what is one landing.
+   *
+   * 🔑 THE NAME IS THE EVIDENCE, and it is the player's own. If two ids carry the same name — from
+   * the game's own drop-off destination, or typed into the naming box — they are the same place and
+   * the player has said so. That is a far safer merge signal than proximity: two outposts a
+   * kilometre apart are genuinely different places, and merging them by distance would route
+   * someone to the wrong one. Absent a name, nothing is merged.
+   *
+   * The canonical id is the lowest-sorting one, so the choice cannot depend on iteration order.
+   */
+  const canonById = (() => {
+    const firstForName = new Map<string, string>();
+    const canon = new Map<string, string>();
+    const named = new Map<string, string>();
+    for (const [id, n] of nameByLoc) if (n?.trim()) named.set(id, n.trim());
+    for (const [id, n] of Object.entries(opts.placeNames ?? {})) if (n?.trim() && !named.has(id)) named.set(id, n.trim());
+    for (const id of [...named.keys()].sort()) {
+      const key = named.get(id)!.toLowerCase();
+      const first = firstForName.get(key);
+      if (first) canon.set(id, first);
+      else firstForName.set(key, id);
+    }
+    return canon;
+  })();
+  /** The id every stop, position and region lookup should use. */
+  const canonLoc = (id: string): string => canonById.get(id) ?? id;
+
+  /**
+   * 🔴 A CONTRACT WHOSE KEY CARRIES NO REGION LEFT THE OPTIMISER BLIND.
+   *
+   * `regionByLoc` is populated from the contract key (`..._Stanton3_...`), which works for the
+   * generated hauling families and not at all for hand-authored ones: Sub's `ORS_MA_HaulingSmall`
+   * and `ORS_MA_HaulingMedium` carry no region token. With no region, `regionOf` returns null for
+   * every stop, every leg is charged the flat cross-body rate, EVERY ORDERING TIES, and the
+   * optimiser picks an arbitrary one — which is exactly what "it isn't optimising" looks like.
+   *
+   * 🔑 So fall back to the NAME. A place we can name can usually be found in locations.json, and
+   * that row knows its parent body — "New Babbage" is on microTech whether or not the contract key
+   * ever said so. Only exact, unambiguous name matches are used: a name matching two rows tells us
+   * nothing, and guessing the body is the confidently-wrong failure this file avoids elsewhere.
+   */
+  const bodyByName = (() => {
+    const m = new Map<string, string | null>();
+    for (const l of Object.values(data.locations())) {
+      const n = (l.name ?? "").trim().toLowerCase();
+      if (!n) continue;
+      const body = (l.parentName ?? "").trim() || null;
+      // Ambiguous names resolve to nothing rather than to the first row that happened to win.
+      m.set(n, m.has(n) && m.get(n) !== body ? null : body);
+    }
+    return m;
+  })();
+  for (const [id, n] of [...nameByLoc, ...Object.entries(opts.placeNames ?? {})]) {
+    const loc = canonLoc(id);
+    if (regionByLoc.has(loc)) continue;
+    const body = bodyByName.get((n ?? "").trim().toLowerCase());
+    if (body) regionByLoc.set(loc, body.toLowerCase());
+  }
+
   const stopById = new Map<string, RouteStop>();
-  const visit = (locationId: string, kind: "pickup" | "dropoff"): RouteStop => {
+  const visit = (rawLocationId: string, kind: "pickup" | "dropoff"): RouteStop => {
+    const locationId = canonLoc(rawLocationId);
     const id = `${locationId}:${kind}`;
     let s = stopById.get(id);
     if (!s) {
