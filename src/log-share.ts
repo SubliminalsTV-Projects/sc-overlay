@@ -278,8 +278,10 @@ export async function maybeShareLog(cfg: LogShareConfig, appVersion = "", stateP
         if (await upload(text, cfg.syncToken, appVersion, `the live Game.log${trimmed}`, "live")) state.liveHash = hash;
       }
     }
-    // Rotated sessions are gated on knowing the current patch: without it every backup would
-    // look eligible and a first run would try to ship the entire folder.
+    // The live log is where the current patch comes from. ⚠️ It is NOT a gate: when the live log
+    // carries no ProductVersion, `onPatch` is true for everything and the patch filter is simply
+    // off for that tick. What stops a first run walking the folder is BACKUPS_PER_TICK and
+    // REJECTS_PER_TICK, not this value — the comment that used to sit here said otherwise.
     if (statePath) {
       await shareBackups(cfg, appVersion, state, patchOf(raw.slice(0, 4096)));
       saveState(statePath, state);

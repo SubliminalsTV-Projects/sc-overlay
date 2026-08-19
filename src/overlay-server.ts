@@ -3695,6 +3695,11 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       || (typeof body.syncToken === "string" && body.syncToken.trim().length > 0)
       || body.clearToken === true;
     const touchedShareLogs = typeof body.shareLogs === "boolean";
+    // "Touched" above means the field was PRESENT, not that it changed — the settings page saves
+    // the whole form, so it is true on every save. Only a real off->on transition is the user's
+    // recovery gesture; clearing the skipped list on every save would re-offer the entire backlog
+    // each time and undo the per-tick bound that makes rejections cheap.
+    const turnedOnShareLogs = touchedShareLogs && body.shareLogs === true && config.shareLogs === false;
     if (touchedLogPath) config.logPath = body.logPath;
     // Apply the checkbox first, then let a freshly-pasted token force sync ON — pasting a
     // token IS the intent to sync, so it can't be left silently disabled. The token is only
@@ -3886,7 +3891,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // on is also the only recovery gesture the settings page offers, so honour it: re-offer the
     // backups that were skipped for being from another game patch (never the ones already sent).
     if (touchedShareLogs) {
-      if (config.shareLogs) clearSkippedBackups(sharedLogStatePath);
+      if (turnedOnShareLogs) clearSkippedBackups(sharedLogStatePath);
       void maybeShareLog(config, APP_VERSION, sharedLogStatePath);
     }
     // Push prefs (e.g. the time-format toggle) to any open overlay immediately.

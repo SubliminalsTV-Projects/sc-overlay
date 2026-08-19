@@ -132,8 +132,10 @@ try {
   writeFileSync(legacyState, JSON.stringify({ backups: ["old-patch.log", "old-patch-haul.log", "no-signal.log"] }));
   await maybeShareLog(cfg, "0.1.45", legacyState);
   const repaired = state(legacyState);
-  assert(!repaired.backups.includes("old-patch.log") || repaired.skippedPatch.includes("old-patch.log"),
+  assert(!repaired.backups.includes("old-patch.log"),
     "a wrongly-blacklisted off-patch backup must be released by the one-time repair");
+  assert(repaired.skippedPatch.includes("old-patch.log"),
+    "…and set aside as recoverable — released into nothing is the same loss wearing a different name");
   assert(repaired.backups.includes("no-signal.log"),
     "an ON-patch name in a legacy list is a genuine upload and must survive the repair");
   assert.equal(JSON.parse(readFileSync(legacyState, "utf8")).v, 2, "the repaired file must be stamped with the new schema version");
@@ -175,6 +177,50 @@ try {
   for (let i = 0; i < 10; i++) await maybeShareLog({ ...cfg, logPath: manyLog }, "0.1.45", manyState);
   assert.equal(state(manyState).backups.length, TOTAL, "repeated ticks must eventually classify the whole folder");
   rmSync(many, { recursive: true, force: true });
+
+  // 🔴 THE TRAP AT FOLDER SCALE, which is the size it actually did its damage at. One off-patch
+  // file proves the branch exists; only a folder proves the two properties that matter together —
+  // that the rejection bound holds on the skippedPatch path (the bulk case above walks the
+  // `backups` path, a different branch that a bound could hold on while this one leaks), and that
+  // NOT ONE name reaches the final set on the way through.
+  const patchDir = mkdtempSync(join(tmpdir(), "logshare-patch-"));
+  const patchBackups = join(patchDir, "logbackups");
+  mkdirSync(patchBackups);
+  const patchLive = join(patchDir, "game.log");
+  writeFileSync(patchLive, liveLog); // states the current patch, and scrubs to nothing
+  const OFF = 30;
+  const offNames: string[] = [];
+  for (let i = 0; i < OFF; i++) {
+    const n = `off-${String(i).padStart(3, "0")}.log`;
+    offNames.push(n);
+    writeFileSync(join(patchBackups, n), header("4.8.184.64329") + SIGNAL);
+  }
+  const patchState = join(patchDir, "s.json");
+  const patchCfg = { ...cfg, logPath: patchLive };
+
+  await maybeShareLog(patchCfg, "0.1.45", patchState);
+  const t1 = state(patchState);
+  // Non-empty FIRST: every "must not be in backups" assertion below is trivially true of a run
+  // that classified nothing at all, and a run that classified nothing is the other way to fail.
+  assert(t1.skippedPatch.length > 0, "the first tick must actually classify something");
+  assert(t1.skippedPatch.length < OFF, `one tick set aside all ${OFF} off-patch backups — the rejection bound does not hold on this path`);
+  assert.deepEqual(t1.backups, [], "not one off-patch backup may be written into the final set");
+
+  // Ticked out, the whole folder is set aside and none of it is blacklisted.
+  for (let i = 0; i < 10; i++) await maybeShareLog(patchCfg, "0.1.45", patchState);
+  const t2 = state(patchState);
+  assert.deepEqual(t2.skippedPatch.slice().sort(), offNames.slice().sort(), "a bounded slice at a time, every off-patch backup must end up set aside");
+  assert.deepEqual(t2.backups, [], "…and none of them recorded as a final verdict");
+
+  // A LATER TICK CAN STILL REACH THEM. This is the whole point of the split: the recovery gesture
+  // puts the entire folder back in play, which the old single-set behaviour could never do.
+  clearSkippedBackups(patchState);
+  assert.deepEqual(state(patchState).skippedPatch, [], "the recovery gesture must empty the skipped list");
+  await maybeShareLog(patchCfg, "0.1.45", patchState);
+  const t3 = state(patchState);
+  assert(t3.skippedPatch.length > 0, "a re-offered folder must be re-judged, not quietly forgotten");
+  assert.deepEqual(t3.backups, [], "re-judging must still never blacklist an off-patch backup");
+  rmSync(patchDir, { recursive: true, force: true });
 
   // A missing logbackups/ must be survivable — plenty of installs have never rotated a log.
   const bare = mkdtempSync(join(tmpdir(), "logshare-bare-"));
