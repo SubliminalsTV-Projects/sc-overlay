@@ -34,36 +34,14 @@ import { planRun, type RouteContract, type RoutePlan, type RouteStop, type Vec3 
 import type { HaulingView, HaulContract, HaulStopState } from "./hauling.js";
 import type { BoxSize, HaulingDataStore, Ship } from "./hauling-data.js";
 import { canAutoLoad, rankAutoLoads } from "./hauling-autoload.js";
+import { boundsFor, commodityFor, resolveScu, weakest, type ScuSource } from "./hauling-scu.js";
+import { CANON_PLANET, matchLocationToken, posKey } from "./hauling-locations.js";
+import { buildRates } from "./hauling-rates.js";
 
-/** Where a load figure came from. Rendered as a badge — never dropped. */
-export type ScuSource =
-  /** The game enumerated every box (`OnItemRegistered`). Exact, and the ONLY exact manifest
-   *  that exists — mission-item hauls only; Covalex SCU hauls log nothing. */
-  | "manifest"
-  /** The tracked contract's own Deliver line. Exact, from the game. */
-  | "log"
-  /** The player typed it in, because they can see it in mobiGlas and we cannot. */
-  | "pinned"
-  /** The dataset states one figure (`minScu == maxScu`). Exact, but from the datacore. */
-  | "dataset"
-  /** The dataset states a SPAN. 🔴 NOT a number — `scu` is the worst case, for fit checking. */
-  | "range"
-  /** ARITHMETIC. The contract total is known and every other pickup has been pinned, so this one
-   *  is the remainder — exact, and never asked about. On a two-pickup contract this is why the
-   *  player types one number instead of two. */
-  | "derived"
-  /** Neither source says anything. `scu` is null and this contract cannot be planned. */
-  | "unknown";
+/** Re-exported so nothing that already reads a plan's provenance has to learn a new module.
+ *  The policy itself lives in hauling-scu.ts. */
+export type { ScuSource };
 
-/** Stanton's four planets, by the code the contract key writes. Confirmed by Sub, 2026-08-17.
- *
- *  🔑 This exists because the DATASET cannot answer it. `Stanton4` carries two Planet records:
- *  "microTech" and "Green". Green is not a place in the game — it is microTech's internal name
- *  left in the files, and the data says so plainly once you look: microTech has 59 children
- *  (every moon and outpost), Green has ZERO. An orphan planet is a ghost record.
- *
- *  Kept to the four planets on purpose. It disambiguates; it is not a translation table, and a
- *  code absent from here degrades to no label rather than to a guess. */
 /** Seconds to move ONE box, measured off Sub's own run: he loaded Silicon + Scrap into a C2 on
  *  2026-08-17 and it took twelve minutes. The app counted 29 boxes for that load (he counted 25),
  *  which brackets 24.8–28.8 s each.
@@ -79,13 +57,6 @@ export type ScuSource =
 const SECONDS_PER_BOX = 25;
 /** Approach, park, and get to the kiosk — the part of a stop that is not touching boxes. */
 const STOP_BASE_MINUTES = 1;
-
-const CANON_PLANET: Record<string, string> = {
-  stanton1: "hurston",
-  stanton2: "crusader",
-  stanton3: "arccorp",
-  stanton4: "microtech",
-};
 
 export interface PlanOptions {
   /** Ship class or display name chosen by the player; overrides whatever the log saw. */
@@ -403,173 +374,6 @@ export function gridsOf(ship: Ship): GridSpec[] {
     h: g.h,
     maxBox: g.maxBox ?? undefined,
   }));
-}
-
-/**
- * 🔴 `RR_<BODY>_LEO` IS THAT PLANET'S ORBITAL STATION, and nothing in the data says so.
- *
- * 🔑 THE NAMING, decoded by Sub: **RR = Rest & Relax** (the in-fiction operator of the stations and
- * rest stops) and **LEO = Low Earth Orbit**. So the family reads as "the R&R station in low orbit
- * around <body>", which makes the whole `RR_` namespace predictable rather than a set of magic
- * strings: `RR_CRU_L1` is the R&R stop at Crusader's first Lagrange point, `RR_JP_NyxPyro` the one
- * at the Nyx–Pyro jump point, and `RR_ARC_LEO` the one in orbit around ArcCorp — Baijini Point.
- *
- * Sub, standing in Baijini with the terminal open, asked the fair question: can you tell I am here
- * yet? The answer was no. Baijini's token shares not one letter with "Baijini Point", so the name
- * join returned null and the router still had no origin. Every token tested before that was a
- * mining area or a salvage centre, where log and dataset happen to spell the place alike — the
- * orbital stations are the case that breaks it, and they are where a hauler spends half their time.
- *
- * ⚠️ Only the LEO leg needs a table, and it genuinely cannot be derived. Each of these planets
- * carries several `Manmade` children that are all QT destinations with no code — ArcCorp has
- * Baijini Point, Comm Array ST3-90 and Orbital Relay AC-421 as siblings — and nothing in the row
- * distinguishes the station you can land at from the relay you cannot. The other `RR_` families
- * need nothing: they resolve through locations.json's own alias map once the prefix is stripped.
- */
-const LEO_STATION: Record<string, string> = {
-  arc: "Baijini Point",
-  hur: "Everus Harbor",
-  cru: "Seraphim Station",
-  mic: "Port Tressler",
-};
-
-/**
- * Join the game's own location token to a place on this board, best evidence first.
- *
- *   1. locations.json's ALIAS table, which already knows `Stanton2_Orison` → Orison,
- *      `Nyx_Levski` → Levski and `cru_l1` → CRU L1. Exact, and it covers most tokens.
- *   2. The LEO table above, for the four orbital stations the alias map has no entry for.
- *   3. A NAME match, letters and digits only, as a subsequence in either direction — because the
- *      log writes `ArcCorp_Area045` where the dataset writes "ArcCorp **Mining** Area 045", and
- *      `SamsonSonsSalvageCenter` where the board says "Samson & Son's Salvage Center".
- *
- * ⚠️ Subsequence, not substring, and the DIGITS have to survive: "Area045" and "Area048" differ by
- * one character. An ambiguous match resolves to NOTHING — putting the player at the wrong outpost
- * is worse than not knowing, because the router would then confidently order around it.
- */
-function matchLocationToken(
-  token: string,
-  names: ReadonlyMap<string, string>,
-  data: HaulingDataStore,
-): string | null {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const isSub = (a: string, b: string) => {
-    let i = 0;
-    for (const c of b) { if (c === a[i]) i++; if (i === a.length) return true; }
-    return i === a.length;
-  };
-  /** Board ids whose name matches `want`; null unless exactly one does. */
-  const onBoard = (want: string): string | null => {
-    const w = norm(want);
-    if (!w) return null;
-    const hits: string[] = [];
-    for (const [id, name] of names) {
-      const n = norm(name);
-      if (n && (isSub(w, n) || isSub(n, w))) hits.push(id);
-    }
-    return hits.length === 1 ? hits[0] : null;
-  };
-
-  // 1 — the dataset's own alias map, on the whole token and on the RR_-stripped form.
-  for (const probe of [token, token.replace(/^RR_/i, "")]) {
-    const named = data.byCode(probe).map((l) => l.name).filter((n): n is string => !!n);
-    for (const n of named) {
-      const hit = onBoard(n);
-      if (hit) return hit;
-    }
-  }
-  // 2 — the orbital stations, which the alias map does not carry.
-  const leo = /^RR_([A-Za-z0-9]+)_LEO$/i.exec(token);
-  if (leo) {
-    const station = LEO_STATION[leo[1].toLowerCase()];
-    if (station) return onBoard(station);
-  }
-  // 3 — the raw token's own words. Drop the leading body code; it names the moon, not the site.
-  return onBoard(token.split("_").slice(1).join(""));
-}
-
-/** Position -> a stable location id. Rounded to the kilometre so a marker re-emitted on spawn-in
- *  with a few metres of drift is still the same place. */
-function posKey(p: Vec3 | null | undefined): string | null {
-  if (!p) return null;
-  return `@${Math.round(p.x / 1000)},${Math.round(p.y / 1000)},${Math.round(p.z / 1000)}`;
-}
-
-// ── resolving what a contract actually weighs ──────────────────────────────
-
-interface Bounds {
-  min: number | null;
-  max: number | null;
-  cap: number | null;
-}
-
-/**
- * Per-leg bounds from the dataset.
- *
- * 🔑 A contract's `orders` array is PER DESTINATION — `SingleToMulti2` carries two orders, one per
- * drop-off — so order[i] lines up with leg i whenever the counts match. When they do not (a
- * re-used template, or legs the log has not all emitted yet) fall back to the whole contract's
- * span and its widest cap, which over-states rather than invents.
- */
-/** What a leg is carrying, from the datacore. Same index rule as `boundsFor`: orders line up with
- *  legs only when there are equally many, otherwise the contract has to speak with one voice — and
- *  a mixed-commodity contract has no single answer, so it gives none rather than naming the first.
- *
- *  🔑 This is knowable at ACCEPT, unlike the tonnage. The commodity is fixed by the contract; only
- *  how much of it is rolled per instance. So the widget can say WHAT before it can say HOW MUCH. */
-function commodityFor(data: HaulingDataStore, contractKey: string, index: number, legCount: number): string | null {
-  const orders = data.contract(contractKey)?.orders ?? [];
-  if (!orders.length) return null;
-  if (orders.length === legCount) return orders[index]?.commodity ?? null;
-  const names = [...new Set(orders.map((o) => o.commodity).filter((c): c is string => !!c))];
-  return names.length === 1 ? names[0] : null;
-}
-
-function boundsFor(data: HaulingDataStore, contractKey: string, index: number, legCount: number): Bounds {
-  const contract = data.contract(contractKey);
-  const orders = contract?.orders ?? [];
-  if (!orders.length) return { min: null, max: null, cap: null };
-  const o = orders.length === legCount ? orders[index] : null;
-  if (o) {
-    const min = o.minScu ?? o.minAmount ?? null;
-    const max = o.maxScu ?? o.maxAmount ?? min;
-    return { min, max, cap: o.maxContainerSize ?? null };
-  }
-  const mins = orders.map((x) => x.minScu ?? x.minAmount).filter((n): n is number => n != null);
-  const maxs = orders.map((x) => x.maxScu ?? x.maxAmount ?? x.minScu).filter((n): n is number => n != null);
-  return {
-    min: mins.length ? Math.min(...mins) : null,
-    max: maxs.length ? Math.max(...maxs) : null,
-    cap: data.maxBoxScu(contractKey),
-  };
-}
-
-/** The load to plan with, and where it came from. The precedence IS the honesty policy. */
-function resolveScu(logNeed: number | null, pinned: number | null, b: Bounds): {
-  scu: number | null; min: number | null; max: number | null; source: ScuSource; exact: boolean;
-} {
-  // The game's own number for a tracked contract beats everything. (A manifest beats even this,
-  // but it is resolved before we get here — it is a box list, not a total.)
-  if (logNeed != null) return { scu: logNeed, min: logNeed, max: logNeed, source: "log", exact: true };
-  // Then what the player read off their own mobiGlas.
-  if (pinned != null) return { scu: pinned, min: pinned, max: pinned, source: "pinned", exact: true };
-  if (b.min == null && b.max == null) return { scu: null, min: null, max: null, source: "unknown", exact: false };
-  const min = b.min ?? b.max!;
-  const max = b.max ?? b.min!;
-  if (min === max) return { scu: min, min, max, source: "dataset", exact: true };
-  // 🔴 A RANGE. `scu` is the WORST CASE, so "does it fit" is answered safely — but `exact` is
-  // false and the widget must print `min–max`. Never let this number stand alone.
-  return { scu: max, min, max, source: "range", exact: false };
-}
-
-/** The weakest claim among a contract's legs decides how the contract as a whole is labelled. */
-/* `derived` sits just below `pinned`: it is exact arithmetic, but it is only as good as the figure
-   the player pinned to produce it, so it must not out-rank that figure. */
-const WEAKNESS: Record<ScuSource, number> = { manifest: 0, log: 1, pinned: 2, derived: 3, dataset: 4, range: 5, unknown: 6 };
-function weakest(sources: ScuSource[]): ScuSource {
-  // No seed — seeding with a source that is not in the list floors the result at that source's
-  // strength, which is how a contract with an exact manifest came back labelled "log".
-  return sources.length ? sources.reduce((a, b) => (WEAKNESS[b] > WEAKNESS[a] ? b : a)) : "unknown";
 }
 
 // ── the build ──────────────────────────────────────────────────────────────
@@ -1345,78 +1149,6 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     },
     notes,
   };
-}
-
-/**
- * aUEC and reputation per hour — measured where it can be, projected where it cannot.
- *
- * 🔴 THE TWO NUMBERS COME FROM DIFFERENT PLACES AND MUST NOT BE AVERAGED TOGETHER.
- *   - aUEC EARNED is real: the game logs `Awarded N aUEC` and the tracker has already paired each
- *     award with the completion it belongs to.
- *   - REPUTATION is never logged in any form — searching a live session finds only the name of the
- *     gRPC service. It comes from the dataset, keyed by contract, where 839 of the 853 `HaulCargo`
- *     keys carry it and it is read from the game files rather than fitted.
- *   - aUEC AHEAD is dataset too, and that one is fitted for 38 of the 853 keys, which is why
- *     `payoutModelled` exists. Checked against Sub's own finished contract on 2026-08-17 the
- *     dataset said 62,000 and the log's award was 62,000.
- *
- * Elapsed time is the LOG's clock, not the wall clock, so an app reading a stale file cannot claim
- * a rate for time that has not happened.
- */
-function buildRates(
-  view: HaulingView,
-  liveContracts: readonly PlannedContract[],
-  plannedMinutes: number,
-  rewards?: (contractKey: string) => { payout: number | null; payoutModelled: boolean; rep: number } | null,
-): HaulingPlan["rates"] {
-  let modelled = false;
-  const lookup = (key: string) => {
-    const r = rewards?.(key) ?? null;
-    if (r?.payoutModelled) modelled = true;
-    return r;
-  };
-
-  // ── measured ───────────────────────────────────────────────────────────────
-  let actual: HaulingPlan["rates"]["actual"] = null;
-  /* 🔴 ACTIVE time, not wall time. This read `updatedAt - runStartedAt`, so every hour the player
-     was asleep, at work, or simply not hauling divided into the same numerator. Sub came back
-     after ELEVEN HOURS away and his rates had collapsed — and a wall-clock rate never recovers,
-     it only falls. See HaulingTracker.accrueActive: intervals count only while a contract is open
-     and only when the log did not go quiet. */
-  const elapsedMin = view.activeMs / 60_000;
-  // 🔑 A minute of elapsed time is the floor. Two contracts completing in the same second is a
-  // real thing (Sub delivers a mixed hold in one lift), and dividing by ~0 would report millions
-  // of aUEC an hour — a number that is arithmetically correct and a lie about the run.
-  if (view.finished.length && elapsedMin >= 1) {
-    const auec = view.finished.reduce((s, f) => s + (f.payout ?? 0), 0);
-    const rep = view.finished.reduce((s, f) => s + (lookup(f.contractKey)?.rep ?? 0), 0);
-    actual = {
-      auec, rep, minutes: elapsedMin, contracts: view.finished.length,
-      auecPerHour: auec / (elapsedMin / 60),
-      repPerHour: rep / (elapsedMin / 60),
-    };
-  }
-
-  // ── projected ──────────────────────────────────────────────────────────────
-  // Only what is actually going to be flown: a contract the player set aside, or one whose load is
-  // unknown, is not in the route and must not be in the rate the route is judged by.
-  let projected: HaulingPlan["rates"]["projected"] = null;
-  const ahead = liveContracts.filter((c) => c.plannable && !c.hidden);
-  if (ahead.length && plannedMinutes > 0) {
-    let auec = 0, rep = 0;
-    for (const c of ahead) {
-      const r = lookup(c.contractKey);
-      auec += r?.payout ?? 0;
-      rep += r?.rep ?? 0;
-    }
-    projected = {
-      auec, rep, minutes: plannedMinutes,
-      auecPerHour: auec / (plannedMinutes / 60),
-      repPerHour: rep / (plannedMinutes / 60),
-    };
-  }
-
-  return { actual, projected, payoutModelled: modelled };
 }
 
 /** One RoutePlan -> the stop list the widget draws, with names and per-stop actions. */
