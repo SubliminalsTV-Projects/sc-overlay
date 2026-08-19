@@ -1,4 +1,44 @@
 {
+  "0.1.45": {
+    "date": "2026-08-19T13:21:03Z",
+    "notes": [
+      {
+        "kind": "new",
+        "label": "Hauling: a whole widget for cargo runs — and it is EXPERIMENTAL",
+        "text": "Accept some cargo contracts and the Hauling widget works out what to fly, in what order, and what to load first. It reads your board off the game log: which contracts you have, how much each moves, where every pickup and drop-off is, and what is already in your hold. Three tabs — Rank (what is worth taking), Route (where to go, in order) and Stow (what to load first, and how to recognise it at the freight elevator).\n\nIt is marked EXPERIMENTAL on purpose. It is new, it is the most ambitious thing in the app, and it will get things wrong — especially any figure the game never states out loud. Check it against your mobiGlas before you trust it, and tell Sub what it got wrong. It only ever READS your log: it cannot touch your contracts or your cargo."
+      },
+      {
+        "kind": "new",
+        "label": "It knows how long the flying actually takes",
+        "text": "Every per-hour figure now counts the travel, not just the loading. The times came from measuring real runs out of the logs rather than guessing: about six minutes between a station and a surface outpost on the same body, about seven to another planet, and roughly three minutes for a jump-gate crossing whichever hole you take.\n\nThat one change reordered the board. A contract with fat boxes and few stops can be worth far more an hour than a fiddly one that looks better per box, and until now the app could not see the difference — it priced flying at nothing."
+      },
+      {
+        "kind": "new",
+        "label": "Rank leads, and it ranks by what an hour pays",
+        "text": "Rank is the first tab, because it is the one you read BEFORE you have a board. Contracts are ordered by reputation or aUEC per HOUR, with the per-box figure kept underneath — per box is what the work feels like in your hands, per hour is the only number you can hold against an evening. Click any row to open that contract on subliminal.gg."
+      },
+      {
+        "kind": "new",
+        "label": "It will not recommend a contract your ship cannot carry",
+        "text": "A container cannot be split, so a hold that takes 4 SCU can never accept an 8 SCU box no matter how much room is free. The board now checks each contract's real box size against your ship's cargo grid and hides the ones that cannot fit at all. If it does not know what you are flying it says so and asks, rather than guessing."
+      },
+      {
+        "kind": "new",
+        "label": "Chat: your tab now names the server you are actually on",
+        "text": "The middle chat tab used to say \"US East 1B\" — which is every shard in that region, not the people you could actually meet. It now reads your real shard, like \"US East 1B 140\", and the region-wide room is gone. Alongside it, the DGS tab is the players on the same game server as you right now, and Global is everyone using the app whether they are in game or not."
+      },
+      {
+        "kind": "fix",
+        "label": "Your earnings rate stops counting the time you were away",
+        "text": "Leave the app open overnight and the per-hour figures used to collapse, because the clock ran wall-to-wall from your first contract. It now counts only time with a contract open and no long idle gap, and there is a reset on the earnings bar if you want to start the measurement again from now."
+      },
+      {
+        "kind": "fix",
+        "label": "Dragging one widget no longer lights up all the others",
+        "text": "Dragging a widget revealed every other widget's drag bar as a drop target. That is still true while you are arranging — stacking widgets is what those bars are for — but notification widgets like SC Feed and Unlock Alerts are left alone, since hiding one behind another defeats the point of a notification."
+      }
+    ]
+  },
   "0.1.44": {
     "date": "2026-08-16T05:46:00Z",
     "notes": [
