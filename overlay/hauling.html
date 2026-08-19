@@ -2350,8 +2350,12 @@
        So the no-plan card is only drawn when EVERY live contract qualifies. A mixed board still
        gets a stowage diagram — because some of it really does have to be stowed by hand — with a
        line saying which part the arm will take. */
-    const al = plan.autoLoad || { hull: false, eligible: 0, live: 0 };
-    const allAuto = m.autoLoad && al.live > 0 && al.eligible === al.live;
+    /* ⚠️ ABSENT is not "none qualify". A plan without the field at all is one this widget did not
+       build (an older sidecar, a fixture), and treating that as "no contract auto-loads" would
+       silently swap the behaviour rather than degrade — the same shape of bug that blanked the
+       Rank tab when a field went missing from a projection. Absent => the old hull-only rule. */
+    const al = plan.autoLoad;
+    const allAuto = m.autoLoad && (!al || (al.live > 0 && al.eligible === al.live));
     if (allAuto) {
       const d = document.createElement("div");
       d.className = "noplan";
@@ -2365,13 +2369,13 @@
       body.appendChild(d);
       return;
     }
-    if (m.autoLoad && al.eligible > 0) {
+    if (m.autoLoad && al && al.eligible > 0) {
       const n = document.createElement("div"); n.className = "droprow";
       n.textContent = "The station's arm will load " + al.eligible + " of your " + al.live
         + " contracts. The rest are below the rank that offers it, so they are stowed by hand — that"
         + " is what this diagram is for.";
       body.appendChild(n);
-    } else if (m.autoLoad) {
+    } else if (m.autoLoad && al) {
       const n = document.createElement("div"); n.className = "droprow";
       n.textContent = (plan.ship.displayName || plan.ship.className) + " can be loaded by the"
         + " station's arm, but none of these contracts are a rank that offers it — so this load is"

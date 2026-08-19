@@ -3283,7 +3283,21 @@ async function run(label, script, preload, query, page) {
   try {
     const base = page ? `http://localhost:${PORT}/${page}` : URL;
     await win.loadURL(query ? base + (base.includes("?") ? "&" : "?") + query : base);
-    const res = await win.webContents.executeJavaScript(script);
+    /* 🔴 A SUITE THAT THROWS MUST NOT TAKE THE OTHERS WITH IT. executeJavaScript rejects when the
+       page script throws, and that rejection escaped `run()` entirely — it unwound to the caller's
+       single try/catch, so ONE bad assertion skipped every suite queued behind it and the whole
+       file reported "FAILED (1)" with no name, no line and no partial results. The hauling suite
+       sat broken behind exactly that for a day, hiding whatever else was broken behind IT.
+       Now the blast radius is one suite and the message says which. */
+    let res;
+    try {
+      res = await win.webContents.executeJavaScript(script);
+    } catch (e) {
+      console.log(`
+${label}`);
+      console.log("  FAIL suite threw before it could report   [" + String((e && e.message) || e).slice(0, 180) + "]");
+      return 1;
+    }
     let fails = 0;
     console.log(`\n${label}`);
     for (const r of res) {
@@ -4606,6 +4620,22 @@ const HAULING = `(async () => {
     fromLocation: "@1,1,1", toLocation: "@2,2,2",
   }, over || {});
 
+  /* 🔴 THE WIDGET NOW OPENS ON THE RANK TAB (2026-08-18 — it is the tab you read BEFORE you have a
+     board, so it leads). Every assertion below is about the ROUTE view, which used to be the
+     default and silently stopped rendering when that changed: the card selector found nothing, the suite
+     threw on the first byTitle() and — because a throw took the whole file down — hid the stow
+     failures behind it too.
+     WARNING: clicked, not assigned. The page keeps its view in a let inside its own closure, and
+     executeJavaScript runs in the global scope — so assigning view here only makes a global the
+     page never reads, and the suite goes on testing the wrong tab while looking like it fixed
+     itself. Drive the tab the way a player does. */
+
+  document.getElementById("tabRoute").click();
+  // Long enough for the load() that click kicks off to come back and repaint. Too short and its
+  // response lands AFTER the fixture below is assigned, quietly replacing it with the sidecar's
+  // real (empty) board - which reads as "the route drew nothing" rather than as a race.
+  await sleep(500);
+
   plan = {
     updatedAt: Date.now(),
     ship: { className: "CRUS_Starlifter_C2", displayName: "Crusader C2 Hercules Starlifter", totalScu: 696,
@@ -4636,11 +4666,16 @@ const HAULING = `(async () => {
     untracked: [{ missionId: "m-range", title: "Untracked Haul", minScu: 40, maxScu: 56, trackedNow: false }],
     trackedMissionId: null,
     trips: [{ landings: 2, totalMinutes: 12, peakScu: 137, method: "exact", stops: [
-      { id: "@1,1,1:pickup", name: "Baijini Point", kind: "pickup", minutes: 4, loadAfterScu: 137, sameSpot: false,
-        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" },
-                  { missionId: "m-range", title: "Untracked Haul", commodity: null, scu: 56, group: "g-range" }] },
-      { id: "@1,1,1:dropoff", name: "Baijini Point", kind: "dropoff", minutes: 0, loadAfterScu: 0, sameSpot: true,
-        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" }] },
+       /* 🔑 kind is PER ACTION, not just per stop - one landing can unload and load, and the
+          widget groups the row by it. This fixture predated that and carried the kind only on
+          the stop, so every action filtered out and NO route rows were drawn: the route
+          assertions had been measuring an empty page. Nothing pointed at it because the suite
+          threw two assertions later on stops[1] and took the whole file down with it. */
+      { id: "@1,1,1:pickup", locationId: "@1,1,1", name: "Baijini Point", kind: "pickup", minutes: 4, loadAfterScu: 137, sameSpot: false,
+        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked", kind: "pickup" },
+                  { missionId: "m-range", title: "Untracked Haul", commodity: null, scu: 56, group: "g-range", kind: "pickup" }] },
+      { id: "@1,1,1:dropoff", locationId: "@1,1,1", name: "Baijini Point", kind: "dropoff", minutes: 0, loadAfterScu: 0, sameSpot: true,
+        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked", kind: "dropoff" }] },
     ] }],
     stranded: [],
     locationNames: { "@1,1,1": "Baijini Point", "@2,2,2": "Site 1" },
@@ -4690,12 +4725,15 @@ const HAULING = `(async () => {
      byTitle("Tracked Haul").querySelector(".amt").title);
   /* Non-emptiness is asserted too: every() over an empty list is true, so a board that rendered
      no cards at all would have satisfied the old form of this. */
-  ok("every contract's figure carries provenance", cards.length > 0 && cards.every((c) => {
-       const a = c.querySelector(".amt");
-       return !!a && /src-[a-z]+/.test(a.className) && !!a.title;
-     }), cards.length + " cards");
-  ok("a modelled box split is labelled modelled",
-     [...byTitle("Tracked Haul").querySelectorAll(".chips .badge")].some((b) => b.textContent === "modelled"));
+  var provOk = cards.filter(function (c) { var a = c.querySelector(".amt"); return !!a && /src-[a-z]+/.test(a.className) && !!a.title; }).length;
+  ok("every contract's figure carries provenance", cards.length > 0 && provOk === cards.length,
+     "n=" + cards.length + " with provenance=" + provOk);
+  /* The "modelled" chip is gone - Sub called it noise, and the counts had been right every time he
+     checked (see the stylesheet note). Provenance rides on the figure's colour now, which the two
+     assertions above already pin, so this asserts the chip is NOT reintroduced by accident rather
+     than testing a label that no longer exists. */
+  ok("the modelled chip stays gone",
+     [...byTitle("Tracked Haul").querySelectorAll(".chips .badge")].every((b) => b.textContent !== "modelled"));
 
   // ── 🔴 the please-track prompt ───────────────────────────────────────────
   const track = document.getElementById("track");
@@ -4769,8 +4807,20 @@ const HAULING = `(async () => {
   const body = document.getElementById("body");
   ok("the diagram never scrolls the panel sideways", body.scrollWidth <= body.clientWidth,
      body.scrollWidth + " vs " + body.clientWidth);
-  ok("the legend says which colour is which drop", document.querySelectorAll(".legend span").length === 2,
-     document.querySelectorAll(".legend span").length);
+  /* 🔴 ONE ENTRY PER DROP-OFF STOP, not per mission. The hold is zoned by drop-off now (4a84361 -
+     "zone the hold by drop-off stop, not by mission or commodity"), and this still expected the old
+     per-mission count. Derived from the plan rather than hard-coded, so it keeps pinning the RULE
+     (a colour means a drop) instead of a number that moves whenever the fixture does. */
+  var dropLocs = {};
+  (plan.trips || []).forEach(function (t) {
+    (t.stops || []).forEach(function (s) {
+      if ((s.actions || []).some(function (a) { return a.kind === "dropoff"; })) dropLocs[s.locationId || s.id] = 1;
+    });
+  });
+  var wantLegend = Object.keys(dropLocs).length;
+  ok("the legend says which colour is which drop",
+     wantLegend > 0 && document.querySelectorAll(".legend span").length === wantLegend,
+     document.querySelectorAll(".legend span").length + " spans for " + wantLegend + " drop-off stops");
 
   return out;
 })()`;

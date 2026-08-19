@@ -12,7 +12,7 @@
     "missions-dump": "tsx src/missions-dump.ts",
     "missions-replay": "tsx src/missions-replay.ts",
     "screen-read-dump": "tsx src/screen-read-dump.ts",
-    "test:widgets": "node --check tools/widget-dom-test.cjs && electron tools/widget-dom-test.cjs",
+    "test:widgets": "node tools/check-suite-literals.cjs && node --check tools/widget-dom-test.cjs && electron tools/widget-dom-test.cjs",
     "standalone": "tsx src/standalone.ts",
     "overlay-app": "electron electron/main.cjs",
     "package": "node tools/package.mjs",
