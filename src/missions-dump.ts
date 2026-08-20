@@ -47,6 +47,8 @@ const fmt = (e: MissionEvent): string => {
       return `REWARD   +${e.amount.toLocaleString()} aUEC`;
     case "blueprintReceived":
       return `BLUEPRINT  «${e.name}»  (mission ${short(e.missionId)})`;
+    case "journalEntry":
+      return `JOURNAL  [${short(e.missionId)}] ${e.subject}${e.jurisdiction ? "  (jurisdiction)" : ""}`;
     case "sessionStart":
       return `SESSION  (PU entered / server change)`;
     case "sessionEnd":
