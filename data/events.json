@@ -33,10 +33,9 @@
         100
       ],
       "tiersSource": "Sub, read off the Journal's reward markers on 4.10 PTU (2026-08-19). These DIFFER from XenoThreat's 15/25/50/60/85/100 below — which is exactly why tiers are data and never constants.",
-      "contracts": {
-        "ORS_MA_HaulingMedium": 6000
-      },
-      "contractsNote": "MEASURED: one \"Orison Relief: Medium Supply Haul\" completion awarded 6,000 (Sub, 4.10 PTU 2026-08-19 21:51:36Z, confirmed by the \"Journal Entry Added: Orison Relief\" line 134ms after the completion). Every other value is UNKNOWN and deliberately absent — 6,000 flat does not divide the tier thresholds into whole missions (7.2 / 12 / 20.6 / 27.4 / 38.4 / 48), so Small and Large must award different amounts.",
+      "contracts": {},
+      "contractsNote": "🔴 EMPTY, AND THAT IS CORRECT FOR NOW. The number 6,000 came from SUB reading his in-game Journal, NOT from the log — the log carries no amount anywhere (see journalEntry in missions-parser.ts). It was briefly written here as ORS_MA_HaulingMedium:6000, but that assignment was an ASSUMPTION: by the time he reported it he had completed more than one contract, and the Medium Supply Haul was simply the only completion found at that moment. Attributing a number to the wrong contract silently mis-prices every future run of it, so it is withdrawn until it can be pinned down.",
+      "howToPinItDown": "Four completions are on record (2026-08-19/20 PTU): 21:51:36Z Medium Supply Haul · 23:05:01Z Medium Supply Haul · 23:05:01Z Small Supply Haul · 01:05:05Z Strike Nine Tails Squad. Each produced exactly one journal entry. So: read the Journal's total/% NOW and it equals the sum of those four. Then run ONE contract of a known type, read it again, and the delta is that contract's value — measured, not inferred. Add one line here per type.",
       "rewards": [],
       "rewardsNote": "EMPTY until observed in game. Note the three pool-bearing event contracts (ORS_Cr_Small/Medium/Large) all drop `TH-01 Propulsor` (item 1afc0022-b8fc-4174-8687-6dfc5b744b98, chance 1) per the 4.9 dataset — but that is a MISSION-pool drop, not a tier reward, so it does not belong here.",
       "knownContractsNote": "All 13 ORS_ contracts are already in the shipped 4.9 dataset, verified by exact key match against real 4.10 markers. Givers: Conerstone Developments 6 (CIG's own typo for Cornerstone — match verbatim), Foxwell Enforcement 3, Covalex Independent Contractors 3, Ling Family Hauling 1. All carry rank:null and empty reputationGained, so none of them feed a normal rep track."

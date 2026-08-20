@@ -27,7 +27,23 @@ const dir = mkdtempSync(join(tmpdir(), "ev-"));
 
 // The REAL events.json ships with the app — use it rather than a fixture, so this test fails if
 // the shipped file is malformed or an event's prefixes are dropped.
-const realEvents = readFileSync(join(import.meta.dirname, "..", "data", "events.json"), "utf8");
+const shipped = JSON.parse(readFileSync(join(import.meta.dirname, "..", "data", "events.json"), "utf8"));
+
+// 🔑 PRICING IS TESTED AGAINST A FIXTURE, NOT AGAINST THE SHIPPED VALUES. The shipped
+// `contracts` map is a live research artefact — values are added and withdrawn as they are
+// measured in game. An earlier version of this file asserted `points === 6000` straight off the
+// shipped data, and withdrawing that (unverified) number turned SEVEN mechanism assertions red
+// for a reason that had nothing to do with the mechanism. A test for "does pricing work" must
+// own its own numbers; only the structural assertions read the real file.
+const realEvents = JSON.stringify({
+  ...shipped,
+  events: shipped.events.map((e: { id: string }) =>
+    e.id === "orison-relief"
+      // Deliberately prices ONE contract and leaves the other unpriced, which is what makes the
+      // priced/unpriced split observable at all.
+      ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 } }
+      : e),
+});
 writeFileSync(join(dir, "events.json"), realEvents);
 
 // Minimal dataset carrying the real key/generator shape of both events.
