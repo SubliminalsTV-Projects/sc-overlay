@@ -79,5 +79,54 @@ check("TECH-PREVIEW is DROPPED", collectsUnder(TECH), false);
   }
 }
 
+// ---- PTU MUST STILL BE USABLE. Everything except blueprints keeps working. ----
+// 🔑 Sub's explicit requirement, and worth pinning rather than trusting: the gate is meant to
+// stop ONE thing (test-server progress entering the real collection), not to degrade the app.
+// Measured on the shipped source there are exactly TWO isLiveEnv gates — the blueprint receipt
+// and the dynamic-event journal entry — and nothing else consults the environment. These
+// assertions are what would catch a third gate being added by accident.
+{
+  const stateDir = mkdtempSync(join(tmpdir(), "logenv-ptu-"));
+  try {
+    const t = new MissionTracker({ dataDir, stateDir });
+    t.detectPatch("<2026-08-20T00:00:00.000Z> ProductVersion: 4.10.190.27847 Changelist: 12479687");
+    t.detectPatch(PTU);
+    check("the gate is closed for this session", t.view().envIsLive, false);
+    check("...and the UI is told which environment", t.view().logEnv, "PTU");
+
+    // A real accept + marker pair, the way the live path receives them.
+    const MID = "c48baebd-b6da-4537-86f1-1355c5e2d488";
+    t.apply({ kind: "accept", ts: "2026-08-20T00:01:00.000Z", missionId: MID, title: "Orison Relief: Medium Supply Haul" } as never);
+    t.apply({ kind: "marker", ts: "2026-08-20T00:01:01.000Z", missionId: MID, contract: "ORS_MA_HaulingMedium_0",
+      contractKey: "ORS_MA_HaulingMedium", generator: "TheBackpocket", contractDefId: "d", objectiveId: "o",
+      markerEntityId: "1", pos: null } as never);
+
+    const v = t.view();
+    check("a mission accepted on PTU is still TRACKED", v.contractKey, "ORS_MA_HaulingMedium");
+    check("...and still shows its title", typeof v.title === "string" && v.title.length > 0, true);
+    check("...and still appears in the mission picker", (v.missions ?? []).length > 0, true);
+    // The dataset must still be loaded and non-empty — a gate that emptied it would make every
+    // assertion above pass vacuously on a tracker that knows nothing.
+    check("...against a NON-EMPTY dataset", t.matchCandidates().length > 0, true);
+
+    // A completion on PTU must still fire, because the mission/hauling side is not gated.
+    // ⚠️ The field is `recentMissions`. An earlier draft read `t.view().recent`, which does not
+    // exist — so `?? []` made it vacuously empty and the assertion failed for a reason that had
+    // nothing to do with the environment gate. Read a field the view really has.
+    // Timestamped NOW because the history is a recency window; a stale stamp would drop out of it
+    // and look like the completion was refused.
+    t.apply({ kind: "contractComplete", ts: new Date().toISOString(), missionId: MID, title: "Orison Relief: Medium Supply Haul" } as never);
+    check("a completion on PTU is still recorded in history", t.view().recentMissions.length > 0, true);
+
+    // ...but the one thing that IS gated stays gated, in the same tracker, at the same moment.
+    // Paired deliberately: "everything works" and "blueprints do not" have to be true together,
+    // or this test would pass on a build that had simply stopped gating anything.
+    t.apply({ kind: "blueprintReceived", ts: new Date().toISOString(), name: REAL_BLUEPRINT, missionId: null } as never);
+    check("...while the blueprint is STILL refused", inGameCount(t), 0);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${failed === 0 ? "ALL PASS" : failed + " FAILED"}`);
 process.exit(failed === 0 ? 0 : 1);

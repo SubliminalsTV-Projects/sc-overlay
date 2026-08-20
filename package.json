@@ -29,6 +29,7 @@
     "test:events": "tsx src/event-track.test.ts",
     "test:localization": "tsx src/localization.test.ts",
     "test:logenv": "tsx src/log-env.test.ts",
+    "test:datasetflip": "tsx src/dataset-flip.test.ts",
     "test:mining": "tsx src/mining-debris.test.ts",
     "test:report": "tsx src/report-blueprints.test.ts",
     "test:screenocr": "tsx src/screen-resurrect.test.ts",

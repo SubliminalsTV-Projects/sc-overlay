@@ -1584,6 +1584,11 @@
         : "NO — nothing will be tracked until this points at a real game.log");
       add("  watching", d.gameLog.watching);
       add("Dataset", d.data.patch);
+      // Spelt out rather than shown as a bare tag: this row exists for the support case where a
+      // player reports that nothing is being collected, and "PTU" on its own does not explain it.
+      add("Environment", d.data.envIsLive === false
+        ? d.data.logEnv + " — TEST SERVER. Blueprints are NOT counted or synced; everything else works."
+        : d.data.logEnv + (d.data.envIsLive === undefined ? "" : " — live, blueprints counting"));
       add("Data folder", d.data.userDir + (d.data.userDirWritable ? "" : "  NOT WRITABLE — nothing can save"));
       add("Sync", d.sync.enabled ? "on, token " + d.sync.token : "off");
       add("Screen reading", "fabricator=" + d.screenReading.fabCapture + " mission=" + d.screenReading.missionOcr +

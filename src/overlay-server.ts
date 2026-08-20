@@ -3762,6 +3762,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // state, and it presents as "none of my settings stick" with nothing else to go on.
       data: {
         patch: tracker.view().patch ?? "(none loaded)", userDir, userDirWritable,
+        // 🔑 The environment belongs in the report a user COPIES, because "my blueprints aren't
+        // showing" is exactly what a PTU session looks like from the outside — and until now
+        // nothing anywhere said so. `logEnv` is the header tag; `envIsLive` is whether receipts
+        // count. Deliberately NOT derived from `patch` above: that is the DATASET label and
+        // currently reads 4.10.0-PTU even for a live build.
+        logEnv: tracker.view().logEnv ?? "(no header seen)", envIsLive: tracker.view().envIsLive,
         configPath,
         configSave: lastSaveError
           ? { ok: false, at: lastSaveError.at, error: lastSaveError.error }
