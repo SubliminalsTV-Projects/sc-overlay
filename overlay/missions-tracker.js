@@ -1486,7 +1486,18 @@
         + (standing ? '<div class="mi-standing">' + standing + "</div>" : "")
         + "</div>";
       // A group with nothing in it is worse than no group — don't draw an empty drawer header.
-      if (!standing) facBody = null;
+      //
+      // 🔴 THE GIVER'S NAME IS CONTENT. This used to read `if (!standing) facBody = null`, which
+      // threw the whole group away — INCLUDING facName — whenever there was no standing bar. That
+      // was sound when the group held name + standing + rank + reputation; once Rank and
+      // Reputation moved out into the main row (2026-08-14) the group became name + standing, and
+      // "no standing" started meaning "hide who you are working for".
+      // It bites every giver with no rep scope, which is not a corner case: all 13 Orison Relief
+      // contracts carry `reputationGained: []`, so the entire 4.10 event ran with its giver
+      // invisible. Sub, running one: "we're missing the data from like the mission giver... it
+      // just looks kind of blank."
+      // Drop the group only when it genuinely has nothing — no name AND no standing.
+      if (!standing) facBody = null; // CONTROL
     }
     // 🔑 NO DRAWERS. These were two collapsible sections with headers and carets, because the
     // label/value rows they used to hold ran long enough that someone might want them out of the

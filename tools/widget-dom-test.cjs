@@ -3051,6 +3051,21 @@ const MISSIONINFO = `(async () => {
   ok("...but an absent gate is not rendered as rank 0", info({ rankRequired: null }).indexOf("Rank needed") < 0);
   ok("rank 0 IS a real gate and shows", info({ rankRequired: 0 }).indexOf("Rank needed 0") >= 0);
 
+  // 🔴 THE GIVER'S NAME SURVIVES WITH NO STANDING BAR. The faction group used to be dropped
+  // whole whenever there was no standing (facBody = null), which also threw away the giver's
+  // NAME. Sound when that group held name + standing + rank + reputation; once Rank and
+  // Reputation moved into the main row it meant "no rep scope" => "hide who you work for".
+  // Not a corner case: all 13 Orison Relief contracts carry reputationGained: [], so the whole
+  // 4.10 event ran with its giver invisible. Sub, running one: "it just looks kind of blank."
+  // NOTE: the info() helper above already sets reputationGained: [] and NO repBar, so these
+  // assertions run against exactly the shape that failed.
+  const noRep = info({ giver: "Covalex Independent Contractors" });
+  ok("the mission info is not empty to begin with", noRep.length > 0, String(noRep.length));
+  ok("a giver with NO rep scope still shows its name",
+     noRep.indexOf("Covalex Independent Contractors") >= 0, noRep.slice(0, 120));
+  // ...and the standing bar itself is still correctly absent - the fix must not invent one.
+  ok("...without inventing a standing bar", noRep.indexOf("Standing") < 0, noRep.slice(0, 120));
+
   // ── two groups, so the faction half can be collapsed on its own ──────────
   const V = { giver: "Headhunters", missionType: "Bounty Hunter", illegal: true, rankRequired: 1,
     contractKey: "HH_Test_Contract", ambiguous: false,
