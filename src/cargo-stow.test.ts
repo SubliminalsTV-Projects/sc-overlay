@@ -152,11 +152,29 @@ const disjoint = (a: ReturnType<typeof extent>, b: ReturnType<typeof extent>): b
 
 {
   const legs = [leg("m1", "Riker", "Aluminum", 64, 8)];
-  const auto = planStowage(HULL_C_GRIDS, legs, { shipClass: "MISC_Hull_C", shipName: "MISC Hull C" });
-  check("an auto-loading hull returns early", auto.autoLoad && auto.placements.length === 0 && auto.loadOrder.length === 0);
+  // 🔴 BOTH HALVES OF THE RULE. Auto-load is a property of the CONTRACT as well as the hull, so
+  // these now say so explicitly. Sub, 2026-08-20: "the autoload ships should not return with no
+  // layout necessarily. That's only the expertise rank missions."
+  const auto = planStowage(HULL_C_GRIDS, legs, { shipClass: "MISC_Hull_C", shipName: "MISC Hull C", autoLoadEligible: true });
+  check("an auto-loading hull on an ELIGIBLE contract returns early", auto.autoLoad && auto.placements.length === 0 && auto.loadOrder.length === 0);
   check("…and says why, rather than showing an empty diagram", /auto-load/i.test(auto.handling.reason), auto.handling.reason);
-  const manual = planStowage(C2_GRIDS, legs, { shipClass: "CRUS_Starlifter_C2" });
-  check("a C2 does not auto-load, so it gets a plan", !manual.autoLoad && manual.placements.length === 8);
+
+  // 🔴 THE REGRESSION THIS EXISTS FOR. Same hull, contracts that do NOT reach Experienced: the
+  // player hand-loads it, so a layout is exactly what they need. Before this, an auto-load hull
+  // returned an empty plan for every contract on the board and a 16-grid Hull B showed nothing.
+  const notEligible = planStowage(HULL_C_GRIDS, legs, { shipClass: "MISC_Hull_C", shipName: "MISC Hull C", autoLoadEligible: false });
+  check("…but the SAME hull on a non-expertise contract gets a real plan",
+    !notEligible.autoLoad && notEligible.placements.length > 0, `${notEligible.placements.length} placements`);
+  check("…and it is the whole 8-box manifest, not a token box",
+    notEligible.placements.length === 8, `${notEligible.placements.length}`);
+  // Unstated eligibility must NOT be read as "yes" - claiming a capability we cannot check is
+  // the bug this whole area exists to avoid.
+  const unstated = planStowage(HULL_C_GRIDS, legs, { shipClass: "MISC_Hull_C" });
+  check("…and an UNSTATED eligibility is treated as not-eligible", !unstated.autoLoad && unstated.placements.length > 0,
+    `autoLoad=${unstated.autoLoad}`);
+
+  const manual = planStowage(C2_GRIDS, legs, { shipClass: "CRUS_Starlifter_C2", autoLoadEligible: true });
+  check("a C2 does not auto-load even on an eligible contract", !manual.autoLoad && manual.placements.length === 8);
 }
 
 // ══ 2. 🔑 THE OBJECTIVE — three small missions in a C2 ═════════════════════
@@ -472,8 +490,20 @@ const disjoint = (a: ReturnType<typeof extent>, b: ReturnType<typeof extent>): b
   check("…and the exact 9-box manifest is laid out box for box", stow.loadOrder.some((s) => s.signature.endsWith("8x 8 SCU + 1x 1 SCU")), JSON.stringify(stow.loadOrder.map((s) => s.signature)));
 
   // 🔑 The same contracts on a Hull C: the game loads it, so there is nothing to lay out.
-  const auto = stowFromPlan(buildHaulingPlan(viewOf(["haul-untracked"], "MISC_Hull_C"), data), set);
-  check("an auto-loading hull off the real log returns early", auto.autoLoad && auto.placements.length === 0, auto.handling.reason);
+  // 🔑 stowFromPlan derives eligibility from the plan's own autoLoad tally, so this exercises the
+  // real wiring rather than a hand-passed flag. These fixture contracts carry no board rank, so
+  // they do NOT qualify - and the hull alone must no longer be enough to skip the layout.
+  const autoPlan = buildHaulingPlan(viewOf(["haul-untracked"], "MISC_Hull_C"), data);
+  const auto = stowFromPlan(autoPlan, set);
+  check("an auto-load HULL whose contracts do not qualify still gets a plan",
+    !auto.autoLoad && auto.placements.length > 0, `autoLoad=${auto.autoLoad} placements=${auto.placements.length}`);
+  check("…and the plan's own tally agrees they do not qualify",
+    autoPlan.autoLoad.hull === true && autoPlan.autoLoad.eligible < autoPlan.autoLoad.live,
+    JSON.stringify(autoPlan.autoLoad));
+  // Forcing eligibility on the same plan flips it back, which proves the flag is what decides.
+  const forced = stowFromPlan(autoPlan, set, { autoLoadEligible: true });
+  check("…and declaring them eligible returns early after all", forced.autoLoad && forced.placements.length === 0,
+    forced.handling.reason);
 }
 
 console.log(failures ? `\n${failures} FAILED` : "\nall ok");
