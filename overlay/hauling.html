@@ -387,6 +387,11 @@
   .stop .acts { font-size: 11px; color: var(--cyan-dim); line-height: 1.5; margin-top: 1px; }
   .stop .acts .c { color: var(--cyan-text); }
   .stop .rt { flex: none; text-align: right; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  /* The tonnage half, moved INSIDE .mid (see the note in hauling-tab-route.js). As a sibling it was
+     flex:none and stole width from the place name until the name ellipsised; under .acts it cannot
+     squeeze anything and the name spans the full row. Left-aligned down here — it is reading as a
+     caption under the step now, not as a right-hand column. */
+  .stop .mid .rt.under { text-align: left; margin-top: 1px; }
   /* 🔴 THE FIGURE ON A STEP IS THE FIGURE THAT STEP MOVES. This was `loadAfterScu` — what is in the
      hold on LEAVING — so the final drop-off of a run always read "0 SCU", which is true and useless:
      Sub read a step headed DROP OFF next to a zero and reasonably asked what it thought he was
