@@ -1140,11 +1140,26 @@ export class MissionTracker extends EventEmitter {
    *  estimate is an accumulation of things we saw once and can never re-observe, exactly like
    *  repWitnessed. */
   private eventContributions = new Map<string, EventContribution[]>();
-  /** The most recent completion, kept solely to attribute the journal entry that follows it.
-   *  🔑 The journal line carries an ALL-ZEROS MissionId (measured: 4.10 PTU, 134 ms after the
-   *  completion), so time proximity is the only join available — the same correlation the aUEC
-   *  award already uses. */
-  private lastCompletionForEvent: { key: string | null; title: string | null; missionId: string; atMs: number } | null = null;
+  /**
+   * Completions waiting to be claimed by the journal entry that follows them, OLDEST FIRST.
+   *
+   * 🔑 The journal line carries an ALL-ZEROS MissionId (measured: 4.10 PTU, 134 ms after the
+   * completion), so time proximity is the only join available — the same correlation the aUEC
+   * award already uses.
+   *
+   * 🔴 **A QUEUE, NOT A SINGLE SLOT — and real data is what proved it.** A single slot looked
+   * correct until this ran against Sub's live 4.10 log, which contains two contracts completing
+   * in the SAME MILLISECOND followed by two journal entries 115 ms apart:
+   *   23:05:01.981  Contract Complete: Orison Relief: Small Supply Haul   [1c862f01…]
+   *   23:05:01.981  Contract Complete: Orison Relief: Medium Supply Haul  [8ce13767…]
+   *   23:05:02.116  Journal Entry Added: Orison Relief
+   *   23:05:02.231  Journal Entry Added: Orison Relief
+   * The slot held only the second completion, so BOTH entries were credited to the Medium haul —
+   * 12,000 points from one 6,000 contract, with the Small haul's unknown value never recorded as
+   * unpriced. FIFO matching also settles the open question in the parser's doc comment: the
+   * journal fires **once per completion**, not once per batch (n is now 3, not 1).
+   */
+  private pendingEventCompletions: { key: string | null; title: string | null; missionId: string; atMs: number }[] = [];
   /** giver -> witnessed reputation on their primary org scope. `sum` accumulates the rep
    *  amount of each post-4.8 completion (a LOWER BOUND — pre-tracker history is gone).
    *  Live real-time completions add to it; verifyFromLogs rebuilds it authoritatively
@@ -1750,21 +1765,27 @@ export class MissionTracker extends EventEmitter {
         const def = this.eventDefFor(ev.subject);
         if (!def) break;                          // an event we do not model; nothing to record
         const atMs = ev.ts ? Date.parse(ev.ts) : NaN;
-        const last = this.lastCompletionForEvent;
-        // 🔑 Correlate by TIME, and REQUIRE a completion. The journal line has an all-zeros
-        // MissionId, so a contribution with no completion behind it cannot be attributed to a
-        // contract — and crediting it to whatever finished minutes ago would invent points.
-        // Measured gap is 134 ms; the window is the same REWARD_WINDOW_MS the aUEC award uses.
-        const inWindow = last && Number.isFinite(atMs) && Math.abs(atMs - last.atMs) <= REWARD_WINDOW_MS;
-        const key = inWindow ? last!.key : null;
+        // 🔑 Correlate by TIME and CLAIM THE OLDEST pending completion. The journal line has an
+        // all-zeros MissionId, so proximity is the only join — and because two contracts can
+        // complete in the same millisecond and emit one journal entry each (measured on Sub's
+        // 4.10 log), each entry must consume a DIFFERENT completion. FIFO is the right order:
+        // the entries arrive in the order the completions did.
+        // Window is the same REWARD_WINDOW_MS the aUEC award uses; the measured gap is 134 ms.
+        const idx = Number.isFinite(atMs)
+          ? this.pendingEventCompletions.findIndex((c) => Math.abs(atMs - c.atMs) <= REWARD_WINDOW_MS)
+          : -1;
+        // A contribution with no completion behind it is still recorded — it IS evidence the
+        // event fired — but with a null key, so it counts as unpriced rather than being credited
+        // to whatever finished minutes ago. Crediting it would invent points.
+        const claimed = idx >= 0 ? this.pendingEventCompletions.splice(idx, 1)[0] : null;
+        const key = claimed?.key ?? null;
         const points = key && def.contracts ? (def.contracts[key] ?? null) : null;
         const at = ev.ts ?? new Date().toISOString();
         const list = this.eventContributions.get(def.log) ?? [];
-        // Dedupe: the same completion can reach us twice (contractComplete AND MissionEnded both
-        // call beginCompletion), and a re-seeded log replays everything. Keyed on the timestamp,
-        // which is the log's own and therefore stable across replays.
+        // Dedupe on the log's own timestamp, which is stable across a re-seeded replay. Two
+        // genuine entries 115 ms apart have different stamps, so this cannot collapse them.
         if (!list.some((c) => c.at === at)) {
-          list.push({ key, title: inWindow ? last!.title : null, at, points });
+          list.push({ key, title: claimed?.title ?? null, at, points });
           this.eventContributions.set(def.log, list);
           this.saveState();
           this.emit("change");
@@ -1817,19 +1838,26 @@ export class MissionTracker extends EventEmitter {
     // card, and a completion whose card was suppressed still produced a receipt that has to
     // be fenced off. Keyed by missionId so the two completion signals (contractComplete and
     // MissionEnded) can't record the same mission twice with slightly different times.
-    if (!this.completedAtByMission.has(missionId)) this.completedAtByMission.set(missionId, completedAtMs);
-    // Remember what just finished so a "Journal Entry Added: <event>" arriving in the next
-    // second can be attributed to it. Recorded for EVERY completion (carded or not, real-time
-    // or replayed) because event progress is not gated on the card's freshness rule — a seeded
-    // log replay must credit the same contributions a live session would.
-    {
+    // 🔑 Queue what just finished so a "Journal Entry Added: <event>" arriving in the next second
+    // can claim it. Recorded for EVERY completion (carded or not, real-time or replayed) because
+    // event progress is not gated on the card's freshness rule — a seeded log replay must credit
+    // the same contributions a live session would.
+    // ⚠️ Guarded on the SAME condition as completedAtByMission above: beginCompletion runs twice
+    // per mission (contractComplete AND MissionEnded both call it), so an unguarded push would
+    // queue every completion twice and let one journal entry claim a phantom.
+    if (!this.completedAtByMission.has(missionId)) {
+      this.completedAtByMission.set(missionId, completedAtMs);
       const info = this.missions.get(missionId);
-      this.lastCompletionForEvent = {
+      this.pendingEventCompletions.push({
         key: info?.contractKey ?? null,
         title: title ?? info?.title ?? null,
         missionId,
         atMs: completedAtMs,
-      };
+      });
+      // Bounded: only entries inside the correlation window can ever be claimed, so anything
+      // older is dead weight. Trimmed here rather than on read so a long session cannot grow it.
+      const floor = completedAtMs - REWARD_WINDOW_MS;
+      this.pendingEventCompletions = this.pendingEventCompletions.filter((c) => c.atMs >= floor);
     }
     const info = this.missions.get(missionId);
     const aUEC =

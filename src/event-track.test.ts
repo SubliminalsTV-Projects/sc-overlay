@@ -147,6 +147,49 @@ check("...and points did NOT grow by a guessed amount", p2.points === 6000, Stri
 check("the unpriced one is flagged on the contribution itself",
   p2.contributions.some((c) => c.key === "ORS_SA" && c.points === null));
 
+// ---- 4b. TWO CONTRACTS COMPLETING AT ONCE — the case real data caught ----
+// 🔴 Verbatim shape from Sub's live 4.10 log (`… (17 09 14).log`): two completions in the SAME
+// millisecond, then two journal entries 115 ms apart. A single-slot correlation credited BOTH
+// entries to the second completion — 12,000 points from one 6,000 contract, and the other
+// contract's unknown value never recorded as unpriced.
+{
+  const bdir = mkdtempSync(join(tmpdir(), "ev-batch-"));
+  writeFileSync(join(bdir, "events.json"), realEvents);
+  writeFileSync(join(bdir, "blueprints.latest.json"), JSON.stringify({
+    schema: "sc-blueprint-pools/2", version: `4.10.0-LIVE.${CL}`, changelist: CL, missionCount: 2,
+    missions: {
+      ORS_MA_HaulingMedium: m("Orison Relief: Medium Supply Haul", "TheBackpocket"),
+      ORS_MA_HaulingSmall: m("Orison Relief: Small Supply Haul", "TheBackpocket"),
+    },
+  }));
+  const b = new MissionTracker({ dataDir: bdir, stateDir: mkdtempSync(join(tmpdir(), "ev-batch-st-")) });
+  b.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  b.detectPatch("<2026> Environment: PUB");
+
+  const SMALL = "1c862f01-6256-4cf8-a367-478b0d542c79";
+  const MEDIUM = "8ce13767-fbb8-4bf7-9136-70539eb513a6";
+  for (const [mid, ck] of [[SMALL, "ORS_MA_HaulingSmall"], [MEDIUM, "ORS_MA_HaulingMedium"]] as const) {
+    b.apply({
+      kind: "marker", ts: "2026-08-19T23:00:00.000Z", missionId: mid, contract: `${ck}_0`, contractKey: ck,
+      generator: "TheBackpocket", contractDefId: "x", objectiveId: "y", markerEntityId: "1", pos: null,
+    });
+  }
+  // Both complete in the same millisecond — Small first, exactly as the log has it.
+  b.apply(parseMissionEvent(ev(`Added notification "Contract Complete: Orison Relief: Small Supply Haul: " [35] to queue. MissionId: [${SMALL}]`, "2026-08-19T23:05:01.981Z"))!);
+  b.apply(parseMissionEvent(ev(`Added notification "Contract Complete: Orison Relief: Medium Supply Haul: " [36] to queue. MissionId: [${MEDIUM}]`, "2026-08-19T23:05:01.981Z"))!);
+  // Then one journal entry each, 115 ms apart.
+  b.apply(parseMissionEvent(ev(JOURNAL, "2026-08-19T23:05:02.116Z"))!);
+  b.apply(parseMissionEvent(ev(JOURNAL, "2026-08-19T23:05:02.231Z"))!);
+
+  const p = b.eventProgress("orison-relief")!;
+  const keys = p.contributions.map((c) => c.key).sort();
+  check("two simultaneous completions record TWO contributions", p.contributions.length === 2, String(p.contributions.length));
+  check("each journal entry claims a DIFFERENT completion",
+    keys.join(",") === "ORS_MA_HaulingMedium,ORS_MA_HaulingSmall", keys.join(","));
+  check("only the measured contract contributes points (6,000, not 12,000)", p.points === 6000, String(p.points));
+  check("the unmeasured Small haul is counted as UNPRICED", p.unpriced === 1, String(p.unpriced));
+}
+
 // ---- 5. A past event with no total claims no percentage ----
 const past = t.eventProgress("return-of-xenothreat")!;
 check("XenoThreat declares no total", past.total === null);
