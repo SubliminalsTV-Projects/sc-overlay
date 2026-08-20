@@ -68,6 +68,28 @@ export type MissionEvent =
   | { kind: "reward"; ts: string | null; amount: number }
   | { kind: "blueprintReceived"; ts: string | null; name: string; missionId: string | null }
   /**
+   * A "Journal Entry Added: <subject>" notification — the player's in-game Journal gained a page.
+   *
+   * 🔑 THIS IS THE ONLY LOG-SIDE SIGNAL THAT A DYNAMIC EVENT COUNTED A COMPLETION. Measured on
+   * 4.10 PTU (`Game Build(12473311) … (15 56 29).log`): completing "Orison Relief: Medium Supply
+   * Haul" emitted `Contract Complete` at 21:51:36.027 and then
+   * `"Journal Entry Added: Orison Relief: "` at 21:51:36.161 — **134 ms later, with an all-zeros
+   * MissionId**. The event's contribution NUMBER (Sub's 6,000 of 288,000) is nowhere in the log;
+   * reputation and event points are served by `sc.external.services.reputation.v1.
+   * ReputationService`, so only the FACT of progress is observable, never the amount.
+   *
+   * ⚠️ `subject` is NOT always an event. The other observed form is
+   * `"Journal Entry Added: Jurisdiction: Hurston Dynamics : "` — entering a jurisdiction, which
+   * does not follow a completion. Callers must match the subject against a known event name
+   * rather than assuming any journal entry is event progress; `jurisdiction` flags that form so
+   * a caller can drop it without re-parsing the string.
+   *
+   * ⚠️ **n = 1 for the event form.** One completion exists across all five 4.10 logs. The shape is
+   * right and matches the mechanic Sub described, but "fires on every event completion" is an
+   * inference from a single observation — do not harden anything against it without more.
+   */
+  | { kind: "journalEntry"; ts: string | null; subject: string; jurisdiction: boolean; missionId: string | null }
+  /**
    * A hauling contract's delivery objective, off the "New Objective: Deliver 0/N …" notification.
    *
    * 🔴 **This fires on objective ASSIGNMENT, not on track — and re-tracking never replays it.**
@@ -392,6 +414,11 @@ const RE = {
   // captured too because it is the only log line that names where the player IS.
   routeRegion: /Projected Start Location is\s+(.+?)\s+for route to destination\s+Region([A-Za-z0-9]+)/,
   reward: /^Awarded\s+([\d,]+)\s+aUEC/,
+  // "Journal Entry Added: Orison Relief: " — a dynamic event counting a completion, and the only
+  // log-side evidence that it did. Also matches "Journal Entry Added: Jurisdiction: microTech : ",
+  // which is unrelated noise; the parser flags that form rather than filtering it here, so the
+  // rule stays visible at the call site instead of being buried in a regex.
+  journalEntry: /^Journal Entry Added:\s*(.+?):\s*$/,
   // "Deliver 0/20 SCU of Processed Food to Sunset Mesa" — matched against the DECORATION-STRIPPED
   // notification text, like everything else here. Three real payload forms share one shape, so
   // the middle is captured whole and classified afterwards (see haulUnit):
@@ -557,6 +584,19 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
       const rw = text.match(RE.reward);
       if (rw) {
         return { kind: "reward", ts: e.timestamp, amount: parseInt(rw[1].replace(/,/g, ""), 10) };
+      }
+      // Last of the notification branches: its prefix is distinct from every one above, so the
+      // position is for readability rather than precedence.
+      const je = text.match(RE.journalEntry);
+      if (je) {
+        const subject = je[1].trim();
+        return {
+          kind: "journalEntry",
+          ts: e.timestamp,
+          subject,
+          jurisdiction: /^Jurisdiction:/i.test(subject),
+          missionId: m.match(RE.missionIdField)?.[1] ?? null,
+        };
       }
       return null;
     }

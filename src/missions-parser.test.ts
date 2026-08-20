@@ -101,4 +101,45 @@ assert.equal(regionOfShard("pub_usw2a_12326004_007"), "usw2a");
 assert.equal(regionOfShard("local_shard"), null);
 assert.equal(regionOfShard(null), null);
 
+// ---- Journal Entry Added: the dynamic-event progress signal (4.10 / Siege of Orison) ----
+// All four lines below are VERBATIM from Sub's own 4.10 PTU logs
+// (`Game Build(12473311) 19 Aug 26 (15 56 29).log`, changelist 12473311). They are kept exactly
+// as the engine wrote them — double spaces, trailing ": ", all-zeros MissionId and all — because
+// every previous fixture in this file that was "tidied" hid a real bug.
+const realOrisonComplete = 'Added notification "Contract Complete: Orison Relief: Medium Supply Haul: " [42] to queue. New queue size: 1, MissionId: [c48baebd-b6da-4537-86f1-1355c5e2d488], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]';
+const realOrisonJournal = 'Added notification "Journal Entry Added: Orison Relief: " [43] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]';
+const realJurisdictionJournal = 'Added notification "Journal Entry Added: Jurisdiction: Hurston Dynamics : " [9] to queue. New queue size: 1, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]';
+
+// 🔑 The event's contract title CONTAINS A COLON. The complete-title regex is lazy, so this is
+// exactly the shape that could truncate to "Orison Relief" and silently key every event contract
+// to one bogus title.
+const orisonComplete = parseMissionEvent(event(realOrisonComplete));
+assert(orisonComplete?.kind === "contractComplete", "the real Orison completion must parse");
+assert.equal(orisonComplete?.title, "Orison Relief: Medium Supply Haul",
+  "an event contract title keeps its internal colon — truncating it would merge all 13 ORS_ contracts");
+assert.equal(orisonComplete?.missionId, "c48baebd-b6da-4537-86f1-1355c5e2d488");
+
+const orisonJournal = parseMissionEvent(event(realOrisonJournal));
+assert(orisonJournal?.kind === "journalEntry", "the event journal entry must parse");
+assert.equal(orisonJournal?.subject, "Orison Relief", "the subject is the EVENT name, trimmed");
+assert.equal(orisonJournal?.jurisdiction, false, "an event entry is not a jurisdiction entry");
+// The all-zeros id is preserved rather than nulled: callers correlate by TIME, and recording what
+// the log actually said is what lets a future reader tell "absent" from "zeroed".
+assert.equal(orisonJournal?.missionId, "00000000-0000-0000-0000-000000000000");
+
+// The noise form. It must still PARSE (so it can never be mistaken for an unknown line) while
+// being flagged, because it does not follow a completion and is not event progress.
+const jurisdictionJournal = parseMissionEvent(event(realJurisdictionJournal));
+assert(jurisdictionJournal?.kind === "journalEntry", "a jurisdiction journal entry still parses");
+assert.equal(jurisdictionJournal?.jurisdiction, true,
+  "entering a jurisdiction must be flagged, or it reads as event progress and inflates the estimate");
+assert.equal(jurisdictionJournal?.subject, "Jurisdiction: Hurston Dynamics",
+  "the subject keeps its prefix — the flag classifies it, the string is not rewritten");
+
+// 🔑 NON-EMPTY GUARD. The two assertions above are both about a parsed object; if the branch
+// silently stopped matching, `subject` comparisons would fail — but a future refactor that made
+// journalEntry unreachable would fail with a confusing "kind" error instead. State the positive.
+assert(orisonJournal.subject.length > 0 && jurisdictionJournal.subject.length > 0,
+  "both journal subjects must be non-empty — an empty subject matches every event name");
+
 console.log("missions-parser tests passed");
