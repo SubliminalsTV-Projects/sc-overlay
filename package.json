@@ -26,6 +26,7 @@
     "test:fabclaim": "tsx src/fab-claim.test.ts",
     "simulate": "node tools/simulate.mjs",
     "test:parser": "tsx src/missions-parser.test.ts",
+    "test:events": "tsx src/event-track.test.ts",
     "test:localization": "tsx src/localization.test.ts",
     "test:logenv": "tsx src/log-env.test.ts",
     "test:mining": "tsx src/mining-debris.test.ts",
