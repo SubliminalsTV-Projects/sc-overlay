@@ -18,6 +18,7 @@ import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
 import { canAutoLoad } from "./hauling-autoload.js";
 import { buildHaulingPlan, gridsOf } from "./hauling-plan.js";
+import { tradeRoutes, tradeLogLine } from "./trade-routes.js";
 import { largestBoxScu } from "./cargo-boxes.js";
 import {
   buildContracts, climbToNextRung, rankContracts, regimeFor, rungAt, HAULING_LADDER,
@@ -613,6 +614,9 @@ const economy = new MiningEconomyStore(dataDir);
 // Bundled reference data for the hauling optimiser (see HaulingDataStore). Served via
 // /api/ships, /api/hauling-orders and /api/locations; the widget is not built yet.
 const haulingData = new HaulingDataStore(dataDir);
+/** Everything the commodity-trading subsystem needs. Declared once so the route handler and the
+ *  three log-feed sites cannot drift apart; every field is read lazily inside that module. */
+const tradeDeps = { dataDir, userDir, economy, haulingData, system: currentSystem, logPath: () => config.logPath };
 {
   const c = haulingData.counts();
   console.log(`[hauling] ships: ${c.ships}, contracts: ${c.contracts}, locations: ${c.locations}` +
@@ -1493,6 +1497,7 @@ function seedFromRotatedLog(): void {
       tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
       if (ev) { tracker.apply(ev); hauling.apply(ev); applied++; }
+      tradeLogLine(line, tradeDeps);
     }
     const mins = Math.round((Date.now() - newest.at) / 60000);
     console.log(`[seed] rotated log replayed: ${applied} mission events from ${mins}m ago (${newest.p})`);
@@ -1520,6 +1525,7 @@ function seedTrackerFromLog(): number | null {
       tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
       if (ev) { tracker.apply(ev); party.apply(ev); hauling.apply(ev); applyChatSignals(ev); }
+      tradeLogLine(line, tradeDeps);
       const chan = shipChannelEvent(line);
       if (chan) {
         if (chan.action === "enter" && chan.manufacturer) { seedMfr = chan.manufacturer; seedShip = chan.ship; }
@@ -1577,6 +1583,8 @@ function startWatcher(): void {
     // terrain report above. A change re-broadcasts because the idle panel filters its suggestions
     // by system, and a stale answer there sends someone to another star.
     if (sysWatch.push(e.raw)) { tracker.setSystem(sysWatch.current()); broadcastMissions(); }
+    // Commodity purchases and sales, for the trade journal. Cheap: one regex test per line.
+    tradeLogLine(e.raw, tradeDeps);
     const me = parseMissionEvent(e);
     if (me) { tracker.apply(me); party.apply(me); hauling.apply(me); applyChatSignals(me); }
 
@@ -1969,6 +1977,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     req.on("close", () => missionClients.delete(res));
     return;
   }
+
+  // Commodity trading (hauling phase 2). Every route, default and piece of state for that
+  // subsystem lives in trade-routes.ts on purpose — this is its ONLY hook into this file.
+  if (tradeRoutes(url, req, res, tradeDeps)) return;
 
   // Current mission/blueprint view (snapshot).
   if (url === "/api/missions" && req.method === "GET") {

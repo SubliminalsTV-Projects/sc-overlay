@@ -372,6 +372,116 @@ check("an empty board is an empty plan, not a throw",
 check("an empty board quotes no rate at all",
   empty.rates.actual === null && empty.rates.projected === null);
 
+// ── one place, two marker keys ─────────────────────────────────────────────
+//
+// 🔴 REPRODUCED FROM SUB'S LIVE PTU BOARD, 2026-08-19. Two "Orison Relief" priority contracts that
+// both drop at August Dunlow Spaceport. Their drop markers sit ~1 km apart, and `posKey` rounds to
+// the kilometre, so they keyed as `@5297,-873,5280` and `@5297,-872,5281` — two ids for one
+// spaceport. The router built a stop for each and produced pickup → drop → pickup → drop, flying
+// back and forth across the system for what is one landing.
+//
+// Both pickups are on microTech, and neither contract key carries a region token
+// (`ORS_MA_HaulingSmall`), so `regionByLoc` was empty and every leg was charged the same flat
+// cross-body rate — every ordering tied and the optimiser had no reason to group anything.
+{
+  const stop = (key: string, role: "pickup" | "dropoff", pos: { x: number; y: number; z: number },
+                destination: string | null, need: number | null) => ({
+    key, objectiveId: key, role, index: 0, pos, markerEntityId: null,
+    destination, commodity: "Fresh Food", need, delivered: 0, unit: "scu" as const,
+    state: "pending" as const, completedAt: null,
+  });
+  const contract = (missionId: string, contractKey: string, stops: unknown[]) => ({
+    missionId, contract: contractKey, contractKey, generator: "", contractDefId: "",
+    title: contractKey, parts: null, acceptedAt: 0, endedAt: null, outcome: null, payout: null,
+    stops, items: [], hidden: false,
+  });
+  const view = {
+    updatedAt: 0, playerNodeId: null, ship: null, untracked: [], trackedMissionId: null,
+    runStartedAt: null, activeMs: 0, finished: [], atLocation: null, atLocationId: null,
+    cargoMove: null,
+    contracts: [
+      contract("m1", "ORS_MA_HaulingSmall", [
+        stop("m1-leg", "pickup", { x: 520_000, y: 435_000, z: 736_000 }, null, null),
+        stop("m1-leg", "dropoff", { x: 5_297_000, y: -873_000, z: 5_280_000 }, "August Dunlow Spaceport", 6),
+      ]),
+      contract("m2", "ORS_MA_HaulingMedium", [
+        stop("m2-leg", "pickup", { x: 844_000, y: -179_000, z: 506_000 }, null, null),
+        // 🔑 One kilometre away, and it is the SAME spaceport. Named by the player, as Sub had to.
+        stop("m2-leg", "dropoff", { x: 5_297_000, y: -872_000, z: 5_281_000 }, null, 96),
+      ]),
+    ],
+  };
+  const placeNames = {
+    "@520,435,736": "New Babbage",
+    "@844,-179,506": "microTech Logistics Depot S4LD13",
+    "@5297,-872,5281": "August Dunlow Spaceport",
+  };
+  const plan = buildHaulingPlan(view as never, data, { placeNames, ship: "MISC Hull C" });
+  const trip = plan.trips[0];
+  const stops = trip?.stops ?? [];
+  const names = stops.map((s) => plan.locationNames[s.locationId] ?? s.locationId);
+
+  check("the board plans a trip at all", !!trip, JSON.stringify(names));
+  // 🔴 THE FIX. Four stops means the two drop markers were treated as different places.
+  check("both drop-offs collapse into ONE landing", stops.length === 3,
+    `${stops.length} stops: ${names.join(" -> ")}`);
+  const dunlow = stops.filter((s) => (plan.locationNames[s.locationId] ?? "").includes("Dunlow"));
+  check("...and it is the shared spaceport that merged", dunlow.length === 1, JSON.stringify(names));
+  // 🔑 Both pickups first, then the single drop — the shape the player expected.
+  const kinds = stops.map((s) => (s.actions ?? []).map((a) => a.kind).join("+"));
+  check("the route is not empty", kinds.length === 3, JSON.stringify(kinds));
+  check("both pickups happen before the drop",
+    kinds.length === 3 && kinds.slice(0, 2).every((k) => k === "pickup"), JSON.stringify(kinds));
+  check("...and the last stop is the drop", (kinds[2] ?? "").includes("dropoff"), JSON.stringify(kinds));
+}
+
+
+// ── a region derived from the NAME, when the contract key has none ─────────
+//
+// 🔴 The merge above fixes the double landing; this fixes the COST. `regionByLoc` is populated from
+// the contract key (`..._Stanton3_...`), which hand-authored families like Orison Relief simply do
+// not carry. With no region every leg is charged the flat cross-body rate, so the router cannot
+// prefer keeping a run on one world — and the Rank tab's per-hour projection divides by that
+// inflated time.
+//
+// 🔑 The assertion is on MINUTES, not stop order: with only two contracts the order ties either
+// way, so an order-based check passes without the fix and proves nothing. Measured — two contracts
+// that each stay on one body cost 25.84 min with name-derived regions and 27.84 without, which is
+// exactly the two legs moving from the cross-body rate to the same-body one.
+{
+  const stop = (key: string, role: "pickup" | "dropoff", x: number, need: number | null) => ({
+    key, objectiveId: key, role, index: 0, pos: { x, y: 0, z: 0 }, markerEntityId: null,
+    destination: null, commodity: "Fresh Food", need, delivered: 0, unit: "scu" as const,
+    state: "pending" as const, completedAt: null,
+  });
+  const contract = (missionId: string, contractKey: string, stops: unknown[]) => ({
+    missionId, contract: contractKey, contractKey, generator: "", contractDefId: "",
+    title: contractKey, parts: null, acceptedAt: 0, endedAt: null, outcome: null, payout: null,
+    stops, items: [], hidden: false,
+  });
+  const view = {
+    updatedAt: 0, playerNodeId: null, ship: null, untracked: [], trackedMissionId: null,
+    runStartedAt: null, activeMs: 0, finished: [], atLocation: null, atLocationId: null,
+    cargoMove: null,
+    contracts: [
+      // Stays on microTech.
+      contract("r1", "ORS_MA_HaulingSmall", [stop("r1", "pickup", 1_000, null), stop("r1", "dropoff", 2_000, 6)]),
+      // Stays on Crusader.
+      contract("r2", "ORS_MA_HaulingMedium", [stop("r2", "pickup", 3_000, null), stop("r2", "dropoff", 4_000, 8)]),
+    ],
+  };
+  const plan = buildHaulingPlan(view as never, data, {
+    ship: "MISC Hull C",
+    placeNames: { "@1,0,0": "New Babbage", "@2,0,0": "Port Tressler", "@3,0,0": "Orison", "@4,0,0": "Seraphim Station" },
+  });
+  const trip = plan.trips[0];
+  check("the four-stop run plans", !!trip && trip.stops.length === 4,
+    trip ? String(trip.stops.length) : "no trip");
+  // 25.84 with the fix, 27.84 without. The midpoint separates them and tolerates handling changes.
+  check("a name-derived body makes the same-world legs cheaper",
+    !!trip && trip.totalMinutes < 26.9, trip ? String(Math.round(trip.totalMinutes * 100) / 100) : "no trip");
+}
+
 // The bundle really is on disk where the server will look for it.
 check("the shipped orders file is the schema this module reads",
   JSON.parse(readFileSync(join(DATA_DIR, "hauling-orders.json"), "utf8")).schema === "sc-hauling-orders/1");
