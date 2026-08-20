@@ -1497,7 +1497,7 @@
       // invisible. Sub, running one: "we're missing the data from like the mission giver... it
       // just looks kind of blank."
       // Drop the group only when it genuinely has nothing — no name AND no standing.
-      if (!standing) facBody = null; // CONTROL
+      if (!standing && !facName) facBody = null;
     }
     // 🔑 NO DRAWERS. These were two collapsible sections with headers and carets, because the
     // label/value rows they used to hold ran long enough that someone might want them out of the
