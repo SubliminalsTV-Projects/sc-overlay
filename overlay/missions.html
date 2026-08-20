@@ -978,22 +978,10 @@
     font-weight: 700; line-height: 14px; text-align: center; }
   .cat.off .cnt { display: none; }
 
-  /* Dynamic-event reward ladder (Return of XenoThreat) shown on a pool-less event
-     mission: an event header, a "check your journal" note, and per-tier reward rows. */
-  .evhead { display: flex; align-items: center; gap: 8px; margin: 2px 3px 7px; font-size: 12px; font-weight: 700;
-    letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); text-shadow: 0 0 12px rgba(var(--value-rgb), 0.3); }
-  .evhead .dot { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
-  .evnote { margin: 0 3px 8px; padding: 7px 9px; font-size: 10.5px; line-height: 1.4; color: var(--cyan-text);
-    background: rgba(var(--accent-rgb), 0.06); border: 1px solid var(--divider); border-radius: 4px; }
-  .evtier { display: flex; align-items: center; gap: 9px; margin: 11px 3px 4px; cursor: pointer;
-    user-select: none; padding: 2px 3px; border-radius: 3px; transition: background .12s; }
-  .evtier:hover { background: rgba(var(--accent-rgb), 0.07); }
-  .evtier .evcar { color: var(--cyan); font-size: 9px; }
-  .evtier .evpct { font-family: var(--mono); font-weight: 700; font-size: 13px; color: var(--gold);
-    font-variant-numeric: tabular-nums; }
-  .evtier .evbar { flex: 1; height: 1px; background: var(--divider); }
-  .evtier .evcount { font-family: var(--mono); font-size: 10px; color: var(--faint); }
-  .evtier.done .evcount { color: var(--green); }
+  /* (The dynamic-event reward ladder's CSS lived here — .evhead/.evnote/.evtier and friends.
+     Removed with renderEventTrack(): the ladder moved to the Event Tracker widget, which is a
+     separate document and cannot use this sheet anyway. The panel now shows the mission report
+     plus one .rewnote line.) */
 
   .msg { padding: 28px 18px; text-align: center; color: var(--cyan-dim); font-size: 13px; position: relative; z-index: 2; }
   .msg b { color: var(--cyan); display: block; font-weight: 600; font-size: 13px; text-transform: uppercase;
@@ -2129,9 +2117,6 @@
   let physOpen = false; // Physical Rewards: reveal the ticked-off (Received) items to un-tick a misclick
   let poolKey = "";
   // (infoOpen / facOpen — the two drawers' expand state — went with the drawers on 2026-08-13.)
-  // Event-ladder tier expand/collapse overrides, keyed by tier pct. Default (no
-  // entry): fully-collected tiers collapse, incomplete tiers stay open.
-  const evOpen = {};
 
   // The 10 in-game fabricator filter tabs, in game order. Mirrors src/categories.ts
   // (the overlay is standalone HTML with no bundler; keep the two in sync). Icons are
