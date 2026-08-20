@@ -2715,6 +2715,80 @@ const SPLITFADE = `(async () => {
   return out;
 })()`;
 
+// -- Suite: test-environment badge ---------------------------------------------
+// The app has silently refused to record PTU blueprints since 4.8 and never told the player:
+// nothing appeared in their collection and no surface anywhere explained why. This suite guards
+// the badge that says so.
+// Driven straight from the view, so every branch is reachable without a PTU log - which is the
+// point, because none of them are reachable from a normal test machine.
+const ENVBADGE = `(async () => {
+  ${PRELUDE}
+  const badge = document.getElementById("envBadge");
+  const line = document.getElementById("envLine");
+  ok("the tracker has an env badge", !!badge);
+  ok("...and a footer env line", !!line);
+  if (!badge || !line) return out;
+  // NOTE: named "visible", NOT "shown". PRELUDE already declares const shown (and el, cs) --
+  // redeclaring one is a duplicate const in the same scope, a PARSE error that surfaces only as
+  // "suite threw before it could report", with no hint about which name collided. SKILL.md warns
+  // about out/ok/sleep; el/shown/cs are on that list too.
+  // 🔴 DELIBERATELY DOES NOT READ n.hidden. An earlier version started with !n.hidden, which
+  // short-circuits: the DOM property alone decided the answer and the CSS was never exercised,
+  // so deleting the .envbadge[hidden] rule left this suite GREEN. That guard is exactly what the
+  // page needs (a bare hidden attribute loses to any class rule setting display, and .envbadge
+  // sets display:inline-block), so the assertion has to measure what the PLAYER sees - computed
+  // display and a real rect - not what the script asked for.
+  const visible = (n) => getComputedStyle(n).display !== "none" && n.getBoundingClientRect().width > 0;
+  const has = (s, sub) => String(s || "").toLowerCase().indexOf(sub) >= 0;
+
+  // NOT LIVE: visible, carries the tag, and says what it costs.
+  renderEnvBadge({ envIsLive: false, logEnv: "PTU", patch: "4.10.0-PTU.12479687" });
+  ok("PTU shows the badge", visible(badge), badge.hidden ? "hidden" : getComputedStyle(badge).display);
+  ok("...naming the environment", badge.textContent === "PTU", badge.textContent);
+  ok("...and the footer says it in words", visible(line) && has(line.textContent, "ptu"), line.textContent);
+
+  // The hover text IS the feature (Sub: "when the user hover over whatever badge or label you
+  // are going to use for the PTU, I want them to be informed that their blueprints won't be
+  // tracked"). Assert the MEANING, not merely that a title exists.
+  const tip = badge.title || "";
+  ok("the tooltip is non-empty", tip.length > 0, String(tip.length));
+  ok("...and mentions blueprints", has(tip, "blueprint"), tip.slice(0, 60));
+  ok("...and says they are NOT recorded",
+     has(tip, "not added") || has(tip, "not counted") || has(tip, "not synced") || has(tip, "not tracked"),
+     tip.slice(0, 90));
+  ok("...and reassures the rest still works", has(tip, "everything else"), tip.slice(0, 120));
+
+  // LIVE: nothing at all. A warning that fires on live is worse than no warning.
+  renderEnvBadge({ envIsLive: true, logEnv: "PUB", patch: "4.10.0-PTU.12479687" });
+  ok("PUB hides the badge", !visible(badge));
+  ok("...and the footer line", !visible(line));
+
+  // NULL READS AS LIVE. The app can attach mid-session and never see a header; refusing to
+  // track there would break the common install to protect the rare one.
+  renderEnvBadge({ envIsLive: true, logEnv: null, patch: "x" });
+  ok("a null env stays quiet", !visible(badge));
+
+  // An older sidecar sends no env fields at all - must not cry wolf.
+  renderEnvBadge({ patch: "4.9.0-LIVE.12344265" });
+  ok("a view with no env fields stays quiet", !visible(badge));
+
+  // Any non-PUB tag warns, not just PTU.
+  renderEnvBadge({ envIsLive: false, logEnv: "TECH-PREVIEW", patch: "x" });
+  ok("TECH-PREVIEW also warns", visible(badge) && badge.textContent === "TECH-PREVIEW", badge.textContent);
+
+  // Not live but no tag: must never print the word null at the player.
+  renderEnvBadge({ envIsLive: false, logEnv: null, patch: "x" });
+  ok("a missing tag falls back to TEST, never null", badge.textContent === "TEST", badge.textContent);
+
+  // THE TRAP THIS FEATURE EXISTS TO AVOID. patch is the DATASET label: the bundled 4.10 data was
+  // extracted from PTU, so it reads "4.10.0-PTU..." even on a genuinely LIVE build. A badge keyed
+  // on that string would tell live players their progress was being thrown away.
+  renderEnvBadge({ envIsLive: true, logEnv: "PUB", patch: "4.10.0-PTU.12479687" });
+  ok("a PTU-flavoured DATASET on a LIVE log shows nothing", !visible(badge),
+     "patch says PTU but the log header says PUB - the header wins");
+  return out;
+})()`;
+
 // ── Suite: nothing animates at rest ────────────────────────────────────────────
 // 🔴 An infinite CSS animation on an always-on-top TRANSPARENT window makes the desktop
 // compositor redraw the overlay — and the game under it — every single frame, forever,
@@ -4988,6 +5062,7 @@ app.whenReady().then(async () => {
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
+    fails += await run("test-environment badge", ENVBADGE, null);
     fails += await run("nothing animates at rest", IDLEPAINT, null);
     fails += await run("mission info from community data", MISSIONINFO, null);
     fails += await run("unrecognized blueprint names", UNRECOGNIZED, null);

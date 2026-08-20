@@ -535,6 +535,27 @@ export interface TrackedView {
   /** The player's actual build changelist from the log (may differ from the dataset
    *  if their exact build isn't bundled — the UI flags that). */
   build: string | null;
+  /**
+   * The environment tag the LOG HEADER declared, uppercased — `"PUB"`, `"PTU"`,
+   * `"TECH-PREVIEW"`, `"EPTU"` — or null when no header has been seen this session.
+   *
+   * 🔴 **THE LOG HEADER IS THE ONLY TRUTH HERE. Never derive this from `patch`.** That string is
+   * the DATASET label: it currently reads `4.10.0-PTU.12479687` because the bundled 4.10 dataset
+   * was built from a PTU extraction, and it would keep saying PTU on a genuinely LIVE 4.10 build
+   * until someone builds a live dataset. Reading the environment off it would tell live players
+   * their progress is not counting.
+   */
+  logEnv: string | null;
+  /**
+   * Whether receipts from the log being read count toward the real collection.
+   *
+   * 🔑 **null reads as LIVE, deliberately.** The app can attach mid-session and never see a
+   * header, and refusing to track in that case would break the common install to protect the
+   * rare one. So this is true for `null` and `"PUB"`, false for everything else — it mirrors
+   * `isLiveEnv` exactly rather than re-deriving the rule, because two copies of a rule is how
+   * they drift.
+   */
+  envIsLive: boolean;
   contractKey: string | null;
   title: string | null;
   generator: string | null;
@@ -4008,6 +4029,10 @@ export class MissionTracker extends EventEmitter {
     return {
       patch: this.patch,
       build: this.detectedChangelist,
+      // Read straight off the same two fields the gating uses, so the badge can never disagree
+      // with whether blueprints are actually being recorded.
+      logEnv: this.logEnv,
+      envIsLive: this.isLiveEnv,
       contractKey: key,
       title: mission?.title ?? tracked?.title ?? null,
       generator: tracked?.generator ?? mission?.generatorClass ?? null,

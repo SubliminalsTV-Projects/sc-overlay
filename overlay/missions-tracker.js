@@ -575,6 +575,7 @@
     let patchTxt = v.patch || "";
     if (v.build && v.patch && !v.patch.includes(v.build)) patchTxt += " · build " + v.build;
     $("patch").textContent = patchTxt;
+    renderEnvBadge(v);
     $("appVer").innerHTML = "SC Overlay" + (v.appVersion ? " v" + escapeHtml(v.appVersion) : "") + ' <span class="fv-beta">BETA</span>';
     $("collected").textContent = v.collectedTotal ?? 0;
     // The report is the ONLY completion summary now — the old in-panel `.cc` card (duration +
@@ -756,6 +757,35 @@
   // 🔑 renderEventTrack() lived here and drew the whole contribution ladder inside this panel.
   // Removed with the branch above: the ladder belongs to the Event Tracker widget, which owns
   // "what percent gets you what loot". Its per-tier collapse state (`evOpen`) went with it.
+
+  /**
+   * "You are on a test server and your blueprints are NOT being recorded."
+   *
+   * 🔑 Driven by `v.envIsLive`, which the tracker copies straight off the same `isLiveEnv` the
+   * gating uses — so the badge cannot claim one thing while the recorder does another.
+   * 🔴 NOT derived from `v.patch`. That string is the DATASET label and currently reads
+   * "4.10.0-PTU.12479687" purely because the bundled 4.10 data was extracted from PTU; on a real
+   * LIVE 4.10 build it would still say PTU, and a badge keyed on it would tell live players their
+   * progress was being thrown away.
+   * 🔑 A null env is LIVE and shows nothing — attaching mid-session with no header is the common
+   * case, and crying wolf there is worse than staying quiet.
+   */
+  function renderEnvBadge(v) {
+    const badge = $("envBadge"), line = $("envLine");
+    if (!badge || !line) return;                 // standalone/older markup — never throw over chrome
+    if (v.envIsLive !== false) {                 // true, or absent on an older sidecar
+      badge.hidden = true; line.hidden = true;
+      return;
+    }
+    const tag = (v.logEnv || "TEST").toUpperCase();
+    badge.textContent = tag;
+    badge.title = "You're playing on " + tag + ", a test environment. Blueprints you earn here are " +
+      "NOT added to your collection and are not synced — only LIVE progress counts. " +
+      "Everything else in the app works normally.";
+    badge.hidden = false;
+    line.textContent = "· " + tag + " — blueprints not counted";
+    line.hidden = false;
+  }
 
   function escapeHtml(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
   function escapeAttr(s){return s.replace(/"/g,"&quot;");}

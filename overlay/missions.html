@@ -997,7 +997,22 @@
     line-height: 1.4; }
   .fv-app { font-family: var(--sans); font-size: 9px; font-weight: 600; letter-spacing: 0.06em;
     text-transform: uppercase; color: var(--cyan-dim); }
+  /* Test-environment badge. Rides the eyebrow because that row is the first thing read in this
+     panel, and the one fact it carries — "your blueprints are not being recorded" — is worth
+     more than the row's own label. Gold rather than red: nothing is broken, it just is not
+     counting, and a red alarm over a working app is its own kind of lie.
+     ⚠️ The `[hidden]` guard is REQUIRED, not belt-and-braces: a bare `hidden` attribute loses to
+     any class rule that sets `display`, and this project already shipped that bug once (Unlock
+     Alerts offering to "claim" a blueprint it had just recorded). */
+  .envbadge[hidden] { display: none; }
+  .envbadge { display: inline-block; padding: 0 5px; border-radius: 3px; letter-spacing: 0.12em;
+    font-size: 9px; font-weight: 800; line-height: 15px; color: #1a1200;
+    background: var(--gold); box-shadow: 0 0 10px rgba(var(--value-rgb), 0.45); cursor: help; }
   .fv-game { font-family: var(--mono); font-size: 9.5px; color: var(--faint); }
+  /* The footer says the same thing in WORDS. The badge is what catches the eye; this is what a
+     player who never hovers it can still read. */
+  .fv-env { font-family: var(--mono); font-size: 9.5px; color: var(--gold); }
+  .fv-env[hidden] { display: none; }
   /* Beta badge (beta phase) — small pill riding the version line. */
   .fv-beta { display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 3px; vertical-align: 1px;
     font-family: var(--sans); font-size: 7.5px; font-weight: 800; letter-spacing: 0.1em;
@@ -1808,7 +1823,7 @@
       </div>
     </div>
     <div class="head">
-      <div class="eyebrow"><span class="dot" id="liveDot"></span> Active Mission<span id="liveTip">SubliminalsTV is <b>live</b>. Click if you want to hang out ↗</span><button type="button" id="msOpen" title="Look up a mission">&#9906;</button></div>
+      <div class="eyebrow"><span class="dot" id="liveDot"></span> Active Mission<span class="envbadge" id="envBadge" hidden></span><span id="liveTip">SubliminalsTV is <b>live</b>. Click if you want to hang out ↗</span><button type="button" id="msOpen" title="Look up a mission">&#9906;</button></div>
       <div class="sub" id="sub"></div>
       <!-- (#missionPick moved into .titlerow on 2026-08-13 — the mission's own name is the
            control now, so the full-width dropdown that used to live here is gone.) -->
@@ -1854,6 +1869,7 @@
       <div class="foot-col-ver">
         <span class="fv-app" id="appVer">SC Overlay</span>
         <span class="fv-game" id="patch"></span>
+        <span class="fv-env" id="envLine" hidden></span>
         <span class="fv-toast" id="footToast"></span>
       </div>
     </div>
