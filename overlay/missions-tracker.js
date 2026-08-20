@@ -617,20 +617,32 @@
 
     const progress = document.querySelector(".progress");
     if (!v.hasPool || !v.pools.length) {
-      // Dynamic-event mission (e.g. Return of XenoThreat): show the personal reward
-      // ladder instead of "no reward" — what unlocks at each contribution %.
-      if (v.eventTrack) { progress.style.display = ""; renderEventTrack(v.eventTrack); return; }
       // No blueprint pool: lead with the mission info we DO have (faction, type, rep) —
       // auto-expanded since there's nothing else on screen — plus any static payout
       // and/or ITEM rewards (Wikelo ships, armor, scrip). Bare message only if truly empty.
+      //
+      // 🔴 AN EVENT MISSION IS STILL A MISSION — Sub's ruling, 2026-08-19. This branch used to
+      // hand a dynamic-event contract straight to renderEventTrack() and `return`, so the reward
+      // LADDER replaced the mission report entirely: running an Orison Relief haul told you what
+      // unlocks at 43% and nothing about the contract you were actually flying. The ladder is the
+      // EVENT TRACKER widget's job ("the event tracker is the one that's going to have to have
+      // this thing that tells you what percent you get what loot at"); this panel's job is
+      // "what is this contract". So the report renders as it would for any pool-less mission and
+      // the event contributes ONE line pointing at the widget.
       const info = missionInfoHtml(v, true);
       const rew = rewardsHtml(v);
-      if (info || rew) {
+      const ev = v.eventTrack
+        ? '<div class="rewnote"><b>Counts toward ' + escapeHtml(v.eventTrack.name) + '.</b> ' +
+          escapeHtml(v.eventTrack.note) + ' Reward tiers are in the Event Tracker.</div>'
+        // Only claim "no blueprints" when it is NOT an event mission: an event contract pays
+        // through the contribution ladder, so saying it drops nothing would be false.
+        : '<div class="rewnote">This mission doesn’t drop blueprints.</div>';
+      if (info || rew || v.eventTrack) {
         panel.classList.remove("empty");
         $("msg").innerHTML = "";
         $("catbar").innerHTML = "";
         progress.style.display = "none"; // no blueprint progress to count
-        $("pool").innerHTML = info + rew + '<div class="rewnote">This mission doesn’t drop blueprints.</div>';
+        $("pool").innerHTML = info + rew + ev;
         return;
       }
       panel.classList.add("empty");
@@ -741,41 +753,9 @@
   // Dynamic-event reward ladder (Return of XenoThreat): shown on an event mission that
   // has no blueprint pool. A note + each contribution-% tier with its rewards and owned
   // checks. Rows carry data-name so the existing click-to-toggle handler works.
-  function renderEventTrack(track) {
-    $("panel").classList.remove("empty");
-    $("catbar").innerHTML = "";
-    $("msg").innerHTML = "";
-    const all = track.tiers.flatMap((t) => t.items);
-    $("frac").textContent = all.filter((i) => i.owned).length + "/" + all.length;
-
-    const html = [
-      '<div class="evhead"><span class="dot"></span>' + escapeHtml(track.name) + " · Reward Track</div>",
-      '<div class="evnote">' + escapeHtml(track.note) + "</div>",
-    ];
-    for (const tier of track.tiers) {
-      const tOwned = tier.items.filter((i) => i.owned).length;
-      const done = tOwned === tier.items.length;
-      // Collapsed tiers hide their rows: completed tiers tuck away by default so the
-      // ladder leads with what's still missing; click a tier header to toggle.
-      const open = tier.pct in evOpen ? evOpen[tier.pct] : !done;
-      html.push('<div class="evtier' + (done ? " done" : "") + '" data-pct="' + tier.pct + '" data-open="' + (open ? 1 : 0) +
-        '" title="' + (open ? "Collapse" : "Expand") + ' this tier">' +
-        '<span class="evcar">' + (open ? "▾" : "▸") + '</span>' +
-        '<span class="evpct">' + tier.pct + '%</span><span class="evbar"></span>' +
-        '<span class="evcount">' + tOwned + "/" + tier.items.length + "</span></div>");
-      if (!open) continue;
-      for (const it of tier.items) {
-        const ovr = it.source === "manual" ? '<span class="ovr">[manual]</span>' : "";
-        html.push(
-          '<div class="row ' + (it.owned ? "owned" : "") + '" data-name="' + escapeAttr(it.name) + '" title="Click to toggle owned">' +
-            '<span class="mark">' + (it.owned ? "✔" : "") + "</span>" +
-            '<span class="name">' + escapeHtml(it.name) + ovr + "</span>" +
-          "</div>"
-        );
-      }
-    }
-    $("pool").innerHTML = html.join("");
-  }
+  // 🔑 renderEventTrack() lived here and drew the whole contribution ladder inside this panel.
+  // Removed with the branch above: the ladder belongs to the Event Tracker widget, which owns
+  // "what percent gets you what loot". Its per-tier collapse state (`evOpen`) went with it.
 
   function escapeHtml(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
   function escapeAttr(s){return s.replace(/"/g,"&quot;");}
@@ -2008,13 +1988,6 @@
     // The Physical Rewards "Received" disclosure reveals/hides the ticked-off items.
     if (e.target.closest('.grphead[data-grp="gotitems"]')) {
       physOpen = !physOpen;
-      if (current) render(current);
-      return;
-    }
-    // An event-ladder tier header toggles that tier's reward rows.
-    const tierEl = e.target.closest(".evtier");
-    if (tierEl) {
-      evOpen[tierEl.getAttribute("data-pct")] = tierEl.getAttribute("data-open") !== "1";
       if (current) render(current);
       return;
     }

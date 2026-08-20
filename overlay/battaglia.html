@@ -132,6 +132,42 @@
   .rate { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 500;
     color: var(--gold); }
 
+  /* Top-level view switcher (giver track vs each event). Sits above .standing, so it uses a
+     heavier weight than the rank .tab strip below it to read as the outer level. */
+  .vnav { flex: none; display: flex; gap: 5px; flex-wrap: wrap; padding: 8px 12px 0; }
+  .vt { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--cyan-dim); background: transparent; cursor: pointer;
+    padding: 4px 9px; border: 1px solid var(--divider); border-radius: 3px; transition: all .12s; }
+  .vt:hover { border-color: var(--cyan); color: var(--cyan-bright); }
+  .vt.on { background: rgba(var(--accent-rgb), 0.26); border-color: var(--cyan); color: var(--cyan-bright); }
+
+  /* Event contribution ladder: what percent pays what loot. */
+  .evbarwrap { position: relative; margin: 4px 12px 26px; }
+  .evtrack { height: 16px; border-radius: 9px; border: 1px solid rgba(var(--accent-rgb), 0.45);
+    background: rgba(0,0,0,0.35); overflow: hidden; }
+  .evfill { height: 100%; border-radius: 9px; background: rgba(var(--accent-rgb), 0.55);
+    box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.35); transition: width .4s; }
+  .evtick { position: absolute; top: 0; transform: translateX(-50%); display: flex;
+    flex-direction: column; align-items: center; pointer-events: none; }
+  .evtick .stem { width: 1px; height: 16px; background: rgba(var(--accent-rgb), 0.5); }
+  .evtick.hit .stem { background: var(--gold); }
+  .evtick .lbl { margin-top: 2px; font-family: var(--mono); font-size: 9px; color: var(--faint); }
+  .evtick.hit .lbl { color: var(--gold); font-weight: 700; }
+  .evrow { display: flex; align-items: baseline; gap: 9px; margin: 9px 12px 3px; padding-bottom: 3px;
+    border-bottom: 1px solid var(--divider); }
+  .evrow .pc { font-family: var(--mono); font-weight: 700; font-size: 13px; color: var(--gold);
+    font-variant-numeric: tabular-nums; min-width: 38px; }
+  .evrow.hit .pc { text-shadow: 0 0 10px rgba(var(--value-rgb), 0.4); }
+  .evrow .at { font-family: var(--mono); font-size: 9.5px; color: var(--faint); }
+  .evloot { margin: 0 12px 8px 59px; font-size: 11px; line-height: 1.55; color: var(--cyan-text); }
+  .evloot .it { display: block; }
+  .evloot .it.owned { color: var(--green); }
+  .evloot .unk { color: var(--faint); font-style: italic; }
+  .evmeta { margin: 10px 12px; padding: 8px 10px; font-size: 10.5px; line-height: 1.5;
+    color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.06);
+    border: 1px solid var(--divider); border-radius: 4px; }
+  .evwarn { color: var(--gold); }
+
   .tabs { flex: none; display: flex; gap: 4px; flex-wrap: wrap; padding: 7px 12px;
     border-bottom: 1px solid var(--divider); position: relative; z-index: 4; }
   .tab { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: var(--cyan-dim);
@@ -160,7 +196,12 @@
       <span class="h-title" id="who">Battaglia</span>
     </div>
 
-    <div class="standing">
+    <!-- Top-level view switcher: the giver's grind track, plus one tab per live event.
+         Distinct from #tabs below, which selects a RANK within the giver track. Hidden
+         entirely when there is only one view, so a single-track user sees no chrome. -->
+    <div class="vnav" id="vnav" style="display:none"></div>
+
+    <div class="standing" id="standingBox">
       <div class="k">Standing</div>
       <div class="now" id="stNow">—</div>
       <div class="rb"><div class="rb-fill" id="stFill" style="width:0%"></div><div class="rb-pct" id="stPct"></div></div>
@@ -194,6 +235,8 @@
   const GIVER = new URLSearchParams(location.search).get("giver") || "";
 
   let track = null;
+  let events = [];        // dynamic-event progress from /api/events (see EventProgress in missions.ts)
+  let view = "giver";     // "giver" = the grind track; otherwise an event id
   let mode = "rewards";   // "rewards" = the ship/item ladder, "missions" = per-rank mission list
   let tab = null;         // selected rank in mission mode
   let showDone = false;   // hide tiers already cleared, so the widget shows what is NEXT
@@ -203,9 +246,16 @@
   async function load() {
     try {
       const r = await fetch("/api/grind-track" + (GIVER ? "?giver=" + encodeURIComponent(GIVER) : ""), { cache: "no-store" });
-      if (!r.ok) { track = null; render(); return; }
-      track = await r.json();
-    } catch { /* keep the last good track */ }
+      // 🔑 `track = null` on a 404 must REACH the renderer. See render()'s comment: this widget
+      // used to leave the previous giver's ladder on screen forever in exactly this case.
+      track = r.ok ? await r.json() : null;
+    } catch { /* network blip — keep the last good track rather than blanking a working widget */ }
+    // Events are independent of the giver track: a 404 on one must not blank the other, so this
+    // is its own try/catch and its own state.
+    try {
+      const re = await fetch("/api/events", { cache: "no-store" });
+      if (re.ok) events = (await re.json()).events || [];
+    } catch { /* keep the last good event list */ }
     render();
   }
 
@@ -509,9 +559,50 @@
     }
   }
 
+  /* Only events worth a tab: a finished one is history, not a track to run. */
+  function liveEvents() { return events.filter((e) => e.status !== "past"); }
+
+  function renderVNav() {
+    const evs = liveEvents();
+    const nav = $("vnav");
+    // One view = no switcher. A lone "Battaglia" button is chrome that explains nothing.
+    if (!evs.length) { nav.style.display = "none"; nav.textContent = ""; return; }
+    nav.style.display = "";
+    nav.textContent = "";
+    const add = (id, label) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "vt" + (view === id ? " on" : "");
+      b.textContent = label;
+      b.addEventListener("click", () => { view = id; render(); });
+      nav.appendChild(b);
+    };
+    add("giver", (track && track.faction) ? track.faction : "Track");
+    for (const e of evs) add(e.id, e.label);
+  }
+
   function render() {
+    // If the selected event disappeared (it ended, or events.json changed under us), fall back
+    // rather than rendering nothing — a dangling selection is how a widget goes silently blank.
+    if (view !== "giver" && !liveEvents().some((e) => e.id === view)) view = "giver";
+    renderVNav();
+    if (view !== "giver") { renderEvent(events.find((e) => e.id === view)); return; }
+
+    $("standingBox").style.display = "";
+    setGiverControls(true);
     if (!track) {
-      $("emptyState") && ($("body").innerHTML = '<div class="empty">Battaglia missions aren\'t in the loaded dataset.<br>They arrive with the patch dataset.</div>');
+      // 🔴 THIS USED TO BE `$("emptyState") && (…)`, WHICH IS A DEAD GUARD AFTER THE FIRST
+      // SUCCESSFUL RENDER. #emptyState exists only in the initial markup and the first
+      // renderRewards()/renderMissions() wipes #body, so the element is gone forever after —
+      // and the message was then never written. A later 404 (the giver retires in a patch, or
+      // the dataset swaps mid-session) left the PREVIOUS giver's full ladder on screen, poll
+      // after poll, with the standing bar still showing a number. Reproduced against a live
+      // sidecar: 404-before-first-render showed the message correctly; 404-after showed a
+      // stale Battaglia ladder and no message at all. Concretely 4.10-shaped: the event's own
+      // giver, "Conerstone Developments", has no rep scope and 404s today.
+      $("tabs").style.display = "none";
+      $("standingBox").style.display = "none";
+      $("body").innerHTML = '<div class="empty">This track isn\'t in the loaded dataset.<br>It arrives with the patch dataset.</div>';
       return;
     }
     $("who").textContent = track.faction || "Battaglia";
@@ -527,6 +618,76 @@
     // 🔑 APPENDED, not a separate view (Sub, 2026-08-15). The ladder says what you are chasing;
     // this says what to run to get there. One screen, both questions.
     renderBestRate();
+  }
+
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  /**
+   * The event contribution ladder — WHAT PERCENT PAYS WHAT LOOT. Sub's ruling, 2026-08-19:
+   * this is the Event Tracker's job, and the Mission & BP Tracker keeps showing the actual
+   * mission report instead of being replaced by this.
+   *
+   * 🔑 EVERY NUMBER HERE IS HEDGED, because the game does not tell the client its own figure.
+   * Event points ride the same server-side ReputationService as reputation, so the percentage is
+   * accumulated from completions this widget witnessed and priced from data/events.json. It is a
+   * LOWER BOUND, it says so, and it points the player at the Journal for the real number.
+   */
+  /* The Rewards/Missions and Show-done buttons act on the GIVER track only, so they are hidden
+     in an event view rather than left sitting there doing nothing. */
+  function setGiverControls(shown) {
+    for (const id of ["modeBtn", "doneBtn"]) {
+      const row = $(id) && $(id).closest(".ws-row");
+      if (row) row.style.display = shown ? "" : "none";
+    }
+  }
+
+  function renderEvent(ev) {
+    if (!ev) return;
+    $("tabs").style.display = "none";
+    $("standingBox").style.display = "none";
+    setGiverControls(false);
+    $("who").textContent = ev.label;
+
+    const html = [];
+    const known = ev.pct != null;
+    // The bar only fills from a figure we can defend. With no total declared there is nothing
+    // honest to draw, so the track renders empty rather than implying zero progress.
+    html.push('<div class="evbarwrap"><div class="evtrack"><div class="evfill" style="width:' +
+      (known ? Math.max(0, Math.min(100, ev.pct)).toFixed(2) : 0) + '%"></div></div>');
+    for (const t of ev.tiers) {
+      html.push('<div class="evtick' + (t.reached ? " hit" : "") + '" style="left:' + t.pct + '%">' +
+        '<div class="stem"></div><div class="lbl">' + t.pct + '%</div></div>');
+    }
+    html.push("</div>");
+
+    // What we can say about the estimate, in plain words. Ordered worst-caveat-first so a
+    // reader who stops after one line has the important one.
+    const meta = [];
+    if (!known) {
+      meta.push("<b>Progress isn't known yet.</b> This event has no point total recorded, so no percentage is shown.");
+    } else {
+      meta.push("<b>" + ev.pct.toFixed(1) + "%</b> — about " + num(ev.points) + " of " + num(ev.total) +
+        ", counted from " + ev.contributions.length + " completion" + (ev.contributions.length === 1 ? "" : "s") + " this tracker saw.");
+    }
+    if (ev.unpriced > 0) {
+      meta.push('<span class="evwarn">' + ev.unpriced + " completion" + (ev.unpriced === 1 ? " is" : "s are") +
+        " not counted yet</span> — those contracts' point values haven't been measured, so the figure above is LOW.");
+    }
+    meta.push("The game never reports your event points to the app. Check your in-game Journal for the real number.");
+    html.push('<div class="evmeta">' + meta.join("<br>") + "</div>");
+
+    // The ladder. This is the part Sub asked for: percent -> loot.
+    for (const t of ev.tiers) {
+      html.push('<div class="evrow' + (t.reached ? " hit" : "") + '"><span class="pc">' + t.pct + "%</span>" +
+        (t.points != null ? '<span class="at">' + num(t.points) + "</span>" : "") + "</div>");
+      if (!t.rewards.length) {
+        html.push('<div class="evloot"><span class="unk">Reward not known yet</span></div>');
+        continue;
+      }
+      html.push('<div class="evloot">' + t.rewards.map((r) =>
+        '<span class="it' + (r.owned ? " owned" : "") + '">' + (r.owned ? "✔ " : "· ") + esc(r.name) + "</span>").join("") + "</div>");
+    }
+    $("body").innerHTML = html.join("");
   }
 
   $("modeBtn").addEventListener("click", () => { mode = mode === "rewards" ? "missions" : "rewards"; render(); });

@@ -1,0 +1,210 @@
+{
+  "schema": "sc-events/1",
+  "note": "Hand-maintained dynamic-event registry. CHANGELIST-INDEPENDENT on purpose: an event's tiers, per-contract point values and rewards are discovered by PLAYING, not by extracting the p4k, so this file must survive dataset regeneration the same way the site's blueprints-extra.json does — whose model it mirrors. Everything unknown is left EMPTY rather than guessed; an invented number here becomes a wrong percentage on Sub's stream.",
+  "howToFillIn": [
+    "1. `log` MUST equal the subject of the game's own notification, verbatim: \"Journal Entry Added: <log>: \". For Siege of Orison the game says \"Orison Relief\" — NOT \"Siege of Orison\", which is only the marketing name. Get this wrong and zero progress is ever recorded, silently.",
+    "2. `contractPrefixes` is what identifies an event's missions. 🔴 `generators` ALONE CANNOT: CIG uses the single generator \"TheBackpocket\" for BOTH Orison Relief (13 ORS_ contracts) and Return of XenoThreat (5 RoX_ contracts), so a generator match shows the wrong event's rewards. The key prefix is the only thing that separates them.",
+    "3. `contracts` maps a dataset mission key to the event points that contract awards. Add one line per contract as it is MEASURED in game. Do not interpolate.",
+    "4. `rewards` gets {tier, name, item} per item as discovered. `name` must equal the log's \"Received Blueprint: <name>\" EXACTLY — that string is what the owned check matches on.",
+    "5. `total` is the event points needed for 100%. Leave null until confirmed."
+  ],
+  "events": [
+    {
+      "id": "orison-relief",
+      "log": "Orison Relief",
+      "label": "Siege of Orison",
+      "status": "upcoming",
+      "patch": "4.10",
+      "note": "Every Orison Relief contract you run adds to YOUR personal progress, not the server's. Check your in-game Journal → Orison Relief for your current %.",
+      "contractPrefixes": [
+        "ORS_"
+      ],
+      "generators": [
+        "TheBackpocket"
+      ],
+      "total": 288000,
+      "totalSource": "Sub, from his in-game Journal on 4.10 PTU (2026-08-19). Personal, not server-wide — Return of XenoThreat behaved the same way.",
+      "tiers": [
+        15,
+        25,
+        43,
+        57,
+        80,
+        100
+      ],
+      "tiersSource": "Sub, read off the Journal's reward markers on 4.10 PTU (2026-08-19). These DIFFER from XenoThreat's 15/25/50/60/85/100 below — which is exactly why tiers are data and never constants.",
+      "contracts": {
+        "ORS_SA": 2000,
+        "ORS_MA_HaulingMedium": 6000,
+        "ORS_MA_HaulingSmall": 3000
+      },
+      "contractsProvenance": {
+        "ORS_SA": "MEASURED, isolated. Sub's Journal read 17,000; he completed exactly one contract (02:13:25Z Strike Nine Tails Squad, one journal entry) and it read 19,000. Delta 2,000 with nothing else in flight — the only value here obtained the clean way.",
+        "ORS_MA_HaulingMedium": "DERIVED, not isolated. Sub reported 6,000 for 'the mission I did' early on. With ORS_SA=2000 measured, the five completions on record (2x Medium, 1x Small, 2x Strike) satisfy 2M + S = 15,000, and M=6000 -> S=3000 fits BOTH Journal readings exactly (17,000 at four completions, 19,000 at five). Consistent and very likely right — but 2M + S = 15,000 is one equation in two unknowns, so M=5000/S=5000 also fits the arithmetic. Confirm by running ONE Medium alone and reading the delta.",
+        "ORS_MA_HaulingSmall": "DERIVED from the same system as Medium; not independently measured. Corroborated by payout ratio: Small pays 47,500 against Medium's 95,250, almost exactly half, mirroring 3,000 against 6,000. Confirm by running ONE Small alone."
+      },
+      "contractsNote": "🔑 The log carries NO amount — event points ride the server-side ReputationService (see journalEntry in missions-parser.ts). Every number here comes from Sub reading his in-game Journal and differencing. The ONLY sound method is: read the Journal, complete exactly ONE contract, read again — the delta is that contract. Values derived by solving a system are marked as such in contractsProvenance above and should be re-measured that way when convenient. Still unmeasured: ORS_BR, ORS_CA_Small/Medium/Large, ORS_Cr_Small/Medium/Large, ORS_MA_DeliveryPilot, ORS_MA_HaulingLarge, ORS_SWA.",
+      "journalReadings": [
+        { "at": "2026-08-20T~01:05Z", "total": 17000, "afterCompletions": ["ORS_MA_HaulingMedium", "ORS_MA_HaulingMedium", "ORS_MA_HaulingSmall", "ORS_SA"] },
+        { "at": "2026-08-20T02:13Z", "total": 19000, "afterCompletions": ["ORS_MA_HaulingMedium", "ORS_MA_HaulingMedium", "ORS_MA_HaulingSmall", "ORS_SA", "ORS_SA"] }
+      ],
+      "journalReadingsNote": "Kept so any future correction can be re-derived from the evidence instead of from these conclusions. Each entry is a Journal total and the completions on record at that moment (from Contract Complete lines in the 12473311 logs, one journal entry each).",
+      "rewards": [],
+      "rewardsNote": "EMPTY until observed in game. Note the three pool-bearing event contracts (ORS_Cr_Small/Medium/Large) all drop `TH-01 Propulsor` (item 1afc0022-b8fc-4174-8687-6dfc5b744b98, chance 1) per the 4.9 dataset — but that is a MISSION-pool drop, not a tier reward, so it does not belong here.",
+      "knownContractsNote": "All 13 ORS_ contracts are already in the shipped 4.9 dataset, verified by exact key match against real 4.10 markers. Givers: Conerstone Developments 6 (CIG's own typo for Cornerstone — match verbatim), Foxwell Enforcement 3, Covalex Independent Contractors 3, Ling Family Hauling 1. All carry rank:null and empty reputationGained, so none of them feed a normal rep track."
+    },
+    {
+      "id": "return-of-xenothreat",
+      "log": "Return of XenoThreat",
+      "label": "Return of XenoThreat",
+      "status": "past",
+      "patch": null,
+      "note": "Every XenoThreat mission you run adds to YOUR personal progress (not the server's). Check your in-game Journal → Return of XenoThreat for your current %.",
+      "contractPrefixes": [
+        "RoX_"
+      ],
+      "generators": [
+        "TheBackpocket"
+      ],
+      "total": null,
+      "tiers": [
+        15,
+        25,
+        50,
+        60,
+        85,
+        100
+      ],
+      "tiersSource": "Migrated verbatim from the XENOTHREAT_TIERS constant this file replaces; cross-checked item-for-item against subliminal.gg's blueprints-extra.json (25/25 names matched, all 25 UUIDs joined).",
+      "contracts": {},
+      "contractsNote": "Never measured — the event is over. Progress for it can no longer be accumulated, which is correct: `total` is null so no percentage is claimed.",
+      "rewards": [
+        {
+          "tier": 15,
+          "name": "Chiron Helmet Purgatory Camo",
+          "item": "9226de19-21c4-4d22-a9b9-04e8ab2d7d1a"
+        },
+        {
+          "tier": 15,
+          "name": "Chiron Core Purgatory Camo",
+          "item": "32efc648-0489-4293-ba06-57b715e18714"
+        },
+        {
+          "tier": 15,
+          "name": "Chiron Arms Purgatory Camo",
+          "item": "ac73e9b7-9bca-4537-9456-71700ee2fa70"
+        },
+        {
+          "tier": 15,
+          "name": "Chiron Legs Purgatory Camo",
+          "item": "6379240a-3e25-4ce5-ae4b-047d26097038"
+        },
+        {
+          "tier": 15,
+          "name": "Chiron Backpack Purgatory Camo",
+          "item": "649b433d-93ef-4fa2-85c2-c54eb5b44595"
+        },
+        {
+          "tier": 15,
+          "name": "BR-2 \"Purgatory Camo\" Shotgun",
+          "item": "342413af-8554-4c32-af63-1690dc948883"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Helmet Purgatory Camo",
+          "item": "bc29c9de-ceda-43da-a03d-d14f0e2cc113"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Core Purgatory Camo",
+          "item": "8ba85453-091a-4471-8be5-6bbc75487a33"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Arms Purgatory Camo",
+          "item": "8b26ce90-6d22-4d50-8828-b2b37a0491d4"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Legs Purgatory Camo",
+          "item": "93f14d45-b05f-4163-bb90-8a5f1f80043b"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Backpack Purgatory Camo",
+          "item": "91d97a2d-2b19-48a9-9246-b64567fe0e88"
+        },
+        {
+          "tier": 25,
+          "name": "S71 \"Purgatory Camo\" Rifle",
+          "item": "4f40a177-91d9-4a93-b2bb-c076938c6f0b"
+        },
+        {
+          "tier": 50,
+          "name": "Monde Helmet Purgatory Camo",
+          "item": "aa369676-fd5d-48cf-b8fc-f20dd89faec0"
+        },
+        {
+          "tier": 50,
+          "name": "Monde Core Purgatory Camo",
+          "item": "cc40d00a-15f4-437d-b0ba-1ba88289dd07"
+        },
+        {
+          "tier": 50,
+          "name": "Monde Arms Purgatory Camo",
+          "item": "f2bb659a-2f68-494a-b28f-328b76513dc5"
+        },
+        {
+          "tier": 50,
+          "name": "Monde Legs Purgatory Camo",
+          "item": "7f6f828f-1508-4e01-bbad-a60b59b7c24d"
+        },
+        {
+          "tier": 50,
+          "name": "Demeco \"Purgatory Camo\" LMG",
+          "item": "656afe86-dc53-4b83-8121-4084992d13df"
+        },
+        {
+          "tier": 50,
+          "name": "Warden Backpack Purgatory Camo",
+          "item": "5ca7d59d-99a5-4b49-8c32-60d8368e6181"
+        },
+        {
+          "tier": 60,
+          "name": "QuadraCell",
+          "item": "d89b535f-8187-4840-b5f4-3230c789dfd1"
+        },
+        {
+          "tier": 60,
+          "name": "QuadraCell MT",
+          "item": "18d542ac-ee74-411e-ad3e-e2e0b980c103"
+        },
+        {
+          "tier": 85,
+          "name": "FR-66",
+          "item": "0baaf20a-460e-4668-84f2-d09f9d31b492"
+        },
+        {
+          "tier": 85,
+          "name": "FR-76",
+          "item": "be9729fb-c973-4c49-93cb-6a6f7c877408"
+        },
+        {
+          "tier": 100,
+          "name": "NDB-26 Repeater",
+          "item": "fecbf518-e3e5-4e58-905a-729a02e86265"
+        },
+        {
+          "tier": 100,
+          "name": "NDB-28 Repeater",
+          "item": "2365f40c-fbd3-4859-ad80-f5cfbc305c83"
+        },
+        {
+          "tier": 100,
+          "name": "NDB-30 Repeater",
+          "item": "2f9fad1d-f591-4e69-ae64-af5ba0a883f7"
+        }
+      ]
+    }
+  ]
+}

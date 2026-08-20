@@ -243,6 +243,93 @@ export interface GrindTrack {
   rewards: { name: string; amount: number; rank: number | null; mission: string; received: boolean; unsure: boolean }[];
 }
 
+// ---- dynamic events (Siege of Orison / Return of XenoThreat) ----
+
+/**
+ * One dynamic event, as declared in the hand-maintained `data/events.json`.
+ *
+ * 🔑 **This is DATA, not code, and deliberately changelist-independent.** An event's tiers,
+ * per-contract point values and rewards are discovered by PLAYING, not by extracting the p4k, so
+ * the file has to survive dataset regeneration — the same reasoning as the site's
+ * `blueprints-extra.json`, whose model this mirrors. Sub's ruling, 2026-08-19: *"Each event
+ * tracker is going to have to be custom made depending on the event."* Orison Relief's tiers are
+ * `15/25/43/57/80/100`; Return of XenoThreat's were `15/25/50/60/85/100`. **They differ, which is
+ * the whole argument for tiers being data.**
+ */
+export interface EventDef {
+  id: string;
+  /** ⚠️ The subject of the game's OWN notification, verbatim: `Journal Entry Added: <log>: `.
+   *  For Siege of Orison the game says **"Orison Relief"**; "Siege of Orison" is only the
+   *  marketing name. Matching on the wrong one records zero progress, silently. */
+  log: string;
+  /** Display name. Intentionally allowed to differ from `log`. */
+  label: string;
+  status?: "upcoming" | "current" | "past";
+  patch?: string | null;
+  /** One-line note telling the player where to read their real % (their in-game Journal). */
+  note?: string;
+  /**
+   * Dataset-key prefixes that identify this event's missions (`["ORS_"]`, `["RoX_"]`).
+   *
+   * 🔴 **THIS, NOT `generators`, IS WHAT SEPARATES TWO EVENTS.** CIG ships ONE generator —
+   * `TheBackpocket` — for both Orison Relief (13 `ORS_` contracts) and Return of XenoThreat
+   * (5 `RoX_`). The shipped code matched on the generator alone, so **10 of the 13 Orison
+   * Relief contracts would have shown a player the XenoThreat reward ladder**, complete with a
+   * note telling them to check "Journal → Return of XenoThreat". Measured against the real 4.9
+   * dataset and real 4.10 markers, 2026-08-19.
+   */
+  contractPrefixes?: string[];
+  /** Kept for recognising an event mission whose key we never saw, and as documentation of the
+   *  shared generator. ⚠️ Never sufficient alone — see `contractPrefixes`. */
+  generators?: string[];
+  /** Event points needed for 100%, or null while unknown. */
+  total?: number | null;
+  /** Reward milestones as PERCENTAGES of `total`. */
+  tiers?: number[];
+  /** Dataset mission key -> event points that contract awards. Sparse on purpose: only
+   *  measured values belong here, because an interpolated one becomes a wrong percentage. */
+  contracts?: Record<string, number>;
+  /** Tier rewards, filled in as they are seen. `name` must equal the log's
+   *  `Received Blueprint: <name>` exactly, or the collected-tier bar can never light up. */
+  rewards?: { tier: number; name: string; item?: string | null }[];
+}
+
+/** One witnessed "this completion counted toward the event" observation. */
+export interface EventContribution {
+  /** Dataset mission key, when a marker resolved it. Null when only the title is known —
+   *  recorded anyway, because an unattributed contribution is still evidence the event fired. */
+  key: string | null;
+  title: string | null;
+  /** ISO-8601 from the log. */
+  at: string;
+  /** Points credited from `EventDef.contracts`, or null when that contract's value is not yet
+   *  measured. 🔑 Null is NOT zero — it is "we saw progress we cannot price", and the view
+   *  reports the two separately so an unpriced run never silently reads as no progress. */
+  points: number | null;
+}
+
+/** The overlay-facing view of one event's track (the Event Tracker widget's tab). */
+export interface EventProgress {
+  id: string;
+  label: string;
+  log: string;
+  status: "upcoming" | "current" | "past";
+  total: number | null;
+  /** Points from contributions we could price. A LOWER BOUND — same honesty policy as the rep
+   *  bar, and for the same reason: the game never tells the client the number. */
+  points: number;
+  /** Percent of `total`, or null when `total` is unknown. */
+  pct: number | null;
+  /** Contributions seen whose contract value is not yet in events.json. If this is non-zero the
+   *  percentage is an UNDER-count and the UI must say so. */
+  unpriced: number;
+  contributions: EventContribution[];
+  tiers: { pct: number; points: number | null; reached: boolean; rewards: { name: string; item: string | null; owned: boolean }[] }[];
+  /** True when the event declares no rewards yet — the widget shows "not yet known" rather
+   *  than an empty list that reads like "no rewards". */
+  rewardsUnknown: boolean;
+}
+
 export interface DatasetMission {
   title: string;
   generatorClass: string;
@@ -614,27 +701,13 @@ export interface EventTrack {
   tiers: { pct: number; items: { name: string; owned: boolean; source: BlueprintSource }[] }[];
 }
 
-// Return of XenoThreat reward ladder — mirrors the site's blueprints-extra.json.
-// Blueprint names are exactly as they appear in the log's "Received Blueprint" lines
-// so owned-status matches via the observed set. Rewards unlock at personal
-// contribution % (individual, not server-wide). Detection: the tracked mission's
-// generator is "TheBackpocket" or its contract starts with "RoX_".
-const XENOTHREAT_TIERS: { pct: number; items: string[] }[] = [
-  { pct: 15, items: ["Chiron Helmet Purgatory Camo", "Chiron Core Purgatory Camo", "Chiron Arms Purgatory Camo", "Chiron Legs Purgatory Camo", "Chiron Backpack Purgatory Camo", 'BR-2 "Purgatory Camo" Shotgun'] },
-  { pct: 25, items: ["Testudo Helmet Purgatory Camo", "Testudo Core Purgatory Camo", "Testudo Arms Purgatory Camo", "Testudo Legs Purgatory Camo", "Testudo Backpack Purgatory Camo", 'S71 "Purgatory Camo" Rifle'] },
-  { pct: 50, items: ["Monde Helmet Purgatory Camo", "Monde Core Purgatory Camo", "Monde Arms Purgatory Camo", "Monde Legs Purgatory Camo", 'Demeco "Purgatory Camo" LMG', "Warden Backpack Purgatory Camo"] },
-  { pct: 60, items: ["QuadraCell", "QuadraCell MT"] },
-  { pct: 85, items: ["FR-66", "FR-76"] },
-  { pct: 100, items: ["NDB-26 Repeater", "NDB-28 Repeater", "NDB-30 Repeater"] },
-];
-const XENOTHREAT_NOTE =
-  "Every XenoThreat mission you run adds to YOUR personal progress (not the server's). Check your in-game Journal → Return of XenoThreat for your current %.";
-
-/** A dynamic-event mission whose rewards come from the personal contribution ladder,
- *  not a blueprint pool (Return of XenoThreat). Keyed off the shared generator. */
-function isXenoThreatMission(contractKey: string | null, generator: string | null): boolean {
-  return generator === "TheBackpocket" || !!contractKey?.startsWith("RoX_");
-}
+// 🔴 The Return of XenoThreat ladder USED TO BE HARDCODED HERE, with a detector that returned
+// true for `generator === "TheBackpocket"`. That generator is shared: CIG uses it for BOTH
+// XenoThreat (5 `RoX_` contracts) and 4.10's Orison Relief (13 `ORS_`), so **10 of the 13 Orison
+// Relief contracts would have shown the XenoThreat reward ladder** and told the player to check
+// "Journal → Return of XenoThreat". Both ladders now live in the hand-maintained
+// `data/events.json` (see EventDef), matched on the CONTRACT-KEY PREFIX, which is the only thing
+// that actually separates two events sharing a generator.
 
 interface Persisted {
   observed: string[];
@@ -676,6 +749,11 @@ interface Persisted {
    *  The contract key is unambiguous; it's only known when a marker fired, so titles remain the
    *  fallback. */
   completedKeys?: Record<string, number>;
+  /** Dynamic-event `log` name -> the completions witnessed as counting toward it. Persisted for
+   *  the same reason repWitnessed is: each contribution is a one-time observation of something
+   *  the game never restates, so losing it loses the estimate permanently. Absent in older state
+   *  files, which reads correctly as "no event progress seen yet". */
+  eventContributions?: Record<string, EventContribution[]>;
 }
 
 /** Stored completed-mission record (newest first, capped). Deduped by missionId+at. */
@@ -1056,6 +1134,32 @@ export class MissionTracker extends EventEmitter {
   /** Reputation scope ladders (thresholds + rank names), loaded once from the bundled
    *  data/rep-scopes.json. Patch-independent (ladders change rarely); powers the rep bar. */
   private repScopes: Record<string, RepScope> = {};
+  /** Dynamic-event definitions from the bundled data/events.json. See EventDef. */
+  private events: EventDef[] = [];
+  /** event `log` name -> the completions witnessed as counting toward it. Persisted: the
+   *  estimate is an accumulation of things we saw once and can never re-observe, exactly like
+   *  repWitnessed. */
+  private eventContributions = new Map<string, EventContribution[]>();
+  /**
+   * Completions waiting to be claimed by the journal entry that follows them, OLDEST FIRST.
+   *
+   * 🔑 The journal line carries an ALL-ZEROS MissionId (measured: 4.10 PTU, 134 ms after the
+   * completion), so time proximity is the only join available — the same correlation the aUEC
+   * award already uses.
+   *
+   * 🔴 **A QUEUE, NOT A SINGLE SLOT — and real data is what proved it.** A single slot looked
+   * correct until this ran against Sub's live 4.10 log, which contains two contracts completing
+   * in the SAME MILLISECOND followed by two journal entries 115 ms apart:
+   *   23:05:01.981  Contract Complete: Orison Relief: Small Supply Haul   [1c862f01…]
+   *   23:05:01.981  Contract Complete: Orison Relief: Medium Supply Haul  [8ce13767…]
+   *   23:05:02.116  Journal Entry Added: Orison Relief
+   *   23:05:02.231  Journal Entry Added: Orison Relief
+   * The slot held only the second completion, so BOTH entries were credited to the Medium haul —
+   * 12,000 points from one 6,000 contract, with the Small haul's unknown value never recorded as
+   * unpriced. FIFO matching also settles the open question in the parser's doc comment: the
+   * journal fires **once per completion**, not once per batch (n is now 3, not 1).
+   */
+  private pendingEventCompletions: { key: string | null; title: string | null; missionId: string; atMs: number }[] = [];
   /** giver -> witnessed reputation on their primary org scope. `sum` accumulates the rep
    *  amount of each post-4.8 completion (a LOWER BOUND — pre-tracker history is gone).
    *  Live real-time completions add to it; verifyFromLogs rebuilds it authoritatively
@@ -1156,6 +1260,7 @@ export class MissionTracker extends EventEmitter {
     this.statePath = join(this.stateDir, "collected.json");
     this.loadState();
     this.loadRepScopes();
+    this.loadEvents();
   }
 
   /** Load the reputation rank ladders once from the bundled dataset. Optional — the rep
@@ -1167,6 +1272,33 @@ export class MissionTracker extends EventEmitter {
     } catch {
       this.repScopes = {};
     }
+  }
+
+  /** Load the hand-maintained dynamic-event registry. Same treatment as rep-scopes: loaded by
+   *  FIXED name (changelist-independent — see EventDef) and entirely optional, so a bundle
+   *  without it simply has no events rather than failing to start.
+   *
+   *  🔑 Read from `dataDir`, which is the WRITABLE user data dir seeded from the bundle. That is
+   *  what lets a value be corrected during a live event without shipping a release — the whole
+   *  point of the file (Sub: *"we'll update it like live in real time"*). `reloadEvents()` is
+   *  exposed so a correction can be picked up without restarting the app. */
+  private loadEvents(): void {
+    try {
+      const p = join(this.dataDir, "events.json");
+      const d = JSON.parse(readFileSync(p, "utf8")) as { events?: EventDef[] };
+      // Drop anything without the two fields every lookup depends on, rather than carrying a
+      // half-declared event that silently matches nothing.
+      this.events = (d.events ?? []).filter((e) => e && typeof e.log === "string" && e.log.trim() && typeof e.id === "string");
+    } catch {
+      this.events = [];
+    }
+  }
+
+  /** Re-read `events.json` from disk. For the live-event workflow: a point value or reward is
+   *  measured mid-session, the file is edited, and the track re-prices without a restart. */
+  reloadEvents(): void {
+    this.loadEvents();
+    this.emit("change");
   }
 
   // ---- dataset / patch ----
@@ -1625,6 +1757,42 @@ export class MissionTracker extends EventEmitter {
         }
         break;
       }
+      case "journalEntry": {
+        // A dynamic event counted a completion. See MissionEvent["journalEntry"] for the
+        // measurement this rests on and its n=1 caveat.
+        if (ev.jurisdiction) break;               // entering a jurisdiction — not event progress
+        if (!this.isLiveEnv) break;               // same rule as blueprints: PTU is not your record
+        const def = this.eventDefFor(ev.subject);
+        if (!def) break;                          // an event we do not model; nothing to record
+        const atMs = ev.ts ? Date.parse(ev.ts) : NaN;
+        // 🔑 Correlate by TIME and CLAIM THE OLDEST pending completion. The journal line has an
+        // all-zeros MissionId, so proximity is the only join — and because two contracts can
+        // complete in the same millisecond and emit one journal entry each (measured on Sub's
+        // 4.10 log), each entry must consume a DIFFERENT completion. FIFO is the right order:
+        // the entries arrive in the order the completions did.
+        // Window is the same REWARD_WINDOW_MS the aUEC award uses; the measured gap is 134 ms.
+        const idx = Number.isFinite(atMs)
+          ? this.pendingEventCompletions.findIndex((c) => Math.abs(atMs - c.atMs) <= REWARD_WINDOW_MS)
+          : -1;
+        // A contribution with no completion behind it is still recorded — it IS evidence the
+        // event fired — but with a null key, so it counts as unpriced rather than being credited
+        // to whatever finished minutes ago. Crediting it would invent points.
+        const claimed = idx >= 0 ? this.pendingEventCompletions.splice(idx, 1)[0] : null;
+        const key = claimed?.key ?? null;
+        const points = key && def.contracts ? (def.contracts[key] ?? null) : null;
+        const at = ev.ts ?? new Date().toISOString();
+        const list = this.eventContributions.get(def.log) ?? [];
+        // Dedupe on the log's own timestamp, which is stable across a re-seeded replay. Two
+        // genuine entries 115 ms apart have different stamps, so this cannot collapse them.
+        if (!list.some((c) => c.at === at)) {
+          list.push({ key, title: claimed?.title ?? null, at, points });
+          this.eventContributions.set(def.log, list);
+          this.saveState();
+          this.emit("change");
+        }
+        break;
+      }
+
       case "activeObjective":
         // Reserved for finer tracked-mission detection; markers already cover it.
         break;
@@ -1670,7 +1838,27 @@ export class MissionTracker extends EventEmitter {
     // card, and a completion whose card was suppressed still produced a receipt that has to
     // be fenced off. Keyed by missionId so the two completion signals (contractComplete and
     // MissionEnded) can't record the same mission twice with slightly different times.
-    if (!this.completedAtByMission.has(missionId)) this.completedAtByMission.set(missionId, completedAtMs);
+    // 🔑 Queue what just finished so a "Journal Entry Added: <event>" arriving in the next second
+    // can claim it. Recorded for EVERY completion (carded or not, real-time or replayed) because
+    // event progress is not gated on the card's freshness rule — a seeded log replay must credit
+    // the same contributions a live session would.
+    // ⚠️ Guarded on the SAME condition as completedAtByMission above: beginCompletion runs twice
+    // per mission (contractComplete AND MissionEnded both call it), so an unguarded push would
+    // queue every completion twice and let one journal entry claim a phantom.
+    if (!this.completedAtByMission.has(missionId)) {
+      this.completedAtByMission.set(missionId, completedAtMs);
+      const info = this.missions.get(missionId);
+      this.pendingEventCompletions.push({
+        key: info?.contractKey ?? null,
+        title: title ?? info?.title ?? null,
+        missionId,
+        atMs: completedAtMs,
+      });
+      // Bounded: only entries inside the correlation window can ever be claimed, so anything
+      // older is dead weight. Trimmed here rather than on read so a long session cannot grow it.
+      const floor = completedAtMs - REWARD_WINDOW_MS;
+      this.pendingEventCompletions = this.pendingEventCompletions.filter((c) => c.atMs >= floor);
+    }
     const info = this.missions.get(missionId);
     const aUEC =
       this.lastReward && Math.abs(this.lastReward.atMs - completedAtMs) <= REWARD_WINDOW_MS
@@ -2867,6 +3055,103 @@ export class MissionTracker extends EventEmitter {
     }));
   }
 
+  /**
+   * The dynamic event a mission belongs to, or null.
+   *
+   * 🔴 **PREFIX FIRST, AND A GENERATOR MATCH NEVER DECIDES BETWEEN TWO EVENTS.** `TheBackpocket`
+   * is shared by Orison Relief and Return of XenoThreat, so it can only ever answer "this is
+   * some event mission" — never which. When the key is known the prefix decides outright; when
+   * it is not, a generator match is accepted ONLY if exactly one declared event claims it, and
+   * otherwise we decline rather than guess. Declining costs a ladder; guessing shows the wrong
+   * event's rewards, which is what the old code did.
+   */
+  eventForMission(contractKey: string | null, generator: string | null): EventDef | null {
+    if (contractKey) {
+      const byPrefix = this.events.find((e) => (e.contractPrefixes ?? []).some((p) => contractKey.startsWith(p)));
+      if (byPrefix) return byPrefix;
+    }
+    if (generator) {
+      const claiming = this.events.filter((e) => (e.generators ?? []).includes(generator));
+      if (claiming.length === 1) return claiming[0];
+    }
+    return null;
+  }
+
+  /** The event a journal-entry subject belongs to, or null. Exact match on the game's own
+   *  string, case- and whitespace-insensitive only — deliberately NOT fuzzy, because a loose
+   *  match here credits one event's progress to another. */
+  private eventDefFor(subject: string): EventDef | null {
+    const want = subject.trim().toLowerCase();
+    return this.events.find((e) => e.log.trim().toLowerCase() === want) ?? null;
+  }
+
+  /** Every declared event, newest-relevant first (current → upcoming → past). */
+  allEventProgress(): EventProgress[] {
+    const rank = { current: 0, upcoming: 1, past: 2 } as const;
+    return this.events
+      .map((e) => this.eventProgress(e.id))
+      .filter((t): t is EventProgress => !!t)
+      .sort((a, b) => rank[a.status] - rank[b.status] || a.label.localeCompare(b.label));
+  }
+
+  /**
+   * One event's track for the widget.
+   *
+   * 🔑 **The percentage is a LOWER BOUND, and the view says so in two separate ways.** The game
+   * never tells the client the number (event points ride the same server-side
+   * `ReputationService` as reputation), so this accumulates only what it witnessed — exactly the
+   * policy the rep bar already uses. `unpriced` counts contributions whose contract value is not
+   * yet in `events.json`; while it is non-zero the percentage is definitely an under-count and
+   * the widget must not present it as a reading.
+   */
+  eventProgress(id: string): EventProgress | null {
+    const def = this.events.find((e) => e.id === id);
+    if (!def) return null;
+    const contributions = this.eventContributions.get(def.log) ?? [];
+    let points = 0;
+    let unpriced = 0;
+    for (const c of contributions) {
+      // Re-price on every build rather than trusting the stored number: a value measured later
+      // and added to events.json must retroactively fix contributions recorded before it was
+      // known. That is the whole live-update workflow.
+      const live = c.key && def.contracts ? def.contracts[c.key] : undefined;
+      const p = live ?? c.points;
+      if (typeof p === "number") points += p;
+      else unpriced++;
+    }
+    const total = typeof def.total === "number" && def.total > 0 ? def.total : null;
+    const pct = total ? Math.min(100, (points / total) * 100) : null;
+    const rewards = def.rewards ?? [];
+    const tiers = (def.tiers ?? []).slice().sort((a, b) => a - b).map((t) => {
+      const rw = rewards.filter((r) => r.tier === t).map((r) => ({
+        name: r.name,
+        item: r.item ?? null,
+        owned: this.isOwned(r.name).owned,
+      }));
+      return {
+        pct: t,
+        points: total ? Math.round((t / 100) * total) : null,
+        // Only ever claim a tier is reached off a priced estimate. With `unpriced` outstanding
+        // the estimate is low, so this under-claims — which is the correct direction to be wrong.
+        reached: pct != null && pct >= t,
+        rewards: rw,
+      };
+    });
+    return {
+      id: def.id,
+      label: def.label,
+      log: def.log,
+      status: def.status ?? "current",
+      total,
+      points,
+      pct,
+      unpriced,
+      contributions: contributions.slice().sort((a, b) => b.at.localeCompare(a.at)),
+      tiers,
+      rewardsUnknown: rewards.length === 0,
+    };
+  }
+
   giverTrack(giver: string): GrindTrack | null {
     if (!this.dataset) return null;
     const want = norm(giver);
@@ -3060,7 +3345,7 @@ export class MissionTracker extends EventEmitter {
     const m = this.datasetMission(missionId);
     if (m && (m.payout || (m.items?.length ?? 0) > 0)) return true;
     const info = this.missions.get(missionId);
-    return isXenoThreatMission(info?.contractKey ?? null, info?.generator ?? null);
+    return !!this.eventForMission(info?.contractKey ?? null, info?.generator ?? null);
   }
 
   /** The mission whose pool to show: the manual pick if set; otherwise the newest
@@ -3700,17 +3985,23 @@ export class MissionTracker extends EventEmitter {
     // observed set (the log's "Received Blueprint" lines). Keyed off pool CONTENT —
     // since schema/2 an event mission can have a (pool-less) dataset entry.
     let eventTrack: EventTrack | null = null;
-    if (pools.length === 0 && isXenoThreatMission(key, tracked?.generator ?? null)) {
+    const evDef = pools.length === 0 ? this.eventForMission(key, tracked?.generator ?? null) : null;
+    if (evDef) {
+      // Group the flat reward list back into tiers. An event with no rewards recorded yet
+      // (Orison Relief, until they are seen in game) yields NO tiers — so the panel says the
+      // ladder is not known rather than drawing an empty one that reads as "no rewards".
+      const byTier = new Map<number, { name: string; owned: boolean; source: BlueprintSource }[]>();
+      for (const r of evDef.rewards ?? []) {
+        const o = this.isOwned(r.name);
+        const row = { name: r.name, owned: o.owned, source: o.source };
+        const cur = byTier.get(r.tier);
+        if (cur) cur.push(row);
+        else byTier.set(r.tier, [row]);
+      }
       eventTrack = {
-        name: "Return of XenoThreat",
-        note: XENOTHREAT_NOTE,
-        tiers: XENOTHREAT_TIERS.map((t) => ({
-          pct: t.pct,
-          items: t.items.map((name) => {
-            const o = this.isOwned(name);
-            return { name, owned: o.owned, source: o.source };
-          }),
-        })),
+        name: evDef.label,
+        note: evDef.note ?? `Every ${evDef.label} mission you run adds to YOUR personal progress (not the server's). Check your in-game Journal for your current %.`,
+        tiers: [...byTier.entries()].sort((a, b) => a[0] - b[0]).map(([pct, items]) => ({ pct, items })),
       };
     }
 
@@ -3815,6 +4106,7 @@ export class MissionTracker extends EventEmitter {
       this.completedTitles = new Map(Object.entries(data.completedTitles ?? {}));
       this.completedKeys = new Map(Object.entries(data.completedKeys ?? {}));
       this.missionHistory = (data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
+      this.eventContributions = new Map(Object.entries(data.eventContributions ?? {}));
     } catch {
       /* first run */
     }
@@ -3833,6 +4125,7 @@ export class MissionTracker extends EventEmitter {
       completedKeys: Object.fromEntries(this.completedKeys),
       observedAt: Object.fromEntries(this.observedAt),
       missionHistory: this.missionHistory,
+      eventContributions: Object.fromEntries(this.eventContributions),
     };
     try {
       if (!existsSync(this.stateDir)) mkdirSync(this.stateDir, { recursive: true });

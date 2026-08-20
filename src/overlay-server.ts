@@ -1482,6 +1482,15 @@ function seedFromRotatedLog(): void {
     let applied = 0;
     for (const line of readFileSync(newest.p, "utf8").split(/\r?\n/)) {
       if (!line) continue;
+      // 🔴 THIS LINE IS THE ENVIRONMENT GATE, AND IT WAS MISSING. `seedTrackerFromLog` calls
+      // detectPatch per line; this function did not — so a rotated log replayed here never set
+      // `logEnv`, and `isLiveEnv` (null => LIVE) returned true for a PTU session. Every receipt
+      // in that backup was folded into the real collection, which SiteSync then pushes with
+      // `replace: true`. Caught 2026-08-19 against Sub's own 4.10 PTU logs: the rotated seed
+      // recorded event contributions from an `Environment: PTU` session while the live watcher
+      // had never read a header. The project rule already says LIVE-only has to be enforced in
+      // more than one place; this was the place that was missed.
+      tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
       if (ev) { tracker.apply(ev); hauling.apply(ev); applied++; }
     }
@@ -3438,6 +3447,17 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const track = tracker.giverTrack(giver);
     res.writeHead(track ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(track ?? { error: "unknown_giver", giver }));
+    return;
+  }
+
+  // Dynamic-event progress (the Event Tracker's per-event tabs), from data/events.json.
+  // Always 200 with a list — an empty list is a legitimate answer ("no events declared") and
+  // must not be reported as an error the widget then has to distinguish from a real failure.
+  // ?reload=1 re-reads events.json so a point value measured mid-event applies without a restart.
+  if (url?.startsWith("/api/events") && req.method === "GET") {
+    if (new URL(req.url ?? "", "http://x").searchParams.get("reload") === "1") tracker.reloadEvents();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ events: tracker.allEventProgress() }));
     return;
   }
 
