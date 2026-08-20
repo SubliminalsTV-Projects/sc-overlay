@@ -115,7 +115,11 @@
              name where it has always been. Moving the whole of `.rt` also worked but cost every
              stop two extra lines of height for no benefit. */
           const under = document.createElement("div");
-          under.className = "rt under";
+          // ⚠️ Its OWN class, NOT "rt". Reusing .rt put a second .rt in every row, and the suite
+          // selects the travel time with querySelector(".rt") — which then matched this block
+          // instead (it sits inside .mid, earlier in document order) and read a tonnage where
+          // it expected a duration. Overloading a class the tests select on is the bug.
+          under.className = "tons";
           // ⚠️ ELEMENT children only. The travel time is set with `rt.textContent = …`, so it is a
           // TEXT NODE sibling of .ld/.hold — a childNodes sweep drags it down too, which is
           // exactly what the first attempt did (the time vanished from the name row).
@@ -322,7 +326,11 @@
              name where it has always been. Moving the whole of `.rt` also worked but cost every
              stop two extra lines of height for no benefit. */
           const under = document.createElement("div");
-          under.className = "rt under";
+          // ⚠️ Its OWN class, NOT "rt". Reusing .rt put a second .rt in every row, and the suite
+          // selects the travel time with querySelector(".rt") — which then matched this block
+          // instead (it sits inside .mid, earlier in document order) and read a tonnage where
+          // it expected a duration. Overloading a class the tests select on is the bug.
+          under.className = "tons";
           // ⚠️ ELEMENT children only. The travel time is set with `rt.textContent = …`, so it is a
           // TEXT NODE sibling of .ld/.hold — a childNodes sweep drags it down too, which is
           // exactly what the first attempt did (the time vanished from the name row).
