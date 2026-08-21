@@ -245,6 +245,30 @@ const pinnedTracked = buildHaulingPlan(viewOf(byId("haul-tracked")), data, {
 });
 check("🔑 a pin never overrides the game's own number", pinnedTracked.contracts[0]?.scu === 81);
 
+// ── a sibling order's cap beats the biggest box in the game ──────────────────
+// 🔴 Sub, 4.10 PTU: "every single one of these cargo grids is full, but I only have 100 and
+// something SCU on board." When an order declares no maxContainerSize the guess jumped to the
+// largest box that exists (32). ORS_MA_HaulingMedium is the mixed case — Iron (no cap) and
+// Medical Supplies (cap 8) — so the Iron leg took 32 and a 96 SCU load partitioned to 3x32.
+// A Hull B cargo grid is 2x8x2 = EXACTLY 32 SCU, so each box filled a whole grid by itself.
+{
+  const orders = data.contract("ORS_MA_HaulingMedium")?.orders ?? [];
+  // Non-empty guard first: everything below describes this contract's shape, and an empty list
+  // would make the interesting assertions unreachable rather than false.
+  check("the 4.10 event haul is in the bundled order data", orders.length > 0, String(orders.length));
+  check("...and it is the MIXED case: one order declares a cap, one does not",
+    orders.some((o) => o.maxContainerSize == null) && orders.some((o) => o.maxContainerSize != null),
+    JSON.stringify(orders.map((o) => [o.commodity, o.maxContainerSize ?? null])));
+  check("...the contract's own declared cap is 8", data.maxBoxScu("ORS_MA_HaulingMedium") === 8,
+    String(data.maxBoxScu("ORS_MA_HaulingMedium")));
+  // The number that made this visible, asserted so the reasoning cannot rot: one box of the
+  // GLOBAL largest size fills an entire Hull B grid.
+  const largest = Math.max(...boxSetFrom(data.boxes()).map((b) => b.scu));
+  check("...and the global largest box (32) is exactly one Hull B grid, 2x8x2",
+    largest === 2 * 8 * 2, String(largest));
+  check("...so the contract's cap must be preferred over it", data.maxBoxScu("ORS_MA_HaulingMedium")! < largest);
+}
+
 // ── cargo already in the hold ──────────────────────────────────────────────
 // Its pickup objective has COMPLETED, so there is nothing left to fly to for it — but the drop-off
 // still has to happen. An earlier cut dropped the whole leg from the route the moment its pickup
