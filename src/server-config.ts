@@ -146,6 +146,8 @@ export interface Config {
   haulingOpen: boolean;
   /** Remembers whether the Log View widget was left open, so it's restored on launch. */
   logViewOpen: boolean;
+  /** Remembers whether the Verse Finder widget was left open, so it's restored on launch. */
+  verseFinderOpen: boolean;
   /** Ship class the player picked in the Hauling widget, overriding what the log saw. Empty =
    *  trust the log. Persisted because the log's ship signal is not guaranteed — a relog, or
    *  taking off in a ship the vehicle-control lines never named, leaves it blank. */
@@ -390,6 +392,7 @@ export const DEFAULTS: Config = {
   battagliaOpen: false,
   haulingOpen: false,
   logViewOpen: false,
+  verseFinderOpen: false,
   haulingShip: "",
   haulingPlaces: {},
   haulingSeenPlaces: [],

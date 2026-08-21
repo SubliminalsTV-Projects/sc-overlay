@@ -289,11 +289,28 @@
           + '<div class="ss-n' + (cls ? " " + cls : "") + '">' + n + "</div>"
           + '<div class="ss-l">' + escapeHtml(label) + "</div></div>";
         const na = '<span class="rt-na">—</span>';
+        // 🔴 EVERY MONEY FIGURE HERE IS AN ESTIMATE NOW, AND HAS TO LOOK LIKE ONE.
+        // The game stopped emitting "Awarded N aUEC" — measured on a real 15.5 MB session log:
+        // zero occurrences, against 59 `Contract Complete` in the same file — so these numbers are
+        // the contracts' LISTED payouts, and roughly two thirds of the ones a player meets are
+        // modelled off a fitted curve that is wrong about one time in four. A bare "148k" would be
+        // read as "this is what you were paid", which is precisely the false precision this panel
+        // exists to avoid. So: a "~" on the figure, and the basis in the tooltip.
+        const est = !!e.aUECEstimated;
+        const tilde = (s) => (est && s !== na ? "~" + s : s);
+        // One sentence, reused by all three money stats, so the caveat cannot drift between them.
+        const basis = !est ? ""
+          : " These are the contracts' listed payouts, not amounts the game reported — current"
+            + " patches no longer log what a contract paid."
+            + (e.aUECModelled
+                ? " Some are estimated from a fitted reward curve and can be well out."
+                : "")
+            + (e.aUECFrom ? " Counted from " + e.aUECFrom + " of " + e.missions + " contracts." : "");
         html += '<div class="ra-sec"><div class="ra-h">This session</div>'
           + '<div class="ss">'
           + stat(e.missions, "Contracts")
-          + stat(e.aUECTotal != null ? compactNum(e.aUECTotal) : na, "aUEC", "gold",
-              "Total from missions whose payout the game actually logged.")
+          + stat(tilde(e.aUECTotal != null ? compactNum(e.aUECTotal) : na), "aUEC", "gold",
+              "What this session's contracts are listed as paying." + basis)
           + stat(blueprints.length, "Blueprints", "green")
           + "</div>"
           // Second row, same shape: what that works out to per hour.
@@ -315,11 +332,12 @@
               + (e.repPace != null
                   ? ", and the pace this whole grind is trending at (" + e.repPace.toLocaleString() + "/hr)."
                   : "."))
-          + stat(rateWithPace(e.aUECLastHr, e.aUECPace, na), "aUEC / hr", "gold",
-              "aUEC in the last 60 minutes, from missions with a known payout"
+          + stat(tilde(rateWithPace(e.aUECLastHr, e.aUECPace, na)), "aUEC / hr", "gold",
+              "aUEC in the last 60 minutes, from contracts with a listed payout"
               + (e.aUECPace != null
                   ? ", and the pace this whole grind is trending at (" + e.aUECPace.toLocaleString() + "/hr)."
-                  : "."))
+                  : ".")
+              + basis)
           + "</div></div>";
       }
     }

@@ -60,7 +60,7 @@ const GROUPING = `(async () => {
   // 14 = the 12 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
   // Bump this deliberately when a widget is added — it is the one assertion that notices a
   // registry entry going missing, which would otherwise just look like a widget quietly absent.
-  ok("registry has 14 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 14, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
+  ok("registry has 15 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 15, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
   ok("starts ungrouped", GROUPS.length === 0, GROUPS.length);
   const party = WBY.party, mining = WBY.mining, notepad = WBY.notepad;
   ok("test widgets shown", shown(party) && shown(mining) && shown(notepad));
@@ -2238,6 +2238,143 @@ const LIFECYCLE = `(async () => {
 // leaks with no page left to lower it. notepad/party/chat always did this via onHide; twitchChat
 // and webView defined the release function and the canvas never called it. Negative-controlled:
 // removing twitchChat's onHide turns "hiding it releases the grab" red.
+// ── Suite: Verse Finder — the honesty rules, on screen ───────────────────────
+// Drives the REAL page against the LIVE sidecar, because every rule here is about what the player
+// actually reads. The assertions are the constraints Sub set, not the plumbing:
+//   · a result names its TERMINAL and never just a price;
+//   · every shop row carries the age of its OWN reading;
+//   · a multi-shop item shows the spread rather than one confident number;
+//   · the footer says which tier the table came from, and that stock is unknowable.
+// Negative-controlled three ways — see the commit message.
+const VERSEFINDER = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400); // let status() land before driving the box
+
+  const box = document.getElementById("q");
+  const search = async (v) => {
+    box.value = v;
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(700); // debounce + the sidecar round trip
+  };
+  const items = () => [...document.querySelectorAll("#results .item")];
+  const shopRows = () => [...document.querySelectorAll("#results .shop")];
+
+  // Nothing typed is not the same as nothing found — the empty state must invite, not report.
+  ok("with an empty box it prompts rather than listing everything",
+     items().length === 0 && !!document.querySelector("#results .empty"),
+     items().length + " items");
+
+  await search("cannon");
+  ok("a real search returns items", items().length > 0, items().length);
+  ok("...and every one of them names at least one shop",
+     items().every((el) => el.querySelectorAll(".shop").length > 0));
+
+  // 🔴 THE CORE RULE. A price with no place is the thing this widget must never show.
+  ok("every shop row names its TERMINAL",
+     shopRows().length > 0 && shopRows().every((r) => {
+       const w = r.querySelector(".where");
+       return w && w.textContent.trim().length > 0;
+     }), shopRows().length + " rows");
+  ok("every shop row carries a price",
+     shopRows().every((r) => {
+       const p = r.querySelector(".price");
+       return p && /[0-9]/.test(p.textContent);
+     }));
+  // 🔴 Per-quote age. Not the table's age, not an average — this reading's own.
+  // ⚠️ The DETAIL is looked up defensively on purpose. Reaching straight through
+  // shopRows()[0].querySelector(".age").textContent throws when the element is missing, which is
+  // exactly the regression this line exists to catch — and a throw kills the suite instead of
+  // failing it, reporting 4/4 passed for a run that never reached the other twelve assertions.
+  // Found by the negative control, which is the only reason it is written this way.
+  const ageText = () => {
+    const r = shopRows()[0];
+    const a = r ? r.querySelector(".age") : null;
+    return a ? a.textContent : "(no .age element)";
+  };
+  ok("every shop row carries the age of its OWN reading",
+     shopRows().length > 0 && shopRows().every((r) => {
+       const a = r.querySelector(".age");
+       return a && a.textContent.trim().length > 0;
+     }), ageText());
+
+  // 🔴 "The price of X" does not exist: 68% of multi-shop items vary by shop. Any item whose
+  // low and high differ must SAY so rather than letting the first row read as the price.
+  const spread = items().filter((el) => {
+    const m = el.querySelector(".more");
+    return m && m.textContent.indexOf("depending where you buy") > -1;
+  });
+  const multi = items().filter((el) => el.querySelectorAll(".shop").length > 1);
+  ok("the result set contains multi-shop items at all", multi.length > 0, multi.length);
+  ok("...and at least one states its spread instead of one number",
+     spread.length > 0, spread.length + " of " + multi.length);
+
+  // A truncated shop list must never read as "this is everywhere it is sold".
+  const truncated = items().filter((el) => {
+    const m = el.querySelector(".more");
+    return m && m.textContent.indexOf("more shop") > -1;
+  });
+  ok("a long shop list says how many were left out",
+     truncated.length === 0 || truncated.every((el) => el.querySelectorAll(".shop").length === 5),
+     truncated.length + " truncated");
+
+  // 🔴 The provenance footer. Sub's requirement is that the user knows when they are on a
+  // fallback, and only the screen they are looking at can say so.
+  const src = document.getElementById("src");
+  ok("the footer names where the table came from", !!src && src.textContent.trim().length > 4,
+     src ? src.textContent : "none");
+  ok("...and it says one of the three tiers, not something vague",
+     /UEX|offline/.test(src.textContent), src.textContent);
+  // 🔴 There is no stock field in the source AT ALL, so the panel says so rather than letting a
+  // player assume a listed shop has one on the shelf.
+  const ns = document.getElementById("nostock");
+  // ⚠️ Asserted on MEANING, not on the exact phrase. The first wording was "stock unknown" and Sub
+  // had to ask what it meant, so the words are expected to keep changing; what must not change is
+  // that the panel says a listed shop might not have the item and explains why on hover.
+  ok("the panel warns that a listed shop may not have it",
+     !!ns && /sold out|stock|shelf/i.test(ns.textContent), ns ? ns.textContent : "none");
+  ok("...and explains why on hover", !!ns && (ns.title || "").length > 60, (ns && ns.title || "").slice(0, 40));
+
+  // 🔴 The age pill's colour band. Asserted as a CONSISTENCY rule between the number rendered and
+  // the class chosen, rather than against hardcoded expectations — the table ages every day, so a
+  // test that expected specific colours would rot within a week.
+  await search("cannon");
+  const pills = [...document.querySelectorAll("#results .age")];
+  const BANDS = ["fresh", "recent", "stale", "ancient"];
+  ok("every age pill carries exactly one band class", pills.length > 0 && pills.every((p) => {
+    const hit = BANDS.filter((b) => p.classList.contains(b));
+    return hit.length === 1;
+  }), pills.length + " pills");
+  // Parse the rendered text back and check it agrees with the band it was given.
+  const bandOf = (txt) => {
+    const m = /^(\\d+)(d|mo)$/.exec(txt.trim());
+    if (txt.trim() === "today") return "fresh";
+    if (!m) return null;
+    const d = m[2] === "mo" ? Number(m[1]) * 30 : Number(m[1]);
+    return d <= 7 ? "fresh" : d <= 45 ? "recent" : d <= 100 ? "stale" : "ancient";
+  };
+  const checked = pills.map((p) => ({ want: bandOf(p.textContent), got: BANDS.find((b) => p.classList.contains(b)) }))
+    .filter((x) => x.want !== null);
+  ok("the band really matches the age it prints", checked.length > 0 && checked.every((x) => x.want === x.got),
+     checked.length + " checked, first mismatch: "
+     + (checked.find((x) => x.want !== x.got) ? JSON.stringify(checked.find((x) => x.want !== x.got)) : "none"));
+
+  // 🔑 Price and age share one column (Sub, 2026-08-21) — they answer the same question together.
+  const cols = [...document.querySelectorAll("#results .pricecol")];
+  ok("price and age sit in ONE column element", cols.length > 0
+     && cols.every((c) => !!c.querySelector(".price") && !!c.querySelector(".age")), cols.length + " columns");
+
+  // A miss must distinguish "no shop known" from "no such item" — the former is the common case.
+  await search("zzzqqxwv");
+  const empty = document.querySelector("#results .empty");
+  ok("a miss renders the empty state", !!empty, empty ? "yes" : "no");
+  ok("...and does NOT flatly claim the item does not exist",
+     !!empty && /No shop known/i.test(empty.textContent), empty ? empty.textContent.slice(0, 60) : "");
+
+  return out;
+})()`;
+
 // ── Suite: Log View releases the canvas grab ─────────────────────────────────
 // Its own suite rather than a third key in TYPINGGRAB, because that loop drives a "type mode"
 // BUTTON and this widget has none — focus is taken by clicking into the filter box, which is the
@@ -5074,6 +5211,7 @@ app.whenReady().then(async () => {
     fails += await run("logView: the filter box releases the canvas grab", LOGVIEWGRAB,
       path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("logView: raw lines, the caps, the filter, the freeze", LOGVIEW, null, null, "logview.html");
+    fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
