@@ -463,6 +463,17 @@ export interface EarningRates {
   /** Total aUEC earned this session from KNOWN-payout missions (null if none known). A total,
    *  not a rate — the idle scoreboard shows what the session was worth. */
   aUECTotal: number | null;
+  /** 🔴 True when any money figure this session came from the contract's LISTED payout rather than
+   *  a logged award. Since current patches stopped emitting "Awarded N aUEC" entirely, this is
+   *  true whenever there is a figure at all — so the UI must always be prepared to mark it. */
+  aUECEstimated: boolean;
+  /** True when any listed payout used above is itself MODELLED off the fitted curve rather than
+   *  read from the game files. Wrong about one time in four, so it earns a stronger caveat than
+   *  `aUECEstimated` alone. */
+  aUECModelled: boolean;
+  /** How many of this session's completions contributed a money figure. Shown so a total drawn
+   *  from 3 of 20 contracts cannot read as the whole session's earnings. */
+  aUECFrom: number;
   /** Total reputation earned this session. */
   repTotal: number;
   /** Completions counted in the current grind session (0 = nothing to rate yet). */
@@ -785,6 +796,52 @@ interface MissionHistoryEntry {
   at: string;
 }
 
+/**
+ * Collapse the several log signals one completion emits into one history entry.
+ *
+ * Shared by the on-disk repair and expressed by the same rule the insert-side dedupe uses: two
+ * entries are the same completion when they are close in time AND agree on mission id — or, where
+ * one signal carries no id, on title. Never on the window alone: two DIFFERENT contracts can
+ * genuinely finish in the same millisecond, and merging those would lose a completion.
+ *
+ * 🔑 The SURVIVOR is the richer entry, not the earlier one. The `end` signals carry no title and
+ * the `contractComplete` does, so keeping whichever arrived first would strip half the history of
+ * its names.
+ */
+function dedupeHistory(rows: MissionHistoryEntry[]): MissionHistoryEntry[] {
+  const out: MissionHistoryEntry[] = [];
+  for (const r of [...rows].sort((a, b) => Date.parse(a.at) - Date.parse(b.at))) {
+    const t = Date.parse(r.at);
+    if (!Number.isFinite(t)) continue;
+    const hit = out.find((o) => {
+      const dt = Math.abs(Date.parse(o.at) - t);
+      if (!Number.isFinite(dt) || dt > COMPLETION_SIGNAL_MS) return false;
+      if (r.missionId && o.missionId) return o.missionId === r.missionId;
+      return !!r.title && o.title === r.title;
+    });
+    if (!hit) { out.push({ ...r }); continue; }
+    if (r.title && !hit.title) hit.title = r.title;
+    if (r.missionId && !hit.missionId) hit.missionId = r.missionId;
+    if (r.aUEC != null && hit.aUEC == null) hit.aUEC = r.aUEC;
+  }
+  return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at)); // newest first, as stored
+}
+
+/** One number for what a contract pays, from the dataset's `{min, max, currency}`.
+ *
+ *  ⚠️ `min` is often 0, which the dataset documents as "up to max" rather than a real floor — so a
+ *  midpoint of (0 + max) / 2 would halve every such payout. A positive min is a genuine range and
+ *  gets the midpoint; anything else falls back to `max`.
+ *
+ *  ⚠️ Currency is UEC or **MER (prison merits)**. MER is not money and must never be summed into
+ *  an aUEC total, so anything that is not UEC returns null. */
+function payoutMid(p?: { min: number | null; max: number; currency: string | null } | null): number | null {
+  if (!p || typeof p.max !== "number" || !(p.max > 0)) return null;
+  if (p.currency && p.currency.toUpperCase() !== "UEC") return null;
+  const min = typeof p.min === "number" && p.min > 0 ? p.min : null;
+  return min !== null && min < p.max ? Math.round((min + p.max) / 2) : p.max;
+}
+
 /** "Geist Armor Arms" matches an observed "Geist Armor Arms Whiteout" (variant suffix). */
 function norm(s: string): string {
   return s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -1019,6 +1076,13 @@ const COMPLETION_FRESH_MS = 90_000;
 /** A gap between completions longer than this starts a fresh "grind session" for the idle
  *  per-hour rates, so a break doesn't drag the extrapolated pace down. */
 const SESSION_GAP_MS = 20 * 60_000;
+/** How far apart two log signals may be and still describe the SAME completion.
+ *
+ *  The measured spread is 7ms (MissionEnded/EndMission at .795, the contractComplete notification
+ *  at .802), so this is enormously generous — deliberately, because the cost of being too tight is
+ *  a silently doubled scoreboard and the cost of being too loose is bounded by the id check that
+ *  guards it. Nothing merges unless the mission ids agree, or one signal carries no id. */
+const COMPLETION_SIGNAL_MS = 30_000;
 /** How many completed missions to retain for the idle recent-activity list. */
 const MISSION_HISTORY_MAX = 200; // keep enough for a full-hour rate even on a fast grind (recentMissions still shows only the top few)
 
@@ -1202,6 +1266,20 @@ export class MissionTracker extends EventEmitter {
    *  with no blueprint reward still feed the rep bar. Same-org titles that differ only in
    *  amount (difficulty tiers) collapse to the MIN — a deliberate under-count. */
   private repTitleIndex = new Map<string, { giver: string; scope: string; amount: number } | null>();
+  /** Title -> what that contract pays, or `null` when its variants disagree.
+   *
+   *  🔴 THE GAME STOPPED LOGGING PAYOUTS, so this is the only way the session scoreboard can show
+   *  money at all. Measured on a real 15.5 MB session log (2026-08-21): `Awarded ` 0, `aUEC` 0,
+   *  `UEC` 0, against 59 `Contract Complete` and 67 `Contract Accepted` in the same file — the
+   *  control proves the search, and the award line is simply gone. What follows a completion now
+   *  is "You've Earned: 12 Rewards / Access Them at Your Primary Residence's Inventory", which is
+   *  ITEM loot and carries no currency.
+   *
+   *  Built exactly like `repTitleIndex` and for the same reason: a title can name several variants
+   *  (540 of 1,273 do), so where they disagree this stores `null` and the caller shows nothing
+   *  rather than picking one. Where they agree it keeps the SMALLEST figure — an earnings total
+   *  that overstates is worse than one that undersells. */
+  private payTitleIndex = new Map<string, { amount: number; modelled: boolean } | null>();
   private observed = new Set<string>();
   /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log). */
   private observedAt = new Map<string, string>();
@@ -2055,7 +2133,33 @@ export class MissionTracker extends EventEmitter {
     const parsed = Date.parse(ts);
     if (!Number.isFinite(parsed)) return;
     const at = new Date(parsed).toISOString();
-    const dupe = this.missionHistory.find((m) => m.at === at && (m.missionId ?? null) === (missionId ?? null));
+    // 🔴 ONE COMPLETION, SEVERAL LOG SIGNALS, MILLISECONDS APART — and an exact-timestamp dedupe
+    // cannot see that, so every contract was recorded TWICE.
+    //
+    // Measured on a real session log (2026-08-21). Completing Combat Gauntlet Scenario #5 emitted:
+    //   20:29:55.795  <MissionEnded> mission_state MISSION_STATE_COMPLETED   missionId 8ddc8dfb…
+    //   20:29:55.795  <EndMission>   CompletionType[Complete]                missionId 8ddc8dfb…
+    //   20:29:55.802  <SHUDEvent_OnNotification> "Contract Complete: …"      missionId 8ddc8dfb…
+    // Same mission, same second, SEVEN MILLISECONDS apart — so `m.at === at` matched nothing and
+    // the history grew two entries. `recentMissions` showed the pairs plainly once looked at
+    // (…55.802 beside …55.795), and it inflated the session scoreboard's contract count and
+    // reputation by ~2x for as long as both signals have been parsed.
+    //
+    // 🔑 The rep-crediting path already deduped by missionId and was therefore correct; only this
+    // history did not. The file's own comment further down even records that "the log holds THREE
+    // completion signals per mission" — the knowledge was here, this dedupe just didn't use it.
+    //
+    // ⚠️ Match on the ID, never on the window alone: two DIFFERENT contracts can genuinely
+    // complete in the same millisecond (the event-track work measured exactly that and had to
+    // stop a single-slot correlation from crediting both to one). So a shared window only merges
+    // when the ids agree — or when one signal carries no id at all, where the title is all there
+    // is to go on.
+    const dupe = this.missionHistory.find((m) => {
+      const dt = Math.abs(Date.parse(m.at) - parsed);
+      if (!Number.isFinite(dt) || dt > COMPLETION_SIGNAL_MS) return false;
+      if (missionId && m.missionId) return m.missionId === missionId;
+      return !!title && m.title === title;
+    });
     if (dupe) {
       // A second source (contractComplete vs reward correlation) may enrich a partial.
       if (title && !dupe.title) dupe.title = title;
@@ -2844,8 +2948,32 @@ export class MissionTracker extends EventEmitter {
    *  same-org difficulty tiers collapse to the MIN amount (conservative under-count). */
   private buildRepTitleIndex(): void {
     this.repTitleIndex.clear();
+    this.payTitleIndex.clear();
     if (!this.dataset) return;
     for (const m of Object.values(this.dataset.missions)) {
+      const k0 = m.title ? normScreenTitle(m.title) : "";
+      // Payout index. Built beside rep because it is the same walk and the same ambiguity rule;
+      // note it does NOT require a giver, since event contracts pay money and no reputation.
+      if (k0) {
+        const amt = payoutMid(m.payout);
+        if (amt !== null) {
+          const entry = { amount: amt, modelled: m.payoutCalculated === true };
+          if (!this.payTitleIndex.has(k0)) this.payTitleIndex.set(k0, entry);
+          else {
+            const cur = this.payTitleIndex.get(k0);
+            if (cur != null) {
+              // 🔑 Keep the smaller figure, and let "modelled" be sticky: if ANY variant behind
+              // this title is a modelled guess, the answer is a guess. Understating and
+              // over-marking are both the safe direction for a number the player reads as income.
+              if (entry.amount < cur.amount) cur.amount = entry.amount;
+              if (entry.modelled) cur.modelled = true;
+            }
+          }
+        } else if (this.payTitleIndex.has(k0)) {
+          // One variant pays and another does not: that is a disagreement, not a zero.
+          this.payTitleIndex.set(k0, null);
+        }
+      }
       if (!m.title || !m.giver) continue;
       const pr = this.primaryRep(m);
       if (!pr) continue;
@@ -2958,8 +3086,51 @@ export class MissionTracker extends EventEmitter {
       const byKey = ck ? this.primaryRep(this.dataset?.missions[ck])?.amount : undefined;
       return byKey ?? (m.title ? this.repTitleIndex.get(normScreenTitle(m.title))?.amount : 0) ?? 0;
     };
+    /**
+     * 🔴 WHAT A COMPLETED CONTRACT WAS WORTH, now that the game no longer says.
+     *
+     * `m.aUEC` is the live "Awarded N aUEC" line, and current patches do not emit it — measured on
+     * a real 15.5 MB session log: zero occurrences of `Awarded `/`aUEC`/`UEC` against 59
+     * `Contract Complete` in the same file. So this figure was null for every completion and the
+     * scoreboard showed "—" forever, which is what Sub reported.
+     *
+     * The fallback is the contract's own dataset payout, resolved the same way `repOf` resolves
+     * reputation: by contract key when the completion has one, else by title through an index that
+     * refuses to answer for titles whose variants disagree.
+     *
+     * 🔑 It returns the SOURCE alongside the number, because the two are not interchangeable. A
+     * logged award is what the game paid you; a dataset payout is what the contract is listed as
+     * paying, and roughly two thirds of the ones a player meets are MODELLED off a fitted curve
+     * that is wrong about one time in four. The caller marks the total accordingly — an estimate
+     * presented as a measurement is exactly the false precision this widget exists to avoid.
+     */
+    const payOf = (m: MissionHistoryEntry): { amount: number; modelled: boolean } | null => {
+      if (m.aUEC != null) return { amount: m.aUEC, modelled: false }; // the game said so
+      const ck = m.missionId ? this.missions.get(m.missionId)?.contractKey : undefined;
+      const byKey = ck ? this.dataset?.missions[contractKeyOf(ck)] : undefined;
+      if (byKey) {
+        const amt = payoutMid(byKey.payout);
+        if (amt !== null) return { amount: amt, modelled: byKey.payoutCalculated === true };
+        return null; // we know exactly which contract this was, and it lists no payout
+      }
+      const e = m.title ? this.payTitleIndex.get(normScreenTitle(m.title)) : undefined;
+      return e ?? null; // undefined = unknown title, null = its variants disagree; both mean "no"
+    };
     const rows = this.missionHistory
-      .map((m) => ({ atMs: Date.parse(m.at), aUEC: m.aUEC, rep: repOf(m) }))
+      .map((m) => {
+        const pay = payOf(m);
+        return {
+          atMs: Date.parse(m.at),
+          aUEC: pay ? pay.amount : null,
+          /** True when this row's figure is the contract's listed payout rather than a logged
+           *  award. Today that is every row that has a figure at all. */
+          estimated: pay ? m.aUEC == null : false,
+          /** True when the listed payout is itself a modelled guess rather than read from the
+           *  game files — a strictly weaker claim again, and the one worth warning about. */
+          modelled: pay ? pay.modelled : false,
+          rep: repOf(m),
+        };
+      })
       .filter((r) => Number.isFinite(r.atMs))
       .sort((a, b) => b.atMs - a.atMs); // newest first
     // Actual last rolling 60 minutes.
@@ -2968,7 +3139,7 @@ export class MissionTracker extends EventEmitter {
     const aUECknown = within.filter((r) => r.aUEC != null);
     const aUECLastHr = aUECknown.length ? aUECknown.reduce((s, r) => s + (r.aUEC ?? 0), 0) : null;
     // Current grind session = the most-recent contiguous run (break on a > SESSION_GAP_MS gap).
-    const session: { atMs: number; aUEC: number | null; rep: number }[] = [];
+    const session: { atMs: number; aUEC: number | null; estimated: boolean; modelled: boolean; rep: number }[] = [];
     for (const r of rows) {
       if (session.length && session[session.length - 1].atMs - r.atMs > SESSION_GAP_MS) break;
       session.push(r);
@@ -2994,12 +3165,27 @@ export class MissionTracker extends EventEmitter {
       ? Math.round(sessionKnown.reduce((s, r) => s + (r.aUEC ?? 0), 0))
       : null;
     const repTotal = Math.round(session.reduce((s, r) => s + r.rep, 0));
+    // 🔴 PROVENANCE TRAVELS WITH THE MONEY. `aUECEstimated` is true when any figure in the session
+    // came from the contract's listed payout rather than a logged award, and `aUECModelled` when
+    // any of those listed payouts is itself a fitted guess. The UI needs both: the first decides
+    // whether to write "~", the second decides how strongly to caveat it.
+    // 🔑 Counted over the SESSION rows, the same set `aUECTotal` is summed from — deriving it from
+    // a different window would let the caveat disagree with the number it is captioning.
+    const moneyRows = session.filter((r) => r.aUEC != null);
+    const aUECEstimated = moneyRows.some((r) => r.estimated);
+    const aUECModelled = moneyRows.some((r) => r.modelled);
     return {
       repLastHr: Math.round(repLastHr),
       repPace,
       aUECLastHr: aUECLastHr != null ? Math.round(aUECLastHr) : null,
       aUECPace,
       aUECTotal,
+      aUECEstimated,
+      aUECModelled,
+      /** How many completions in this session contributed a money figure at all. The rest either
+       *  list no payout or belong to a title whose variants disagree, and a total that silently
+       *  covers 3 of 20 contracts would read as covering all 20. */
+      aUECFrom: moneyRows.length,
       repTotal,
       missions: rows.filter((r) => now - r.atMs <= SHOW_MS).length,
     };
@@ -4130,7 +4316,12 @@ export class MissionTracker extends EventEmitter {
       this.repAccruedMissionIds = new Set(data.repAccruedMissionIds ?? []);
       this.completedTitles = new Map(Object.entries(data.completedTitles ?? {}));
       this.completedKeys = new Map(Object.entries(data.completedKeys ?? {}));
-      this.missionHistory = (data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
+      // 🔴 REPAIR THE DOUBLE-COUNTED HISTORY ALREADY ON DISK. The insert-side dedupe below only
+      // stops NEW duplicates; every completion recorded before it existed was written twice (one
+      // entry per log signal, milliseconds apart) and is restored here verbatim. Without this the
+      // scoreboard stays wrong for every existing user forever, and the fix would look like it had
+      // not worked — which is exactly how it presented while being diagnosed.
+      this.missionHistory = dedupeHistory(data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
       this.eventContributions = new Map(Object.entries(data.eventContributions ?? {}));
     } catch {
       /* first run */
