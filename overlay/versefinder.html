@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verse Finder</title>
+<script>/* AMD compatibility: apply the lite skin BEFORE first paint (no flash) when the shell asks for it. */
+  if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
+  /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
+  { const q = new URLSearchParams(location.search); const r = document.documentElement;
+    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
+    /* ?bg=RRGGBB paints an opaque backdrop, for embedding in a THIRD-PARTY host (GameGlass
+       and friends). Hex digits only, and applied through CSSOM — a value that is not a colour
+       is rejected by the engine rather than landing anywhere it could be read as markup. */
+    const b = q.get("bg"); if (b && /^[0-9a-f]{3,8}$/i.test(b)) { r.style.setProperty("--wbg", "#" + b); r.dataset.bg = ""; } }</script>
+<link rel="stylesheet" href="/widget-theme.css" />
+<style>
+  /* Verse Finder: type an item name, get the shops that sell it. Fed by /api/verse/search (see
+     src/verse-routes.ts). Theme tokens come from the shared /widget-theme.css, so this widget
+     retints with the flown ship like every other one.
+
+     🔴 THE HONESTY CONSTRAINT IS THE DESIGN, not a caption bolted on. Prices are per-terminal and
+     the readings are old, so:
+       · a result NEVER shows one price — it shows a shop, and a row per shop;
+       · every row carries the age of its own reading;
+       · the panel says out loud that stock is unknowable, because the source has no stock field
+         at all and a player who flies out can still find the shelf empty;
+       · when the table is a fallback (cache/bundle), the footer says so rather than staying quiet.
+     A UI that implies false precision here is worse than no UI (Sub, repeatedly). */
+  * { box-sizing: border-box; }
+  * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb), 0.28) transparent; }
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
+
+  #panel {
+    display: flex; flex-direction: column;
+    width: 460px; height: 480px; margin: 20px auto;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    position: relative;
+  }
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  body.embedded { overflow: visible; background: transparent; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+
+  .head { min-height: 38px; gap: 6px; }
+
+  /* The search box IS the widget — one control, given the room. */
+  #q { flex: 1; min-width: 40px; font-family: var(--sans); font-size: 12px;
+    color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.07);
+    border: 1px solid var(--divider); border-radius: 6px; padding: 5px 8px; outline: none; }
+  #q:focus { border-color: var(--cyan); background: rgba(var(--accent-rgb), 0.13); }
+  #q::placeholder { color: var(--faint); }
+
+  #results { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 0 8px; }
+
+  /* ── One item ─────────────────────────────────────────────────────────────── */
+  .item { border-bottom: 1px solid var(--divider); padding: 8px 10px 9px; }
+  .item:last-child { border-bottom: 0; }
+  .iname { font-size: 12.5px; font-weight: 600; color: var(--cyan-bright); line-height: 1.3;
+    overflow-wrap: anywhere; }
+  /* Manufacturer + size + category. Components are named bare ("Burst" is a quantum drive), so
+     without this line half the catalogue reads as meaningless single words. */
+  .imeta { font-size: 10px; color: var(--faint); letter-spacing: 0.02em; margin-top: 2px; }
+  .imeta .sz { color: var(--cyan); }
+
+  /* The craft cross-link — the one thing no other SC tool can say. Only drawn when the item's
+     UUID really matches a blueprint we track, never on a name resemblance. */
+  .craft { display: inline-block; margin-top: 5px; font-size: 9.5px; letter-spacing: 0.04em;
+    padding: 2px 6px; border-radius: 5px; border: 1px solid var(--divider); color: var(--faint); }
+  .craft.own { color: var(--green); border-color: rgba(var(--accent-rgb), 0.4); }
+
+  /* ── The shops ────────────────────────────────────────────────────────────── */
+  .shops { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+  .shop { display: flex; align-items: baseline; gap: 7px; font-size: 11px; line-height: 1.35; }
+  .price { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--amber);
+    min-width: 68px; text-align: right; }
+  .where { flex: 1; min-width: 0; color: var(--cyan-text); overflow-wrap: anywhere; }
+  .where .sub { color: var(--faint); }
+  /* Age of THIS reading. Never omitted, never averaged into anything. */
+  .age { flex: none; font-size: 9px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .age.old { color: var(--amber); }
+
+  .more { font-size: 9.5px; color: var(--faint); margin-top: 4px; }
+
+  .empty { padding: 26px 18px; text-align: center; color: var(--faint); font-size: 11.5px; line-height: 1.7; }
+  .empty b { color: var(--cyan-text); font-weight: 600; }
+
+  /* ── Footer ───────────────────────────────────────────────────────────────────
+     Carries the two things that stop a confident-looking answer being a lie: where the table came
+     from, and that stock is not a thing we can know. */
+  .foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px 6px;
+    border-top: 1px solid var(--divider); position: relative; z-index: 4;
+    font-family: var(--mono); font-size: 9px; color: var(--faint); letter-spacing: 0.03em; }
+  #src { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #src.fallback { color: var(--amber); }
+  #nostock { flex: none; }
+</style>
+</head>
+<body>
+  <div id="panel" class="wpanel selectable">
+    <div class="head">
+      <span class="dia"></span>
+      <span class="h-title">Verse Finder</span>
+      <input id="q" type="text" placeholder="item name…" spellcheck="false" autocomplete="off" maxlength="60" />
+    </div>
+
+    <div id="results"></div>
+
+    <div class="foot">
+      <span id="src">…</span>
+      <span id="nostock" title="UEX has no stock field for items at all, so nothing here can tell you whether the shelf is full. Shops are also restocked on their own timers.">stock unknown</span>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const EMBEDDED = new URLSearchParams(location.search).has("embedded");
+  if (EMBEDDED) document.body.classList.add("embedded");
+  // Same-origin bridge to the parent canvas (present only when embedded on the overlay).
+  const host = () => (EMBEDDED && window.parent) ? window.parent.__verseFinderHost : null;
+
+  // How many shops to draw per item before summarising the rest. The full count always travels
+  // and is always stated, so a truncation can never read as "this is everywhere it is sold".
+  const SHOPS_SHOWN = 5;
+  // Debounce: the player is flying. Every keystroke hitting the sidecar would be a request per
+  // frame of typing, over a game.
+  const DEBOUNCE_MS = 160;
+
+  let timer = null;
+  let seq = 0;            // response ordering — a slow early request must not overwrite a fast late one
+  let lastQuery = "";
+
+  const fmt = (n) => n.toLocaleString("en-US");
+
+  /** Age of one reading, in the plainest words that are still true.
+   *  🔑 Rendered per QUOTE, never rolled up: each shop's price was reported at its own moment. */
+  function ageOf(sec) {
+    const days = Math.floor((Date.now() / 1000 - sec) / 86400);
+    if (days <= 0) return "today";
+    if (days === 1) return "1d ago";
+    if (days < 60) return days + "d ago";
+    return Math.floor(days / 30) + "mo ago";
+  }
+
+  function placeText(q) {
+    // Most specific first: you dock at Baijini Point; "Hurston" is a whole planet.
+    const bits = [q.place, q.body, q.system].filter(Boolean);
+    return bits.length ? bits.join(" · ") : "";
+  }
+
+  function itemNode(r) {
+    const el = document.createElement("div");
+    el.className = "item";
+
+    const name = document.createElement("div");
+    name.className = "iname";
+    name.textContent = r.name;
+    el.appendChild(name);
+
+    const metaBits = [];
+    if (r.company) metaBits.push(r.company);
+    if (r.category) metaBits.push(r.category);
+    const meta = document.createElement("div");
+    meta.className = "imeta";
+    meta.textContent = metaBits.join(" · ");
+    if (r.size) {
+      const sz = document.createElement("span");
+      sz.className = "sz";
+      sz.textContent = (metaBits.length ? " · " : "") + "Size " + r.size;
+      meta.appendChild(sz);
+    }
+    el.appendChild(meta);
+
+    if (r.craft) {
+      const c = document.createElement("span");
+      c.className = "craft" + (r.craft.owned ? " own" : "");
+      c.textContent = r.craft.owned ? "✦ you own this blueprint" : "✦ craftable";
+      c.title = r.craft.owned
+        ? "This item is also a blueprint in your collection — you can fabricate it instead of buying it."
+        : "This item is also a craftable blueprint, though you have not unlocked it yet.";
+      el.appendChild(c);
+    }
+
+    const shops = document.createElement("div");
+    shops.className = "shops";
+    for (const q of r.quotes.slice(0, SHOPS_SHOWN)) {
+      const row = document.createElement("div");
+      row.className = "shop";
+
+      const p = document.createElement("span");
+      p.className = "price";
+      p.textContent = fmt(q.price);
+      row.appendChild(p);
+
+      const w = document.createElement("span");
+      w.className = "where";
+      w.textContent = q.terminal;
+      const where = placeText(q);
+      if (where) {
+        const sub = document.createElement("span");
+        sub.className = "sub";
+        sub.textContent = " — " + where;
+        w.appendChild(sub);
+      }
+      row.appendChild(w);
+
+      const a = document.createElement("span");
+      const days = Math.floor((Date.now() / 1000 - q.asOf) / 86400);
+      a.className = "age" + (days > 90 ? " old" : "");
+      a.textContent = ageOf(q.asOf);
+      a.title = "This price was last reported to UEX " + ageOf(q.asOf)
+        + ". Shop prices in Star Citizen very rarely change, so an old reading is usually still right.";
+      row.appendChild(a);
+
+      shops.appendChild(row);
+    }
+    el.appendChild(shops);
+
+    // 🔴 The spread, and the rest of the shops. Both exist because "the price of X" does not:
+    // 68% of items sold in more than one place cost different amounts at different shops.
+    const notes = [];
+    if (r.shopCount > SHOPS_SHOWN) notes.push("+" + (r.shopCount - SHOPS_SHOWN) + " more shop" + (r.shopCount - SHOPS_SHOWN === 1 ? "" : "s"));
+    if (r.low !== r.high) notes.push(fmt(r.low) + "–" + fmt(r.high) + " aUEC depending where you buy");
+    if (notes.length) {
+      const m = document.createElement("div");
+      m.className = "more";
+      m.textContent = notes.join("  ·  ");
+      el.appendChild(m);
+    }
+    return el;
+  }
+
+  function showEmpty(html) {
+    const box = $("results");
+    box.textContent = "";
+    const e = document.createElement("div");
+    e.className = "empty";
+    e.innerHTML = html;
+    box.appendChild(e);
+  }
+
+  function render(data) {
+    const box = $("results");
+    if (!data.query) {
+      showEmpty("Type an item name.<br />Weapons, armour, ship components, gear.");
+      return;
+    }
+    if (!data.results.length) {
+      // 🔴 "We don't know of a shop" and "no such item" are DIFFERENT answers, and the common case
+      // is the first: roughly two thirds of the item catalogue has no reported shop at all. Saying
+      // "not found" flatly would tell the player the item does not exist, which is usually false.
+      showEmpty("No shop known for <b>" + escapeHtml(data.query) + "</b>."
+        + "<br />That often means nobody has reported one — "
+        + (data.catalogueOnly ? fmt(data.catalogueOnly) + " known items have no shop on record." : "not that it cannot be bought."));
+      return;
+    }
+    box.textContent = "";
+    for (const r of data.results) box.appendChild(itemNode(r));
+    box.scrollTop = 0;
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  /** 🔑 The footer says which tier the table came from, always — Sub's requirement is that the
+   *  user knows when they are on a fallback, and only the screen they are looking at can say so. */
+  function renderSource(data) {
+    const el = $("src");
+    const age = data.fetchedAt ? ageOf(Math.floor(data.fetchedAt / 1000)) : "unknown age";
+    if (data.source === "live") {
+      el.className = "";
+      el.textContent = "UEX via subliminal.gg · updated " + age;
+    } else if (data.source === "cache") {
+      el.className = "fallback";
+      el.textContent = "offline — last download " + age;
+    } else {
+      el.className = "fallback";
+      el.textContent = "offline — using the copy that shipped with the app";
+    }
+    el.title = (data.itemCount || 0) + " items across " + (data.terminalCount || 0) + " shops."
+      + (data.droppedOffline ? "  " + data.droppedOffline + " price rows were dropped for sitting at terminals the game no longer has." : "")
+      + (data.lastError ? "  Last refresh failed: " + data.lastError : "");
+  }
+
+  async function run(q) {
+    const mine = ++seq;
+    try {
+      const r = await fetch("/api/verse/search?q=" + encodeURIComponent(q) + "&limit=20&shops=" + (SHOPS_SHOWN + 3));
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      // An earlier request landing late must not replace a newer answer.
+      if (mine !== seq) return;
+      render(data);
+      renderSource(data);
+    } catch (e) {
+      if (mine !== seq) return;
+      showEmpty("Couldn't reach the overlay's own service.<br />The widget needs it running.");
+    }
+  }
+
+  async function status() {
+    try {
+      const r = await fetch("/api/verse/status");
+      if (r.ok) renderSource(await r.json());
+    } catch { /* the search will report it */ }
+  }
+
+  const qEl = $("q");
+  qEl.addEventListener("input", () => {
+    const v = qEl.value.trim();
+    if (v === lastQuery) return;
+    lastQuery = v;
+    if (timer) clearTimeout(timer);
+    if (!v) { render({ query: "", results: [] }); seq++; return; }
+    timer = setTimeout(() => run(v), DEBOUNCE_MS);
+  });
+  /* 🔴 The search box takes the CANVAS-WIDE keyboard grab, so its release set has to be complete:
+     focus arms it, blur lowers it, Escape is an explicit way out, and `__verseFinderExitTyping`
+     covers the widget being hidden — hiding UNLOADS this page, so a grab stranded that way could
+     never be lowered by anything left on screen. Same rule as notepad/party/chat/logview. */
+  qEl.addEventListener("focus", () => { try { host()?.editStart?.(); } catch { /* standalone */ } });
+  qEl.addEventListener("blur", () => { try { host()?.editEnd?.(); } catch { /* standalone */ } });
+  qEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    if (qEl.value) { qEl.value = ""; lastQuery = ""; seq++; render({ query: "", results: [] }); }
+    else qEl.blur();
+  });
+
+  // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
+  document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
+
+  // The shell's hand-back once the held interact key is released — safe to focus now.
+  window.__verseFinderFocus = () => { try { qEl.focus(); } catch { /* gone */ } };
+  window.__verseFinderExitTyping = () => {
+    try { document.activeElement?.blur?.(); } catch { /* nothing focused */ }
+    try { host()?.editEnd?.(); } catch { /* not embedded */ }
+  };
+
+  render({ query: "", results: [] });
+  void status();
+  try { host()?.ready?.(); } catch { /* not embedded */ }
+</script>
+</body>
+</html>

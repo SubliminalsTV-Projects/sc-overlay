@@ -321,6 +321,16 @@
       onHide: (w) => { try { frameWin(w)?.__logViewExitTyping?.(); } catch { /* iframe gone */ } },
     },
     {
+      // Verse Finder — "where can I buy this item, and for how much". Reads the shop table the
+      // sidecar keeps (see src/verse-routes.ts); no live connection of its own.
+      key: "verseFinder", page: "versefinder.html", title: "Verse Finder",
+      def: { x: 40, y: 60 }, size: { w: 460, h: 480, minW: 300, maxW: 2400, minH: 220, maxH: 1600 },
+      focusFn: "__verseFinderFocus", // the search box needs the shared keyboard grab
+      // Don't strand the keyboard grab: hiding with the search box focused would leave the
+      // interact key suspended, and hide UNLOADS the iframe so the page can never release it.
+      onHide: (w) => { try { frameWin(w)?.__verseFinderExitTyping?.(); } catch { /* iframe gone */ } },
+    },
+    {
       // Player-to-player chat (Global / Server / Shard tabs). The SIDECAR owns the connection
       // and history (src/chat.ts) — this page only renders and posts, so closing or regrouping
       // it drops nothing. No socket exists unless this widget is open (chatOpen is the gate).
@@ -2220,7 +2230,7 @@
         $("hubTheme").value = c.theme || "mobiglas";
       }).catch(() => { /* fall back to whatever's in the inputs */ });
       $("wgBlueprint").checked = WBY.blueprint.s.visible !== false;
-      window.overlayApi.widgetStates?.().then((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgLogView").checked = !!s.logView; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
+      window.overlayApi.widgetStates?.().then((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgLogView").checked = !!s.logView; $("wgVerseFinder").checked = !!s.verseFinder; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
       syncModal(); window.overlayApi.hover?.(true);
     }
     gc.addEventListener("click", (e) => { e.stopPropagation(); armGameHide(); setHub(!hub.classList.contains("open")); });
@@ -2297,11 +2307,12 @@
     $("wgBattaglia").addEventListener("change", () => window.overlayApi.setBattaglia($("wgBattaglia").checked));
     $("wgHauling").addEventListener("change", () => window.overlayApi.setHauling($("wgHauling").checked));
     $("wgLogView").addEventListener("change", () => window.overlayApi.setLogView($("wgLogView").checked));
+    $("wgVerseFinder").addEventListener("change", () => window.overlayApi.setVerseFinder($("wgVerseFinder").checked));
     $("wgChat").addEventListener("change", () => window.overlayApi.setChat($("wgChat").checked));
     $("wgWebView").addEventListener("change", () => window.overlayApi.setWebView($("wgWebView").checked));
     $("wgBindingChart").addEventListener("change", () => window.overlayApi.setBindingChart($("wgBindingChart").checked));
     // Stay in sync if a widget is toggled elsewhere (tray) while the hub is open.
-    window.overlayApi.onWidgetStates?.((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgLogView").checked = !!s.logView; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
+    window.overlayApi.onWidgetStates?.((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgLogView").checked = !!s.logView; $("wgVerseFinder").checked = !!s.verseFinder; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
     // Global appearance — persisted config (also broadcasts to OBS sources).
     $("hubTheme").addEventListener("change", () => setPref({ theme: $("hubTheme").value }));
     // Layout
