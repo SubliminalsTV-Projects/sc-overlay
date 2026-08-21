@@ -104,7 +104,28 @@
           const rt = document.createElement("div");
           rt.className = "rt";
           rt.textContent = "—";
+          /* 🔴 THE TONNAGE USED TO SIT BESIDE THE NAME AND EAT IT. `.rt` is flex:none, so a step
+             reading "6 SCU of Medical Supplies" took whatever width it liked and `.mid` shrank
+             until the place name ellipsised — worst exactly when the commodity name was longest,
+             which is when you most need to know where you are going. Sub: "the amount of SCU of
+             whatever is truncating the pickup and drop off location. The pickup and drop off
+             location should just go span across the whole thing."
+             🔑 Split by LENGTH, not wholesale. Only the tonnage moves down; the travel time is
+             two or three mono characters and can never squeeze anything, so it stays beside the
+             name where it has always been. Moving the whole of `.rt` also worked but cost every
+             stop two extra lines of height for no benefit. */
+          const under = document.createElement("div");
+          // ⚠️ Its OWN class, NOT "rt". Reusing .rt put a second .rt in every row, and the suite
+          // selects the travel time with querySelector(".rt") — which then matched this block
+          // instead (it sits inside .mid, earlier in document order) and read a tonnage where
+          // it expected a duration. Overloading a class the tests select on is the bug.
+          under.className = "tons";
+          // ⚠️ ELEMENT children only. The travel time is set with `rt.textContent = …`, so it is a
+          // TEXT NODE sibling of .ld/.hold — a childNodes sweep drags it down too, which is
+          // exactly what the first attempt did (the time vanished from the name row).
+          while (rt.firstElementChild) under.appendChild(rt.firstElementChild); // .ld, .hold
           mid.append(nm, acts);
+          if (under.childNodes.length) mid.appendChild(under);
           row.append(numEl, mid, rt);
           body.appendChild(row);
         }
@@ -294,7 +315,28 @@
             hold.title = "In the hold when you leave this stop.";
             rt.appendChild(hold);
           }
+          /* 🔴 THE TONNAGE USED TO SIT BESIDE THE NAME AND EAT IT. `.rt` is flex:none, so a step
+             reading "6 SCU of Medical Supplies" took whatever width it liked and `.mid` shrank
+             until the place name ellipsised — worst exactly when the commodity name was longest,
+             which is when you most need to know where you are going. Sub: "the amount of SCU of
+             whatever is truncating the pickup and drop off location. The pickup and drop off
+             location should just go span across the whole thing."
+             🔑 Split by LENGTH, not wholesale. Only the tonnage moves down; the travel time is
+             two or three mono characters and can never squeeze anything, so it stays beside the
+             name where it has always been. Moving the whole of `.rt` also worked but cost every
+             stop two extra lines of height for no benefit. */
+          const under = document.createElement("div");
+          // ⚠️ Its OWN class, NOT "rt". Reusing .rt put a second .rt in every row, and the suite
+          // selects the travel time with querySelector(".rt") — which then matched this block
+          // instead (it sits inside .mid, earlier in document order) and read a tonnage where
+          // it expected a duration. Overloading a class the tests select on is the bug.
+          under.className = "tons";
+          // ⚠️ ELEMENT children only. The travel time is set with `rt.textContent = …`, so it is a
+          // TEXT NODE sibling of .ld/.hold — a childNodes sweep drags it down too, which is
+          // exactly what the first attempt did (the time vanished from the name row).
+          while (rt.firstElementChild) under.appendChild(rt.firstElementChild); // .ld, .hold
           mid.append(nm, acts);
+          if (under.childNodes.length) mid.appendChild(under);
           row.append(numEl, mid, rt);
           body.appendChild(row);
         });

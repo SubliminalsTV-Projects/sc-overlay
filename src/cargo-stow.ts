@@ -168,6 +168,22 @@ export interface StowLeg {
 export interface StowOptions {
   /** Class name, for the auto-load check. Omit and the ship is assumed to load by hand. */
   shipClass?: string | null;
+  /**
+   * Do the CONTRACTS being loaded actually get the station arm?
+   *
+   * 🔴 AUTO-LOAD IS A PROPERTY OF THE CONTRACT AS WELL AS THE HULL, and this module used to
+   * ignore that half. Sub, 2026-08-20: "the autoload ships should not return with no layout
+   * necessarily. That's only the expertise rank missions. These are not expertise." The same
+   * correction was made once before, for Hull A - `hauling-plan.ts` grew an
+   * `autoLoad: {hull, eligible, live}` tally out of it - but the fix never reached the early
+   * return here, so an auto-load HULL still refused to draw a layout for contracts that will
+   * not be loaded for you. On a 16-grid Hull B carrying Orison Relief work (all below
+   * Experienced) that means no stowage plan at all, exactly when one is needed.
+   *
+   * Undefined means "caller did not say", which is treated as NOT eligible: refusing to claim a
+   * capability we cannot check is the rule this whole area already follows.
+   */
+  autoLoadEligible?: boolean;
   shipName?: string | null;
   missionTitles?: Record<string, string | null>;
   /** Cells of clear air left between stacks when there is room for it. 0 disables. */
@@ -693,7 +709,10 @@ export function planStowage(
 
   // 🔑 An auto-loading ship needs no plan at all — the game loads it, the player never sees the
   // inside of the hold, and drawing a stowage diagram for it would be inventing a chore.
-  if (canAutoLoad(opts.shipClass)) {
+  // ⚠️ BUT ONLY WHEN THE CONTRACTS QUALIFY TOO. See `autoLoadEligible`: the hull is half the
+  // rule, and skipping the layout on the hull alone leaves a player hand-loading a 16-grid Hull B
+  // with nothing on screen.
+  if (canAutoLoad(opts.shipClass) && opts.autoLoadEligible === true) {
     return {
       autoLoad: true,
       placements: [],
@@ -1025,10 +1044,16 @@ export function stowFromPlan(plan: StowPlanSource, boxSet: readonly { scu: numbe
   for (const leg of legByGroup.values()) if (!ordered.includes(leg)) ordered.push(leg);
 
   const grids: GridSpec[] = (plan.ship?.grids ?? []).map((g) => ({ name: g.name, w: g.w, l: g.l, h: g.h, maxBox: g.maxBox }));
+  // 🔑 EVERY live contract must qualify before the layout is skipped. A board where some jobs
+  // auto-load and some do not still has to be hand-loaded, so a partial tally draws the plan -
+  // under-claiming the capability rather than over-claiming it.
+  const al = plan.autoLoad;
+  const allEligible = !!al && al.live > 0 && al.eligible === al.live;
   return planStowage(grids, ordered, {
     ...opts,
     shipClass: opts.shipClass ?? plan.ship?.className ?? null,
     shipName: opts.shipName ?? plan.ship?.displayName ?? null,
+    autoLoadEligible: opts.autoLoadEligible ?? allEligible,
     missionTitles: titles,
   });
 }
@@ -1051,6 +1076,9 @@ export interface StowPlanSource {
   }[];
   trips: { stops: { kind: "pickup" | "dropoff"; actions: { group: string }[] }[] }[];
   locationNames: Record<string, string>;
+  /** The plan's own auto-load tally. Optional so an older/synthetic source still type-checks -
+   *  absent means "not known", which is treated as NOT eligible (see the early return). */
+  autoLoad?: { hull: boolean; eligible: number; live: number };
 }
 
 function clashesIn(steps: readonly LoadStep[]): { signature: string; missionIds: string[] }[] {

@@ -488,7 +488,20 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         : resolveScu(drop.unit === "scu" ? drop.need : null, pinPer ? pinPer[i] : null, b);
       // No declared cap means the game may hand you any size, so plan for the largest that exists
       // — an over-large box is the case that fails to fit, which is the safe direction to guess in.
-      const cap = b.cap ?? (r.scu != null ? largestBox : null);
+      /* 🔴 A SIBLING ORDER'S CAP BEATS THE BIGGEST BOX IN THE GAME. When THIS order declares no
+         maxContainerSize the guess used to jump straight to `largestBox` (32). That is right when
+         the contract is silent, but wrong when the contract already told us a size on another
+         order. 4.10's ORS_MA_HaulingMedium is exactly that shape:
+           Iron              minScu 1   maxContainerSize undefined
+           Medical Supplies  minScu 96  maxContainerSize 8
+         The Iron leg took 32, so a 96 SCU load partitioned to 3x32 — and a Hull B cargo grid is
+         2x8x2 = EXACTLY 32 SCU, so each box filled a whole grid on its own. Sub: "every single one
+         of these cargo grids is full, but I only have 100 and something SCU on board."
+         ⚠️ `capSource` below is deliberately NOT upgraded to "dataset" for this case. The number
+         came from the dataset but NOT from this order, so it is still an assumption about this
+         leg — a better-informed one. Relabelling it would trade a display bug for a provenance
+         lie, which is the worse of the two. */
+      const cap = b.cap ?? data.maxBoxScu(c.contractKey) ?? (r.scu != null ? largestBox : null);
       const partition: Partition | null = !manifest.length && r.scu != null && cap != null
         ? partitionScu(r.scu, cap, boxSet)
         : null;
