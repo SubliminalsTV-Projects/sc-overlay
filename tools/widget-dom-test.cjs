@@ -2329,9 +2329,41 @@ const VERSEFINDER = `(async () => {
   // 🔴 There is no stock field in the source AT ALL, so the panel says so rather than letting a
   // player assume a listed shop has one on the shelf.
   const ns = document.getElementById("nostock");
-  ok("the panel says stock is unknown", !!ns && /stock unknown/i.test(ns.textContent),
-     ns ? ns.textContent : "none");
-  ok("...and explains why on hover", !!ns && (ns.title || "").length > 30, (ns && ns.title || "").slice(0, 40));
+  // ⚠️ Asserted on MEANING, not on the exact phrase. The first wording was "stock unknown" and Sub
+  // had to ask what it meant, so the words are expected to keep changing; what must not change is
+  // that the panel says a listed shop might not have the item and explains why on hover.
+  ok("the panel warns that a listed shop may not have it",
+     !!ns && /sold out|stock|shelf/i.test(ns.textContent), ns ? ns.textContent : "none");
+  ok("...and explains why on hover", !!ns && (ns.title || "").length > 60, (ns && ns.title || "").slice(0, 40));
+
+  // 🔴 The age pill's colour band. Asserted as a CONSISTENCY rule between the number rendered and
+  // the class chosen, rather than against hardcoded expectations — the table ages every day, so a
+  // test that expected specific colours would rot within a week.
+  await search("cannon");
+  const pills = [...document.querySelectorAll("#results .age")];
+  const BANDS = ["fresh", "recent", "stale", "ancient"];
+  ok("every age pill carries exactly one band class", pills.length > 0 && pills.every((p) => {
+    const hit = BANDS.filter((b) => p.classList.contains(b));
+    return hit.length === 1;
+  }), pills.length + " pills");
+  // Parse the rendered text back and check it agrees with the band it was given.
+  const bandOf = (txt) => {
+    const m = /^(\\d+)(d|mo)$/.exec(txt.trim());
+    if (txt.trim() === "today") return "fresh";
+    if (!m) return null;
+    const d = m[2] === "mo" ? Number(m[1]) * 30 : Number(m[1]);
+    return d <= 7 ? "fresh" : d <= 45 ? "recent" : d <= 100 ? "stale" : "ancient";
+  };
+  const checked = pills.map((p) => ({ want: bandOf(p.textContent), got: BANDS.find((b) => p.classList.contains(b)) }))
+    .filter((x) => x.want !== null);
+  ok("the band really matches the age it prints", checked.length > 0 && checked.every((x) => x.want === x.got),
+     checked.length + " checked, first mismatch: "
+     + (checked.find((x) => x.want !== x.got) ? JSON.stringify(checked.find((x) => x.want !== x.got)) : "none"));
+
+  // 🔑 Price and age share one column (Sub, 2026-08-21) — they answer the same question together.
+  const cols = [...document.querySelectorAll("#results .pricecol")];
+  ok("price and age sit in ONE column element", cols.length > 0
+     && cols.every((c) => !!c.querySelector(".price") && !!c.querySelector(".age")), cols.length + " columns");
 
   // A miss must distinguish "no shop known" from "no such item" — the former is the common case.
   await search("zzzqqxwv");

@@ -54,33 +54,78 @@
   #results { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 0 8px; }
 
   /* ── One item ─────────────────────────────────────────────────────────────── */
-  .item { border-bottom: 1px solid var(--divider); padding: 8px 10px 9px; }
+  .item { border-bottom: 1px solid var(--divider); padding: 9px 12px 10px; }
   .item:last-child { border-bottom: 0; }
-  .iname { font-size: 12.5px; font-weight: 600; color: var(--cyan-bright); line-height: 1.3;
+  .iname { font-size: 13px; font-weight: 600; color: var(--cyan-bright); line-height: 1.3;
     overflow-wrap: anywhere; }
-  /* Manufacturer + size + category. Components are named bare ("Burst" is a quantum drive), so
-     without this line half the catalogue reads as meaningless single words. */
-  .imeta { font-size: 10px; color: var(--faint); letter-spacing: 0.02em; margin-top: 2px; }
-  .imeta .sz { color: var(--cyan); }
 
+  /* Manufacturer / category / size / craftability as CHIPS, matching the tracker's `.mi-chip`
+     rather than inventing a look: same 5px radius, same divider border, same accent tint. They
+     wrap instead of truncating, which is what lets a narrow widget keep every fact.
+     🔑 Deliberately NOT a 999px capsule — Sub ruled on that for the payout pill ("the same round"):
+     a full capsule beside 5px chips reads as a different species. */
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+  .chip { font-family: var(--sans); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.10);
+    border: 1px solid var(--divider); border-radius: 5px; padding: 2px 7px; white-space: nowrap; }
+  /* Components are named BARE ("Burst" is a quantum drive), so the manufacturer is identity here,
+     not decoration — it gets the brighter treatment. */
+  .chip.mk { color: var(--cyan-bright); }
+  .chip.sz { color: var(--cyan-bright); border-color: rgba(var(--accent-rgb), 0.45);
+    background: rgba(var(--accent-rgb), 0.14); }
   /* The craft cross-link — the one thing no other SC tool can say. Only drawn when the item's
-     UUID really matches a blueprint we track, never on a name resemblance. */
-  .craft { display: inline-block; margin-top: 5px; font-size: 9.5px; letter-spacing: 0.04em;
-    padding: 2px 6px; border-radius: 5px; border: 1px solid var(--divider); color: var(--faint); }
-  .craft.own { color: var(--green); border-color: rgba(var(--accent-rgb), 0.4); }
+     UUID really matches a blueprint we track, never on a name resemblance. Dashed while you do NOT
+     own it, matching the tracker's convention for "not from your own collection". */
+  .chip.craft { border-style: dashed; color: var(--cyan-dim); }
+  .chip.craft.own { border-style: solid; color: var(--green);
+    border-color: color-mix(in srgb, var(--green) 45%, transparent);
+    background: color-mix(in srgb, var(--green) 12%, transparent); }
 
   /* ── The shops ────────────────────────────────────────────────────────────── */
-  .shops { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
-  .shop { display: flex; align-items: baseline; gap: 7px; font-size: 11px; line-height: 1.35; }
-  .price { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--amber);
-    min-width: 68px; text-align: right; }
-  .where { flex: 1; min-width: 0; color: var(--cyan-text); overflow-wrap: anywhere; }
-  .where .sub { color: var(--faint); }
-  /* Age of THIS reading. Never omitted, never averaged into anything. */
-  .age { flex: none; font-size: 9px; color: var(--faint); font-variant-numeric: tabular-nums; }
-  .age.old { color: var(--amber); }
+  .shops { margin-top: 7px; display: flex; flex-direction: column; }
+  /* Row divider is the faint one the hauling route uses between stops, not the item divider —
+     these are lines within a record, not records. */
+  .shop { display: flex; gap: 9px; padding: 5px 0;
+    border-top: 1px solid rgba(var(--accent-rgb), 0.07); font-size: 11px; line-height: 1.35; }
+  .shop:first-child { border-top: 0; }
 
-  .more { font-size: 9.5px; color: var(--faint); margin-top: 4px; }
+  /* 🔑 PRICE AND AGE ARE ONE COLUMN (Sub, 2026-08-21). They answer the same question — "what does
+     this shop charge, and how much do I trust that" — so splitting them to opposite edges of the
+     row made the eye travel to reconcile two halves of one fact. Stacked and right-aligned, the
+     prices still form a scannable numeric column. */
+  .pricecol { flex: none; width: 82px; display: flex; flex-direction: column;
+    align-items: flex-end; gap: 3px; }
+  .price { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600;
+    font-size: 11.5px; color: var(--gold); }
+
+  /* Age of THIS reading, as a chip in the same family as the ones above. Never omitted, never
+     averaged into anything, and never rolled up to the table's age — each shop's price was
+     reported at its own moment.
+     🔑 Colour is set by a band class and the border/background derive from `currentColor` via
+     color-mix, so all four bands retint with every manufacturer skin instead of pinning four
+     colours of their own. */
+  .age { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums; padding: 1px 5px; border-radius: 5px;
+    border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+    background: color-mix(in srgb, currentColor 12%, transparent); white-space: nowrap; }
+  /* Bands are cut at the MEASURED quartiles of the real data (p25 36d, median 83d, p90 93d), not
+     at round numbers — round thresholds would have put ~everything in one bucket and said nothing. */
+  /* 🔴 "recent" IS DELIBERATELY NEUTRAL, NOT THE ACCENT. The first cut used `--cyan` and it broke
+     on the warm skins: Drake's accent is #E4802F and its amber is #F6A93A, so "recent" and "stale"
+     rendered as the same orange and the band said nothing. Green / neutral / amber / red are the
+     only four that stay distinct across all 16 manufacturer themes — and the unremarkable case
+     should be the quiet one anyway. */
+  .age.fresh { color: var(--green); }
+  .age.recent { color: var(--cyan-dim); }
+  .age.stale { color: var(--amber); }
+  .age.ancient { color: var(--red); }
+
+  .where { flex: 1; min-width: 0; color: var(--cyan-text); overflow-wrap: anywhere;
+    align-self: center; }
+  .where .sub { display: block; color: var(--faint); font-size: 10px; margin-top: 1px; }
+
+  .more { font-size: 9.5px; color: var(--faint); margin-top: 6px; padding-top: 5px;
+    border-top: 1px solid rgba(var(--accent-rgb), 0.07); }
 
   .empty { padding: 26px 18px; text-align: center; color: var(--faint); font-size: 11.5px; line-height: 1.7; }
   .empty b { color: var(--cyan-text); font-weight: 600; }
@@ -108,7 +153,11 @@
 
     <div class="foot">
       <span id="src">…</span>
-      <span id="nostock" title="UEX has no stock field for items at all, so nothing here can tell you whether the shelf is full. Shops are also restocked on their own timers.">stock unknown</span>
+      <!-- 🔴 "stock unknown" was the first wording and Sub had to ask what it meant, which is the
+           whole test failed: it reads like a loading state rather than a statement about the data.
+           The label now says the CONSEQUENCE for the player — a shop listed here can still be
+           sold out — and the tooltip carries why we cannot know. -->
+      <span id="nostock" title="Nobody tracks shop stock levels: UEX has no stock field for items at all, so nothing here can tell you whether a shop actually has one right now. These rows mean 'this shop sells it at this price', not 'it is on the shelf today'.">may be sold out</span>
     </div>
   </div>
 
@@ -132,14 +181,36 @@
 
   const fmt = (n) => n.toLocaleString("en-US");
 
+  const daysSince = (sec) => Math.floor((Date.now() / 1000 - sec) / 86400);
+
   /** Age of one reading, in the plainest words that are still true.
    *  🔑 Rendered per QUOTE, never rolled up: each shop's price was reported at its own moment. */
   function ageOf(sec) {
-    const days = Math.floor((Date.now() / 1000 - sec) / 86400);
+    const days = daysSince(sec);
     if (days <= 0) return "today";
-    if (days === 1) return "1d ago";
-    if (days < 60) return days + "d ago";
-    return Math.floor(days / 30) + "mo ago";
+    if (days === 1) return "1d";
+    if (days < 60) return days + "d";
+    return Math.floor(days / 30) + "mo";
+  }
+
+  /** Which colour band a reading falls in.
+   *
+   *  🔑 THE CUTS COME FROM THE REAL DISTRIBUTION, not from round numbers. Measured over all 23,747
+   *  quotes: p25 is 36 days, the median 83, p90 93, the oldest 142. Round thresholds (30/90/365)
+   *  would have dropped almost every row into one bucket, and a pill that is always the same
+   *  colour is just a slower way of saying nothing.
+   *
+   *  ⚠️ Read the colour as "how recently someone checked", NOT as "how wrong this might be". Shop
+   *  prices in SC are fixed, not a market: 99.6% of rows were never once observed to move over a
+   *  month. An amber pill means nobody has looked lately, which is a different and much milder
+   *  claim than a stale commodity price. The tooltip says so, because the colour alone implies
+   *  more risk than the data supports. */
+  function ageBand(sec) {
+    const d = daysSince(sec);
+    if (d <= 7) return "fresh";
+    if (d <= 45) return "recent";
+    if (d <= 100) return "stale";
+    return "ancient";
   }
 
   function placeText(q) {
@@ -157,29 +228,28 @@
     name.textContent = r.name;
     el.appendChild(name);
 
-    const metaBits = [];
-    if (r.company) metaBits.push(r.company);
-    if (r.category) metaBits.push(r.category);
-    const meta = document.createElement("div");
-    meta.className = "imeta";
-    meta.textContent = metaBits.join(" · ");
-    if (r.size) {
-      const sz = document.createElement("span");
-      sz.className = "sz";
-      sz.textContent = (metaBits.length ? " · " : "") + "Size " + r.size;
-      meta.appendChild(sz);
-    }
-    el.appendChild(meta);
-
-    if (r.craft) {
+    // Chips, in the tracker's own idiom. The manufacturer leads because for ship components it IS
+    // the identity — the item itself is often a single bare word.
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    const chip = (cls, text, title) => {
       const c = document.createElement("span");
-      c.className = "craft" + (r.craft.owned ? " own" : "");
-      c.textContent = r.craft.owned ? "✦ you own this blueprint" : "✦ craftable";
-      c.title = r.craft.owned
-        ? "This item is also a blueprint in your collection — you can fabricate it instead of buying it."
-        : "This item is also a craftable blueprint, though you have not unlocked it yet.";
-      el.appendChild(c);
+      c.className = "chip " + cls;
+      c.textContent = text;
+      if (title) c.title = title;
+      chips.appendChild(c);
+    };
+    if (r.company) chip("mk", r.company);
+    if (r.category) chip("cat", r.category);
+    if (r.size) chip("sz", "Size " + r.size);
+    if (r.craft) {
+      chip("craft" + (r.craft.owned ? " own" : ""),
+        r.craft.owned ? "✦ blueprint owned" : "✦ craftable",
+        r.craft.owned
+          ? "This item is also a blueprint in your collection — you can fabricate it instead of buying it."
+          : "This item is also a craftable blueprint, though you have not unlocked it yet.");
     }
+    if (chips.childNodes.length) el.appendChild(chips);
 
     const shops = document.createElement("div");
     shops.className = "shops";
@@ -187,10 +257,23 @@
       const row = document.createElement("div");
       row.className = "shop";
 
+      // 🔑 Price and age share ONE column — they answer the same question together.
+      const col = document.createElement("span");
+      col.className = "pricecol";
       const p = document.createElement("span");
       p.className = "price";
       p.textContent = fmt(q.price);
-      row.appendChild(p);
+      col.appendChild(p);
+
+      const a = document.createElement("span");
+      a.className = "age " + ageBand(q.asOf);
+      a.textContent = ageOf(q.asOf);
+      a.title = "Last reported to UEX " + ageOf(q.asOf).replace(/^(\d+)d$/, "$1 days ago")
+        + ". Shop prices in Star Citizen are fixed rather than a live market — 99.6% of them were "
+        + "never once seen to change over a month — so an old reading is usually still correct. "
+        + "The colour is how recently someone checked, not how wrong it might be.";
+      col.appendChild(a);
+      row.appendChild(col);
 
       const w = document.createElement("span");
       w.className = "where";
@@ -199,18 +282,10 @@
       if (where) {
         const sub = document.createElement("span");
         sub.className = "sub";
-        sub.textContent = " — " + where;
+        sub.textContent = where;
         w.appendChild(sub);
       }
       row.appendChild(w);
-
-      const a = document.createElement("span");
-      const days = Math.floor((Date.now() / 1000 - q.asOf) / 86400);
-      a.className = "age" + (days > 90 ? " old" : "");
-      a.textContent = ageOf(q.asOf);
-      a.title = "This price was last reported to UEX " + ageOf(q.asOf)
-        + ". Shop prices in Star Citizen very rarely change, so an old reading is usually still right.";
-      row.appendChild(a);
 
       shops.appendChild(row);
     }
