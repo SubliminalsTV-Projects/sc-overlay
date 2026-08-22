@@ -40,15 +40,42 @@
       },
       "contractsProvenance": {
         "ORS_SA": "MEASURED, isolated. Sub's Journal read 17,000; he completed exactly one contract (02:13:25Z Strike Nine Tails Squad, one journal entry) and it read 19,000. Delta 2,000 with nothing else in flight — the only value here obtained the clean way.",
-        "ORS_MA_HaulingMedium": "DERIVED, not isolated. Sub reported 6,000 for 'the mission I did' early on. With ORS_SA=2000 measured, the five completions on record (2x Medium, 1x Small, 2x Strike) satisfy 2M + S = 15,000, and M=6000 -> S=3000 fits BOTH Journal readings exactly (17,000 at four completions, 19,000 at five). Consistent and very likely right — but 2M + S = 15,000 is one equation in two unknowns, so M=5000/S=5000 also fits the arithmetic. Confirm by running ONE Medium alone and reading the delta.",
-        "ORS_MA_HaulingSmall": "DERIVED from the same system as Medium; not independently measured. Corroborated by payout ratio: Small pays 47,500 against Medium's 95,250, almost exactly half, mirroring 3,000 against 6,000. Confirm by running ONE Small alone."
+        "ORS_MA_HaulingMedium": "CONFIRMED by substitution, once Small was measured in isolation (2026-08-22). The five completions on record satisfy 2M + S = 15,000; with S=3000 now MEASURED rather than derived, 2M = 12,000 and M = 6,000 is forced. The equation is no longer underdetermined. Still worth one isolated Medium run to close it directly.",
+        "ORS_MA_HaulingSmall": "MEASURED, isolated. Sub character-reset on 4.10 PTU, wiping his event rep, then rebuilt from scratch. Journal read 12,000; he completed exactly ONE contract (2026-08-22T00:38:39Z, Small Supply Haul) and it read 15,000. Delta 3,000, nothing else in flight. This REPLACES the earlier derivation and kills the M=5000/S=5000 alternative it could not exclude."
       },
       "contractsNote": "🔑 The log carries NO amount — event points ride the server-side ReputationService (see journalEntry in missions-parser.ts). Every number here comes from Sub reading his in-game Journal and differencing. The ONLY sound method is: read the Journal, complete exactly ONE contract, read again — the delta is that contract. Values derived by solving a system are marked as such in contractsProvenance above and should be re-measured that way when convenient. Still unmeasured: ORS_BR, ORS_CA_Small/Medium/Large, ORS_Cr_Small/Medium/Large, ORS_MA_DeliveryPilot, ORS_MA_HaulingLarge, ORS_SWA.",
       "journalReadings": [
-        { "at": "2026-08-20T~01:05Z", "total": 17000, "afterCompletions": ["ORS_MA_HaulingMedium", "ORS_MA_HaulingMedium", "ORS_MA_HaulingSmall", "ORS_SA"] },
-        { "at": "2026-08-20T02:13Z", "total": 19000, "afterCompletions": ["ORS_MA_HaulingMedium", "ORS_MA_HaulingMedium", "ORS_MA_HaulingSmall", "ORS_SA", "ORS_SA"] }
+        {
+          "at": "2026-08-20T~01:05Z",
+          "total": 17000,
+          "afterCompletions": [
+            "ORS_MA_HaulingMedium",
+            "ORS_MA_HaulingMedium",
+            "ORS_MA_HaulingSmall",
+            "ORS_SA"
+          ]
+        },
+        {
+          "at": "2026-08-20T02:13Z",
+          "total": 19000,
+          "afterCompletions": [
+            "ORS_MA_HaulingMedium",
+            "ORS_MA_HaulingMedium",
+            "ORS_MA_HaulingSmall",
+            "ORS_SA",
+            "ORS_SA"
+          ]
+        },
+        {
+          "at": "2026-08-22T00:38:39Z",
+          "total": 15000,
+          "afterCompletions": [
+            "ORS_MA_HaulingSmall"
+          ],
+          "note": "Post-character-reset baseline 12,000 -> 15,000. Isolated: notification queue id 21 (completion) and 22 (journal entry) — exactly one of each."
+        }
       ],
-      "journalReadingsNote": "Kept so any future correction can be re-derived from the evidence instead of from these conclusions. Each entry is a Journal total and the completions on record at that moment (from Contract Complete lines in the 12473311 logs, one journal entry each).",
+      "journalReadingsNote": "Kept so any future correction can be re-derived from the evidence instead of from these conclusions. Each entry is a Journal total and the completions on record at that moment (from Contract Complete lines in the 12473311 logs, one journal entry each). 🔑 THE NOTIFICATION QUEUE ID IS THE DEDUPE KEY. Each notification is logged several times (Added notification, then UpdateNotificationItem for Next/StartFade/Remove) all carrying the SAME bracketed id. Counting raw lines reads one contract as three. Count only `Added notification` lines, and treat the id as the identity — this is what distinguishes a genuine simultaneous double-completion from one notification echoing.",
       "rewards": [],
       "rewardsNote": "EMPTY until observed in game. Note the three pool-bearing event contracts (ORS_Cr_Small/Medium/Large) all drop `TH-01 Propulsor` (item 1afc0022-b8fc-4174-8687-6dfc5b744b98, chance 1) per the 4.9 dataset — but that is a MISSION-pool drop, not a tier reward, so it does not belong here.",
       "knownContractsNote": "All 13 ORS_ contracts are already in the shipped 4.9 dataset, verified by exact key match against real 4.10 markers. Givers: Conerstone Developments 6 (CIG's own typo for Cornerstone — match verbatim), Foxwell Enforcement 3, Covalex Independent Contractors 3, Ling Family Hauling 1. All carry rank:null and empty reputationGained, so none of them feed a normal rep track."
