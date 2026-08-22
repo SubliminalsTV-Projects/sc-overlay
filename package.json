@@ -66,7 +66,8 @@
     "test:signals": "tsx src/origin-signals.test.ts",
     "test:verseroutes": "tsx src/verse-routes.test.ts",
     "test:loctoken": "tsx src/location-token.test.ts",
-    "test:eventfeed": "tsx src/event-feed.test.ts"
+    "test:eventfeed": "tsx src/event-feed.test.ts",
+    "sync:events": "node tools/sync-events.mjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",

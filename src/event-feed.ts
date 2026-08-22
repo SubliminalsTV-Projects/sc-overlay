@@ -226,23 +226,31 @@ export class EventFeed {
       }
 
       const remoteRev = revisionOf(body);
-      const etag = res.headers?.get?.("etag") ?? null;
-      const lastModified = res.headers?.get?.("last-modified") ?? null;
-
-      // Cache it whatever the revision says. The body is genuinely what the server has, so it is
-      // the right thing to validate the NEXT conditional request against; whether we ADOPT it is
-      // a separate question, answered immediately below.
-      const fetchedAt = now();
-      this.cache = { etag, lastModified, fetchedAt, body };
-      this.writeCache(this.cache);
 
       if (remoteRev <= this.state.revision) {
         // A remote that is not strictly newer is refused, and that is the point: an app release
         // can legitimately ship a HIGHER revision than the site is serving, and adopting the
         // older one would delete a discovery the build was cut for.
+        //
+        // 🔴 AND THE REFUSED BODY MUST NOT BE CACHED. The cache is not a scratch copy of "what
+        // the server last said" — it is the durable copy of what is IN EFFECT, which is the only
+        // reason an adopted correction survives `seedDataDir()` at the next launch. Writing a
+        // refused body here destroys the adopted one, and the loss is invisible until the NEXT
+        // restart, which is exactly how it was found: verified live against a real sidecar, where
+        // a session that adopted revision 4 and then saw a stale revision 2 came back up on the
+        // bundle with the discovery gone. Every unit assertion passed, because they all tested
+        // within one session. The cost of not caching it is one full body per refresh while the
+        // site is serving something older — a transient misconfiguration that should be visible.
         this.state.lastError = null;
         return false;
       }
+
+      // Validators belong to the ADOPTED body, so a later 304 confirms the copy we actually hold.
+      const etag = res.headers?.get?.("etag") ?? null;
+      const lastModified = res.headers?.get?.("last-modified") ?? null;
+      const fetchedAt = now();
+      this.cache = { etag, lastModified, fetchedAt, body };
+      this.writeCache(this.cache);
 
       this.state = {
         source: "live",

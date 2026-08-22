@@ -157,9 +157,38 @@ function fakeFetch(reply: (headers: Record<string, string>) => { status: number;
   check("source stays bundled", s.source === "bundled", s.source);
   check("the effective revision stays the bundle's", s.revision === 5, String(s.revision));
   check("a refused-but-valid remote is not an error", s.lastError === null, String(s.lastError));
-  // It is still cached, because it is genuinely what the server has and is what the NEXT
-  // conditional request must validate against.
-  check("the refused body is still cached for conditional requests", JSON.parse(readFileSync(w.cachePath, "utf8")).etag === 'W/"old"');
+  check("a refused body is NOT cached", !existsSync(w.cachePath));
+  rmSync(w.dir, { recursive: true, force: true });
+}
+
+// ── 4b. 🔴 A REFUSED REMOTE MUST NOT DESTROY THE ADOPTED CACHE ──────────────────────────────
+// The bug this exists for was invisible to every assertion above, because they all live inside
+// ONE session: the cache was being written on every 200, adopted or not, so a session that
+// adopted revision 4 and then saw a stale revision 2 kept running perfectly — and came back up
+// on the BUNDLE at the next launch with the discovery gone. Found by driving a real sidecar
+// through adopt -> regress -> restart, which is a sequence no single-session test can express.
+{
+  const w = world(1, "BUNDLED REWARD");
+  let serving = { rev: 4, reward: "ADOPTED DISCOVERY" };
+  const f = fakeFetch(() => ({ status: 200, body: JSON.stringify(eventsFile(serving.rev, serving.reward)), etag: `W/"r${serving.rev}"` }));
+  const feed = new EventFeed({ ...w, url: URL_, fetchImpl: f.impl });
+  feed.start();
+  await feed.refresh();
+  check("(setup) revision 4 was adopted", feed.status().revision === 4 && w.working().events[0].rewards[0].name === "ADOPTED DISCOVERY", String(feed.status().revision));
+
+  // The site regresses — a stale deploy, or a rollback.
+  serving = { rev: 2, reward: "STALE SITE COPY" };
+  await feed.refresh();
+  check("the stale copy is refused in-session", w.working().events[0].rewards[0].name === "ADOPTED DISCOVERY", JSON.stringify(w.working().events[0].rewards));
+  check("the cache still holds the ADOPTED revision, not the refused one", JSON.parse(readFileSync(w.cachePath, "utf8")).body.revision === 4, String(JSON.parse(readFileSync(w.cachePath, "utf8")).body.revision));
+
+  // --- restart, offline. This is where the loss used to become visible. ---
+  w.seed();
+  const feed2 = new EventFeed({ ...w, url: null });
+  feed2.start();
+  check("after a restart the ADOPTED discovery is still in effect", w.working().events[0].rewards[0].name === "ADOPTED DISCOVERY", JSON.stringify(w.working().events[0].rewards));
+  check("...at the adopted revision", feed2.status().revision === 4, String(feed2.status().revision));
+  check("...reported as cache", feed2.status().source === "cache", feed2.status().source);
   rmSync(w.dir, { recursive: true, force: true });
 }
 

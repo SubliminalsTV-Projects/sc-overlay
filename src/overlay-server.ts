@@ -332,7 +332,9 @@ const eventFeed = new EventFeed({
   bundledPath: join(bundledDataDir, "events.json"),
   workingPath: join(dataDir, "events.json"),
   cachePath: join(userDir, "events-remote.json"),
-  url: "https://subliminal.gg/sc/events.json",
+  // SC_EVENTS_URL points a dev run at a staging copy. It is also the only way to exercise the
+  // adopt path end to end before the site has deployed the file.
+  url: process.env.SC_EVENTS_URL || "https://subliminal.gg/sc/events.json",
 });
 eventFeed.start();
 
