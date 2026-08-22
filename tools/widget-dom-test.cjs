@@ -2572,9 +2572,22 @@ const VERSEFINDER = `(async () => {
   // only because the live sentence used to begin "UEX via subliminal.gg". The credit moved to a
   // badge, so the word left the sentence and this failed on working code. The tier wording is what
   // the assertion was ever about, so it now reads the element that carries the tier.
+  // ⚠️ RE-POINTED AGAIN 2026-08-22. It matched on "subliminal.gg", which left the assertion tied to
+  // a phrase whose whole job was to name our plumbing — and Sub cut that phrase for exactly that
+  // reason ("we don't need to have that in there"). Chasing the wording a second time would be the
+  // trap; the RULING has never changed, so this now checks the thing the ruling is about: the line
+  // states WHICH TIER the table came from. Live says how fresh it is, the two fallbacks say they
+  // are offline. A footer that said neither would be the regression.
   const srctext = document.getElementById("srctext");
+  const tierWords = ["updated", "offline"];
   ok("...and it says one of the three tiers, not something vague",
-     !!srctext && /subliminal\.gg|offline/.test(srctext.textContent),
+     !!srctext && tierWords.some((w) => srctext.textContent.indexOf(w) > -1),
+     srctext ? srctext.textContent : "(no #srctext)");
+  // 🔴 Paired with the positive: the credit must NOT have crept back into the sentence. The badge
+  // carries the attribution; the sentence carries the age. Both halves asserted, because "does not
+  // mention subliminal.gg" alone is satisfied for free by an empty footer.
+  ok("...and does not re-narrate whose proxy it came through",
+     !!srctext && srctext.textContent.indexOf("subliminal.gg") === -1,
      srctext ? srctext.textContent : "(no #srctext)");
   // 🔴 THE UEX CREDIT IS ITS OWN ASSERTION NOW, because it is its own requirement (Sub,
   // 2026-08-22: "this is really mainly just them. All we're doing is putting up a wrapper for
@@ -2985,7 +2998,14 @@ const VERSEFINDER = `(async () => {
   // stayed green when the server was reverted to "19m ago". The control is what exposed it.
   const liveNote = document.getElementById("ordernote");
   const liveEyeLbl = document.getElementById("eyelbl");
-  const liveAgeText = (liveNote ? liveNote.textContent : "") + " " + (liveEyeLbl ? liveEyeLbl.textContent : "");
+  // 🔑 #srctext joins them (2026-08-22). It is a THIRD age in the same footer — how old our copy of
+  // the table is — so it is exposed to the identical misreading and now shares the bare-Nm check
+  // below rather than needing its own. Captured here for the same reason as the other two: it is
+  // composed from a server value and the fixture render must not get a chance to overwrite it.
+  const liveSrcText = document.getElementById("srctext");
+  const liveFooterAge = liveSrcText ? liveSrcText.textContent : "";
+  const liveAgeText = (liveNote ? liveNote.textContent : "") + " " + (liveEyeLbl ? liveEyeLbl.textContent : "")
+    + " " + liveFooterAge;
 
   // ── 🔴 DISTANCE, NOT MINUTES (Sub, 2026-08-22) ─────────────────────────────────────────────
   //
@@ -3094,6 +3114,35 @@ const VERSEFINDER = `(async () => {
     ok("no age in the live footer reads as a bare Nm",
        hasAge && offenders.length === 0,
        offenders.length ? "offenders: " + offenders.join(",") : liveAgeText.trim().slice(0, 70));
+
+    // 🔴 HOW OLD OUR COPY IS, AND HOW OLD A QUOTE IS, ARE TWO LADDERS (Sub, 2026-08-22: "how about
+    // we do updated and then the minutes ago?"). The footer used ageOf, which is built for quote
+    // ages with a median of 34 DAYS — so its lowest rung is the word "today" and every possible
+    // footer value collapsed onto it, while the table is actually refreshed every six hours and the
+    // whole interesting range sits under a day.
+    // ⚠️ Extractor written FIRST and its output printed, so a failure names the string it read
+    // rather than the whole line — the ELEVENTH control lesson, which cost an assertion that
+    // measured the wrong slice.
+    {
+      const marker = "updated ";
+      const at = liveFooterAge.indexOf(marker);
+      const stated = at < 0 ? "(no 'updated' in the footer)" : liveFooterAge.slice(at + marker.length).trim();
+      // Positive first: on a cache/bundled tier the footer legitimately says "offline - ..." and
+      // there is no freshness to check, so say which case ran rather than passing silently.
+      const isLive = at >= 0;
+      ok("the footer states when our copy was last updated", isLive || liveFooterAge.indexOf("offline") > -1,
+         liveFooterAge || "(empty)");
+      if (isLive) {
+        const relative = stated.indexOf(" ago") > -1 || stated === "just now";
+        ok("...as a relative time, not a quote-age band",
+           relative, "extracted: [" + stated + "]");
+        // The exact bands ageOf would have produced. Their presence IS the regression.
+        const bands = ["today", "1d", "mo"];
+        const band = bands.filter((b) => stated === b || (b === "mo" && stated.indexOf("mo") > -1));
+        ok("...and never the quote ladder's wording", band.length === 0,
+           "extracted: [" + stated + "] matched: " + (band.join(",") || "none"));
+      }
+    }
   }
 
   return out;

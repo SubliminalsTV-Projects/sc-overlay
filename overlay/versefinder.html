@@ -375,6 +375,31 @@
     return Math.floor(days / 30) + "mo";
   }
 
+  /**
+   * How old OUR COPY of the table is — a different question from `ageOf`, which ages a QUOTE.
+   *
+   * 🔴 They cannot share a helper, and using `ageOf` here was wrong in a way that looked fine:
+   * a quote is a median 34 DAYS old so its ladder starts at "today" and climbs in days, which
+   * collapsed every possible footer value into the single word "today". The table is refreshed
+   * every six hours, so the whole interesting range sits UNDER a day — exactly the range `ageOf`
+   * throws away (Sub: "how about we do updated and then the minutes ago?").
+   *
+   * 🔴 THE UNIT IS SPELLED OUT, matching `originSummary()` in `src/player-origin.ts` verbatim —
+   * "just now" / "19 min ago" / "2h ago". That is not fussiness: Sub read "New Babbage 4M away"
+   * as a distance when the `4m` was an age, because this widget also prints Mm and Gm, so a bare
+   * `m` is genuinely ambiguous and may not appear alone. Same footer, same rule, same wording.
+   */
+  function freshnessOf(ms) {
+    const min = (Date.now() - ms) / 60000;
+    if (!(min >= 0)) return "just now";        // a clock skew must not print "-3 min ago"
+    if (min < 1) return "just now";
+    if (min < 60) return Math.round(min) + " min ago";
+    const hours = min / 60;
+    if (hours < 24) return Math.round(hours) + "h ago";
+    const days = Math.round(hours / 24);
+    return days + (days === 1 ? " day ago" : " days ago");
+  }
+
   /** Which colour band a reading falls in.
    *
    *  🔑 THE CUTS COME FROM THE REAL DISTRIBUTION, not from round numbers. Measured over all 23,747
@@ -844,12 +869,19 @@
     // is now the credit block — doing that would delete the UEX mark and wordmark on the first
     // response and leave the attribution showing only for the instant before any data arrived.
     const t = $("srctext");
-    const age = data.fetchedAt ? ageOf(Math.floor(data.fetchedAt / 1000)) : "unknown age";
+    // 🔑 `freshnessOf`, not `ageOf` — this is how old OUR COPY is (refreshed every six hours), not
+    // how old a QUOTE is (a median 34 days). See the two helpers' notes; sharing one collapsed
+    // every value here into the word "today".
+    const age = data.fetchedAt ? freshnessOf(data.fetchedAt) : "unknown age";
     if (data.source === "live") {
       el.className = "";
-      // 🔑 "UEX via" is gone from the sentence because the wordmark beside it already says UEX.
-      // Repeating it made the credit read as part of a status line rather than as a credit.
-      t.textContent = "via subliminal.gg · updated " + age;
+      // 🔑 "UEX via" went first because the wordmark beside it already says UEX — repeating it made
+      // the credit read as part of a status line rather than as a credit.
+      // 🔑 "via subliminal.gg" followed (Sub, 2026-08-22). Same reasoning one step further: WHOSE
+      // proxy the table came through is our plumbing, not the player's business. What the line is
+      // for is how old the reading is, and every word that is not that competes with it in a 9px
+      // footer. The badge still carries the attribution that actually matters.
+      t.textContent = "updated " + age;
     } else if (data.source === "cache") {
       el.className = "fallback";
       t.textContent = "offline — last download " + age;
