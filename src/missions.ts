@@ -1860,7 +1860,22 @@ export class MissionTracker extends EventEmitter {
         // A dynamic event counted a completion. See MissionEvent["journalEntry"] for the
         // measurement this rests on and its n=1 caveat.
         if (ev.jurisdiction) break;               // entering a jurisdiction — not event progress
-        if (!this.isLiveEnv) break;               // same rule as blueprints: PTU is not your record
+        /* 🔴 DELIBERATELY *NOT* GATED ON ENVIRONMENT — and it used to be, "same rule as
+           blueprints". That reasoning does not survive contact with what the two things are.
+
+           A blueprint receipt MUST be dropped on a test server because `observed` is the set
+           SiteSync pushes with `replace: true`: anything reaching it overwrites the player's
+           real collection on subliminal.gg. Event progress has no such path. `sync.ts` sends
+           `got`, `mission` and `patch` and nothing else; no outbound request anywhere in the
+           app carries a contribution. It is a local counter feeding a local widget.
+
+           So the gate bought no safety and cost the entire feature exactly when it is most
+           wanted: an event runs on the PTU FIRST, which is the whole reason to be there.
+           Sub, 2026-08-22, 24,000 points into Siege of Orison on 4.10 PTU with the widget
+           showing him nothing: "I need to be able to track these missions in the app."
+
+           ⚠️ The player is still told where they are — `envIsLive` rides in the view and the
+           PTU badge renders off it. Shown-and-labelled, not silently dropped. */
         const def = this.eventDefFor(ev.subject);
         if (!def) break;                          // an event we do not model; nothing to record
         const atMs = ev.ts ? Date.parse(ev.ts) : NaN;
