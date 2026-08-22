@@ -2246,6 +2246,88 @@ const LIFECYCLE = `(async () => {
 //   · a multi-shop item shows the spread rather than one confident number;
 //   · the footer says which tier the table came from, and that stock is unknowable.
 // Negative-controlled three ways — see the commit message.
+// ── Suite: the Event Tracker must SAY when its reward table is a fallback ───────────────────
+// The tiers and rewards are fetched from subliminal.gg (src/event-feed.ts) so a reward confirmed
+// mid-event reaches players without an app release. The corollary is Sub's standing requirement:
+// when that fetch is failing, the player has to be able to tell that the ladder they are reading
+// is the one the build shipped with, rather than reading "Reward not known yet" as fact.
+const EVENTFEED = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const cav = window.__eventFeedCaveat;
+  ok("the caveat hook exists", typeof cav === "function", typeof cav);
+  // Defensive: a detail expression is evaluated EAGERLY, so a throw here would kill the suite
+  // and report it as a small pass. Never reach into the result without wrapping.
+  const txt = (f) => { try { return String(cav(f) || ""); } catch (e) { return "(threw: " + (e && e.message) + ")"; } };
+
+  // POSITIVE FIRST. Every assertion below is "says nothing", and those are all satisfied for
+  // free by a function that has stopped speaking at all — so the case that MUST speak is the
+  // one that tells a working guard apart from a dead one.
+  const shipped = txt({ source: "bundled", revision: 1, fetchedAt: null, checkedAt: 1, lastError: "fetch failed" });
+  ok("bundled + unreachable site DOES warn", shipped.length > 0, JSON.stringify(shipped));
+  ok("...and says the list is the one the app shipped with", shipped.indexOf("shipped with") >= 0, JSON.stringify(shipped));
+  ok("...in the gold warn style, not as body text", shipped.indexOf("evwarn") >= 0, JSON.stringify(shipped));
+
+  const staleCache = txt({ source: "cache", revision: 4, fetchedAt: Date.now() - 3 * 3600 * 1000, checkedAt: Date.now(), lastError: "fetch failed" });
+  ok("a downloaded list that has gone stale DOES warn", staleCache.length > 0, JSON.stringify(staleCache));
+  ok("...and says HOW OLD it is, which is the part that lets a player judge it",
+     staleCache.indexOf("hours ago") >= 0, JSON.stringify(staleCache));
+
+  // Now the silences, each of which is only meaningful because the two cases above speak.
+  ok("a healthy live fetch says nothing",
+     txt({ source: "live", revision: 4, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null }) === "",
+     JSON.stringify(txt({ source: "live", revision: 4, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null })));
+  ok("a healthy cache replay says nothing",
+     txt({ source: "cache", revision: 4, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null }) === "");
+  // Before the first check returns, "bundled" is the normal transient state. Crying wolf there
+  // would put a permanent warning on every cold start for the second it takes to fetch.
+  ok("bundled BEFORE the first check has returned says nothing",
+     txt({ source: "bundled", revision: 1, fetchedAt: null, checkedAt: null, lastError: null }) === "");
+  ok("no feed at all says nothing", txt(null) === "");
+
+  // ── And it must actually REACH the panel. A pure function nobody renders is not a warning. ──
+  // Stub the sidecar so the feed state is KNOWN: the live one is whatever this machine's network
+  // is doing, which is not something an assertion can pin.
+  const realFetch = window.fetch;
+  window.fetch = async (u, o) => {
+    const s = String(u);
+    if (s.indexOf("/api/events") >= 0) {
+      return new Response(JSON.stringify({
+        feed: { source: "bundled", revision: 1, fetchedAt: null, checkedAt: 1, lastError: "fetch failed" },
+        events: [{ id: "suite-event", label: "Suite Event", log: "Suite Event", status: "current",
+                   total: 1000, points: 150, pct: 15, unpriced: 0, contributions: [],
+                   rewardsUnknown: false,
+                   tiers: [{ pct: 15, points: 150, reached: true, rewards: [{ name: "SUITE REWARD", item: null, owned: false }] }] }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(u, o);
+  };
+  await window.__battReload();
+  await sleep(150);
+
+  const tabs = [...document.querySelectorAll("#vnav .vt")];
+  const evTab = tabs.find((b) => b.textContent === "Suite Event");
+  ok("the stubbed event gets a tab", !!evTab, tabs.map((b) => b.textContent).join(" | "));
+  if (evTab) evTab.click();
+  await sleep(150);
+
+  const metaEl = document.querySelector("#body .evmeta");
+  const meta = metaEl ? metaEl.textContent : "(no .evmeta element)";
+  ok("the event panel rendered its meta block", !!metaEl, meta);
+  ok("the fallback warning is ON SCREEN, not merely computable",
+     meta.indexOf("shipped with") >= 0, meta);
+  ok("...and it is styled as a warning in the rendered DOM",
+     !!(metaEl && metaEl.querySelector(".evwarn")), meta);
+  // The caveat must be an ADDITION, not a replacement — the existing honesty lines still matter.
+  ok("the Journal advice survives beside it", meta.indexOf("in-game Journal") >= 0, meta);
+
+  window.fetch = realFetch;
+  return out;
+})()`;
+
 const VERSEFINDER = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
@@ -5286,6 +5368,7 @@ app.whenReady().then(async () => {
     fails += await run("logView: the filter box releases the canvas grab", LOGVIEWGRAB,
       path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("logView: raw lines, the caps, the filter, the freeze", LOGVIEW, null, null, "logview.html");
+    fails += await run("event feed: the reward ladder says when it is a fallback", EVENTFEED, null, null, "battaglia.html");
     fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);

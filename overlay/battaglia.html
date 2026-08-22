@@ -236,6 +236,7 @@
 
   let track = null;
   let events = [];        // dynamic-event progress from /api/events (see EventProgress in missions.ts)
+  let feed = null;        // where that event DATA came from: live / cache / bundled (EventFeedState)
   let view = "giver";     // "giver" = the grind track; otherwise an event id
   let mode = "rewards";   // "rewards" = the ship/item ladder, "missions" = per-rank mission list
   let tab = null;         // selected rank in mission mode
@@ -254,7 +255,14 @@
     // is its own try/catch and its own state.
     try {
       const re = await fetch("/api/events", { cache: "no-store" });
-      if (re.ok) events = (await re.json()).events || [];
+      if (re.ok) {
+        const j = await re.json();
+        events = j.events || [];
+        // Provenance of the reward/tier data itself — see src/event-feed.ts. The ladder is
+        // fetched from subliminal.gg so a reward confirmed mid-event reaches players without an
+        // app release; when that fetch is failing the player has to be able to tell.
+        feed = j.feed || null;
+      }
     } catch { /* keep the last good event list */ }
     render();
   }
@@ -641,6 +649,45 @@
     }
   }
 
+  /** Rough "how long ago", in the largest unit that is still honest. */
+  function ago(ms) {
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 90) return "just now";
+    const m = Math.round(s / 60);
+    if (m < 90) return m + " minute" + (m === 1 ? "" : "s") + " ago";
+    const h = Math.round(m / 60);
+    if (h < 48) return h + " hour" + (h === 1 ? "" : "s") + " ago";
+    return Math.round(h / 24) + " days ago";
+  }
+
+  /**
+   * One line, only when the player is genuinely looking at a FALLBACK reward table.
+   *
+   * 🔑 SILENT WHEN HEALTHY, on purpose. The tiers and rewards are fetched from subliminal.gg so a
+   * discovery lands without an app release; a successful (or merely quiet) fetch needs no words,
+   * and a banner on every render is the clutter Sub has ruled against elsewhere. It speaks in
+   * exactly the two cases the player cannot otherwise distinguish from "there is no reward":
+   * the shipped table with no successful fetch behind it, and a downloaded table that has since
+   * gone stale because the site is unreachable.
+   */
+  function feedCaveat(f) {
+    // `undefined` means "use whatever the last poll gave us" (the production call); an
+    // explicit null means "there is no feed", which is what a suite needs to be able to say.
+    f = f === undefined ? feed : f;
+    if (!f) return "";
+    if (f.source === "bundled") {
+      // No error yet means the first check has simply not returned. Saying anything then would
+      // be crying wolf on a request that is about to succeed.
+      if (!f.lastError) return "";
+      return '<span class="evwarn">This reward list is the one the app shipped with</span> — subliminal.gg is unreachable, so a reward confirmed since this build won\'t appear yet.';
+    }
+    if (f.lastError) {
+      return '<span class="evwarn">Reward list may be out of date</span> — downloaded ' +
+        (f.fetchedAt ? ago(f.fetchedAt) : "earlier") + ", and subliminal.gg is unreachable right now.";
+    }
+    return "";
+  }
+
   function renderEvent(ev) {
     if (!ev) return;
     $("tabs").style.display = "none";
@@ -674,6 +721,8 @@
         " not counted yet</span> — those contracts' point values haven't been measured, so the figure above is LOW.");
     }
     meta.push("The game never reports your event points to the app. Check your in-game Journal for the real number.");
+    const stale = feedCaveat();
+    if (stale) meta.push(stale);
     html.push('<div class="evmeta">' + meta.join("<br>") + "</div>");
 
     // The ladder. This is the part Sub asked for: percent -> loot.
@@ -701,6 +750,13 @@
   try { host()?.ready?.(); } catch { /* not embedded */ }
   // Per-widget settings, opened by the bar's cog. Controls that used to crowd the header live
   // here; the parent injects its Text size row into this same sheet.
+  // Diagnostic hook so the widget suite can drive the events-feed caveat with a KNOWN feed
+  // state. The page's own `feed` is filled from /api/events and is whatever the live sidecar
+  // happens to be doing, which is not something an assertion can pin.
+  window.__eventFeedCaveat = (f) => feedCaveat(f);
+  // ...and a way to force a poll, so a suite can stub fetch and see the result THIS tick
+  // rather than waiting out POLL_MS.
+  window.__battReload = () => load();
   window.__widgetSettings = () => $("wsettings").classList.add("open");
   window.__widgetSettingsRoot = () => $("wsettings");
   document.addEventListener("click", (e) => {
