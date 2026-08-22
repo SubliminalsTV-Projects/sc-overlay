@@ -237,6 +237,26 @@ const CONTAINMENT_RANK: Record<Containment, number> = {
   "same-place": 0, "same-body": 1, "same-system": 2, elsewhere: 3,
 };
 
+/**
+ * How old the fix is, in words.
+ *
+ * 🔴 THE UNIT IS ALWAYS SPELLED, because "m" is ambiguous between metres, megametres and minutes
+ * and all three are live in this widget — Sub read "New Babbage 4M away" as a distance when it was
+ * this figure. Same rule as `originSummary`, which is where the other copy lives.
+ *
+ * ⚠️ AND IT ROLLS OVER TO HOURS. Seen live on Sub's dev app after an overnight gap: the note read
+ * **"seen 649 min ago"**. Not wrong, but nobody counts in hundreds of minutes, and it sat beside a
+ * summary from `originSummary` that had correctly said "11h ago" — the same quantity, in the same
+ * footer, in two different units. A shared helper is the point: the rollover has to move in one
+ * place or the two drift apart again.
+ */
+function agoPhrase(ageMin: number): string {
+  if (ageMin < 60) return Math.round(ageMin) + " min ago";
+  const h = ageMin / 60;
+  if (h < 24) return Math.round(h) + "h ago";
+  return Math.round(h / 24) + "d ago";
+}
+
 /* ── The ordering ────────────────────────────────────────────────────────────────────────────── */
 
 export interface ProximityDeps {
@@ -313,7 +333,7 @@ export function orderByProximity(
       });
       return {
         basis: "travel-time",
-        note: `Nearest first, from ${origin.label}${origin.ageMin != null && origin.ageMin >= 1 ? ` (seen ${Math.round(origin.ageMin)} min ago)` : ""}.`,
+        note: `Nearest first, from ${origin.label}${origin.ageMin != null && origin.ageMin >= 1 ? ` (seen ${agoPhrase(origin.ageMin)})` : ""}.`,
         quotes: rows,
       };
     }
@@ -331,7 +351,7 @@ export function orderByProximity(
   return {
     basis: "containment",
     note: coarse
-      ? `Closest first, roughly — ${origin.label} is the last place we saw you${origin.ageMin != null && origin.ageMin >= 1 ? `, ${Math.round(origin.ageMin)} min ago` : ""}.`
+      ? `Closest first, roughly — ${origin.label} is the last place we saw you${origin.ageMin != null && origin.ageMin >= 1 ? `, ${agoPhrase(origin.ageMin)}` : ""}.`
       : `Closest first, roughly — we know you are near ${origin.label} but not where exactly.`,
     quotes: rows,
   };

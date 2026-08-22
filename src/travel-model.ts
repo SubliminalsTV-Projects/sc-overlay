@@ -63,6 +63,37 @@ export const LEG_CROSS_BODY_MINUTES = 6;
 export const QUANTUM_SPEED_MPS = 2.34e8;
 
 /**
+ * 🔴 SUB IS RIGHT THAT THIS DEPENDS ON THE EQUIPPED QUANTUM DRIVE — AND THE LOG CANNOT GIVE US ONE.
+ *
+ * His objection, 2026-08-22: "those quantum drive numbers are going to be dependent on what quantum
+ * drive I actually have equipped on my ship." Correct, and it is worth writing down exactly how far
+ * the data can and cannot go, so nobody re-runs this hoping for a per-drive constant.
+ *
+ * Measured over the 250 long legs (>5 Gm, where speed dominates rather than spool) that name a hull:
+ *
+ *   36 distinct hulls. Medians span 7.5x — Gladius Valiant 9.6e8 down to Cutlass Red 1.3e8, and the
+ *   ordering is plausible (light fighters fast, haulers slow), so the effect is real.
+ *
+ * 🔴 BUT THE WITHIN-HULL SPREAD IS 144x. The SAME ship on different legs varies far more than ships
+ * vary from each other, so the drive's signal is buried. The bracket is `Player Selected Quantum
+ * Target` -> `Quantum Drive Arrived`, and that window contains the player deciding, re-selecting,
+ * and getting around to actually engaging. Fitting a per-hull speed off it would be fitting how
+ * long Sub took to press the button.
+ *
+ * 🔴 AND A HULL IS NOT A DRIVE ANYWAY. The quantum drive is a COMPONENT — two Guardians can carry
+ * different ones — and the log names the ship entity, never the loadout. So even a clean per-hull
+ * fit would not be the number he is asking about. Getting it properly needs the equipped item,
+ * which nothing we read reports.
+ *
+ * 🔑 WHY THIS DOES NOT CHANGE THE VERSE FINDER, which is the practical point: within one system
+ * `minutes = d / v`, so a different drive scales EVERY row by the same factor and the ordering is
+ * untouched. It only shifts the balance between in-system distance and the fixed `JUMP_MINUTES`,
+ * i.e. it can only re-order a far in-system shop against a near cross-system one. And the figure
+ * the player is SHOWN is the distance, which no drive affects. That is the strongest argument for
+ * the show-distance/order-by-minutes split: the drive-dependent half never reaches the screen.
+ */
+
+/**
  * ⚠️ BELOW THIS RANGE THE DRIVE WILL NOT SPOOL — MEASURED 2026-08-22, replacing a recollection.
  *
  * This read `20_000_000` (20,000 km) and carried an honest label saying it was Sub's recollection
