@@ -41,19 +41,29 @@
  */
 import type { TradeQuote, TradeSource } from "./trade-prices.js";
 
-/** Measured in `hauling-route.ts` off Sub's logs: the cost of a leg is dominated by the landing,
- *  so another body costs about a minute more than the same one. */
-const LEG_SAME_BODY_MINUTES = 5;
-const LEG_CROSS_BODY_MINUTES = 6;
+/* 🔑 IMPORTED NOW, NOT COPIED. The header above still describes the old arrangement and the
+ * comment that used to sit here admitted it: "duplicated rather than imported because that module
+ * keeps them private... if they are ever retuned, both places must move." They have now been
+ * retuned, and a third consumer (the Verse Finder) wants them, so they live in `travel-model.ts`
+ * and there is exactly one copy. */
+import {
+  LEG_SAME_BODY_MINUTES, LEG_CROSS_BODY_MINUTES, JUMP_MINUTES,
+} from "./travel-model.js";
+
 /**
- * ⚠️ NOT MEASURED. Nothing in the hauling work crossed a system, so there is no observed floor for
- * a Stanton <-> Pyro run. This is a deliberate placeholder standing in for "get to the gateway,
- * queue, jump, cross the far system", and it is set high enough that a cross-system route has to
- * be genuinely better to outrank a local one rather than winning on an optimistic number.
- * 🔑 If this is ever tuned, tune it from `requested inventory for Location[...]` timings the way
- * the other two were - not from a guess about tunnel length.
+ * ⚠️ STILL A FLAT FALLBACK, but no longer an invented one — and it is now the LAST resort rather
+ * than the only answer.
+ *
+ * The old value was 25 minutes with a note saying it was not measured. It is now built from the
+ * parts that were: the jump Sub settled at ~4 minutes, plus a cross-body leg at each end for
+ * "get out to the gateway" and "cross the far system". That is the same decomposition
+ * `travelMinutes()` performs properly when it has coordinates for both ends; this is what to
+ * charge when it does not.
+ *
+ * 🔑 Prefer `travelMinutes()` wherever both places are placed — it routes through the real gateway
+ * graph and knows that Stanton to Nyx is TWO jumps, which no flat number can express.
  */
-const LEG_CROSS_SYSTEM_MINUTES = 25;
+const LEG_CROSS_SYSTEM_MINUTES = JUMP_MINUTES + LEG_CROSS_BODY_MINUTES * 2;
 /** Landing, elevator, buying or selling, leaving. `hauling-route.ts`'s figure. */
 const STOP_MINUTES = 4;
 
@@ -348,7 +358,7 @@ export function findRoutes(
   const seen = new Set<string>();
   const deduped: TradeRoute[] = [];
   for (const r of out) {
-    const k = r.commodity + " " + r.from.terminal;
+    const k = r.commodity + "\u0000" + r.from.terminal;
     if (seen.has(k)) continue;
     seen.add(k);
     deduped.push(r);

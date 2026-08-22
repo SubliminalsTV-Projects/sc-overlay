@@ -141,17 +141,11 @@ const DEFAULTS = {
   unknownLegMinutes: 6,
 };
 
-/* Measured floors, terminal to terminal. See `regionOf`.
- *
- * ⚠️ These EXCLUDE the per-stop base that hauling-plan adds as handling (STOP_BASE_MINUTES,
- * "approach, park, and get to the kiosk"). The measurement is kiosk-to-kiosk, so it already
- * contains that minute — charging both would double-count it. leg + base reproduces the floor:
- *   same body   5 + 1 = 6 min   (Baijini <-> Wala outposts 5m32s-7m14s, outpost -> outpost 5m10s)
- *   cross body  6 + 1 = 7 min   (48 cross-body trips in 18 months of logs; floor 6m59s)
- * Cross-body is corroborated independently: Sub's size-3 drive covers the 59.46 Gm to microTech
- * in 4m10s, and ~3 minutes of ascent, spool and descent lands on the same number. */
-const LEG_SAME_BODY_MINUTES = 5;
-const LEG_CROSS_BODY_MINUTES = 6;
+/* 🔑 THESE MOVED to `travel-model.ts`, which is now the single home for anything that turns a
+ * distance into minutes. Their derivation moved with them verbatim — this module measured them and
+ * is now just their first importer, because trade and the Verse Finder need the same numbers and
+ * were keeping their own copies. */
+import { LEG_SAME_BODY_MINUTES, LEG_CROSS_BODY_MINUTES } from "./travel-model.js";
 
 /** Above this many visits, exact enumeration stops being cheap and we fall back to a heuristic. */
 const EXACT_STOP_LIMIT = 14;

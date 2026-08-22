@@ -56,7 +56,9 @@
     "test:advisor": "tsx src/hauling-advisor.test.ts",
     "test:trade": "tsx src/trade.test.ts",
     "test:verse": "tsx src/item-search.test.ts",
-    "test:earnings": "tsx src/session-earnings.test.ts"
+    "test:earnings": "tsx src/session-earnings.test.ts",
+    "test:travel": "tsx src/travel-model.test.ts",
+    "test:origin": "tsx src/player-origin.test.ts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
