@@ -63,7 +63,8 @@
     "test:travel": "tsx src/travel-model.test.ts",
     "test:origin": "tsx src/player-origin.test.ts",
     "test:proximity": "tsx src/verse-proximity.test.ts",
-    "test:signals": "tsx src/origin-signals.test.ts"
+    "test:signals": "tsx src/origin-signals.test.ts",
+    "test:verseroutes": "tsx src/verse-routes.test.ts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",

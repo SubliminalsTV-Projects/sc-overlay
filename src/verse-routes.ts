@@ -22,8 +22,19 @@
  * uses. See references/security.md.
  */
 import type { ServerResponse } from "node:http";
-import { ItemShopStore } from "./item-shops.js";
-import { searchItems, provenance, type SearchHit } from "./item-search.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ItemShopStore, type ItemShopTable } from "./item-shops.js";
+import { searchItems, provenance, type SearchHit, type ResolvedQuote } from "./item-search.js";
+import {
+  buildTerminalIndex, orderByProximity, systemKey,
+  type TerminalIndex, type LocationRecord, type ProximityOrder,
+} from "./verse-proximity.js";
+import { collectOriginSignals, originDepsFor, type SignalInputs } from "./origin-signals.js";
+import { resolveOrigin, originSummary, type OriginVerdict } from "./player-origin.js";
+import { deriveGateways, loadPlaces, type GatewayInfo, type Vec3 } from "./travel-model.js";
+import { matchLocationToken } from "./hauling-locations.js";
+import type { HaulingDataStore } from "./hauling-data.js";
 
 /** How often the sidecar re-asks the endpoint.
  *
@@ -64,6 +75,15 @@ export interface VerseDeps {
   /** The mission tracker, for the craft cross-link. Optional: without it the widget simply never
    *  mentions crafting, which is a smaller loss than the route failing. */
   tracker?: TrackerLike;
+  /**
+   * Where the session currently thinks the player is. Optional throughout: without it the widget
+   * orders by price and says plainly that it does not know where you are, which is the same
+   * honest state a player who has just launched the app is in anyway.
+   */
+  locationSignals?: () => SignalInputs;
+  /** Hauling reference data, used ONLY to resolve the game's own location tokens (`RR_ARC_LEO`).
+   *  Optional: without it a token that is not literally a place name simply does not resolve. */
+  haulingData?: HaulingDataStore;
 }
 
 let store: ItemShopStore | null = null;
@@ -84,6 +104,105 @@ function ensure(deps: VerseDeps): ItemShopStore {
     timer.unref?.();
   }
   return store;
+}
+
+/* ── Proximity: where the player is, and how far each shop is from there ─────────────────────── */
+
+/**
+ * All of this is built ONCE and cached, because it is derived from files that do not change while
+ * the app runs. The terminal index is the exception: it is rebuilt when the shop TABLE changes
+ * (a live refresh swaps it), which is why it is keyed on the terminals array itself.
+ *
+ * 🔴 EVERY PIECE IS OPTIONAL. A build with no `locations-xyz`, a session with no location signal,
+ * a table whose terminals do not resolve — each degrades to a coarser ordering that says what it
+ * is, and none of them may fail the search. Somebody typing an item name must always get their
+ * answer; where they are is an enhancement to it, never a precondition.
+ */
+interface ProxCache {
+  locations: Record<string, LocationRecord>;
+  gateways: GatewayInfo[];
+  posOf: (id: string) => Vec3 | null;
+  systemOf: (id: string) => string | null;
+  names: Map<string, string>;
+}
+let prox: ProxCache | null = null;
+let termIndex: { forTerminals: unknown; index: TerminalIndex } | null = null;
+
+function proxCache(dataDir: string): ProxCache | null {
+  if (prox) return prox;
+  try {
+    const raw = JSON.parse(readFileSync(join(dataDir, "locations.json"), "utf8")) as
+      { locations?: Record<string, LocationRecord> };
+    const locations = raw.locations ?? {};
+    if (!Object.keys(locations).length) return null;
+    const places = loadPlaces(dataDir);
+    const names = new Map<string, string>();
+    for (const [id, rec] of Object.entries(locations)) if (rec?.name) names.set(id, rec.name);
+    prox = {
+      locations,
+      gateways: deriveGateways(locations as never, places),
+      posOf: (id) => (places[id]
+        ? { x: places[id].pos[0], y: places[id].pos[1], z: places[id].pos[2] } : null),
+      // 🔑 travel-model wants a system TOKEN here (it compares them to build the gateway path),
+      // unlike `originDepsFor`'s systemOf which returns a star id for the containment check. Two
+      // different questions that happen to share a name; do not merge them.
+      systemOf: (id) => systemKey(locations[id]?.system) || null,
+      names,
+    };
+    return prox;
+  } catch {
+    // A build without the location data must still answer searches.
+    return null;
+  }
+}
+
+function terminalIndex(table: ItemShopTable, locations: Record<string, LocationRecord>): TerminalIndex {
+  if (termIndex && termIndex.forTerminals === table.terminals) return termIndex.index;
+  const index = buildTerminalIndex(table.terminals, locations);
+  termIndex = { forTerminals: table.terminals, index };
+  return index;
+}
+
+/** The verdict plus a ready-made orderer, or null when we cannot say anything useful. */
+function proximity(deps: VerseDeps, table: ItemShopTable): {
+  origin: OriginVerdict;
+  order: (q: ResolvedQuote[]) => ProximityOrder;
+} | null {
+  const c = proxCache(deps.dataDir);
+  if (!c) return null;
+  const inputs = deps.locationSignals?.() ?? {};
+  const signals = collectOriginSignals(inputs, {
+    locations: c.locations,
+    // The game's own tokens, through the resolver that already knows them. Pointed at the STARMAP
+    // names so it returns starmap ids — the namespace everything downstream is keyed by.
+    resolveToken: deps.haulingData
+      ? (t) => matchLocationToken(t, c.names, deps.haulingData!)
+      : undefined,
+  });
+  const origin = resolveOrigin(signals, originDepsFor(c.locations));
+  const index = terminalIndex(table, c.locations);
+  return {
+    origin,
+    order: (q) => orderByProximity(q, {
+      index, locations: c.locations,
+      travel: { gateways: c.gateways, posOf: c.posOf, systemOf: c.systemOf },
+      origin,
+    }),
+  };
+}
+
+/** What the widget renders beside the eye. Kept whole rather than split across fields so the UI
+ *  cannot assemble a claim we did not make. */
+function originPayload(origin: OriginVerdict) {
+  return {
+    tier: origin.tier,
+    label: origin.label,
+    summary: originSummary(origin),
+    ageMin: origin.ageMin,
+    stale: origin.stale,
+    from: origin.from,
+    howToImprove: origin.howToImprove,
+  };
 }
 
 /**
@@ -141,19 +260,32 @@ export function verseRoutes(
   const p = qs(req.url ?? "/");
 
   if (url === "/api/verse/status") {
-    json(res, 200, provenance(table));
+    const px = proximity(deps, table);
+    json(res, 200, { ...provenance(table), origin: px ? originPayload(px.origin) : null });
     return true;
   }
 
   if (url === "/api/verse/search") {
     const q = (p.get("q") ?? "").trim();
+    const px = proximity(deps, table);
+    // 🔴 One ORDER per response, not per item. `basis` and `note` describe how well we know where
+    // the player is, which is a property of the session — letting it vary row by row would invite
+    // the UI to print a different confidence beside each shop for the same single reading.
+    let order: ProximityOrder | null = null;
     const hits = searchItems(table, q, {
       limit: intParam(p, "limit", 20),
       quotesPerItem: intParam(p, "shops", 8),
+      orderQuotes: px
+        ? (quotes) => { const r = px.order(quotes); order = r; return r.quotes; }
+        : undefined,
     });
     json(res, 200, {
       query: q,
       results: hits.map((h) => ({ ...h, craft: craftInfo(h, deps.tracker) })),
+      origin: px ? originPayload(px.origin) : null,
+      // Null when nothing was ordered at all — an empty result set never ran the orderer, and
+      // claiming a basis for zero rows would be a statement about data we never looked at.
+      order: order ? { basis: (order as ProximityOrder).basis, note: (order as ProximityOrder).note } : null,
       ...provenance(table),
     });
     return true;

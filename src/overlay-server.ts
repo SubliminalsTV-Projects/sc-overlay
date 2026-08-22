@@ -1985,7 +1985,21 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
 
   // Verse Finder — "where can I buy this item". Same discipline as trade: every route, default
   // and piece of state lives in verse-routes.ts and this is its ONLY hook into this file.
-  if (verseRoutes(url, req, res, { dataDir, userDir, tracker })) return;
+  if (verseRoutes(url, req, res, {
+    dataDir, userDir, tracker, haulingData,
+    // Read at request time, never cached: these watchers are updated by the log tail and a
+    // snapshot taken at startup would pin the player wherever they were when the app launched.
+    locationSignals: () => {
+      const h = hauling.view();
+      return {
+        place: place.current(),
+        system: sysWatch.current(),
+        atLocation: h.atLocation,
+        atLocationId: h.atLocationId,
+        cargoMove: h.cargoMove,
+      };
+    },
+  })) return;
 
   // Current mission/blueprint view (snapshot).
   if (url === "/api/missions" && req.method === "GET") {

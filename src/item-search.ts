@@ -173,6 +173,19 @@ export interface SearchOptions {
   /** Max shops per item on the wire. The full count still travels as `shopCount`, so a truncation
    *  can never read as "this is everywhere it is sold". */
   quotesPerItem?: number;
+  /**
+   * Reorder an item's shops before they are truncated.
+   *
+   * 🔴 THE HOOK IS HERE, AND NOT AT THE CALL SITE, PRECISELY BECAUSE OF THE TRUNCATION. Quotes
+   * arrive cheapest-first and only `quotesPerItem` of them survive onto the wire, so a caller
+   * sorting the RETURNED array would be sorting the eight cheapest — "the nearest of the cheapest"
+   * is not "the nearest", and it is wrong exactly when it matters most: the median item has 4
+   * shops, but the p90 has 19 and the maximum 159.
+   *
+   * Receives every resolvable shop and must return the same quotes in a new order. Absent, the
+   * cheapest-first order stands.
+   */
+  orderQuotes?: (quotes: ResolvedQuote[]) => ResolvedQuote[];
 }
 
 /**
@@ -213,7 +226,8 @@ export function searchItems(table: ItemShopTable, query: string, opts: SearchOpt
       size: item.z,
       uuid: item.u,
       shopCount: quotes.length,
-      quotes: quotes.slice(0, perItem),
+      // Order FIRST, then truncate — see `orderQuotes` on why that order matters.
+      quotes: (opts.orderQuotes ? opts.orderQuotes(quotes) : quotes).slice(0, perItem),
       low,
       high,
       score,
