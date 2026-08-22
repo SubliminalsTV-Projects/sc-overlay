@@ -57,6 +57,12 @@ export interface OriginSignal {
 
 export interface OriginVerdict {
   tier: OriginTier;
+  /** The winning signal's own id — the starmap place/body/system token, NOT the display label.
+   *
+   *  🔑 Added by verse2 because without it a verdict cannot be USED, only shown: computing a
+   *  distance needs the id that `locations-xyz` is keyed by, and re-deriving one from `label`
+   *  would be exactly the name-matching this module exists to avoid. Null only for "unknown". */
+  id: string | null;
   label: string;
   /** Epoch ms of the reading, or null when nothing is known. */
   at: number | null;
@@ -152,6 +158,7 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
     if (a > TRUST_MIN[tier]) continue;
     return {
       tier,
+      id: s.id,
       label: s.label,
       at: s.at,
       ageMin: a,
@@ -168,6 +175,7 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
   if (expired) {
     return {
       tier: expired.tier,
+      id: expired.id,
       label: expired.label,
       at: expired.at,
       ageMin: age(expired),
@@ -178,6 +186,7 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
   }
   return {
     tier: "unknown",
+    id: null,
     label: "Unknown",
     at: null,
     ageMin: null,
