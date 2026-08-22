@@ -53,8 +53,27 @@ export type OrderBasis = "travel-time" | "containment" | "none";
 export type Containment = "same-place" | "same-body" | "same-system" | "elsewhere";
 
 export interface ProximityQuote extends ResolvedQuote {
-  /** Minutes to fly there, or null when this ordering does not produce numbers. */
+  /** Minutes to fly there, or null when this ordering does not produce numbers.
+   *
+   *  ⚠️ THIS IS THE ORDERING KEY, NOT THE THING TO SHOW. It is composed from a jump estimate and an
+   *  effective quantum speed with no fixed spool term, so it is optimistic at short range — see
+   *  `inSystemMinutes`. `metres` below is exact, and is what the widget renders. */
   minutes: number | null;
+  /**
+   * 🔴 STRAIGHT-LINE DISTANCE, AND ONLY WHEN THAT PHRASE MEANS SOMETHING — null across systems.
+   *
+   * Sub asked to see distance rather than minutes, and distance is the honest half of this pair:
+   * every one of the 461 terminals resolves to a starmap place with real metre coordinates, so
+   * this number is measured where the minutes are modelled.
+   *
+   * 🔑 It is null for a cross-system shop ON PURPOSE. `locations-xyz` is per-system frames — its
+   * own `units` field says "coordinates are NOT comparable across systems" — so subtracting a Pyro
+   * coordinate from a Stanton one produces a number with no meaning. `jumps` is what carries
+   * "how far" in that case, because that is genuinely what the answer is.
+   */
+  metres: number | null;
+  /** Wormhole transits between you and this shop; 0 for same-system. Null when no route was built. */
+  jumps: number | null;
   /** Only as measured as the route's weakest leg — a cross-system hop is always "estimated",
    *  because the wormhole transit itself has never been measured. */
   travelBasis: TravelBasis | null;
@@ -241,7 +260,7 @@ export function orderByProximity(
 ): ProximityOrder {
   const { origin, index, locations, travel } = deps;
   const plain = (): ProximityQuote[] =>
-    quotes.map((q) => ({ ...q, minutes: null, travelBasis: null, containment: null }));
+    quotes.map((q) => ({ ...q, minutes: null, metres: null, jumps: null, travelBasis: null, containment: null }));
 
   if (origin.tier === "unknown" || !origin.id) {
     return {
@@ -259,13 +278,25 @@ export function orderByProximity(
   // decided not to trust would be precision we do not have.
   const coarse = origin.stale || origin.tier === "system";
   if (!coarse) {
+    // 🔑 The straight-line distance is only meaningful inside ONE system's frame, so it is computed
+    // here rather than inside travelMinutes: that function deliberately decomposes a cross-system
+    // route into legs in two different frames, and there is no single distance to hand back.
+    const originPos = travel.posOf(origin.id!);
+    const originSys = travel.systemOf(origin.id!);
     const rows: ProximityQuote[] = quotes.map((q) => {
       const pid = placeOf(q);
       const est = pid ? travelMinutes(origin.id!, pid, travel) : null;
       const usable = est && !est.unknown;
+      const shopPos = pid ? travel.posOf(pid) : null;
+      const sameSystem = !!pid && !!originSys && travel.systemOf(pid) === originSys;
       return {
         ...q,
         minutes: usable ? est!.minutes : null,
+        metres: sameSystem && originPos && shopPos
+          ? Math.hypot(originPos.x - shopPos.x, originPos.y - shopPos.y, originPos.z - shopPos.z)
+          : null,
+        // `path` is the systems traversed, so the transits between them is one less.
+        jumps: usable ? Math.max(0, est!.path.length - 1) : null,
         travelBasis: usable ? est!.basis : null,
         containment: contain(q),
       };
@@ -282,21 +313,25 @@ export function orderByProximity(
       });
       return {
         basis: "travel-time",
-        note: `Nearest first, from ${origin.label}${origin.ageMin != null && origin.ageMin >= 1 ? ` (seen ${Math.round(origin.ageMin)}m ago)` : ""}.`,
+        note: `Nearest first, from ${origin.label}${origin.ageMin != null && origin.ageMin >= 1 ? ` (seen ${Math.round(origin.ageMin)} min ago)` : ""}.`,
         quotes: rows,
       };
     }
   }
 
+  // 🔴 Containment ordering states NO distance either. The reason is the same one that downgrades
+  // it here in the first place: we do not know precisely where the player is, so a metre figure
+  // would be exact-looking arithmetic off an inexact origin — the same false precision as minutes,
+  // wearing a unit the player is even more likely to believe.
   const rows: ProximityQuote[] = quotes.map((q) => ({
-    ...q, minutes: null, travelBasis: null, containment: contain(q),
+    ...q, minutes: null, metres: null, jumps: null, travelBasis: null, containment: contain(q),
   }));
   rows.sort((a, b) =>
     CONTAINMENT_RANK[a.containment!] - CONTAINMENT_RANK[b.containment!] || a.price - b.price);
   return {
     basis: "containment",
     note: coarse
-      ? `Closest first, roughly — ${origin.label} is the last place we saw you${origin.ageMin != null && origin.ageMin >= 1 ? `, ${Math.round(origin.ageMin)}m ago` : ""}.`
+      ? `Closest first, roughly — ${origin.label} is the last place we saw you${origin.ageMin != null && origin.ageMin >= 1 ? `, ${Math.round(origin.ageMin)} min ago` : ""}.`
       : `Closest first, roughly — we know you are near ${origin.label} but not where exactly.`,
     quotes: rows,
   };

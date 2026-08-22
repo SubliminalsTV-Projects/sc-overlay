@@ -54,7 +54,13 @@
   #results { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 0 8px; }
 
   /* ── One item ─────────────────────────────────────────────────────────────── */
-  .item { border-bottom: 1px solid var(--divider); padding: 9px 12px 10px; }
+  /* 🔑 LEFT AND RIGHT ARE NOT THE SAME JOB, so they are no longer the same number (Sub, 2026-08-22:
+     "too much left padding… it looks off"). The right edge carries the price column, which is
+     right-ALIGNED and therefore already ends short of the border — a matching 12px there reads as
+     a wide, empty gutter on the left where text starts hard. 7px on the left puts the item name
+     near the panel edge the eye scans down; the right keeps its 12px so the prices are not jammed
+     against the frame. */
+  .item { border-bottom: 1px solid var(--divider); padding: 9px 12px 10px 7px; }
   .item:last-child { border-bottom: 0; }
   .iname { font-size: 13px; font-weight: 600; color: var(--cyan-bright); line-height: 1.3;
     overflow-wrap: anywhere; }
@@ -144,10 +150,17 @@
   .dist.contain { font-family: var(--sans); font-size: 9.5px; font-weight: 600; color: var(--dim);
                   text-transform: lowercase; letter-spacing: 0.01em; }
 
-  /* The indicator. An inline SVG eye, never a glyph: this page links widget-theme.css so an emoji
-     WOULD render, but the colour-emoji face is a lazy 4.8 MB fetch and a text-presentation eye is
-     at the mercy of the OS font — the same trap that made `o7` render as a box. Drawn, it cannot
-     be missing. */
+  /* 🔴 A CIRCLED "i", NOT AN EYE (Sub, 2026-08-22: "the letter I with a circle around it").
+     An eye reads as a visibility toggle — show/hide this thing — which is exactly the wrong verb
+     for a control whose whole job is "there is more to read here, click or hover". The tracker
+     already learned this once: an eye glyph beside the reputation figure "read as something else
+     entirely" and was replaced by a circled i for the same reason.
+
+     Still INLINE SVG, and still never a glyph, for the reason the eye was: this page links
+     widget-theme.css so a real ⓘ WOULD render, but only by pulling the 4.8 MB colour-emoji face,
+     and the text-presentation form is at the mercy of the OS font — the trap that made `o7` render
+     as a box. It is also drawn as a circle plus two strokes rather than SVG <text>, so it does not
+     depend on a font at all. */
   .eyebtn { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0;
             padding: 1px 3px; margin: 0; cursor: pointer; font: inherit; color: var(--dim);
             border-radius: 3px; }
@@ -158,8 +171,15 @@
   /* Three states, and they are the three claims — precise, approximate, none. */
   .eyebtn.precise { color: var(--green); }
   .eyebtn.rough   { color: var(--amber); }
-  .eyebtn.none    { color: var(--dim); }
-  .eyebtn.none svg { opacity: 0.55; }
+  /* 🔴 "WE DO NOT KNOW WHERE YOU ARE" IS THE STATE THAT WANTS THE PLAYER TO ACT, so it can no
+     longer be the quietest thing in the footer. It used to render at `--dim` with the icon knocked
+     back to 55% opacity — dimmer than the two states that need nothing from anybody. The ladder
+     was backwards: precise (green) is good news and can recede, rough (amber) is a caveat, and
+     unknown is the only one with an instruction behind it. It now takes the amber-family accent
+     and full-strength icon, and keeps the neutral LABEL colour so it reads as "attention", not as
+     an error — nothing is broken, we simply cannot see you yet. */
+  .eyebtn.none    { color: var(--amber); }
+  .eyebtn.none .lbl { color: var(--cyan-text); }
 
   /* 🔴 A POPOVER, in the TOP LAYER. It is immune to every ancestor's overflow and takes NO space
      in layout, which is what stops it growing the panel — a plain absolutely-positioned box here
@@ -181,11 +201,34 @@
   .ordernote { flex: none; padding: 3px 10px 0; font-family: var(--sans); font-size: 9.5px;
                color: var(--dim); letter-spacing: 0.01em; }
 
-  .foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px 6px;
+  /* 🔴 A BIGGER FOOTER, TO GIVE UEX ROOM (Sub, 2026-08-22). His framing is the design note:
+     "this is really mainly just them. All we're doing is putting up a wrapper for it." So the
+     credit is not a 9px afterthought squeezed against two other things — it is the second most
+     important thing in the panel after the results, and it gets height, its own line, and the
+     brand mark. 9px mono at 5px padding was a legal footnote; this is a credit. */
+  .foot { flex: none; display: flex; align-items: center; gap: 9px; padding: 8px 10px 9px 7px;
     border-top: 1px solid var(--divider); position: relative; z-index: 4;
-    font-family: var(--mono); font-size: 9px; color: var(--faint); letter-spacing: 0.03em; }
-  #src { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #src.fallback { color: var(--amber); }
+    font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: 0.03em; }
+  #src { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; }
+  /* 🔴 UEX'S OWN "Powered by UEX" BADGE, supplied by Sub 2026-08-22 — so it is used UNMODIFIED,
+     which is the entire point of a brand badge. It is not tinted, not recoloured by the
+     manufacturer skins, and not clipped: an attribution that changes to suit our theme stops being
+     an attribution. It carries the words "Powered by UEX" itself, which is why there is no
+     separate wordmark beside it — repeating the name would read as a status line rather than a
+     credit.
+
+     🔑 SHIPPED AT 202x60 FOR A 17px SLOT. The original is 3840x1138 / 118 KB, which is 40x more
+     pixels than this can ever show and would be paid on every widget load by every user. Trimmed
+     and resampled to 4x the display height it is 3.1 KB — the same reasoning that keeps the
+     colour-emoji face out of this page.
+
+     ⚠️ If it cannot load it is REPLACED by the words, never merely removed — see the markup. A
+     broken-image glyph would be ugly, but an attribution that silently disappears is worse. */
+  #uexmark { flex: none; height: 17px; width: auto; display: block; border-radius: 3px; }
+  #uexname { flex: none; font-family: var(--sans); font-weight: 700; font-size: 10px;
+    letter-spacing: 0.04em; color: var(--cyan-text); white-space: nowrap; }
+  #srctext { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #src.fallback #srctext { color: var(--amber); }
   #nostock { flex: none; }
 </style>
 </head>
@@ -209,15 +252,26 @@
            `title` stays for hover: there is no API to open a native tooltip from script, so the
            popover carries the click and the two coexist rather than one replacing the other. -->
       <button id="eye" class="eyebtn none" type="button" popovertarget="eyepop">
+        <!-- The circled i, drawn: ring, dot, stem. No <text>, so no font can fail to have it. -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z" />
-          <circle cx="12" cy="12" r="3.2" />
+          <circle cx="12" cy="12" r="9.5" />
+          <path d="M12 11v5.5" />
+          <path d="M12 7.6v0.1" stroke-width="2.6" />
         </svg>
         <span class="lbl" id="eyelbl">Location unknown</span>
       </button>
       <div id="eyepop" class="eyepop" popover="auto"></div>
-      <span id="src">…</span>
+      <!-- 🔴 THE CREDIT, not a source line. Sub: "this is really mainly just them. All we're doing
+           is putting up a wrapper for it." The mark is a drop-in (see #uexmark) and the wordmark
+           stands alone until it exists, so the attribution is never absent. -->
+      <span id="src">
+        <!-- ⚠️ The fallback REPLACES rather than removes: an attribution that can vanish because an
+             image 404'd is not an attribution. If the badge cannot load, the words take its place. -->
+        <img id="uexmark" src="/logos/uex-powered.png" alt="Powered by UEX"
+             onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" />
+        <span id="srctext">…</span>
+      </span>
       <!-- 🔴 "stock unknown" was the first wording and Sub had to ask what it meant, which is the
            whole test failed: it reads like a loading state rather than a statement about the data.
            The label now says the CONSEQUENCE for the player — a shop listed here can still be
@@ -243,6 +297,9 @@
   let timer = null;
   let seq = 0;            // response ordering — a slow early request must not overwrite a fast late one
   let lastQuery = "";
+  // The origin from the most recent response, held only so a distance tooltip can name what the
+  // figure is measured FROM. Never used to compute anything.
+  let lastOrigin = null;
 
   const fmt = (n) => n.toLocaleString("en-US");
 
@@ -284,12 +341,25 @@
     return bits.length ? bits.join(" · ") : "";
   }
 
-  /** Minutes as a player reads them: under an hour, minutes; past that, hours. */
-  function mins(m) {
-    if (m < 1) return "<1m";
-    if (m < 60) return Math.round(m) + "m";
-    const h = Math.floor(m / 60);
-    return h + "h" + (Math.round(m - h * 60) ? " " + Math.round(m - h * 60) + "m" : "");
+  /**
+   * Metres as the GAME writes them — km, Mm, Gm — because that is the ladder on the player's own
+   * HUD and quantum target list. Anything else makes them convert in their head to compare the
+   * widget against the screen behind it.
+   *
+   * 🔑 THE UNIT IS ALWAYS PRESENT AND ALWAYS SPELLED. This is the direct lesson of Sub reading
+   * "New Babbage 4M away" as a distance when it was the age of his position fix: a bare number or
+   * a single-letter suffix next to a place name gets read as distance whatever it actually is.
+   * One decimal only below 10 of a unit, where the difference is legible; none above, where it is
+   * false precision on a straight-line figure.
+   */
+  function fmtDist(m) {
+    if (m < 1000) return "<1 km";
+    const km = m / 1000;
+    if (km < 1000) return Math.round(km).toLocaleString() + " km";
+    const Mm = m / 1e6;
+    if (Mm < 1000) return (Mm < 10 ? Mm.toFixed(1) : Math.round(Mm).toLocaleString()) + " Mm";
+    const Gm = m / 1e9;
+    return (Gm < 10 ? Gm.toFixed(1) : Math.round(Gm).toLocaleString()) + " Gm";
   }
 
   const CONTAIN_TEXT = {
@@ -299,21 +369,47 @@
     "elsewhere": "elsewhere",
   };
 
-  /** The distance cell, or null when the server made no claim about this row. */
-  function distNode(q) {
-    if (q.minutes != null) {
+  /**
+   * 🔴 DISTANCE, NOT MINUTES (Sub, 2026-08-22) — and the swap is only safe because the ordering
+   * was fixed first. He asked for this while ALSO reporting that the numbers were wrong; showing
+   * the same broken join in a new unit would have been the same bug in new clothes.
+   *
+   * 🔑 WHY DISTANCE IS THE HONEST HALF OF THE PAIR. Every one of the 461 terminals resolves to a
+   * starmap place with real metre coordinates, so `metres` is MEASURED. `minutes` is MODELLED —
+   * an effective quantum speed with no fixed spool term plus a 4-minute jump estimate — and at
+   * short range it collapses: from Seraphim, Orison (830 km), GrimHEX (8 Mm) and everything else
+   * inside a gigametre all quote "0.0m". A column of zeroes is not a distance readout. The metre
+   * figure separates those rows correctly at every scale.
+   *
+   * 🔴 A BARE NUMBER BESIDE A PLACE NAME GETS READ AS A DISTANCE — which is what happened to Sub
+   * with the ordering note's "(seen 4m ago)". So the unit is always written out (km / Mm / Gm),
+   * never a bare "4m", and the tooltip says straight-line from where in the first clause.
+   */
+  function farNode(q) {
+    // Same system: a real straight-line distance.
+    if (q.metres != null) {
       const s = document.createElement("span");
-      // "est" is not decoration: a route crossing a jump point is estimated, because the wormhole
-      // transit itself has never been measured. It rides the leg, so the server decides it.
-      s.className = "dist" + (q.travelBasis === "estimated" ? " est" : "")
-        + (q.minutes < 1 ? " near" : "");
-      s.textContent = (q.travelBasis === "estimated" ? "~" : "") + mins(q.minutes);
-      s.title = q.travelBasis === "estimated"
-        ? "About " + mins(q.minutes) + " away. The route crosses a jump point, and the transit "
-          + "through the wormhole has never been measured — so this leg is an estimate, and the "
-          + "whole figure is only as certain as it is."
-        : mins(q.minutes) + " away at quantum speed, from the last place we saw you. It does not "
-          + "include time spent landing, docking, or getting to your ship.";
+      s.className = "dist" + (q.metres < 1e6 ? " near" : "");
+      s.textContent = fmtDist(q.metres);
+      s.title = q.metres < 1000
+        ? "You are effectively already here — under a kilometre from the last place the game "
+          + "told us about."
+        : fmtDist(q.metres) + " in a straight line from " + (q.__from || "where we last saw you")
+          + ". It is the distance, not a travel time: it does not know about spooling up, "
+          + "landing, docking, or getting to your ship.";
+      return s;
+    }
+    // 🔴 Another system: there is NO distance to state. `locations-xyz` is per-system frames and
+    // says so in its own `units` field, so subtracting a Pyro coordinate from a Stanton one gives
+    // a number with no meaning. The jump count IS the answer to "how far" here.
+    if (q.jumps != null && q.jumps > 0) {
+      const s = document.createElement("span");
+      s.className = "dist est";
+      s.textContent = q.jumps + (q.jumps === 1 ? " jump" : " jumps");
+      s.title = "Another system — " + q.jumps + (q.jumps === 1 ? " wormhole transit" : " wormhole transits")
+        + " away. There is no straight-line distance to give you: the game stores each system's "
+        + "coordinates in its own frame, so measuring between two of them would produce a "
+        + "confident-looking number that means nothing.";
       return s;
     }
     if (q.containment && q.containment !== "elsewhere") {
@@ -329,12 +425,21 @@
   }
 
   /**
-   * 🔴 THE EYE SAYS HOW WELL WE CAN SEE YOU — it is not an info button.
+   * 🔴 IT SAYS HOW WELL WE CAN SEE YOU — and since 2026-08-22 it wears a circled i, not an eye.
    *
    * Three states because there are exactly three claims: we know where you are (green), we know
-   * roughly or the reading has aged (amber), we do not know (dim). The label is the server's own
-   * `summary`, and the popover carries `from` and `howToImprove` verbatim. Sub's requirement for
-   * the hover was that it says what the player can DO about it, not merely that it is uncertain.
+   * roughly or the reading has aged (amber), we do not know (also amber now — it is the one state
+   * asking the player for something, so it may not be the quietest thing on screen; see the CSS).
+   * The label is the server's own `summary`, and the popover carries `from` and `howToImprove`
+   * verbatim. Sub's requirement for the hover was that it says what the player can DO about it,
+   * not merely that it is uncertain.
+   *
+   * 🔴 THE THREE-QUANTITY TRAP, and why the summary is rewritten below. Sub read "New Babbage
+   * 4M away" as a distance. It was neither a distance nor minutes to New Babbage — `order.note`
+   * said "Nearest first, from Orison (seen 4m ago)" and that `4m` was the AGE OF HIS POSITION FIX.
+   * Three different quantities were on screen in similar shapes and they merged. The rows now
+   * carry a spelled-out distance unit, and every AGE in this footer is spelled "min ago" / "h ago"
+   * so no bare `4m` can sit beside a place name and be read as how far away it is.
    */
   function renderEye(origin, order) {
     const btn = $("eye"), lbl = $("eyelbl"), pop = $("eyepop");
@@ -437,10 +542,14 @@
       }
       row.appendChild(w);
 
-      // 🔴 How far — and ONLY what the server actually claimed. `minutes` is present exactly when
-      // the ordering was by travel time; `containment` when it was rougher. Neither is derived
-      // here, because deriving one would let the widget state a confidence the data never had.
-      const d = distNode(q);
+      // 🔴 How far — and ONLY what the server actually claimed. `metres` is present exactly when
+      // the ordering was by travel time AND the shop shares the player's system; `jumps` carries
+      // it when it does not; `containment` when the fix was too coarse for either. Nothing is
+      // derived here, because deriving one would let the widget state a confidence the data never
+      // had. The origin's own name is passed through only so the tooltip can name what the
+      // distance is measured FROM — the row must never read as an absolute position.
+      q.__from = (lastOrigin && lastOrigin.label) || null;
+      const d = farNode(q);
       if (d) row.appendChild(d);
 
       shops.appendChild(row);
@@ -475,6 +584,7 @@
     // The eye is about the SESSION, not about these results, so it updates on every response —
     // including the empty ones. A player who searched something we do not stock still deserves to
     // know whether we can see where they are.
+    lastOrigin = data.origin || null;
     renderEye(data.origin, data.order);
     if (!data.query) {
       showEmpty("Type an item name.<br />Weapons, armour, ship components, gear.");
@@ -504,16 +614,22 @@
    *  user knows when they are on a fallback, and only the screen they are looking at can say so. */
   function renderSource(data) {
     const el = $("src");
+    // ⚠️ WRITE TO #srctext, NEVER TO #src. This used to set `textContent` on the whole span, which
+    // is now the credit block — doing that would delete the UEX mark and wordmark on the first
+    // response and leave the attribution showing only for the instant before any data arrived.
+    const t = $("srctext");
     const age = data.fetchedAt ? ageOf(Math.floor(data.fetchedAt / 1000)) : "unknown age";
     if (data.source === "live") {
       el.className = "";
-      el.textContent = "UEX via subliminal.gg · updated " + age;
+      // 🔑 "UEX via" is gone from the sentence because the wordmark beside it already says UEX.
+      // Repeating it made the credit read as part of a status line rather than as a credit.
+      t.textContent = "via subliminal.gg · updated " + age;
     } else if (data.source === "cache") {
       el.className = "fallback";
-      el.textContent = "offline — last download " + age;
+      t.textContent = "offline — last download " + age;
     } else {
       el.className = "fallback";
-      el.textContent = "offline — using the copy that shipped with the app";
+      t.textContent = "offline — using the copy that shipped with the app";
     }
     el.title = (data.itemCount || 0) + " items across " + (data.terminalCount || 0) + " shops."
       + (data.droppedOffline ? "  " + data.droppedOffline + " price rows were dropped for sitting at terminals the game no longer has." : "")

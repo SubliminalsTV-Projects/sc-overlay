@@ -2324,8 +2324,30 @@ const VERSEFINDER = `(async () => {
   const src = document.getElementById("src");
   ok("the footer names where the table came from", !!src && src.textContent.trim().length > 4,
      src ? src.textContent : "none");
+  // ⚠️ RE-POINTED 2026-08-22. This read the whole #src span and matched /UEX|offline/, which passed
+  // only because the live sentence used to begin "UEX via subliminal.gg". The credit moved to a
+  // badge, so the word left the sentence and this failed on working code. The tier wording is what
+  // the assertion was ever about, so it now reads the element that carries the tier.
+  const srctext = document.getElementById("srctext");
   ok("...and it says one of the three tiers, not something vague",
-     /UEX|offline/.test(src.textContent), src.textContent);
+     !!srctext && /subliminal\.gg|offline/.test(srctext.textContent),
+     srctext ? srctext.textContent : "(no #srctext)");
+  // 🔴 THE UEX CREDIT IS ITS OWN ASSERTION NOW, because it is its own requirement (Sub,
+  // 2026-08-22: "this is really mainly just them. All we're doing is putting up a wrapper for
+  // it."). Previously it was only ever incidental to the tier check above — which is exactly how
+  // it disappeared from the sentence without anything noticing.
+  // 🔑 EITHER the badge OR the words satisfy it, because the markup deliberately swaps one for the
+  // other when the image cannot load. Asserting on the <img> alone would go red for the fallback
+  // that exists to keep the attribution present.
+  {
+    const badge = document.getElementById("uexmark");
+    const words = document.getElementById("uexname");
+    const credited = (badge && /uex/i.test(badge.getAttribute("alt") || "")) ||
+                     (words && /uex/i.test(words.textContent || ""));
+    ok("🔴 UEX is credited in the footer, by badge or by name",
+       !!credited,
+       badge ? "badge alt=" + badge.getAttribute("alt") : words ? "words=" + words.textContent : "(neither present)");
+  }
   // 🔴 There is no stock field in the source AT ALL, so the panel says so rather than letting a
   // player assume a listed shop has one on the shelf.
   const ns = document.getElementById("nostock");
@@ -2385,6 +2407,19 @@ const VERSEFINDER = `(async () => {
   ok("...drawn as an SVG, never a glyph the OS font might not have",
      !!(eyeEl() && eyeEl().querySelector("svg path")),
      eyeEl() ? (eyeEl().querySelector("svg") ? "svg" : "no svg") : "(no eye)");
+  // 🔴 IT IS A CIRCLED i, NOT AN EYE (Sub, 2026-08-22). An eye reads as a visibility toggle, which
+  // is the wrong verb for "there is more to read here".
+  // 🔑 Asserted on the SHAPE, because that is the thing that can regress. The eye was one <path>
+  // outline plus a pupil <circle>; the i is a ring <circle> plus a stem and a dot, both <path>.
+  // Counting "a circle and two paths" is what tells them apart — checking merely that an <svg>
+  // exists passes just as happily for the eye, which is how this could have been missed.
+  {
+    const svg = eyeEl() && eyeEl().querySelector("svg");
+    const circles = svg ? svg.querySelectorAll("circle").length : 0;
+    const paths = svg ? svg.querySelectorAll("path").length : 0;
+    ok("...as a circled i (ring + stem + dot), not the old eye outline",
+       circles === 1 && paths === 2, "circle=" + circles + " path=" + paths);
+  }
   ok("...and it always says something rather than sitting blank",
      eyeTxt().length > 0, eyeTxt());
   // Three states and only three, because there are exactly three claims it can make.
@@ -2446,6 +2481,117 @@ const VERSEFINDER = `(async () => {
   ok("...and no distance cell is ever empty",
      distCells.every((c) => c.textContent.trim().length > 0),
      distCells.length + " cells");
+
+  // 🔑 CAPTURED FROM THE LIVE RESPONSE, BEFORE THE FIXTURE BELOW REPLACES IT. These two strings are
+  // built by the SERVER (originSummary and orderByProximity's note), so they are the only place the
+  // real age wording can be tested. The first version of the bare-age assertion ran after the
+  // fixture render and therefore read the fixture's own hand-written strings — a tautology that
+  // stayed green when the server was reverted to "19m ago". The control is what exposed it.
+  const liveNote = document.getElementById("ordernote");
+  const liveEyeLbl = document.getElementById("eyelbl");
+  const liveAgeText = (liveNote ? liveNote.textContent : "") + " " + (liveEyeLbl ? liveEyeLbl.textContent : "");
+
+  // ── 🔴 DISTANCE, NOT MINUTES (Sub, 2026-08-22) ─────────────────────────────────────────────
+  //
+  // 🔑 DRIVEN FROM A FIXTURE THROUGH render(), NOT FROM THE LIVE SIDECAR, and that is the only way
+  // this can be tested at all. The sidecar's origin comes from Sub's real log, so whether it is
+  // fresh or stale is a property of when he last played — and a stale fix orders by CONTAINMENT
+  // and states no distances whatsoever. Asserting against the live response would pass or fail on
+  // the clock. The fixture carries the exact numbers from his report so the case that shipped
+  // wrong is the case under test.
+  {
+    const q = (place, price, metres, jumps, basis, contain) => ({
+      terminal: "T " + place, system: "Stanton", body: "b", place: place, price: price,
+      asOf: 1786511612, minutes: 0, metres: metres, jumps: jumps, travelBasis: basis,
+      containment: contain,
+    });
+    render({
+      query: "fixture", source: "live", fetchedAt: Date.now(), itemCount: 1, terminalCount: 461,
+      origin: { tier: "place", label: "Seraphim Station", summary: "Seraphim Station . just now",
+                ageMin: 0, stale: false, from: "a test", howToImprove: "x" },
+      order: { basis: "travel-time", note: "Nearest first, from Seraphim Station." },
+      results: [{
+        name: "Fixture Item", company: "c", category: "k", size: null, uuid: "u",
+        shopCount: 4, low: 265, high: 400,
+        quotes: [
+          q("Seraphim Station", 265, 0, 0, "measured", "same-place"),
+          q("Orison", 280, 830050, 0, "measured", "same-body"),
+          q("New Babbage", 300, 57477000000, 0, "measured", "same-system"),
+          q("Ruin Station", 400, null, 1, "estimated", "elsewhere"),
+        ],
+      }],
+    });
+    await sleep(60);
+    const cell = (i) => {
+      const rows = [...document.querySelectorAll("#results .shop")];
+      const c = rows[i] && rows[i].querySelector(".dist");
+      return c ? c.textContent.trim() : "(no cell " + i + ")";
+    };
+    const texts = [cell(0), cell(1), cell(2), cell(3)];
+    // POSITIVE FIRST — every claim below is free if the fixture drew no rows at all.
+    ok("the fixture really drew four shop rows",
+       document.querySelectorAll("#results .shop").length === 4,
+       document.querySelectorAll("#results .shop").length + " rows: " + texts.join(" | "));
+    ok("Sub's 830 km hop reads as a DISTANCE, not as minutes",
+       texts[1] === "830 km", texts[1]);
+    ok("...and the far one is a distance too, at its own scale",
+       texts[2] === "57 Gm", texts[2]);
+    // 🔴 The regression that started all this: 830 km used to render as "15m" and 57 Gm as "4m",
+    // so the nearer shop looked further. Asserting the strings pins BOTH the unit and the order.
+    ok("🔴 the near shop no longer reads as further than the far one",
+       texts[1].indexOf("km") >= 0 && texts[2].indexOf("Gm") >= 0,
+       texts[1] + " then " + texts[2]);
+    // 🔴 Cross-system has NO distance, because the coordinate frames are per-system. It must say
+    // jumps rather than invent a number by subtracting incomparable coordinates.
+    ok("a shop in another system states JUMPS, never a distance",
+       texts[3] === "1 jump", texts[3]);
+    // 🔴 THE LABELLING TRAP THAT CAUSED THE REPORT. Sub read "4m" as a distance when it was the
+    // AGE of his position fix. So no distance cell may carry a bare single-letter unit, and every
+    // one must name a real unit in full.
+    // ⚠️ STRING METHODS ONLY BELOW — NO REGEX. This block is inside a template literal, where a
+    // backslash escape is eaten before any RegExp is ever built: "\b" becomes a literal backspace
+    // byte and "\d"/"\s" simply lose their backslash. The first version of these three assertions
+    // used all three. One went honestly red and the OTHER TWO PASSED WITHOUT TESTING ANYTHING,
+    // because a regex that can never match makes a "must NOT contain" check free forever. That is
+    // the documented trap in this file's own rules, met head-on.
+    const lastWord = (t) => { const p = t.trim().split(" "); return p[p.length - 1]; };
+    const UNITS = ["km", "Mm", "Gm"];
+    ok("every distance cell spells its unit out",
+       texts.slice(0, 3).every((t) => UNITS.indexOf(lastWord(t)) >= 0) &&
+       texts[3].indexOf("jump") >= 0,
+       texts.map((t) => t + " -> " + lastWord(t)).join(" | "));
+    // 🔴 THE LABELLING TRAP ITSELF: a one-character unit is what let "4m" be read as a distance.
+    // 🔑 The unit is whatever remains after stripping the number, NOT the last space-separated
+    // token — otherwise "15m" measures as a 3-character "unit" and passes. The control proved it:
+    // reverting the cell to "15m" left the first version of this assertion green.
+    const unitOf = (t) => {
+      let u = lastWord(t);
+      while (u.length && ("0123456789.,<~".indexOf(u[0]) >= 0)) u = u.slice(1);
+      return u;
+    };
+    ok("...and no unit is a single letter, which is what made 4m ambiguous",
+       texts.every((t) => unitOf(t).length >= 2),
+       texts.map((t) => t + " -> unit " + (unitOf(t) || "(none)")).join(" | "));
+    // 🔴 AND THE AGE, which is the quantity he actually misread, must not wear a bare "m" either.
+    // A token is a bare age if it is digits followed by exactly "m" — "19m" bad, "19" fine,
+    // "min" fine because it is three letters.
+    // ⚠️ Asserted against the LIVE strings captured above, never the fixture's — see that comment.
+    const bareAge = (tok) => {
+      if (tok.length < 2 || tok[tok.length - 1] !== "m") return false;
+      for (let i = 0; i < tok.length - 1; i++) if (tok[i] < "0" || tok[i] > "9") return false;
+      return true;
+    };
+    const offenders = liveAgeText.split(" ").map((t) => t.trim()).filter(bareAge);
+    // 🔑 POSITIVE FIRST, and it is load-bearing here: this whole check is free unless the live
+    // footer actually printed an age. If the sidecar has no location fix the label reads
+    // "Location unknown", there is no number at all, and "no bare Nm" is satisfied by nothing.
+    const hasAge = liveAgeText.indexOf(" ago") >= 0 || liveAgeText.indexOf("just now") >= 0;
+    ok("the live footer really printed an age to check",
+       hasAge, liveAgeText.trim().slice(0, 70) || "(empty)");
+    ok("no age in the live footer reads as a bare Nm",
+       hasAge && offenders.length === 0,
+       offenders.length ? "offenders: " + offenders.join(",") : liveAgeText.trim().slice(0, 70));
+  }
 
   return out;
 })()`;

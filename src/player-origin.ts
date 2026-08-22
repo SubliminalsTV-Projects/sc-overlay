@@ -217,12 +217,20 @@ function improve(tier: OriginTier): string {
   }
 }
 
-/** One-line summary for a compact UI. Kept here so every surface words it identically. */
+/**
+ * One-line summary for a compact UI. Kept here so every surface words it identically.
+ *
+ * 🔴 THE AGE UNIT IS SPELLED OUT — "19 min ago", never "19m ago". This looks like fussiness and is
+ * not. Sub read "New Babbage 4M away" as a distance on 2026-08-22; the `4m` was this age, sitting
+ * a few pixels from a place name in a widget whose other numbers ARE distances (Mm, Gm). Three
+ * different quantities in the same shape merged into one wrong reading. `m` is genuinely ambiguous
+ * here — metres, megametres and minutes are all live in this UI — so it may not appear alone.
+ */
 export function originSummary(v: OriginVerdict): string {
   if (v.tier === "unknown") return "Location unknown";
   const age = v.ageMin === null ? "" :
     v.ageMin < 1 ? " · just now" :
-    v.ageMin < 60 ? " · " + Math.round(v.ageMin) + "m ago" :
+    v.ageMin < 60 ? " · " + Math.round(v.ageMin) + " min ago" :
     " · " + Math.round(v.ageMin / 60) + "h ago";
   const what = v.tier === "place" ? v.label
     : v.tier === "body" ? "near " + v.label
