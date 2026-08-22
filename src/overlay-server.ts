@@ -35,6 +35,7 @@ import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
 import { maybeShareLog, clearSkippedBackups } from "./log-share.js";
+import { EventFeed, EVENT_REFRESH_MS } from "./event-feed.js";
 
 import {
   overlayDir, bundledDataDir, userDir, configPath, seedConfigPath, dataDir, sharedLogStatePath,
@@ -322,10 +323,37 @@ function seedDataDir(): void {
 }
 seedDataDir();
 
+// The dynamic-event registry phones home, because a reward or point value is discovered by
+// PLAYING and would otherwise be stranded behind an app release. `start()` must run AFTER
+// seedDataDir() (which has just clobbered the working copy with the bundle) and BEFORE the
+// tracker is constructed, so its very first read already sees the freshest copy we hold.
+// See src/event-feed.ts for why this is freshness rather than fetch-if-missing.
+const eventFeed = new EventFeed({
+  bundledPath: join(bundledDataDir, "events.json"),
+  workingPath: join(dataDir, "events.json"),
+  cachePath: join(userDir, "events-remote.json"),
+  url: "https://subliminal.gg/sc/events.json",
+});
+eventFeed.start();
+
 // ── Mission / blueprint tracker ─────────────────────────────────────────────
 // remoteBaseUrl: pull a patch's pool data from subliminal.gg if it isn't bundled
 // (offline-first — always falls back to the shipped data/ files).
 const tracker = new MissionTracker({ dataDir, remoteBaseUrl: "https://subliminal.gg/sc" });
+
+/** Re-check the events feed and re-read the file only if it actually changed. Best-effort by
+ *  construction: `refresh()` never throws and never leaves us worse off than the copy in hand. */
+async function refreshEvents(): Promise<boolean> {
+  const changed = await eventFeed.refresh();
+  if (changed) {
+    tracker.reloadEvents();
+    const s = eventFeed.status();
+    console.log(`[events] adopted revision ${s.revision} (${s.source})`);
+  }
+  return changed;
+}
+void refreshEvents();
+setInterval(() => { void refreshEvents(); }, EVENT_REFRESH_MS).unref?.();
 // Name->UUID catalog for the screen-read OCR endpoint; loaded lazily on first use.
 let screenCatalog: CatalogEntry[] | null = null;
 
@@ -3507,9 +3535,17 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // must not be reported as an error the widget then has to distinguish from a real failure.
   // ?reload=1 re-reads events.json so a point value measured mid-event applies without a restart.
   if (url?.startsWith("/api/events") && req.method === "GET") {
-    if (new URL(req.url ?? "", "http://x").searchParams.get("reload") === "1") tracker.reloadEvents();
+    const q = new URL(req.url ?? "", "http://x").searchParams;
+    // ?reload=1 re-reads the file off disk (for a hand edit); ?refresh=1 re-checks the site
+    // first. Two switches on purpose — a hand edit must not be silently overwritten by a
+    // fetch, and a fetch must not be skipped because someone only wanted a re-read.
+    if (q.get("refresh") === "1") await refreshEvents();
+    if (q.get("reload") === "1") tracker.reloadEvents();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ events: tracker.allEventProgress() }));
+    // `feed` is the provenance of the events data itself — live / cache / bundled. It rides
+    // every response because Sub's standing requirement is that a player can tell when they
+    // are looking at a fallback rather than having to infer it from the values being stale.
+    res.end(JSON.stringify({ events: tracker.allEventProgress(), feed: eventFeed.status() }));
     return;
   }
 

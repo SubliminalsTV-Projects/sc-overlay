@@ -1,12 +1,15 @@
 {
   "schema": "sc-events/1",
+  "revision": 1,
+  "revisionNote": "Ordering key for the phone-home feed (src/event-feed.ts). The app fetches https://subliminal.gg/sc/events.json on a timer and adopts it ONLY when its revision is strictly greater than the copy in effect, so a site copy that is older than the shipped one can never delete a discovery the build was cut for. Do not bump this by hand: `npm run sync:events` copies this file to the site repo and bumps it, which is what makes a correction reach players without an app release.",
   "note": "Hand-maintained dynamic-event registry. CHANGELIST-INDEPENDENT on purpose: an event's tiers, per-contract point values and rewards are discovered by PLAYING, not by extracting the p4k, so this file must survive dataset regeneration the same way the site's blueprints-extra.json does — whose model it mirrors. Everything unknown is left EMPTY rather than guessed; an invented number here becomes a wrong percentage on Sub's stream.",
   "howToFillIn": [
     "1. `log` MUST equal the subject of the game's own notification, verbatim: \"Journal Entry Added: <log>: \". For Siege of Orison the game says \"Orison Relief\" — NOT \"Siege of Orison\", which is only the marketing name. Get this wrong and zero progress is ever recorded, silently.",
     "2. `contractPrefixes` is what identifies an event's missions. 🔴 `generators` ALONE CANNOT: CIG uses the single generator \"TheBackpocket\" for BOTH Orison Relief (13 ORS_ contracts) and Return of XenoThreat (5 RoX_ contracts), so a generator match shows the wrong event's rewards. The key prefix is the only thing that separates them.",
     "3. `contracts` maps a dataset mission key to the event points that contract awards. Add one line per contract as it is MEASURED in game. Do not interpolate.",
     "4. `rewards` gets {tier, name, item} per item as discovered. `name` must equal the log's \"Received Blueprint: <name>\" EXACTLY — that string is what the owned check matches on.",
-    "5. `total` is the event points needed for 100%. Leave null until confirmed."
+    "5. `total` is the event points needed for 100%. Leave null until confirmed.",
+    "6. TO PUBLISH A CORRECTION MID-EVENT, WITHOUT AN APP RELEASE: edit this file, then run `npm run sync:events` and deploy the site. That copies it to subliminal-gg's public/sc/events.json and bumps `revision`; every running app picks it up within 30 minutes (src/event-feed.ts). Editing this file alone only reaches players who install a new build."
   ],
   "events": [
     {

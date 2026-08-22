@@ -65,7 +65,8 @@
     "test:proximity": "tsx src/verse-proximity.test.ts",
     "test:signals": "tsx src/origin-signals.test.ts",
     "test:verseroutes": "tsx src/verse-routes.test.ts",
-    "test:loctoken": "tsx src/location-token.test.ts"
+    "test:loctoken": "tsx src/location-token.test.ts",
+    "test:eventfeed": "tsx src/event-feed.test.ts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
