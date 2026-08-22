@@ -2503,7 +2503,7 @@ const VERSEFINDER = `(async () => {
     await sleep(700); // debounce + the sidecar round trip
   };
   const items = () => [...document.querySelectorAll("#results .item")];
-  const shopRows = () => [...document.querySelectorAll("#results .shop")];
+  const shopRows = () => [...document.querySelectorAll("#results .grow")];
 
   // Nothing typed is not the same as nothing found — the empty state must invite, not report.
   ok("with an empty box it prompts rather than listing everything",
@@ -2513,12 +2513,12 @@ const VERSEFINDER = `(async () => {
   await search("cannon");
   ok("a real search returns items", items().length > 0, items().length);
   ok("...and every one of them names at least one shop",
-     items().every((el) => el.querySelectorAll(".shop").length > 0));
+     items().every((el) => el.querySelectorAll(".grow").length > 0));
 
   // 🔴 THE CORE RULE. A price with no place is the thing this widget must never show.
   ok("every shop row names its TERMINAL",
      shopRows().length > 0 && shopRows().every((r) => {
-       const w = r.querySelector(".where");
+       const w = r.querySelector(".gshop");
        return w && w.textContent.trim().length > 0;
      }), shopRows().length + " rows");
   ok("every shop row carries a price",
@@ -2549,7 +2549,7 @@ const VERSEFINDER = `(async () => {
     const m = el.querySelector(".more");
     return m && m.textContent.indexOf("depending where you buy") > -1;
   });
-  const multi = items().filter((el) => el.querySelectorAll(".shop").length > 1);
+  const multi = items().filter((el) => el.querySelectorAll(".grow").length > 1);
   ok("the result set contains multi-shop items at all", multi.length > 0, multi.length);
   ok("...and at least one states its spread instead of one number",
      spread.length > 0, spread.length + " of " + multi.length);
@@ -2560,7 +2560,7 @@ const VERSEFINDER = `(async () => {
     return m && m.textContent.indexOf("more shop") > -1;
   });
   ok("a long shop list says how many were left out",
-     truncated.length === 0 || truncated.every((el) => el.querySelectorAll(".shop").length === 5),
+     truncated.length === 0 || truncated.every((el) => el.querySelectorAll(".grow").length === 5),
      truncated.length + " truncated");
 
   // 🔴 The provenance footer. Sub's requirement is that the user knows when they are on a
@@ -2568,8 +2568,30 @@ const VERSEFINDER = `(async () => {
   const src = document.getElementById("src");
   ok("the footer names where the table came from", !!src && src.textContent.trim().length > 4,
      src ? src.textContent : "none");
+  // ⚠️ RE-POINTED 2026-08-22. This read the whole #src span and matched /UEX|offline/, which passed
+  // only because the live sentence used to begin "UEX via subliminal.gg". The credit moved to a
+  // badge, so the word left the sentence and this failed on working code. The tier wording is what
+  // the assertion was ever about, so it now reads the element that carries the tier.
+  const srctext = document.getElementById("srctext");
   ok("...and it says one of the three tiers, not something vague",
-     /UEX|offline/.test(src.textContent), src.textContent);
+     !!srctext && /subliminal\.gg|offline/.test(srctext.textContent),
+     srctext ? srctext.textContent : "(no #srctext)");
+  // 🔴 THE UEX CREDIT IS ITS OWN ASSERTION NOW, because it is its own requirement (Sub,
+  // 2026-08-22: "this is really mainly just them. All we're doing is putting up a wrapper for
+  // it."). Previously it was only ever incidental to the tier check above — which is exactly how
+  // it disappeared from the sentence without anything noticing.
+  // 🔑 EITHER the badge OR the words satisfy it, because the markup deliberately swaps one for the
+  // other when the image cannot load. Asserting on the <img> alone would go red for the fallback
+  // that exists to keep the attribution present.
+  {
+    const badge = document.getElementById("uexmark");
+    const words = document.getElementById("uexname");
+    const credited = (badge && /uex/i.test(badge.getAttribute("alt") || "")) ||
+                     (words && /uex/i.test(words.textContent || ""));
+    ok("🔴 UEX is credited in the footer, by badge or by name",
+       !!credited,
+       badge ? "badge alt=" + badge.getAttribute("alt") : words ? "words=" + words.textContent : "(neither present)");
+  }
   // 🔴 There is no stock field in the source AT ALL, so the panel says so rather than letting a
   // player assume a listed shop has one on the shelf.
   const ns = document.getElementById("nostock");
@@ -2604,10 +2626,24 @@ const VERSEFINDER = `(async () => {
      checked.length + " checked, first mismatch: "
      + (checked.find((x) => x.want !== x.got) ? JSON.stringify(checked.find((x) => x.want !== x.got)) : "none"));
 
-  // 🔑 Price and age share one column (Sub, 2026-08-21) — they answer the same question together.
-  const cols = [...document.querySelectorAll("#results .pricecol")];
-  ok("price and age sit in ONE column element", cols.length > 0
-     && cols.every((c) => !!c.querySelector(".price") && !!c.querySelector(".age")), cols.length + " columns");
+  // 🔑 Price and age stay TOGETHER (Sub, 2026-08-21) — they answer the same question, and
+  // splitting them to opposite edges made the eye travel to reconcile two halves of one fact.
+  // ⚠️ RE-POINTED 2026-08-22 for the grouped layout. They used to be stacked inside a .pricecol
+  // element and this asserted that element existed; they are now adjacent siblings at the end of
+  // the row. The RULING was never about the wrapper — it was about the two not being separated —
+  // so the assertion now checks adjacency, which is the thing that must not regress.
+  {
+    const rows = [...document.querySelectorAll("#results .grow")];
+    ok("there are rows to check the price/age pairing on", rows.length > 0, rows.length + " rows");
+    const paired = rows.filter((r) => {
+      const kids = [...r.children];
+      const ai = kids.findIndex((k) => k.classList.contains("age"));
+      const pi = kids.findIndex((k) => k.classList.contains("price"));
+      return ai >= 0 && pi >= 0 && Math.abs(ai - pi) === 1;
+    });
+    ok("price and age sit next to each other, never at opposite ends",
+       rows.length > 0 && paired.length === rows.length, paired.length + " of " + rows.length);
+  }
 
   // A miss must distinguish "no shop known" from "no such item" — the former is the common case.
   await search("zzzqqxwv");
@@ -2629,6 +2665,19 @@ const VERSEFINDER = `(async () => {
   ok("...drawn as an SVG, never a glyph the OS font might not have",
      !!(eyeEl() && eyeEl().querySelector("svg path")),
      eyeEl() ? (eyeEl().querySelector("svg") ? "svg" : "no svg") : "(no eye)");
+  // 🔴 IT IS A CIRCLED i, NOT AN EYE (Sub, 2026-08-22). An eye reads as a visibility toggle, which
+  // is the wrong verb for "there is more to read here".
+  // 🔑 Asserted on the SHAPE, because that is the thing that can regress. The eye was one <path>
+  // outline plus a pupil <circle>; the i is a ring <circle> plus a stem and a dot, both <path>.
+  // Counting "a circle and two paths" is what tells them apart — checking merely that an <svg>
+  // exists passes just as happily for the eye, which is how this could have been missed.
+  {
+    const svg = eyeEl() && eyeEl().querySelector("svg");
+    const circles = svg ? svg.querySelectorAll("circle").length : 0;
+    const paths = svg ? svg.querySelectorAll("path").length : 0;
+    ok("...as a circled i (ring + stem + dot), not the old eye outline",
+       circles === 1 && paths === 2, "circle=" + circles + " path=" + paths);
+  }
   ok("...and it always says something rather than sitting blank",
      eyeTxt().length > 0, eyeTxt());
   // Three states and only three, because there are exactly three claims it can make.
@@ -2683,13 +2732,350 @@ const VERSEFINDER = `(async () => {
   await search("cannon");
   const noteEl = document.getElementById("ordernote");
   const basisShown = !!(noteEl && !noteEl.hidden && noteEl.textContent.trim().length > 0);
-  const distCells = [...document.querySelectorAll("#results .dist")];
+  const distCells = [...document.querySelectorAll("#results .cpill")];
   ok("the order note appears only when an ordering was actually applied",
      basisShown === (distCells.length > 0) || eyeCls().indexOf("none") >= 0,
      "note=" + basisShown + " distCells=" + distCells.length + " eye=" + eyeCls());
   ok("...and no distance cell is ever empty",
      distCells.every((c) => c.textContent.trim().length > 0),
      distCells.length + " cells");
+
+  // ── 🔴 NO DEAD GUTTER DOWN THE LEFT (Sub, 2026-08-22: "a lot of wasted space") ──────────────
+  //
+  // The price column was a fixed 82px box with right-aligned contents, placed FIRST — so a 20px
+  // price rendered 62px in from the panel edge and every shop name started at x=99. The fix was
+  // both halves: move it off the left AND size it to its contents. Guarded because it is invisible
+  // to every other assertion here — the rows were correct, complete and readable throughout.
+  {
+    const panelRect = document.getElementById("panel").getBoundingClientRect();
+    const rows = [...document.querySelectorAll("#results .grow")];
+    const leftOf = (el) => Math.round(el.getBoundingClientRect().left - panelRect.left);
+    const rightOf = (el) => Math.round(el.getBoundingClientRect().right - panelRect.left);
+    // 🔑 POSITIVE FIRST: every claim below is free with no rows on screen.
+    ok("there are shop rows to measure the gutter on", rows.length > 0, rows.length + " rows");
+    const names = rows.map((r) => r.querySelector(".gshop")).filter(Boolean);
+    const starts = [...new Set(names.map(leftOf))];
+    // The item's own left padding is 7px, so a name should begin within a pixel or two of that.
+    // 99px was the bug. Anything past ~20 means a fixed-width column crept back onto the left.
+    ok("🔴 shop names start at the panel edge, not behind a reserved column",
+       starts.length > 0 && Math.max(...starts) <= 20,
+       "name left edges: " + starts.join(","));
+    // 🔑 AND THE ALIGNMENT MUST SURVIVE. The price is the last thing in the row and the shop name
+    // is the only flexible item, so every price should land on one right edge across every group.
+    const prices = rows.map((r) => r.querySelector(".price")).filter(Boolean);
+    const edges = [...new Set(prices.map(rightOf))];
+    ok("there are prices to check alignment on", prices.length > 1, prices.length + " prices");
+    ok("...and every price still right-aligns to the same column",
+       edges.length === 1, "right edges: " + edges.join(","));
+    // 🔴 NOTHING IN THE ROW MAY RESERVE SPACE IT DOES NOT USE — the general form of the 82px
+    // gutter. Every row item except the shop name is flex:none and shrink-to-fit, so each box
+    // should measure its own content. A fixed width creeping back onto any of them shows up here
+    // as slack, which neither the gutter check nor the alignment check can see.
+    {
+      const boxes = [];
+      for (const r of rows) {
+        for (const k of [...r.children]) {
+          if (k.classList.contains("gshop")) continue;   // the one item that may flex
+          boxes.push({ cls: k.className, slack: Math.round(k.getBoundingClientRect().width - k.scrollWidth) });
+        }
+      }
+      ok("there are fixed row items to measure slack in", boxes.length > 0, boxes.length + " items");
+      const worst = boxes.reduce((m, b) => (b.slack > m.slack ? b : m), { cls: "-", slack: -1 });
+      ok("🔴 no row item reserves space beyond its content",
+         boxes.length > 0 && worst.slack <= 2,
+         "worst " + worst.slack + "px on ." + String(worst.cls).split(" ")[0] + " across " + boxes.length + " items");
+    }
+    // ── 🔴 AT 320px, THE WIDTH THAT ACTUALLY BINDS ──────────────────────────────────────────
+    //
+    // Sub, 2026-08-22: a 16:9 window centred on a 21:9 screen leaves a bar each side, and that bar
+    // is the narrowest anyone would sensibly make this widget. On a 2560x1080 ultrawide it is
+    // 320px. The widget had been designed and previewed at 460 — wider than the worst case, which
+    // is how you ship something that falls apart exactly where it counts.
+    //
+    // 🔑 THE PANEL MUST BE NARROWED BEFORE MEASURING, and the negative control is what proved it:
+    // the age-pill assertion below passed at the harness's default 460px even with the bug
+    // deliberately re-injected, because nothing is squeezed when there is room to spare. An
+    // assertion about narrow-width behaviour that never narrows anything cannot fail.
+    {
+      const panelEl = document.getElementById("panel");
+      const restore = panelEl.style.width;
+      panelEl.style.width = "320px";
+      await sleep(260);
+
+      const narrowRows = [...document.querySelectorAll("#results .grow")];
+      ok("there are rows to measure at 320px", narrowRows.length > 0, narrowRows.length + " rows");
+
+      // 🔴 THE TWO-LINE PILL. A flex item defaults to flex:0-1-auto, so at a narrow width the
+      // browser shrinks the pill's BOX below its content. A white-space:nowrap keeps the TEXT on
+      // one line but does nothing to stop the box collapsing, so the pill grows a second line
+      // while its text sits on one. Measured against the pill's own line-height, not a constant.
+      const ages = narrowRows.map((r) => r.querySelector(".age")).filter(Boolean);
+      const tall = ages.filter((a) => {
+        const line = parseFloat(getComputedStyle(a).lineHeight) || 12;
+        return a.getBoundingClientRect().height > line * 1.7;
+      });
+      ok("there are age pills to measure at 320px", ages.length > 0, ages.length + " pills");
+      ok("🔴 no age pill has collapsed to two lines at 320px",
+         tall.length === 0,
+         tall.length ? tall.length + " tall, e.g. " + tall[0].textContent : ages.length + " single-line");
+
+      // The same collapse would hit the price, and it is the more expensive one to misread.
+      const pricesN = narrowRows.map((r) => r.querySelector(".price")).filter(Boolean);
+      const tallP = pricesN.filter((p) => {
+         const line = parseFloat(getComputedStyle(p).lineHeight) || 12;
+         return p.getBoundingClientRect().height > line * 1.7;
+      });
+      ok("...nor has any price", tallP.length === 0,
+         tallP.length ? tallP.length + " tall" : pricesN.length + " single-line");
+
+      // 🔴 AND NOTHING MAY SPILL OUT OF THE PANEL. #results clips overflow-x, so a row that is
+      // too wide gets silently cut rather than scrolling — the reader never learns it was there.
+      const pr = panelEl.getBoundingClientRect();
+      const spill = narrowRows.filter((r) => r.getBoundingClientRect().right > pr.right + 1);
+      ok("🔴 no row spills past the panel edge at 320px",
+         spill.length === 0,
+         spill.length ? spill.length + " of " + narrowRows.length + " spill"
+                      : narrowRows.length + " rows inside " + Math.round(pr.width) + "px");
+
+      panelEl.style.width = restore;
+      await sleep(160);
+    }
+
+    // ── 🔴 THE PRICE NAMES ITS CURRENCY (Sub, 2026-08-22: "it just says seven") ───────────────
+    // A bare number in a widget that also prints distances, ages and sizes is the same ambiguity
+    // that made him read "4M away" as a distance.
+    {
+      const units = rows.map((r) => r.querySelector(".price .unit")).filter(Boolean);
+      ok("every price carries a currency unit", units.length === rows.length,
+         units.length + " of " + rows.length + " rows");
+      const texts = [...new Set(units.map((u) => u.textContent.trim()))];
+      ok("...and it says aUEC", texts.length === 1 && texts[0] === "aUEC", texts.join(","));
+      // 🔑 The unit must be a CHILD of .price, not appended into its text: the alignment assertions
+      // above measure .price, and the suite would still pass while the column drifted.
+      const first = rows[0].querySelector(".price");
+      ok("...as a child element, so the number is still addressable on its own",
+         !!first && first.childElementCount >= 1 && first.firstChild.nodeType === 3,
+         first ? "children=" + first.childElementCount + " text=" + first.firstChild.textContent : "(none)");
+    }
+  }
+
+  // ── 🔴 THE CATEGORY RIDES THE NAME, AND IS NOT ALSO A CHIP (Sub, 2026-08-22) ────────────────
+  // "CRUZ Lux" does not say drink. The category is what makes a row identifiable, so it belongs in
+  // the identity rather than as one more attribute chip.
+  await search("lux");
+  {
+    const item = document.querySelector("#results .item");
+    const nameEl = item && item.querySelector(".iname");
+    const catEl = item && item.querySelector(".iname .icat");
+    ok("the search returned an item to inspect", !!nameEl,
+       nameEl ? nameEl.textContent.slice(0, 40) : "(no item)");
+    ok("the category is part of the name", !!catEl,
+       nameEl ? nameEl.textContent.slice(0, 40) : "(no name)");
+    if (catEl) {
+      const t = catEl.textContent;
+      ok("...introduced by a dash, not just jammed on", t.indexOf("-") >= 0 || t.indexOf("–") >= 0, t);
+      // 🔴 AND NOT DUPLICATED. Mirroring it into a chip as well is the same fact in two places,
+      // which is what makes a reader wonder what the difference is.
+      const chipTexts = [...item.querySelectorAll(".chip")].map((c) => c.textContent.trim());
+      const catWord = t.replace("–", "").replace("-", "").trim();
+      ok("...and NOT repeated as a chip",
+         chipTexts.every((c) => c.toLowerCase() !== catWord.toLowerCase()),
+         "chips: " + (chipTexts.join(",") || "(none)") + " vs category " + catWord);
+    }
+  }
+
+  // ── 🔴 GROUPED BY PLACE, WITH THE PLACE OFF THE SHOP NAME (Sub picked this 2026-08-22) ──────
+  await search("medpen");
+  {
+    const groups = [...document.querySelectorAll("#results .grp")];
+    ok("results are grouped by place", groups.length > 0, groups.length + " groups");
+    ok("...and every group states its place once, in a heading",
+       groups.length > 0 && groups.every((g) => {
+         const h = g.querySelector(".ghead .gplace");
+         return h && h.textContent.trim().length > 0;
+       }),
+       groups.map((g) => (g.querySelector(".gplace") || {}).textContent).join(" | "));
+    // 🔴 THE SAME PLACE MUST NOT OPEN TWICE. Grouping walks CONSECUTIVE runs to preserve the
+    // proximity order, so a bug that broke a run would show up as one place heading appearing
+    // more than once — which reads as a duplicate result rather than as a sorting fault.
+    const places = groups.map((g) => (g.querySelector(".gplace") || {}).textContent);
+    ok("...and no place opens a second group",
+       places.length === new Set(places).size, places.join(" | "));
+    // 🔴 THE PLACE IS NOT REPEATED ON THE SHOPS UNDER IT — the whole point of the heading.
+    let repeats = [];
+    for (const g of groups) {
+      const place = ((g.querySelector(".gplace") || {}).textContent || "").toLowerCase();
+      const squash = (x) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const r of [...g.querySelectorAll(".grow .gshop")]) {
+        // A shop legitimately named after its place keeps its name (never strip to nothing), so
+        // only flag a name that ENDS with the place as a trailing segment.
+        const n = r.textContent;
+        const tail = n.split(" - ").pop().trim();
+        if (place && squash(tail) && squash(place).indexOf(squash(tail)) === 0 && n.indexOf(" - ") >= 0) {
+          repeats.push(n + "  under  " + place);
+        }
+      }
+    }
+    ok("...and no shop name still trails the place its heading already names",
+       repeats.length === 0, repeats.length ? repeats.slice(0, 3).join(" ; ") : "clean");
+    // 🔑 THE FULL NAME STAYS REACHABLE. Stripping is a display convenience; the name UEX
+    // publishes is what a player would search for or report a problem about.
+    const firstShop = document.querySelector("#results .grow .gshop");
+    ok("...while the full terminal name survives on hover",
+       !!firstShop && (firstShop.title || "").length >= firstShop.textContent.length,
+       firstShop ? firstShop.textContent + "  →  " + firstShop.title : "(none)");
+  }
+
+  // ── 🔴 CONTAINMENT IS A PILL, LIKE THE REST OF THE WIDGET FAMILY (Sub, 2026-08-22) ──────────
+  {
+    const pills = [...document.querySelectorAll("#results .cpill")];
+    // POSITIVE FIRST — everything below is free with no pills on screen. Which state the live
+    // sidecar is in depends on Sub's log, so this is reported rather than demanded.
+    if (pills.length === 0) {
+      ok("(no containment rows this run - the origin is precise enough for distances)", true,
+         "skipped, " + document.querySelectorAll("#results .cpill").length + " distance cells");
+    } else {
+      ok("containment rows render as pills", pills.length > 0, pills.length + " pills");
+      const cs0 = getComputedStyle(pills[0]);
+      ok("...with a real chip border and radius",
+         cs0.borderTopWidth !== "0px" && parseFloat(cs0.borderTopLeftRadius) > 0,
+         "border " + cs0.borderTopWidth + " radius " + cs0.borderTopLeftRadius);
+      // 🔴 A pill must SHRINK TO ITS TEXT. Styling the fixed-width slot as the pill made "here" and
+      // "same body" render identically wide and clipped the longer one — which is what stops it
+      // reading as a pill at all.
+      const clipped = pills.filter((p) => p.scrollWidth > p.clientWidth + 1).map((p) => p.textContent);
+      ok("...and none of them is clipped by its slot",
+         clipped.length === 0, clipped.length ? "clipped: " + clipped.join(",") : pills.length + " checked");
+      const byText = new Map();
+      for (const p of pills) byText.set(p.textContent.trim(), Math.round(p.getBoundingClientRect().width));
+      const distinctTexts = [...byText.keys()];
+      const distinctWidths = [...new Set(byText.values())];
+      // Only meaningful when two different labels are on screen; say so rather than passing quietly.
+      ok(distinctTexts.length > 1
+           ? "...and pills of different text are different widths"
+           : "(only one containment label on screen, width variation not testable)",
+         distinctTexts.length > 1 ? distinctWidths.length > 1 : true,
+         distinctTexts.map((t) => t + "=" + byText.get(t) + "px").join(" "));
+    }
+  }
+
+  // 🔑 CAPTURED FROM THE LIVE RESPONSE, BEFORE THE FIXTURE BELOW REPLACES IT. These two strings are
+  // built by the SERVER (originSummary and orderByProximity's note), so they are the only place the
+  // real age wording can be tested. The first version of the bare-age assertion ran after the
+  // fixture render and therefore read the fixture's own hand-written strings — a tautology that
+  // stayed green when the server was reverted to "19m ago". The control is what exposed it.
+  const liveNote = document.getElementById("ordernote");
+  const liveEyeLbl = document.getElementById("eyelbl");
+  const liveAgeText = (liveNote ? liveNote.textContent : "") + " " + (liveEyeLbl ? liveEyeLbl.textContent : "");
+
+  // ── 🔴 DISTANCE, NOT MINUTES (Sub, 2026-08-22) ─────────────────────────────────────────────
+  //
+  // 🔑 DRIVEN FROM A FIXTURE THROUGH render(), NOT FROM THE LIVE SIDECAR, and that is the only way
+  // this can be tested at all. The sidecar's origin comes from Sub's real log, so which tier he is
+  // in is a property of when he last played — and all four tiers can never coexist in one real
+  // response. The fixture carries the exact numbers from his report so the case that shipped wrong
+  // is the case under test.
+  {
+    const q = (place, sys, price, metres, jumps, basis, contain) => ({
+      terminal: "Shop - " + place, system: sys, body: "b", place: place, price: price,
+      asOf: 1786511612, minutes: 0, metres: metres, jumps: jumps, travelBasis: basis,
+      containment: contain,
+    });
+    render({
+      query: "fixture", source: "live", fetchedAt: Date.now(), itemCount: 1, terminalCount: 461,
+      origin: { tier: "place", label: "Seraphim Station", summary: "Seraphim Station . just now",
+                ageMin: 0, stale: false, from: "a test", howToImprove: "x" },
+      order: { basis: "travel-time", note: "Nearest first, from Seraphim Station." },
+      results: [{
+        name: "Fixture Item", company: "c", category: "k", size: null, uuid: "u",
+        shopCount: 4, low: 265, high: 400,
+        quotes: [
+          q("Seraphim Station", "Stanton", 265, 0, 0, "measured", "same-place"),
+          q("Orison", "Stanton", 280, 830050, 0, "measured", "same-body"),
+          q("New Babbage", "Stanton", 300, 57477000000, 0, "measured", "same-system"),
+          q("Ruin Station", "Pyro", 400, null, 1, "estimated", "elsewhere"),
+        ],
+      }],
+    });
+    await sleep(80);
+    const heads = [...document.querySelectorAll("#results .grp")];
+    const distOf = (i) => {
+      const d = heads[i] && heads[i].querySelector(".gdist");
+      return d ? d.textContent.trim() : "(none)";
+    };
+    const texts = [distOf(0), distOf(1), distOf(2), distOf(3)];
+    // POSITIVE FIRST — every claim below is free if the fixture drew nothing at all.
+    ok("the fixture really drew four shop rows",
+       document.querySelectorAll("#results .grow").length === 4,
+       document.querySelectorAll("#results .grow").length + " rows");
+    ok("...in four groups, one per place",
+       heads.length === 4, heads.length + " groups: " + texts.join(" | "));
+    ok("Sub's 830 km hop reads as a DISTANCE, not as minutes", texts[1] === "830 km", texts[1]);
+    ok("...and the far one is a distance too, at its own scale", texts[2] === "57 Gm", texts[2]);
+    // 🔴 The regression that started all this: 830 km used to render as "15m" and 57 Gm as "4m",
+    // so the nearer shop looked further. Asserting the strings pins BOTH the unit and the order.
+    ok("🔴 the near shop no longer reads as further than the far one",
+       texts[1].indexOf("km") >= 0 && texts[2].indexOf("Gm") >= 0,
+       texts[1] + " then " + texts[2]);
+    // 🔴 Cross-system has NO distance, because the coordinate frames are per-system. The system
+    // name carries "how far" there instead, which is asserted with the tier ladder below.
+    ok("a shop in another system states no distance at all", texts[3] === "(none)", texts[3]);
+    // ⚠️ STRING METHODS ONLY BELOW — NO REGEX. This block is inside a template literal, where a
+    // backslash escape is eaten before any RegExp is built: "\b" becomes a backspace byte and
+    // "\d"/"\s" lose their backslash. The first version of these assertions used all three; one
+    // went honestly red and the OTHER TWO PASSED WITHOUT TESTING ANYTHING, because a pattern that
+    // can never match makes a "must not contain" check free forever.
+    const lastWord = (t) => { const p = t.trim().split(" "); return p[p.length - 1]; };
+    const UNITS = ["km", "Mm", "Gm"];
+    const measured = texts.slice(0, 3);
+    ok("every distance spells its unit out",
+       measured.every((t) => UNITS.indexOf(lastWord(t)) >= 0),
+       measured.map((t) => t + " -> " + lastWord(t)).join(" | "));
+    // 🔴 THE LABELLING TRAP ITSELF: a one-character unit is what let "4m" be read as a distance.
+    const unitOf = (t) => {
+      let u = lastWord(t);
+      while (u.length && ("0123456789.,<~".indexOf(u[0]) >= 0)) u = u.slice(1);
+      return u;
+    };
+    ok("...and no unit is a single letter, which is what made 4m ambiguous",
+       measured.every((t) => unitOf(t).length >= 2),
+       measured.map((t) => t + " -> unit " + (unitOf(t) || "(none)")).join(" | "));
+    // 🔴 THE FOUR-STEP TIER LADDER. It can only be exercised from a fixture: the live sidecar
+    // shows whichever single tier Sub's own log puts him in.
+    {
+      const pills = [...document.querySelectorAll("#results .cpill")];
+      const seen = pills.map((p) => p.textContent.trim() + ":" + String(p.className).split(" ")[1]);
+      ok("the fixture produced a pill per group", pills.length === 4, seen.join(" | "));
+      const want = ["here:t-here", "same body:t-body", "in system:t-sys", "Pyro:t-away"];
+      ok("🔴 each tier gets its own class, in the near-to-far order the results are sorted in",
+         seen.join(" | ") === want.join(" | "), seen.join(" | "));
+      // 🔴 THE FAR TIER NAMES THE SYSTEM (Sub: "instead of saying out of system, just put Nyx or
+      // Pyro"). "elsewhere" told the player nothing they did not already know.
+      const away = pills.find((p) => String(p.className).indexOf("t-away") >= 0);
+      ok("...and the far one is the SYSTEM NAME, not the word elsewhere",
+         !!away && away.textContent.trim() === "Pyro", away ? away.textContent : "(no far pill)");
+      // ⚠️ A proper noun must not be lower-cased by the styling that lower-cases the tier words.
+      ok("...rendered as a proper noun, not lower-cased like the tier words",
+         !!away && getComputedStyle(away).textTransform === "none",
+         away ? getComputedStyle(away).textTransform : "-");
+      const colours = [...new Set(pills.map((p) => getComputedStyle(p).color))];
+      ok("...and the four tiers are four distinct colours", colours.length === 4, colours.join(" | "));
+    }
+    // 🔴 AND THE AGE, which is the quantity Sub actually misread, must not wear a bare "m".
+    // ⚠️ Asserted against the LIVE strings captured earlier, never the fixture's own hand-written
+    // ones — a fixture cannot test a string the SERVER composes.
+    const bareAge = (tok) => {
+      if (tok.length < 2 || tok[tok.length - 1] !== "m") return false;
+      for (let i = 0; i < tok.length - 1; i++) if (tok[i] < "0" || tok[i] > "9") return false;
+      return true;
+    };
+    const offenders = liveAgeText.split(" ").map((t) => t.trim()).filter(bareAge);
+    const hasAge = liveAgeText.indexOf(" ago") >= 0 || liveAgeText.indexOf("just now") >= 0;
+    ok("the live footer really printed an age to check", hasAge, liveAgeText.trim().slice(0, 70) || "(empty)");
+    ok("no age in the live footer reads as a bare Nm",
+       hasAge && offenders.length === 0,
+       offenders.length ? "offenders: " + offenders.join(",") : liveAgeText.trim().slice(0, 70));
+  }
 
   return out;
 })()`;
@@ -4623,6 +5009,10 @@ const CHATLINKS = `(async () => {
   const savedMode = localStorage.getItem("chatRightMode");
   const railTitle = () => document.getElementById("memTitle").textContent;
   const railClosed = () => document.getElementById("panel").classList.contains("no-right");
+  // ⚠️ The .where below is the CHAT widget's own member row, NOT the Verse Finder's. Two
+  // widgets legitimately use that class name. A blanket rename of the Verse Finder's .where to
+  // .gshop silently reached in here and broke this suite -- the failure surfaced three widgets
+  // away, which is why the baseline run is the only honest way to attribute a red assertion.
   const whereOf = (h) => {
     const r = [...document.querySelectorAll("#memList .mrow")]
       .find((x) => x.querySelector(".nm")?.textContent === h);

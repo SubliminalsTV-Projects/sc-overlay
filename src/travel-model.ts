@@ -63,21 +63,62 @@ export const LEG_CROSS_BODY_MINUTES = 6;
 export const QUANTUM_SPEED_MPS = 2.34e8;
 
 /**
- * ⚠️ BELOW THIS RANGE YOU CANNOT SPOOL A QUANTUM DRIVE — you fly there.
+ * 🔴 SUB IS RIGHT THAT THIS DEPENDS ON THE EQUIPPED QUANTUM DRIVE — AND THE LOG CANNOT GIVE US ONE.
  *
- * Sub: "It might be possible to jump from the station to the gate if it's far enough away. It
- * depends on how far away it is. I want to say it's like 20,000 kilometers."
+ * His objection, 2026-08-22: "those quantum drive numbers are going to be dependent on what quantum
+ * drive I actually have equipped on my ship." Correct, and it is worth writing down exactly how far
+ * the data can and cannot go, so nobody re-runs this hoping for a per-drive constant.
  *
- * 🔴 RECOLLECTION, NOT MEASUREMENT — flagged the same way the jump cost is. It matters because a
- * gateway can be much closer to a station than to the star, and quoting a quantum time for a hop
- * the drive would refuse is the sort of confident wrongness this codebase keeps paying for. If it
- * is ever measured, this is the constant to move.
+ * Measured over the 250 long legs (>5 Gm, where speed dominates rather than spool) that name a hull:
+ *
+ *   36 distinct hulls. Medians span 7.5x — Gladius Valiant 9.6e8 down to Cutlass Red 1.3e8, and the
+ *   ordering is plausible (light fighters fast, haulers slow), so the effect is real.
+ *
+ * 🔴 BUT THE WITHIN-HULL SPREAD IS 144x. The SAME ship on different legs varies far more than ships
+ * vary from each other, so the drive's signal is buried. The bracket is `Player Selected Quantum
+ * Target` -> `Quantum Drive Arrived`, and that window contains the player deciding, re-selecting,
+ * and getting around to actually engaging. Fitting a per-hull speed off it would be fitting how
+ * long Sub took to press the button.
+ *
+ * 🔴 AND A HULL IS NOT A DRIVE ANYWAY. The quantum drive is a COMPONENT — two Guardians can carry
+ * different ones — and the log names the ship entity, never the loadout. So even a clean per-hull
+ * fit would not be the number he is asking about. Getting it properly needs the equipped item,
+ * which nothing we read reports.
+ *
+ * 🔑 WHY THIS DOES NOT CHANGE THE VERSE FINDER, which is the practical point: within one system
+ * `minutes = d / v`, so a different drive scales EVERY row by the same factor and the ordering is
+ * untouched. It only shifts the balance between in-system distance and the fixed `JUMP_MINUTES`,
+ * i.e. it can only re-order a far in-system shop against a near cross-system one. And the figure
+ * the player is SHOWN is the distance, which no drive affects. That is the strongest argument for
+ * the show-distance/order-by-minutes split: the drive-dependent half never reaches the screen.
  */
-export const QUANTUM_MIN_RANGE_M = 20_000_000; // 20,000 km
 
-/** Normal-space cruise, for hops under the quantum floor. Deliberately conservative and clearly
- *  an estimate — it exists so a sub-quantum hop is not quoted at quantum speed, not to be precise. */
-export const CRUISE_SPEED_MPS = 1_000;
+/**
+ * ⚠️ BELOW THIS RANGE THE DRIVE WILL NOT SPOOL — MEASURED 2026-08-22, replacing a recollection.
+ *
+ * This read `20_000_000` (20,000 km) and carried an honest label saying it was Sub's recollection
+ * rather than a measurement — "I want to say it's like 20,000 kilometers", flagged the same way the
+ * jump cost is. It has now been measured, and it was too high by roughly seventyfold.
+ *
+ * The extraction is the one `references/travel.md` already documents — `<Player Selected Quantum
+ * Target>` then `<Quantum Drive Arrived - Arrived at Final Destination>`, with `Calculate Route`
+ * naming the destination in between — run over 529 of Sub's logs and keeping only the legs where
+ * BOTH ends resolve to a placed starmap id in the SAME system, so a real distance can be computed:
+ *
+ *   309 completed legs with both ends placed; 33 of them shorter than the old floor.
+ *   shortest completed leg    283 km   Wala to ArcCorp Mining Area 056   (0.54 and 0.64 min)
+ *   the shape Sub hit         801 km   ArcCorp to Area18                 (0.35 / 0.62 / 0.77 min)
+ *
+ * 🔑 THE JOIN THAT MADE IT MEASURABLE, and it is worth knowing for any future log work:
+ * `locations-xyz` carries an `entity` token per place (1,144 of 1,189) and that token is EXACTLY
+ * what the log names as a destination. `rs_ext_cru-leo1` is Seraphim Station. No fuzzy name
+ * matching, no guessing — a direct join from a log line to a coordinate.
+ *
+ * ⚠️ THIS IS AN UPPER BOUND, NOT THE FLOOR ITSELF. 283 km is the shortest hop we have WATCHED the
+ * drive make; the true refusal point is at or below it. That is the honest reading and it is the
+ * direction that matters — the old value claimed the drive refuses hops it demonstrably makes.
+ */
+export const QUANTUM_MIN_RANGE_M = 283_000; // 283 km — shortest leg observed, so an upper bound
 
 /**
  * 🔴 THE JUMP ITSELF — AN ESTIMATE, AND LABELLED AS ONE EVERYWHERE IT SURFACES.
@@ -235,8 +276,41 @@ export function systemPath(gateways: GatewayInfo[], from: string, to: string): s
 export function inSystemMinutes(a: Vec3, b: Vec3): { minutes: number; quantum: boolean } {
   const d = euclidean(a, b);
   if (d <= 0) return { minutes: 0, quantum: false };
+  // 🔑 The flag still carries the real fact — a hop this short is flown, not jumped — so a caller
+  // that wants to SAY so still can. What it no longer does is change the number.
   const quantum = d >= QUANTUM_MIN_RANGE_M;
-  const speed = quantum ? QUANTUM_SPEED_MPS : CRUISE_SPEED_MPS;
+  //
+  // 🔴 ONE SPEED, BECAUSE A SECOND ONE MADE BEING NEARER COST MORE.
+  //
+  // This used to switch to a `CRUISE_SPEED_MPS` of 1 km/s below the floor — 234,000x slower than
+  // the drive — so a shop just inside the floor quoted MORE minutes than one on another planet.
+  // Sub hit it live on 2026-08-22 docked at Seraphim Station: Orison 830 km away quoted 14.83 min
+  // while New Babbage 57,477 Mm away quoted 4.09. Both figures were the shipped constants working
+  // exactly as written — the terminal join, the units and the coordinates were all correct, which
+  // is why looking for a broken join found nothing.
+  //
+  // 🔑 THE PROPERTY THAT HAS TO HOLD, and the reason a second speed cannot come back: WITHIN ONE
+  // SYSTEM, A NEARER PLACE MUST NEVER QUOTE MORE MINUTES THAN A FARTHER ONE. Two speeds with a
+  // discontinuity between them cannot satisfy that at ANY floor value — lowering the floor MOVES
+  // the inversion, it does not remove it — which is why correcting the floor above was necessary
+  // and not sufficient. One speed makes the property true by construction, and the sweep in
+  // `verse-proximity.test.ts` walks every Stanton shop in ascending distance to hold it there.
+  //
+  // ⚠️ WHAT IS GIVEN UP, stated rather than hidden: a sub-quantum hop is now quoted
+  // OPTIMISTICALLY, because `QUANTUM_SPEED_MPS` is an effective speed carrying no fixed spool term
+  // (see its comment), so every short hop lands near zero. Measured, an 800 km hop really takes
+  // about 0.6 min. That is a real limitation at short range — and it is one the model ALREADY had
+  // on the quantum side of the old floor. All this does is stop the two sides disagreeing. It is
+  // tolerable in the Verse Finder because the number's job there is to ORDER shops, and what the
+  // player is shown is the DISTANCE, which is exact.
+  //
+  // 🔑 The fix for the short-range optimism is a two-parameter fit (spool + speed) across legs of
+  // differing length, NOT another speed with a cliff in it. The data to do it now exists — the 309
+  // measured legs above — and a first pass gives `1.46 min + d / 5.03e8 m/s`. That reproduces
+  // Crusader to microTech at 3.36 min against the 4.09 recorded two other ways, and an 18% gap on
+  // the one leg two independent sources agree about is why it is written down here rather than
+  // shipped. The ordering bug does not need it.
+  const speed = QUANTUM_SPEED_MPS;
   // 🔴 NO OVERHEAD IS ADDED ON THE QUANTUM PATH, and that is not an omission.
   //
   // `QUANTUM_SPEED_MPS` was derived as distance / TOTAL measured time — and the measured time is
@@ -250,9 +324,13 @@ export function inSystemMinutes(a: Vec3, b: Vec3): { minutes: number; quantum: b
   // it was measured (57 Gm) and optimistic for short quantum hops, where a fixed spool cost is a
   // larger share of the trip. Separating the two needs a fit across legs of differing length —
   // one measurement is one equation in two unknowns, and the events work already paid for guessing
-  // at that. The cruise path keeps a small fixed minute because its speed was never fitted at all.
-  const overhead = quantum ? 0 : 1;
-  return { minutes: d / speed / 60 + overhead, quantum };
+  // at that. There are 309 such measurements now, and the fit they give is recorded above.
+  //
+  // ⚠️ There used to be a `+1` minute here on the sub-quantum path only. It was the second half of
+  // the same inversion — a fixed penalty applied to exactly the shops nearest the player — and it
+  // is gone with the second speed. A term that applies to one side of a threshold and not the
+  // other is a discontinuity however small it is.
+  return { minutes: d / speed / 60, quantum };
 }
 
 export interface TravelDeps {

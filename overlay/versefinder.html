@@ -54,10 +54,19 @@
   #results { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 0 8px; }
 
   /* ── One item ─────────────────────────────────────────────────────────────── */
-  .item { border-bottom: 1px solid var(--divider); padding: 9px 12px 10px; }
+  /* 🔑 LEFT AND RIGHT ARE NOT THE SAME JOB, so they are no longer the same number (Sub, 2026-08-22:
+     "too much left padding… it looks off"). The right edge carries the price column, which is
+     right-ALIGNED and therefore already ends short of the border — a matching 12px there reads as
+     a wide, empty gutter on the left where text starts hard. 7px on the left puts the item name
+     near the panel edge the eye scans down; the right keeps its 12px so the prices are not jammed
+     against the frame. */
+  .item { border-bottom: 1px solid var(--divider); padding: 9px 12px 10px 7px; }
   .item:last-child { border-bottom: 0; }
   .iname { font-size: 13px; font-weight: 600; color: var(--cyan-bright); line-height: 1.3;
     overflow-wrap: anywhere; }
+  /* The category, riding the name. Lighter weight and dimmer so the NAME still reads as the answer
+     to what was typed — this is context, not a second title. */
+  .icat { font-weight: 500; color: var(--cyan-dim); }
 
   /* Manufacturer / category / size / craftability as CHIPS, matching the tracker's `.mi-chip`
      rather than inventing a look: same 5px radius, same divider border, same accent tint. They
@@ -81,22 +90,49 @@
     border-color: color-mix(in srgb, var(--green) 45%, transparent);
     background: color-mix(in srgb, var(--green) 12%, transparent); }
 
-  /* ── The shops ────────────────────────────────────────────────────────────── */
+  /* ── The shops ────────────────────────────────────── */
   .shops { margin-top: 7px; display: flex; flex-direction: column; }
-  /* Row divider is the faint one the hauling route uses between stops, not the item divider —
-     these are lines within a record, not records. */
-  .shop { display: flex; gap: 9px; padding: 5px 0;
-    border-top: 1px solid rgba(var(--accent-rgb), 0.07); font-size: 11px; line-height: 1.35; }
-  .shop:first-child { border-top: 0; }
 
-  /* 🔑 PRICE AND AGE ARE ONE COLUMN (Sub, 2026-08-21). They answer the same question — "what does
-     this shop charge, and how much do I trust that" — so splitting them to opposite edges of the
-     row made the eye travel to reconcile two halves of one fact. Stacked and right-aligned, the
-     prices still form a scannable numeric column. */
-  .pricecol { flex: none; width: 82px; display: flex; flex-direction: column;
-    align-items: flex-end; gap: 3px; }
-  .price { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600;
-    font-size: 11.5px; color: var(--gold); }
+  /* ══ GROUPED BY PLACE ══════════════════════════════════════════════════════════════════════
+     One heading per place, then a bare row per shop. The heading carries everything the shops in
+     it share — where it is, how far, which tier — so the rows carry only what differs. */
+  .grp { margin-top: 6px; }
+  .ghead { display: flex; align-items: center; gap: 7px; padding: 4px 0 3px;
+    border-top: 1px solid rgba(var(--accent-rgb), 0.14); }
+  .grp:first-child .ghead { border-top: 0; }
+  /* The place is the heading, so it takes the uppercase treatment the widget uses for titles.
+     It may truncate — the full string is on the row's own hover, and at 320px the shop names
+     matter more than the last word of a long station name. */
+  .gplace { font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 62%; }
+  .grule { flex: 1; height: 1px; min-width: 6px; background: rgba(var(--accent-rgb), 0.14); }
+  .gdist { flex: none; font-family: var(--mono); font-size: 9px; font-weight: 600;
+    letter-spacing: 0.02em; color: var(--cyan-dim); white-space: nowrap; }
+
+  /* 🔴 THE TWO-LINE PILL Sub spotted in the mockup — and the cause is NOT what it looks like.
+     The obvious diagnosis is flex-shrink (a flex item defaults to `flex: 0 1 auto`, so a narrow
+     row squeezes the box below its content). Controlled at 320px, that alone does NOT reproduce
+     it. The real cause is two defaults acting together:
+       · `align-items` defaults to STRETCH, so every child grows to the tallest item in the row;
+       · a shop name allowed to WRAP makes the row two lines tall.
+     The pill then stretches to match, while its own text still sits on one line. Re-injecting
+     exactly those two turns 9 of the pills tall; either one alone leaves it green.
+     🔑 So the fix is `align-items: center` plus a name that truncates instead of wrapping. The
+     `flex: none` below is belt-and-braces on top of that, not the load-bearing part — worth
+     keeping, but do not mistake it for the reason this works. */
+  .grow { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 9px;
+    font-size: 11px; line-height: 1.35; }
+  .grow + .grow { border-top: 1px solid rgba(var(--accent-rgb), 0.06); }
+  .gshop { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--cyan-text); }
+
+  .price { flex: none; font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-weight: 600; font-size: 11.5px; color: var(--gold); white-space: nowrap; }
+  /* The currency, dimmed and lighter. Present on every row because a bare number is ambiguous in a
+     widget that also prints distances and ages — but subordinate, because what the eye compares
+     down the column is the amount, not the unit repeated five times. */
+  .unit { font-size: 9px; font-weight: 500; opacity: 0.62; letter-spacing: 0.02em; }
 
   /* Age of THIS reading, as a chip in the same family as the ones above. Never omitted, never
      averaged into anything, and never rolled up to the table's age — each shop's price was
@@ -104,26 +140,11 @@
      🔑 Colour is set by a band class and the border/background derive from `currentColor` via
      color-mix, so all four bands retint with every manufacturer skin instead of pinning four
      colours of their own. */
-  .age { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.02em;
-    font-variant-numeric: tabular-nums; padding: 1px 5px; border-radius: 5px;
+  .age { flex: none; font-family: var(--mono); font-size: 9px; font-weight: 600;
+    letter-spacing: 0.02em; font-variant-numeric: tabular-nums; padding: 1px 5px;
+    border-radius: 5px; line-height: 1.35;
     border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
     background: color-mix(in srgb, currentColor 12%, transparent); white-space: nowrap; }
-  /* Bands are cut at the MEASURED quartiles of the real data (p25 36d, median 83d, p90 93d), not
-     at round numbers — round thresholds would have put ~everything in one bucket and said nothing. */
-  /* 🔴 "recent" IS DELIBERATELY NEUTRAL, NOT THE ACCENT. The first cut used `--cyan` and it broke
-     on the warm skins: Drake's accent is #E4802F and its amber is #F6A93A, so "recent" and "stale"
-     rendered as the same orange and the band said nothing. Green / neutral / amber / red are the
-     only four that stay distinct across all 16 manufacturer themes — and the unremarkable case
-     should be the quiet one anyway. */
-  .age.fresh { color: var(--green); }
-  .age.recent { color: var(--cyan-dim); }
-  .age.stale { color: var(--amber); }
-  .age.ancient { color: var(--red); }
-
-  .where { flex: 1; min-width: 0; color: var(--cyan-text); overflow-wrap: anywhere;
-    align-self: center; }
-  .where .sub { display: block; color: var(--faint); font-size: 10px; margin-top: 1px; }
-
   .more { font-size: 9.5px; color: var(--faint); margin-top: 6px; padding-top: 5px;
     border-top: 1px solid rgba(var(--accent-rgb), 0.07); }
 
@@ -137,17 +158,33 @@
      🔴 The distance column is deliberately NOT styled like the price. A price is a fact about a
      shop; a distance is a claim about where the PLAYER is, and those two deserve different
      confidence on sight. Minutes are dim and monospaced, containment is quieter still. */
-  .dist { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.02em;
-          color: var(--cyan-dim); white-space: nowrap; text-align: right; min-width: 42px; }
-  .dist.est { opacity: 0.72; }
-  .dist.near { color: var(--green); }
-  .dist.contain { font-family: var(--sans); font-size: 9.5px; font-weight: 600; color: var(--dim);
-                  text-transform: lowercase; letter-spacing: 0.01em; }
+  .cpill { flex: none; display: inline-block; padding: 1px 6px; border-radius: 5px;
+    font-family: var(--sans); font-size: 9px; font-weight: 600;
+    letter-spacing: 0.01em; white-space: nowrap; line-height: 1.35;
+    border: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+    background: color-mix(in srgb, currentColor 12%, transparent); }
+  /* 🔴 THE TIER LADDER — four steps of "how far", read as colour before it is read as words.
+     Green you are standing there, cyan same body, gold same system, red another system. All four
+     are the shared semantic tokens, so they retint with every manufacturer skin rather than
+     pinning colours of their own.
+     ⚠️ Only the three known tiers are lowercased. The far one prints a SYSTEM NAME — "Pyro",
+     "Stanton" — and forcing a proper noun to lower case would read as a typo. */
+  .cpill.t-here { color: var(--green); text-transform: lowercase; }
+  .cpill.t-body { color: var(--cyan); text-transform: lowercase; }
+  .cpill.t-sys  { color: var(--gold); text-transform: lowercase; }
+  .cpill.t-away { color: var(--red); }
 
-  /* The indicator. An inline SVG eye, never a glyph: this page links widget-theme.css so an emoji
-     WOULD render, but the colour-emoji face is a lazy 4.8 MB fetch and a text-presentation eye is
-     at the mercy of the OS font — the same trap that made `o7` render as a box. Drawn, it cannot
-     be missing. */
+  /* 🔴 A CIRCLED "i", NOT AN EYE (Sub, 2026-08-22: "the letter I with a circle around it").
+     An eye reads as a visibility toggle — show/hide this thing — which is exactly the wrong verb
+     for a control whose whole job is "there is more to read here, click or hover". The tracker
+     already learned this once: an eye glyph beside the reputation figure "read as something else
+     entirely" and was replaced by a circled i for the same reason.
+
+     Still INLINE SVG, and still never a glyph, for the reason the eye was: this page links
+     widget-theme.css so a real ⓘ WOULD render, but only by pulling the 4.8 MB colour-emoji face,
+     and the text-presentation form is at the mercy of the OS font — the trap that made `o7` render
+     as a box. It is also drawn as a circle plus two strokes rather than SVG <text>, so it does not
+     depend on a font at all. */
   .eyebtn { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0;
             padding: 1px 3px; margin: 0; cursor: pointer; font: inherit; color: var(--dim);
             border-radius: 3px; }
@@ -158,8 +195,15 @@
   /* Three states, and they are the three claims — precise, approximate, none. */
   .eyebtn.precise { color: var(--green); }
   .eyebtn.rough   { color: var(--amber); }
-  .eyebtn.none    { color: var(--dim); }
-  .eyebtn.none svg { opacity: 0.55; }
+  /* 🔴 "WE DO NOT KNOW WHERE YOU ARE" IS THE STATE THAT WANTS THE PLAYER TO ACT, so it can no
+     longer be the quietest thing in the footer. It used to render at `--dim` with the icon knocked
+     back to 55% opacity — dimmer than the two states that need nothing from anybody. The ladder
+     was backwards: precise (green) is good news and can recede, rough (amber) is a caveat, and
+     unknown is the only one with an instruction behind it. It now takes the amber-family accent
+     and full-strength icon, and keeps the neutral LABEL colour so it reads as "attention", not as
+     an error — nothing is broken, we simply cannot see you yet. */
+  .eyebtn.none    { color: var(--amber); }
+  .eyebtn.none .lbl { color: var(--cyan-text); }
 
   /* 🔴 A POPOVER, in the TOP LAYER. It is immune to every ancestor's overflow and takes NO space
      in layout, which is what stops it growing the panel — a plain absolutely-positioned box here
@@ -181,11 +225,34 @@
   .ordernote { flex: none; padding: 3px 10px 0; font-family: var(--sans); font-size: 9.5px;
                color: var(--dim); letter-spacing: 0.01em; }
 
-  .foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px 6px;
+  /* 🔴 A BIGGER FOOTER, TO GIVE UEX ROOM (Sub, 2026-08-22). His framing is the design note:
+     "this is really mainly just them. All we're doing is putting up a wrapper for it." So the
+     credit is not a 9px afterthought squeezed against two other things — it is the second most
+     important thing in the panel after the results, and it gets height, its own line, and the
+     brand mark. 9px mono at 5px padding was a legal footnote; this is a credit. */
+  .foot { flex: none; display: flex; align-items: center; gap: 9px; padding: 8px 10px 9px 7px;
     border-top: 1px solid var(--divider); position: relative; z-index: 4;
-    font-family: var(--mono); font-size: 9px; color: var(--faint); letter-spacing: 0.03em; }
-  #src { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #src.fallback { color: var(--amber); }
+    font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: 0.03em; }
+  #src { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; }
+  /* 🔴 UEX'S OWN "Powered by UEX" BADGE, supplied by Sub 2026-08-22 — so it is used UNMODIFIED,
+     which is the entire point of a brand badge. It is not tinted, not recoloured by the
+     manufacturer skins, and not clipped: an attribution that changes to suit our theme stops being
+     an attribution. It carries the words "Powered by UEX" itself, which is why there is no
+     separate wordmark beside it — repeating the name would read as a status line rather than a
+     credit.
+
+     🔑 SHIPPED AT 202x60 FOR A 17px SLOT. The original is 3840x1138 / 118 KB, which is 40x more
+     pixels than this can ever show and would be paid on every widget load by every user. Trimmed
+     and resampled to 4x the display height it is 3.1 KB — the same reasoning that keeps the
+     colour-emoji face out of this page.
+
+     ⚠️ If it cannot load it is REPLACED by the words, never merely removed — see the markup. A
+     broken-image glyph would be ugly, but an attribution that silently disappears is worse. */
+  #uexmark { flex: none; height: 17px; width: auto; display: block; border-radius: 3px; }
+  #uexname { flex: none; font-family: var(--sans); font-weight: 700; font-size: 10px;
+    letter-spacing: 0.04em; color: var(--cyan-text); white-space: nowrap; }
+  #srctext { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #src.fallback #srctext { color: var(--amber); }
   #nostock { flex: none; }
 </style>
 </head>
@@ -209,15 +276,26 @@
            `title` stays for hover: there is no API to open a native tooltip from script, so the
            popover carries the click and the two coexist rather than one replacing the other. -->
       <button id="eye" class="eyebtn none" type="button" popovertarget="eyepop">
+        <!-- The circled i, drawn: ring, dot, stem. No <text>, so no font can fail to have it. -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z" />
-          <circle cx="12" cy="12" r="3.2" />
+          <circle cx="12" cy="12" r="9.5" />
+          <path d="M12 11v5.5" />
+          <path d="M12 7.6v0.1" stroke-width="2.6" />
         </svg>
         <span class="lbl" id="eyelbl">Location unknown</span>
       </button>
       <div id="eyepop" class="eyepop" popover="auto"></div>
-      <span id="src">…</span>
+      <!-- 🔴 THE CREDIT, not a source line. Sub: "this is really mainly just them. All we're doing
+           is putting up a wrapper for it." The mark is a drop-in (see #uexmark) and the wordmark
+           stands alone until it exists, so the attribution is never absent. -->
+      <span id="src">
+        <!-- ⚠️ The fallback REPLACES rather than removes: an attribution that can vanish because an
+             image 404'd is not an attribution. If the badge cannot load, the words take its place. -->
+        <img id="uexmark" src="/logos/uex-powered.png" alt="Powered by UEX"
+             onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" />
+        <span id="srctext">…</span>
+      </span>
       <!-- 🔴 "stock unknown" was the first wording and Sub had to ask what it meant, which is the
            whole test failed: it reads like a loading state rather than a statement about the data.
            The label now says the CONSEQUENCE for the player — a shop listed here can still be
@@ -243,6 +321,9 @@
   let timer = null;
   let seq = 0;            // response ordering — a slow early request must not overwrite a fast late one
   let lastQuery = "";
+  // The origin from the most recent response, held only so a distance tooltip can name what the
+  // figure is measured FROM. Never used to compute anything.
+  let lastOrigin = null;
 
   const fmt = (n) => n.toLocaleString("en-US");
 
@@ -278,63 +359,119 @@
     return "ancient";
   }
 
-  function placeText(q) {
-    // Most specific first: you dock at Baijini Point; "Hurston" is a whole planet.
-    const bits = [q.place, q.body, q.system].filter(Boolean);
-    return bits.length ? bits.join(" · ") : "";
-  }
-
-  /** Minutes as a player reads them: under an hour, minutes; past that, hours. */
-  function mins(m) {
-    if (m < 1) return "<1m";
-    if (m < 60) return Math.round(m) + "m";
-    const h = Math.floor(m / 60);
-    return h + "h" + (Math.round(m - h * 60) ? " " + Math.round(m - h * 60) + "m" : "");
-  }
-
-  const CONTAIN_TEXT = {
-    "same-place": "here",
-    "same-body": "same body",
-    "same-system": "in system",
-    "elsewhere": "elsewhere",
-  };
-
-  /** The distance cell, or null when the server made no claim about this row. */
-  function distNode(q) {
-    if (q.minutes != null) {
-      const s = document.createElement("span");
-      // "est" is not decoration: a route crossing a jump point is estimated, because the wormhole
-      // transit itself has never been measured. It rides the leg, so the server decides it.
-      s.className = "dist" + (q.travelBasis === "estimated" ? " est" : "")
-        + (q.minutes < 1 ? " near" : "");
-      s.textContent = (q.travelBasis === "estimated" ? "~" : "") + mins(q.minutes);
-      s.title = q.travelBasis === "estimated"
-        ? "About " + mins(q.minutes) + " away. The route crosses a jump point, and the transit "
-          + "through the wormhole has never been measured — so this leg is an estimate, and the "
-          + "whole figure is only as certain as it is."
-        : mins(q.minutes) + " away at quantum speed, from the last place we saw you. It does not "
-          + "include time spent landing, docking, or getting to your ship.";
-      return s;
-    }
-    if (q.containment && q.containment !== "elsewhere") {
-      const s = document.createElement("span");
-      s.className = "dist contain";
-      s.textContent = CONTAIN_TEXT[q.containment] || "";
-      s.title = "We know roughly where you are, but not precisely enough to give you a time. "
-        + "This shop is " + (CONTAIN_TEXT[q.containment] || "nearby") + " relative to the last "
-        + "place the game told us about.";
-      return s;
-    }
-    return null;
+  /**
+   * Metres as the GAME writes them — km, Mm, Gm — because that is the ladder on the player's own
+   * HUD and quantum target list. Anything else makes them convert in their head to compare the
+   * widget against the screen behind it.
+   *
+   * 🔑 THE UNIT IS ALWAYS PRESENT AND ALWAYS SPELLED. This is the direct lesson of Sub reading
+   * "New Babbage 4M away" as a distance when it was the age of his position fix: a bare number or
+   * a single-letter suffix next to a place name gets read as distance whatever it actually is.
+   * One decimal only below 10 of a unit, where the difference is legible; none above, where it is
+   * false precision on a straight-line figure.
+   */
+  function fmtDist(m) {
+    if (m < 1000) return "<1 km";
+    const km = m / 1000;
+    if (km < 1000) return Math.round(km).toLocaleString() + " km";
+    const Mm = m / 1e6;
+    if (Mm < 1000) return (Mm < 10 ? Mm.toFixed(1) : Math.round(Mm).toLocaleString()) + " Mm";
+    const Gm = m / 1e9;
+    return (Gm < 10 ? Gm.toFixed(1) : Math.round(Gm).toLocaleString()) + " Gm";
   }
 
   /**
-   * 🔴 THE EYE SAYS HOW WELL WE CAN SEE YOU — it is not an info button.
+   * 🔴 HOW FAR, AS A COLOURED TIER — and the far tier NAMES THE SYSTEM (Sub, 2026-08-22:
+   * "instead of saying out of system, just put Nyx or Pyro").
+   *
+   * "elsewhere" was a non-answer. The player knows they are in Stanton; being told a shop is
+   * "elsewhere" costs a glance and returns nothing, whereas "Pyro" is the actual decision — it is
+   * a jump away and you either want to go or you do not.
+   *
+   * 🔑 THE COLOUR IS THE LADDER, so the four tiers read at a glance without being read as words:
+   * green (you are standing there) → cyan (same body) → gold (same system) → red (another system).
+   * All four are the shared semantic tokens, so they retint with every manufacturer skin.
+   *
+   * 🔴 NO PILL AT ALL WHEN `containment` IS NULL. That means the server made no claim about where
+   * the player is, and colouring a tier we did not compute would be inventing one. It is not the
+   * same as "elsewhere", which is a real finding.
+   */
+  const TIER = {
+    "same-place":  { text: "here",      cls: "t-here" },
+    "same-body":   { text: "same body", cls: "t-body" },
+    "same-system": { text: "in system", cls: "t-sys" },
+  };
+  function tierPill(g) {
+    const c = g.first.containment;
+    if (!c) return null;
+    let text, cls, why;
+    if (TIER[c]) {
+      ({ text, cls } = TIER[c]);
+      why = "This shop is " + text + ", relative to the last place the game told us about.";
+    } else {
+      // "elsewhere" — another system. Name it rather than restating that it is not here.
+      text = g.system || "another system";
+      cls = "t-away";
+      why = "Another system" + (g.system ? " — " + g.system : "")
+        + ". Getting there means a wormhole transit, so it is a different kind of trip from "
+        + "anything in your own system, not just a longer one.";
+    }
+    const s = document.createElement("span");
+    s.className = "cpill " + cls;
+    s.textContent = text;
+    s.title = why;
+    return s;
+  }
+
+  /**
+   * 🔴 DROP THE PLACE OFF THE SHOP NAME — it is already the group heading (Sub, 2026-08-22).
+   *
+   * UEX writes terminals as "Shop - Building - Place": "Pharmacy - Seraphim",
+   * "Covalex Shipping - Providence Platform - Orison". Under a heading that already says the
+   * place, the tail is the same word twice, and it is the width the name needs at 320px.
+   *
+   * 🔑 MEASURED BEFORE SHIPPING, because name-matching is where this codebase keeps getting
+   * caught: across all 461 terminals, 449 shorten, 0 are emptied, and — the property that
+   * actually matters — 0 COLLIDE, meaning no two shops at the same place end up reading
+   * identically. A collision would silently merge two different shops in the player's eyes.
+   *
+   * ⚠️ The prefix rule ("Seraphim" for "Seraphim Station") needs the 4-character floor. Without it
+   * a two-letter segment matches the start of almost any place name and strips real words.
+   */
+  function shortName(terminal, place, body) {
+    const parts = String(terminal || "").split(" - ").map((s) => s.trim()).filter(Boolean);
+    if (parts.length < 2) return terminal;
+    const k = (s) => String(s || "").toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").replace(/[^a-z0-9]/g, "");
+    const pk = k(place), bk = k(body);
+    const redundant = (seg) => {
+      const s = k(seg);
+      if (!s) return false;
+      if (pk && (s === pk || (pk.indexOf(s) === 0 && s.length >= 4))) return true;
+      if (bk && (s === bk || (bk.indexOf(s) === 0 && s.length >= 4))) return true;
+      return false;
+    };
+    const out = parts.slice();
+    // 🔑 Never strip everything. A shop whose whole name is the place still needs a label.
+    while (out.length > 1 && redundant(out[out.length - 1])) out.pop();
+    return out.join(" - ");
+  }
+
+  /**
+   * 🔴 IT SAYS HOW WELL WE CAN SEE YOU — and since 2026-08-22 it wears a circled i, not an eye.
    *
    * Three states because there are exactly three claims: we know where you are (green), we know
-   * roughly or the reading has aged (amber), we do not know (dim). The label is the server's own
-   * `summary`, and the popover carries `from` and `howToImprove` verbatim. Sub's requirement for
-   * the hover was that it says what the player can DO about it, not merely that it is uncertain.
+   * roughly or the reading has aged (amber), we do not know (also amber now — it is the one state
+   * asking the player for something, so it may not be the quietest thing on screen; see the CSS).
+   * The label is the server's own `summary`, and the popover carries `from` and `howToImprove`
+   * verbatim. Sub's requirement for the hover was that it says what the player can DO about it,
+   * not merely that it is uncertain.
+   *
+   * 🔴 THE THREE-QUANTITY TRAP, and why the summary is rewritten below. Sub read "New Babbage
+   * 4M away" as a distance. It was neither a distance nor minutes to New Babbage — `order.note`
+   * said "Nearest first, from Orison (seen 4m ago)" and that `4m` was the AGE OF HIS POSITION FIX.
+   * Three different quantities were on screen in similar shapes and they merged. The rows now
+   * carry a spelled-out distance unit, and every AGE in this footer is spelled "min ago" / "h ago"
+   * so no bare `4m` can sit beside a place name and be read as how far away it is.
    */
   function renderEye(origin, order) {
     const btn = $("eye"), lbl = $("eyelbl"), pop = $("eyepop");
@@ -373,9 +510,22 @@
     const el = document.createElement("div");
     el.className = "item";
 
+    // 🔑 THE CATEGORY RIDES THE NAME (Sub, 2026-08-22: "CRUZ Lux dash drinks"). Item names in this
+    // catalogue are frequently uninformative on their own — "CRUZ Lux" does not say drink, and
+    // components are named bare ("Burst" is a quantum drive) — so the category is what makes the
+    // row identifiable at a glance. As a chip it read as one more attribute among four; appended
+    // to the name it reads as part of the identity, which is what it actually is.
+    // ⚠️ It is a CHILD SPAN, not string concatenation, so it can be styled down. The name is the
+    // thing being searched for and must stay dominant; the category is context.
     const name = document.createElement("div");
     name.className = "iname";
     name.textContent = r.name;
+    if (r.category) {
+      const cat = document.createElement("span");
+      cat.className = "icat";
+      cat.textContent = " – " + r.category;
+      name.appendChild(cat);
+    }
     el.appendChild(name);
 
     // Chips, in the tracker's own idiom. The manufacturer leads because for ship components it IS
@@ -390,7 +540,9 @@
       chips.appendChild(c);
     };
     if (r.company) chip("mk", r.company);
-    if (r.category) chip("cat", r.category);
+    // ⚠️ NO category chip — it MOVED onto the name above, it was not duplicated. Showing it in both
+    // places is the "mirror it and you have two writers" mistake in visual form: the reader sees
+    // the same fact twice and starts wondering what the difference is.
     if (r.size) chip("sz", "Size " + r.size);
     if (r.craft) {
       chip("craft" + (r.craft.owned ? " own" : ""),
@@ -401,49 +553,95 @@
     }
     if (chips.childNodes.length) el.appendChild(chips);
 
+    // ══ SHOPS, GROUPED BY PLACE (Sub picked this shape 2026-08-22) ══════════════════════════
+    //
+    // 🔴 THE REASON IT IS A GROUP AND NOT A COLUMN. Results are already ordered by proximity, so
+    // shops at the same place are already adjacent — and the distance to all of them is by
+    // definition identical. The flat layout printed that same fact once per row: in the MedPen
+    // result, 5 shops fall in 2 places, so "same body" was drawn four times. Stating it once as a
+    // heading is not just tidier, it is what frees the width the shop name needs at 320px.
+    //
+    // 🔑 AND IT LETS THE PLACE COME OFF THE SHOP NAME. "Pharmacy - Seraphim" under a heading that
+    // already says Seraphim Station is the same word twice. `shortName()` strips it — measured
+    // across the whole table: 449 of 461 shortened, 0 emptied, and 0 collisions (no two shops at
+    // one place end up reading identically), which is the property that makes it safe.
     const shops = document.createElement("div");
     shops.className = "shops";
+
+    // Consecutive-run grouping, NOT a map keyed by place: the incoming order is the proximity
+    // order and must be preserved exactly. Bucketing by name would silently re-sort the results.
+    const groups = [];
     for (const q of r.quotes.slice(0, SHOPS_SHOWN)) {
-      const row = document.createElement("div");
-      row.className = "shop";
+      const last = groups[groups.length - 1];
+      if (last && last.place === q.place && last.system === q.system) last.quotes.push(q);
+      else groups.push({ place: q.place, body: q.body, system: q.system, first: q, quotes: [q] });
+    }
 
-      // 🔑 Price and age share ONE column — they answer the same question together.
-      const col = document.createElement("span");
-      col.className = "pricecol";
-      const p = document.createElement("span");
-      p.className = "price";
-      p.textContent = fmt(q.price);
-      col.appendChild(p);
+    for (const g of groups) {
+      const gEl = document.createElement("div");
+      gEl.className = "grp";
 
-      const a = document.createElement("span");
-      a.className = "age " + ageBand(q.asOf);
-      a.textContent = ageOf(q.asOf);
-      a.title = "Last reported to UEX " + ageOf(q.asOf).replace(/^(\d+)d$/, "$1 days ago")
-        + ". Shop prices in Star Citizen are fixed rather than a live market — 99.6% of them were "
-        + "never once seen to change over a month — so an old reading is usually still correct. "
-        + "The colour is how recently someone checked, not how wrong it might be.";
-      col.appendChild(a);
-      row.appendChild(col);
+      const head = document.createElement("div");
+      head.className = "ghead";
+      const pl = document.createElement("span");
+      pl.className = "gplace";
+      pl.textContent = g.place || "Unknown location";
+      // The body and system stay available without spending a line on them.
+      pl.title = [g.place, g.body, g.system].filter(Boolean).join(" · ");
+      head.appendChild(pl);
+      head.appendChild(Object.assign(document.createElement("span"), { className: "grule" }));
 
-      const w = document.createElement("span");
-      w.className = "where";
-      w.textContent = q.terminal;
-      const where = placeText(q);
-      if (where) {
-        const sub = document.createElement("span");
-        sub.className = "sub";
-        sub.textContent = where;
-        w.appendChild(sub);
+      // A real distance when we have one — it is exact where the tier word is only a category.
+      g.first.__from = (lastOrigin && lastOrigin.label) || null;
+      if (g.first.metres != null) {
+        const dm = document.createElement("span");
+        dm.className = "gdist";
+        dm.textContent = fmtDist(g.first.metres);
+        dm.title = fmtDist(g.first.metres) + " in a straight line from "
+          + (g.first.__from || "where we last saw you") + ". It is the distance, not a travel "
+          + "time: it does not know about spooling up, landing, docking, or getting to your ship.";
+        head.appendChild(dm);
       }
-      row.appendChild(w);
+      const tp = tierPill(g);
+      if (tp) head.appendChild(tp);
+      gEl.appendChild(head);
 
-      // 🔴 How far — and ONLY what the server actually claimed. `minutes` is present exactly when
-      // the ordering was by travel time; `containment` when it was rougher. Neither is derived
-      // here, because deriving one would let the widget state a confidence the data never had.
-      const d = distNode(q);
-      if (d) row.appendChild(d);
+      for (const q of g.quotes) {
+        const row = document.createElement("div");
+        row.className = "grow";
 
-      shops.appendChild(row);
+        const w = document.createElement("span");
+        w.className = "gshop";
+        w.textContent = shortName(q.terminal, q.place, q.body);
+        // ⚠️ The FULL terminal name stays reachable on hover. Stripping is a display convenience;
+        // the name UEX actually publishes is what a player would search for or report a problem
+        // about, so it must not become unrecoverable.
+        w.title = q.terminal;
+        row.appendChild(w);
+
+        const a = document.createElement("span");
+        a.className = "age " + ageBand(q.asOf);
+        a.textContent = ageOf(q.asOf);
+        a.title = "Last reported to UEX " + ageOf(q.asOf).replace(/^(\d+)d$/, "$1 days ago")
+          + ". Shop prices in Star Citizen are fixed rather than a live market — 99.6% of them were "
+          + "never once seen to change over a month — so an old reading is usually still correct. "
+          + "The colour is how recently someone checked, not how wrong it might be.";
+        row.appendChild(a);
+
+        // 🔑 THE UNIT IS NAMED (Sub: "it just says seven"). Dimmed child span so the AMOUNT is what
+        // the eye compares down the column, and so `.price` still holds only the number.
+        const p = document.createElement("span");
+        p.className = "price";
+        p.textContent = fmt(q.price);
+        const u = document.createElement("span");
+        u.className = "unit";
+        u.textContent = " aUEC";
+        p.appendChild(u);
+        row.appendChild(p);
+
+        gEl.appendChild(row);
+      }
+      shops.appendChild(gEl);
     }
     el.appendChild(shops);
 
@@ -475,6 +673,7 @@
     // The eye is about the SESSION, not about these results, so it updates on every response —
     // including the empty ones. A player who searched something we do not stock still deserves to
     // know whether we can see where they are.
+    lastOrigin = data.origin || null;
     renderEye(data.origin, data.order);
     if (!data.query) {
       showEmpty("Type an item name.<br />Weapons, armour, ship components, gear.");
@@ -504,16 +703,22 @@
    *  user knows when they are on a fallback, and only the screen they are looking at can say so. */
   function renderSource(data) {
     const el = $("src");
+    // ⚠️ WRITE TO #srctext, NEVER TO #src. This used to set `textContent` on the whole span, which
+    // is now the credit block — doing that would delete the UEX mark and wordmark on the first
+    // response and leave the attribution showing only for the instant before any data arrived.
+    const t = $("srctext");
     const age = data.fetchedAt ? ageOf(Math.floor(data.fetchedAt / 1000)) : "unknown age";
     if (data.source === "live") {
       el.className = "";
-      el.textContent = "UEX via subliminal.gg · updated " + age;
+      // 🔑 "UEX via" is gone from the sentence because the wordmark beside it already says UEX.
+      // Repeating it made the credit read as part of a status line rather than as a credit.
+      t.textContent = "via subliminal.gg · updated " + age;
     } else if (data.source === "cache") {
       el.className = "fallback";
-      el.textContent = "offline — last download " + age;
+      t.textContent = "offline — last download " + age;
     } else {
       el.className = "fallback";
-      el.textContent = "offline — using the copy that shipped with the app";
+      t.textContent = "offline — using the copy that shipped with the app";
     }
     el.title = (data.itemCount || 0) + " items across " + (data.terminalCount || 0) + " shops."
       + (data.droppedOffline ? "  " + data.droppedOffline + " price rows were dropped for sitting at terminals the game no longer has." : "")

@@ -18,3 +18,4 @@ __pycache__/
 
 # Throwaway profile used by 'npm run dev:fresh' to walk through first-run setup
 .dev-profile/
+.dev-versefit/
