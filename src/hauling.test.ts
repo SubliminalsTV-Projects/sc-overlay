@@ -54,6 +54,17 @@ assert.ok(isHaulingContract("Covalex_Hauling", "HaulCargo_AToB_Processed_Stims_S
 assert.ok(isHaulingContract("GoblinG_Generator", "GoblinG_HaulCargo_L_Stanton2"));
 assert.ok(!isHaulingContract("BountyHuntersGuild_KIllShip", "BountyHuntersGuild_Bounty_Pyro_VeryEasy"));
 
+// Siege of Orison. `ORS_MA_DeliveryPilot` is a real two-box haul CIG never named as one:
+// neither "haul" nor "cargo" appears in "TheBackpocket ORS_MA_DeliveryPilot", so it used to be
+// rejected at the door while emitting the full hauling signal set. Sub, 2026-08-22.
+assert.ok(isHaulingContract("TheBackpocket", "ORS_MA_DeliveryPilot"));
+// 🔴 THE OTHER HALF, and the reason the rule is not "admit the ORS_ prefix": the SAME generator
+// runs Strike Nine Tails Squad, a combat contract with no cargo in it. Widening to the event
+// prefix would drag it in, so this assertion is what stops that shortcut being taken later.
+assert.ok(!isHaulingContract("TheBackpocket", "ORS_SA"));
+// The Orison hauls CIG did name normally must keep working.
+assert.ok(isHaulingContract("TheBackpocket", "ORS_MA_HaulingSmall"));
+
 // ── A tracked Covalex contract, accept → delivery → payout ─────────────────────────────────
 // Real lines: mission 275d8ca8 (2026-08-16, Stims 81 SCU) with the completion/payout pair
 // grafted on from mission 0c17926b, which really did pay 56,000 aUEC 39ms after ending.
