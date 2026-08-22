@@ -18,7 +18,7 @@ import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
 import { canAutoLoad } from "./hauling-autoload.js";
 import { buildHaulingPlan, gridsOf } from "./hauling-plan.js";
-import { tradeRoutes, tradeLogLine } from "./trade-routes.js";
+import { tradeRoutes, tradeLogLine, tradeTable } from "./trade-routes.js";
 import { verseRoutes } from "./verse-routes.js";
 import { largestBoxScu } from "./cargo-boxes.js";
 import {
@@ -2071,6 +2071,11 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // and piece of state lives in verse-routes.ts and this is its ONLY hook into this file.
   if (verseRoutes(url, req, res, {
     dataDir, userDir, tracker, haulingData,
+    // 🔴 The Verse Finder BORROWS the trade subsystem's commodity table rather than building one.
+    // Two stores would refresh on two clocks and the two widgets could quote different prices for
+    // the same commodity in the same second. Read at request time for the same reason the location
+    // signals are: the table is swapped by a background refresh.
+    commodities: () => tradeTable(tradeDeps),
     // Read at request time, never cached: these watchers are updated by the log tail and a
     // snapshot taken at startup would pin the player wherever they were when the app launched.
     locationSignals: () => {

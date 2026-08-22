@@ -12,6 +12,27 @@
  *   /api/verse/status          where the table came from, how old it is, and what it cannot say
  *   /api/verse/search?q=       ranked items, each with every shop that sells it
  *
+ * -- WHAT "ITEM" MEANS HERE, WIDENED 2026-08-22 ----------------------------------------------
+ *
+ * One box, three sources, and the merge is what makes it one feature rather than three:
+ *
+ *   SHOP ITEMS   the site's table. Unchanged.
+ *   SHIPS        rows in that same table, because Sub ruled a ship is not different from any other
+ *                item - "people just need to know where it is and know how much it costs". Nothing
+ *                in this file knows a ship from a magazine; a rental quote is labelled and that is
+ *                the only difference the whole path carries.
+ *   COMMODITIES  BORROWED from the trade subsystem via `deps.commodities`, adapted by
+ *                `verse-commodities.ts`. Never a second store - see that dep's note.
+ *
+ * 🔑 THEY ARE SCORED BY ONE SCORER AND MERGED INTO ONE RANKED LIST. A player typing a name does not
+ * know which of our tables the answer lives in, so ranking by source would make the order depend on
+ * our storage rather than on what they typed.
+ *
+ * 🔴 AND A BLANK RESULT NOW SAYS WHICH KIND OF BLANK IT IS. `unpriced` names catalogued items no
+ * shop sells (two thirds of the catalogue) and `sellOnly` names commodities you can only sell (36
+ * of 122). Both are computed ONLY when the search found nothing, because that is the one moment
+ * they are an answer rather than noise.
+ *
  * 🔑 EVERY RESPONSE CARRIES `source` AND THE TABLE'S AGE. Sub's requirement is that the user knows
  * when they are on a fallback, and a widget can only say so on the screen they are looking at.
  *
@@ -25,7 +46,9 @@ import type { ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ItemShopStore, type ItemShopTable } from "./item-shops.js";
-import { searchItems, provenance, type SearchHit, type ResolvedQuote } from "./item-search.js";
+import { searchItems, searchUnpriced, provenance, type SearchHit, type ResolvedQuote } from "./item-search.js";
+import { searchCommodities, sellOnlyMatches } from "./verse-commodities.js";
+import type { TradeTable } from "./trade-prices.js";
 import {
   buildTerminalIndex, orderByProximity, systemKey,
   type TerminalIndex, type LocationRecord, type ProximityOrder,
@@ -84,6 +107,18 @@ export interface VerseDeps {
   /** Hauling reference data, used ONLY to resolve the game's own location tokens (`RR_ARC_LEO`).
    *  Optional: without it a token that is not literally a place name simply does not resolve. */
   haulingData?: HaulingDataStore;
+  /**
+   * The commodity price table, borrowed READ-ONLY from the trade subsystem.
+   *
+   * 🔴 A BORROW, NOT A SECOND STORE. `trade-routes.ts` owns the refresh clock, the disk cache and
+   * the journal; this file must never build its own, or the Verse Finder and the Trade widget could
+   * quote different prices for the same commodity at the same moment - the in-app version of the
+   * exact drift the site-side join exists to prevent.
+   *
+   * Optional like everything else here: without it the widget simply never mentions commodities,
+   * which is a smaller loss than the search failing.
+   */
+  commodities?: () => TradeTable | null;
 }
 
 let store: ItemShopStore | null = null;
@@ -268,20 +303,38 @@ export function verseRoutes(
   if (url === "/api/verse/search") {
     const q = (p.get("q") ?? "").trim();
     const px = proximity(deps, table);
+    const limit = intParam(p, "limit", 20);
+    const shops = intParam(p, "shops", 8);
     // 🔴 One ORDER per response, not per item. `basis` and `note` describe how well we know where
     // the player is, which is a property of the session — letting it vary row by row would invite
     // the UI to print a different confidence beside each shop for the same single reading.
     let order: ProximityOrder | null = null;
-    const hits = searchItems(table, q, {
-      limit: intParam(p, "limit", 20),
-      quotesPerItem: intParam(p, "shops", 8),
-      orderQuotes: px
-        ? (quotes) => { const r = px.order(quotes); order = r; return r.quotes; }
-        : undefined,
-    });
+    const orderQuotes = px
+      ? (quotes: ResolvedQuote[]) => { const r = px.order(quotes); order = r; return r.quotes; }
+      : undefined;
+
+    // 🔑 Commodities are scored by the SAME scorer and merged into ONE list, not appended as a
+    // second section. A player typing a name does not know or care which of our two tables the
+    // answer lives in, and stapling the two together would make the ranking depend on our storage
+    // rather than on what they typed. `sort` is stable in V8, so equal scores keep item-then-
+    // commodity order, which is only a tie-break and never a section.
+    let commodityTable: TradeTable | null = null;
+    try { commodityTable = deps.commodities?.() ?? null; } catch { commodityTable = null; }
+    const hits = [
+      ...searchItems(table, q, { limit, quotesPerItem: shops, orderQuotes }),
+      ...searchCommodities(commodityTable, q, { limit, quotesPerItem: shops, orderQuotes }),
+    ].sort((a, b) => b.score - a.score || a.name.length - b.name.length || a.name.localeCompare(b.name))
+      .slice(0, limit);
+
+    // 🔴 WHAT TO SAY WHEN THERE IS NOTHING TO SELL YOU. Both of these exist so that a blank result
+    // can state WHICH kind of blank it is — they are computed only when the search found nothing,
+    // because that is the only moment they are an answer rather than noise.
+    const nothing = q && !hits.length;
     json(res, 200, {
       query: q,
       results: hits.map((h) => ({ ...h, craft: craftInfo(h, deps.tracker) })),
+      unpriced: nothing ? searchUnpriced(table, q) : [],
+      sellOnly: nothing ? sellOnlyMatches(commodityTable, q) : [],
       origin: px ? originPayload(px.origin) : null,
       // Null when nothing was ordered at all — an empty result set never ran the orderer, and
       // claiming a basis for zero rows would be a statement about data we never looked at.

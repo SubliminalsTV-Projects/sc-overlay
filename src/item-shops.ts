@@ -6,6 +6,26 @@
  * this is about ITEMS - components, weapons, armour, gear - not the commodity market. Commodities
  * are `trade-prices.ts`, which is this module's sibling and its template.
  *
+ * ⚠️ AMENDED 2026-08-22 - THAT LAST SENTENCE IS STILL TRUE OF THIS FILE AND NO LONGER TRUE OF THE
+ * WIDGET. The reasoning above was right about the DATA and was being read as a rule about the
+ * FEATURE, which is why a player typing "Laranite" into the Verse Finder got the same blank as a
+ * typo while the answer sat on their own disk. Commodities keep their own module, their own refresh
+ * clock, their own stock and demand fields and their own honesty rules - none of that is folded in
+ * here, because a commodity is genuinely a different kind of row. What changed is only that
+ * `verse-commodities.ts` now ADAPTS the trade table into search hits alongside this one, so the
+ * widget can answer both questions from one box. Do not merge the two tables; do not delete the
+ * distinction this paragraph is drawing.
+ *
+ * 🔴 SHIPS, HOWEVER, *ARE* ROWS IN THIS TABLE (schema 2). Sub: "It's really not any different than
+ * any other item. People just need to know where it is and know how much it costs to make sure
+ * they're getting it at the cheapest price available." UEX sells them through DEALERS rather than
+ * shops - its own item category called "Vehicles" is empty - so the site fetches the dealer
+ * endpoints and appends the rows here. Nothing in this file, in the search, or in the proximity
+ * ordering knows a ship from a magazine, which is the point.
+ * 🔴 The ONE difference honesty forces: a RENTAL price is not a purchase price. A rental quote
+ * carries `k: "rent"` and is labelled wherever it is drawn. 344 of the 632 dealer rows are rentals,
+ * and rendering them as sale prices would say a 100i costs 28,665 aUEC.
+ *
  * 🔴 THE UEX API KEY MUST NEVER SHIP IN THIS APP. It is a distributable desktop binary: a key
  * inside it is extractable, and then strangers spend our quota. So the app fetches an
  * UNAUTHENTICATED endpoint on subliminal.gg, which holds one key server-side and polls UEX on
@@ -58,8 +78,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
-/** Bump when the wire shape changes. Mirrors `ITEM_SHOPS_SCHEMA` on the site. */
-export const ITEM_SHOPS_SCHEMA = 1;
+/** Bump when the wire shape changes. Mirrors `ITEM_SHOPS_SCHEMA` on the site.
+ *  2 - vehicle rows, `ItemQuote.k`, and the `unpriced` list. */
+export const ITEM_SHOPS_SCHEMA = 2;
 
 /** One shop that sells one item. Terminal is an INDEX into `ItemShopTable.terminals` - a terminal
  *  name repeats across ~50 rows and inlining it triples the payload for no gain. */
@@ -70,6 +91,23 @@ export interface ItemQuote {
   /** Epoch SECONDS this price was last reported to UEX. Never null - UEX populates it on 100% of
    *  rows, and a quote whose age we cannot state has no business being rendered. */
   m: number;
+  /** 🔴 Present ONLY on a vehicle RENTAL quote; absent means a purchase. Deliberately opt-IN so the
+   *  honest reading is the default: a consumer that has never heard of rentals cannot accidentally
+   *  render one as a sale price, because it would have to go looking for this field to find one. */
+  k?: "rent";
+}
+
+/** A catalogue item nobody has reported a shop for.
+ *
+ *  🔴 THIS EXISTS SO A BLANK CAN SAY WHICH KIND OF BLANK IT IS. Roughly two thirds of the catalogue
+ *  has no known shop (4,962 of 7,753 as measured 2026-08-22), and until schema 2 the app knew only
+ *  the COUNT - so an armour set that genuinely exists and a mistyped word produced the identical
+ *  "no shop known", and the player had no way to tell "nobody sells this" from "no such thing".
+ *  Armor›Full Set is the group that bites: 112 sets, every one of them a real thing someone will
+ *  search by name. */
+export interface UnpricedItem {
+  n: string;
+  c: string;
 }
 
 export interface ShopItem {
@@ -110,8 +148,11 @@ export interface ItemShopTable {
   droppedOffline: number;
   /** Items UEX lists that nobody has reported a shop for. The honest denominator: "we don't know
    *  of a shop" is the COMMON answer (roughly two thirds of the catalogue) and the UI has to tell
-   *  it apart from "no such item". */
+   *  it apart from "no such item". Equals `unpriced.length` on a schema-2 table. */
   catalogueOnly: number;
+  /** The NAMES behind that count. Empty on a schema-1 table (and on a bundle built before this
+   *  shipped), which the search path must treat as "we cannot say", never as "no such item". */
+  unpriced: UnpricedItem[];
   /** Set when the last refresh failed, so the widget can say WHY it is on a fallback rather than
    *  only that it is. */
   lastError: string | null;
@@ -125,6 +166,9 @@ interface RemotePayload {
   fetchedAt?: number | null;
   droppedOffline?: number;
   catalogueOnly?: number;
+  /** `[name, category]` pairs. Pairs rather than objects because the category repeats heavily and
+   *  gzip is what makes 4,962 of these affordable at all - 196 KB of JSON, 35.7 KB on the wire. */
+  unpriced?: [string, string][];
 }
 
 export interface ItemShopOptions {
@@ -142,7 +186,24 @@ const CACHE_FILE = "item-shops.json";
 const BUNDLED_FILE = "item-shops.json";
 
 function emptyTable(source: ShopSource): ItemShopTable {
-  return { items: [], terminals: [], source, fetchedAt: null, droppedOffline: 0, catalogueOnly: 0, lastError: null };
+  return { items: [], terminals: [], source, fetchedAt: null, droppedOffline: 0, catalogueOnly: 0, unpriced: [], lastError: null };
+}
+
+/** Decode the wire's `[name, category]` pairs. Anything malformed is skipped rather than failing
+ *  the table: an unusable entry here costs one name out of a hint list, whereas rejecting the whole
+ *  payload would cost the player every price in it. Deliberately NOT the same policy as `normalise`
+ *  applies to quotes, because a quote with a bad terminal index would be rendered as a WRONG fact
+ *  and this list can only ever be short. */
+function readUnpriced(raw: RemotePayload["unpriced"]): UnpricedItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: UnpricedItem[] = [];
+  for (const row of raw) {
+    if (!Array.isArray(row)) continue;
+    const n = typeof row[0] === "string" ? row[0].trim() : "";
+    if (!n) continue;
+    out.push({ n, c: typeof row[1] === "string" && row[1] ? row[1] : "Unknown" });
+  }
+  return out;
 }
 
 /** Structural validation of a payload from anywhere - network, cache or bundle.
@@ -176,10 +237,17 @@ function normalise(body: RemotePayload | null | undefined): { items: ShopItem[];
       // A quote pointing at a terminal we do not have is unrenderable - it would be a price with
       // no place, which is the one thing this widget must never show.
       if (t < 0 || t >= terminals.length || p <= 0 || m <= 0) continue;
-      q.push({ t, p, m });
+      // Only the one literal is accepted. An unrecognised `k` becomes a PURCHASE, which is the
+      // wrong way round to be safe - so it is narrowed to the value we know, and anything else is
+      // dropped from the quote rather than passed through to be guessed at downstream.
+      q.push(raw?.k === "rent" ? { t, p, m, k: "rent" } : { t, p, m });
     }
     if (!q.length) continue;
-    q.sort((a, b) => a.p - b.p || b.m - a.m);
+    // 🔴 Purchases before rentals, then cheapest first. Merging the two ladders would put a 28,665
+    // aUEC rental above a 1,089,270 aUEC purchase and make "cheapest first" read as the price of
+    // the ship. Proximity ordering may still interleave them, which is fine - by then every row is
+    // labelled and the ordering is explicitly about distance rather than price.
+    q.sort((a, b) => (a.k === "rent" ? 1 : 0) - (b.k === "rent" ? 1 : 0) || a.p - b.p || b.m - a.m);
     items.push({
       n,
       co: typeof it.co === "string" && it.co ? it.co : null,
@@ -251,6 +319,7 @@ export class ItemShopStore {
         fetchedAt: typeof body.fetchedAt === "number" ? body.fetchedAt : Date.now(),
         droppedOffline: typeof body.droppedOffline === "number" ? body.droppedOffline : 0,
         catalogueOnly: typeof body.catalogueOnly === "number" ? body.catalogueOnly : 0,
+        unpriced: readUnpriced(body.unpriced),
         lastError: null,
       };
       this.writeCache(this.table);
@@ -276,6 +345,7 @@ export class ItemShopStore {
         fetchedAt: typeof body.fetchedAt === "number" ? body.fetchedAt : null,
         droppedOffline: typeof body.droppedOffline === "number" ? body.droppedOffline : 0,
         catalogueOnly: typeof body.catalogueOnly === "number" ? body.catalogueOnly : 0,
+        unpriced: readUnpriced(body.unpriced),
         lastError: null,
       };
     } catch {
@@ -302,6 +372,7 @@ export class ItemShopStore {
         fetchedAt: typeof body.fetchedAt === "number" ? body.fetchedAt : null,
         droppedOffline: typeof body.droppedOffline === "number" ? body.droppedOffline : 0,
         catalogueOnly: typeof body.catalogueOnly === "number" ? body.catalogueOnly : 0,
+        unpriced: readUnpriced(body.unpriced),
         lastError: null,
       };
     } catch { return null; }
@@ -317,6 +388,7 @@ export class ItemShopStore {
         fetchedAt: t.fetchedAt,
         droppedOffline: t.droppedOffline,
         catalogueOnly: t.catalogueOnly,
+        unpriced: t.unpriced.map((u) => [u.n, u.c]),
       }));
     } catch { /* a read-only profile must not take the feature down */ }
   }

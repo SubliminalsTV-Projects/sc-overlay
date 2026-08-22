@@ -26,7 +26,7 @@
 import type { ServerResponse } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { TradePriceStore, type PlaceInfo, type BundledCommodity } from "./trade-prices.js";
+import { TradePriceStore, type PlaceInfo, type BundledCommodity, type TradeTable } from "./trade-prices.js";
 import { findRoutes, lookupCommodity, tradableNames, buyableSystems } from "./trade-finder.js";
 import { TradeJournal } from "./trade-journal.js";
 import { parseTradeLine } from "./trade-log.js";
@@ -164,6 +164,23 @@ function ensureJournal(deps: TradeDeps): TradeJournal {
 }
 
 /** Build the store once, and start the refresh tick. Idempotent. */
+/**
+ * The current commodity table, for a READ-ONLY borrower outside this subsystem.
+ *
+ * 🔴 THE ONLY REASON THIS IS EXPORTED. The Verse Finder searches commodities (see
+ * `verse-commodities.ts`), and there must be exactly ONE commodity store in the process: two would
+ * refresh on two clocks and the two widgets could quote different prices for the same commodity at
+ * the same moment. This hands out the table `tradeRoutes` is already serving, so they cannot.
+ *
+ * ⚠️ It will CREATE the store on first call, including arming the refresh timer — the same thing
+ * any `/api/trade/*` request already does, so a player who never opens Trade but does search for
+ * Laranite gets a store rather than nothing. Never widen this into a mutating accessor; the
+ * subsystem's state stays owned here.
+ */
+export function tradeTable(deps: TradeDeps): TradeTable {
+  return ensure(deps).current();
+}
+
 function ensure(deps: TradeDeps): TradePriceStore {
   if (store) return store;
   store = new TradePriceStore({
