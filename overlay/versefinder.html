@@ -64,6 +64,9 @@
   .item:last-child { border-bottom: 0; }
   .iname { font-size: 13px; font-weight: 600; color: var(--cyan-bright); line-height: 1.3;
     overflow-wrap: anywhere; }
+  /* The category, riding the name. Lighter weight and dimmer so the NAME still reads as the answer
+     to what was typed — this is context, not a second title. */
+  .icat { font-weight: 500; color: var(--cyan-dim); }
 
   /* Manufacturer / category / size / craftability as CHIPS, matching the tracker's `.mi-chip`
      rather than inventing a look: same 5px radius, same divider border, same accent tint. They
@@ -109,7 +112,11 @@
   .pricecol { flex: none; min-width: 0; display: flex; flex-direction: column;
     align-items: flex-end; gap: 3px; }
   .price { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600;
-    font-size: 11.5px; color: var(--gold); }
+    font-size: 11.5px; color: var(--gold); white-space: nowrap; }
+  /* The currency, dimmed and lighter. Present on every row because a bare number is ambiguous in a
+     widget that also prints distances and ages — but subordinate, because what the eye compares
+     down the column is the amount, not the unit repeated five times. */
+  .unit { font-size: 9px; font-weight: 500; opacity: 0.62; letter-spacing: 0.02em; }
 
   /* Age of THIS reading, as a chip in the same family as the ones above. Never omitted, never
      averaged into anything, and never rolled up to the table's age — each shop's price was
@@ -159,14 +166,25 @@
      a longer phrase is ever added here, re-measure — do not just nudge the number. */
   .dist { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.02em;
           color: var(--cyan-dim); white-space: nowrap; text-align: right;
-          flex: none; width: 54px; }
-  /* The same 54px, holding the slot open on a row that has no distance to state, so the price
+          flex: none; width: 66px; }
+  /* The same 66px, holding the slot open on a row that has no distance to state, so the price
      column keeps a single right edge across mixed rows. Same width by construction. */
-  .distpad { flex: none; width: 54px; }
+  .distpad { flex: none; width: 66px; }
   .dist.est { opacity: 0.72; }
   .dist.near { color: var(--green); }
-  .dist.contain { font-family: var(--sans); font-size: 9.5px; font-weight: 600; color: var(--dim);
-                  text-transform: lowercase; letter-spacing: 0.01em; }
+  /* 🔑 CONTAINMENT IS A PILL, in the same family as the item chips and the age chip — same 5px
+     radius, same currentColor-derived border and tint, so it retints with every manufacturer skin
+     instead of pinning a colour of its own. It is a CATEGORY ("here", "same body"), not a
+     measurement, so it should not sit in the numeric column pretending to be one. */
+  .dist.contain { color: var(--cyan-dim); }
+  /* The pill itself — shrink-to-fit inside the fixed slot, in the same family as the item chips
+     and the age chip: same 5px radius, border and tint derived from `currentColor` via color-mix,
+     so it retints with every manufacturer skin rather than pinning a colour of its own. */
+  .cpill { display: inline-block; padding: 1px 6px; border-radius: 5px;
+    font-family: var(--sans); font-size: 9px; font-weight: 600;
+    text-transform: lowercase; letter-spacing: 0.01em; white-space: nowrap;
+    border: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+    background: color-mix(in srgb, currentColor 12%, transparent); }
 
   /* 🔴 A CIRCLED "i", NOT AN EYE (Sub, 2026-08-22: "the letter I with a circle around it").
      An eye reads as a visibility toggle — show/hide this thing — which is exactly the wrong verb
@@ -431,10 +449,22 @@
       return s;
     }
     if (q.containment && q.containment !== "elsewhere") {
+      // 🔑 A PILL, matching the rest of the widget family (Sub, 2026-08-22). "here" and "same body"
+      // are CATEGORIES, not measurements — unlike a distance there is no number to align — so they
+      // take the chip treatment the tracker uses for every other categorical fact rather than
+      // pretending to be a quantity in a numeric column.
+      // ⚠️ THE PILL IS A CHILD OF THE SLOT, NOT THE SLOT ITSELF. Styling `.dist` as the pill made
+      // the pill inherit the slot's fixed width, so "same body" (which needs 63px) was squeezed
+      // into 54 and clipped, while "here" was stretched to the same 54. A pill has to shrink to
+      // its own text — that is what makes it read as a pill — so the fixed width stays on the
+      // wrapper and the pill sits inside it, right-aligned.
       const s = document.createElement("span");
       s.className = "dist contain";
-      s.textContent = CONTAIN_TEXT[q.containment] || "";
-      s.title = "We know roughly where you are, but not precisely enough to give you a time. "
+      const pill = document.createElement("span");
+      pill.className = "cpill";
+      pill.textContent = CONTAIN_TEXT[q.containment] || "";
+      s.appendChild(pill);
+      s.title = "We know roughly where you are, but not precisely enough to give you a distance. "
         + "This shop is " + (CONTAIN_TEXT[q.containment] || "nearby") + " relative to the last "
         + "place the game told us about.";
       return s;
@@ -496,9 +526,22 @@
     const el = document.createElement("div");
     el.className = "item";
 
+    // 🔑 THE CATEGORY RIDES THE NAME (Sub, 2026-08-22: "CRUZ Lux dash drinks"). Item names in this
+    // catalogue are frequently uninformative on their own — "CRUZ Lux" does not say drink, and
+    // components are named bare ("Burst" is a quantum drive) — so the category is what makes the
+    // row identifiable at a glance. As a chip it read as one more attribute among four; appended
+    // to the name it reads as part of the identity, which is what it actually is.
+    // ⚠️ It is a CHILD SPAN, not string concatenation, so it can be styled down. The name is the
+    // thing being searched for and must stay dominant; the category is context.
     const name = document.createElement("div");
     name.className = "iname";
     name.textContent = r.name;
+    if (r.category) {
+      const cat = document.createElement("span");
+      cat.className = "icat";
+      cat.textContent = " – " + r.category;
+      name.appendChild(cat);
+    }
     el.appendChild(name);
 
     // Chips, in the tracker's own idiom. The manufacturer leads because for ship components it IS
@@ -513,7 +556,9 @@
       chips.appendChild(c);
     };
     if (r.company) chip("mk", r.company);
-    if (r.category) chip("cat", r.category);
+    // ⚠️ NO category chip — it MOVED onto the name above, it was not duplicated. Showing it in both
+    // places is the "mirror it and you have two writers" mistake in visual form: the reader sees
+    // the same fact twice and starts wondering what the difference is.
     if (r.size) chip("sz", "Size " + r.size);
     if (r.craft) {
       chip("craft" + (r.craft.owned ? " own" : ""),
@@ -535,9 +580,19 @@
       // the age tooltip and band belong beside the price they describe.
       const col = document.createElement("span");
       col.className = "pricecol";
+      // 🔑 THE UNIT IS NAMED (Sub, 2026-08-22: "it just says seven"). A bare number in a widget
+      // that also prints distances, ages and sizes is exactly the ambiguity that made him read
+      // "4M away" as a distance — the currency has to say what it is.
+      // ⚠️ "aUEC" is a SEPARATE span so it can be dimmed: the amount is what gets compared row to
+      // row, and repeating the unit at full weight down a column turns it into noise. It also
+      // keeps `.price` holding only the number, which the widget suite reads for alignment.
       const p = document.createElement("span");
       p.className = "price";
       p.textContent = fmt(q.price);
+      const u = document.createElement("span");
+      u.className = "unit";
+      u.textContent = " aUEC";
+      p.appendChild(u);
       col.appendChild(p);
 
       const a = document.createElement("span");

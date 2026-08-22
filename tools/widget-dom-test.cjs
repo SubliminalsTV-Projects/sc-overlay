@@ -2529,6 +2529,81 @@ const VERSEFINDER = `(async () => {
          slack.length > 0 && Math.max(...slack) <= 2,
          "worst slack " + Math.max(...slack) + "px across " + cols.length + " columns");
     }
+
+    // ── 🔴 THE PRICE NAMES ITS CURRENCY (Sub, 2026-08-22: "it just says seven") ───────────────
+    // A bare number in a widget that also prints distances, ages and sizes is the same ambiguity
+    // that made him read "4M away" as a distance.
+    {
+      const units = rows.map((r) => r.querySelector(".price .unit")).filter(Boolean);
+      ok("every price carries a currency unit", units.length === rows.length,
+         units.length + " of " + rows.length + " rows");
+      const texts = [...new Set(units.map((u) => u.textContent.trim()))];
+      ok("...and it says aUEC", texts.length === 1 && texts[0] === "aUEC", texts.join(","));
+      // 🔑 The unit must be a CHILD of .price, not appended into its text: the alignment assertions
+      // above measure .price, and the suite would still pass while the column drifted.
+      const first = rows[0].querySelector(".price");
+      ok("...as a child element, so the number is still addressable on its own",
+         !!first && first.childElementCount >= 1 && first.firstChild.nodeType === 3,
+         first ? "children=" + first.childElementCount + " text=" + first.firstChild.textContent : "(none)");
+    }
+  }
+
+  // ── 🔴 THE CATEGORY RIDES THE NAME, AND IS NOT ALSO A CHIP (Sub, 2026-08-22) ────────────────
+  // "CRUZ Lux" does not say drink. The category is what makes a row identifiable, so it belongs in
+  // the identity rather than as one more attribute chip.
+  await search("lux");
+  {
+    const item = document.querySelector("#results .item");
+    const nameEl = item && item.querySelector(".iname");
+    const catEl = item && item.querySelector(".iname .icat");
+    ok("the search returned an item to inspect", !!nameEl,
+       nameEl ? nameEl.textContent.slice(0, 40) : "(no item)");
+    ok("the category is part of the name", !!catEl,
+       nameEl ? nameEl.textContent.slice(0, 40) : "(no name)");
+    if (catEl) {
+      const t = catEl.textContent;
+      ok("...introduced by a dash, not just jammed on", t.indexOf("-") >= 0 || t.indexOf("–") >= 0, t);
+      // 🔴 AND NOT DUPLICATED. Mirroring it into a chip as well is the same fact in two places,
+      // which is what makes a reader wonder what the difference is.
+      const chipTexts = [...item.querySelectorAll(".chip")].map((c) => c.textContent.trim());
+      const catWord = t.replace("–", "").replace("-", "").trim();
+      ok("...and NOT repeated as a chip",
+         chipTexts.every((c) => c.toLowerCase() !== catWord.toLowerCase()),
+         "chips: " + (chipTexts.join(",") || "(none)") + " vs category " + catWord);
+    }
+  }
+
+  // ── 🔴 CONTAINMENT IS A PILL, LIKE THE REST OF THE WIDGET FAMILY (Sub, 2026-08-22) ──────────
+  {
+    const pills = [...document.querySelectorAll("#results .cpill")];
+    // POSITIVE FIRST — everything below is free with no pills on screen. Which state the live
+    // sidecar is in depends on Sub's log, so this is reported rather than demanded.
+    if (pills.length === 0) {
+      ok("(no containment rows this run - the origin is precise enough for distances)", true,
+         "skipped, " + document.querySelectorAll("#results .dist").length + " distance cells");
+    } else {
+      ok("containment rows render as pills", pills.length > 0, pills.length + " pills");
+      const cs0 = getComputedStyle(pills[0]);
+      ok("...with a real chip border and radius",
+         cs0.borderTopWidth !== "0px" && parseFloat(cs0.borderTopLeftRadius) > 0,
+         "border " + cs0.borderTopWidth + " radius " + cs0.borderTopLeftRadius);
+      // 🔴 A pill must SHRINK TO ITS TEXT. Styling the fixed-width slot as the pill made "here" and
+      // "same body" render identically wide and clipped the longer one — which is what stops it
+      // reading as a pill at all.
+      const clipped = pills.filter((p) => p.scrollWidth > p.clientWidth + 1).map((p) => p.textContent);
+      ok("...and none of them is clipped by its slot",
+         clipped.length === 0, clipped.length ? "clipped: " + clipped.join(",") : pills.length + " checked");
+      const byText = new Map();
+      for (const p of pills) byText.set(p.textContent.trim(), Math.round(p.getBoundingClientRect().width));
+      const distinctTexts = [...byText.keys()];
+      const distinctWidths = [...new Set(byText.values())];
+      // Only meaningful when two different labels are on screen; say so rather than passing quietly.
+      ok(distinctTexts.length > 1
+           ? "...and pills of different text are different widths"
+           : "(only one containment label on screen, width variation not testable)",
+         distinctTexts.length > 1 ? distinctWidths.length > 1 : true,
+         distinctTexts.map((t) => t + "=" + byText.get(t) + "px").join(" "));
+    }
   }
 
   // 🔑 CAPTURED FROM THE LIVE RESPONSE, BEFORE THE FIXTURE BELOW REPLACES IT. These two strings are
