@@ -2328,6 +2328,168 @@ const EVENTFEED = `(async () => {
   return out;
 })()`;
 
+// ── Suite: the tier-reward question, and the line between a sighting and a rumour ──────────
+// `events.json` knows ONE of Siege of Orison's six rewards. The other five fill themselves from
+// this card. What must never happen is a rumour rendering as a fact: the candidate names come
+// from a viewer relaying a chatbot answer, and inside this question is the ONLY place they may
+// appear, because answering is what promotes one to a measurement.
+//
+// ⚠️ The keyboard-grab half is NOT asserted here and that is deliberate: this suite loads
+// battaglia.html standalone, where there is no host bridge, so `editStart()` is never reached
+// and any grab assertion would pass for free. It lives in `typing grab: hiding releases it`,
+// which drives the real canvas.
+const REWARDCARD = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  // Defensive: a detail expression is evaluated EAGERLY, so a throw there kills the suite and
+  // reports it as a small pass. Never reach into an element without a fallback.
+  const txt = (sel) => { const e = document.querySelector(sel); return e ? e.textContent : "(missing " + sel + ")"; };
+  const btns = () => [...document.querySelectorAll("#rwrow .rwbtn")].map((b) => b.textContent);
+  const shown = () => { const c = document.getElementById("rwcard"); return !!c && !c.hidden && getComputedStyle(c).display !== "none"; };
+
+  // Stub the sidecar so the prompt state is KNOWN. The live one depends on whether anybody has
+  // crossed a tier on this machine, which is not something an assertion can pin.
+  const realFetch = window.fetch;
+  const posted = [];
+  let promptState = null;
+  window.fetch = async (u, o) => {
+    const s = String(u);
+    // Model the sidecar: answering marks the prompt answered, so the very next /api/events
+    // stops offering it. A stub that keeps serving an answered prompt would make the card
+    // reappear on the load() that follows an answer, which is a fault in the stub and not in
+    // the widget - the real server clears it.
+    if (s.indexOf("/api/events/reward") >= 0) { posted.push(JSON.parse(o.body)); promptState = null; return new Response("{}", { status: 200 }); }
+    if (s.indexOf("/api/events") >= 0) {
+      return new Response(JSON.stringify({
+        feed: { source: "live", revision: 1, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null },
+        reporting: true,
+        rewardPrompt: promptState,
+        events: [{ id: "suite-event", label: "Suite Event", log: "Suite Event", status: "current",
+                   total: 1000, points: 250, pct: 25, unpriced: 0, contributions: [], rewardsUnknown: true,
+                   tiers: [{ pct: 25, points: 250, reached: true, rewards: [] }] }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(u, o);
+  };
+  const mk = (over) => Object.assign({
+    id: "suite-event:25", eventId: "suite-event", eventLabel: "Suite Event", tier: 25,
+    crossedAt: "2026-08-22T00:00:00Z", crossedAtMs: Date.now(),
+    observed: null, candidate: null, answer: null, reported: false,
+  }, over);
+  const drive = async (p) => { promptState = p; await window.__battReload(); await sleep(160); };
+
+  // ── No prompt: no card. The POSITIVE cases follow, and they are what make this meaningful. ──
+  await drive(null);
+  ok("with nothing due the card is not shown", !shown());
+
+  // ── 1. The app SAW it. One click, and the copy says it was seen. ──
+  await drive(mk({ observed: "S-38 SecondWind Pistol", candidate: "SOME OTHER GUESS" }));
+  ok("a due prompt shows the card", shown());
+  ok("...naming the tier crossed", txt("#rwq").indexOf("25%") >= 0, txt("#rwq"));
+  ok("...and the event", txt("#rwq").indexOf("Suite Event") >= 0, txt("#rwq"));
+  ok("the OBSERVED name is what is offered, not the candidate",
+     txt(".rwname") === "S-38 SecondWind Pistol", txt(".rwname"));
+  // 🔴 The line this suite exists for, half one: a sighting must SAY it was seen.
+  ok("...and the caption says the app SAW it arrive",
+     txt(".rwsrc").indexOf("saw this arrive") >= 0, txt(".rwsrc"));
+  ok("...and does NOT call a sighting unconfirmed",
+     txt(".rwsrc").indexOf("UNCONFIRMED") < 0, txt(".rwsrc"));
+  ok("it is a one-click confirmation", btns().indexOf("Yes") >= 0, btns().join(" | "));
+  ok("...with a way to disagree", btns().some((b) => b.indexOf("No") === 0), btns().join(" | "));
+
+  document.querySelectorAll("#rwrow .rwbtn")[0].click();
+  await sleep(120);
+  ok("Yes posts an answer", posted.length === 1, String(posted.length));
+  ok("...reporting the OBSERVED name", posted[0] && posted[0].name === "S-38 SecondWind Pistol", JSON.stringify(posted[0]));
+  // 🔑 Agreeing with a SIGHTING had two independent witnesses; agreeing with a guess had one.
+  // The site weights them differently, so the app must not collapse them into one word.
+  ok("...as source=confirmed, because the log witnessed it", posted[0] && posted[0].source === "confirmed", JSON.stringify(posted[0]));
+  ok("answering hides the card", !shown());
+
+  // ── 2. Only a CANDIDATE. Still one click, but it must not read as a fact. ──
+  posted.length = 0;
+  await drive(mk({ id: "suite-event:43", tier: 43, observed: null, candidate: "FBL-8a (Modified) armor set" }));
+  ok("a candidate-only prompt still shows the card", shown());
+  ok("the candidate is the name offered", txt(".rwname") === "FBL-8a (Modified) armor set", txt(".rwname"));
+  // 🔴 The line this suite exists for, half two.
+  ok("🔴 a candidate is labelled UNCONFIRMED in words",
+     txt(".rwsrc").indexOf("UNCONFIRMED") >= 0, txt(".rwsrc"));
+  ok("...and is never described as something the app saw",
+     txt(".rwsrc").indexOf("saw this arrive") < 0, txt(".rwsrc"));
+  document.querySelectorAll("#rwrow .rwbtn")[0].click();
+  await sleep(120);
+  // Agreeing with a guess is NOT a confirmed sighting — there was one witness, the player.
+  ok("agreeing with a guess is NOT recorded as a witnessed confirmation",
+     posted[0] && posted[0].source !== "confirmed", JSON.stringify(posted[0]));
+
+  // ── 3. Nothing observed, no candidate. An open question with no Yes to press. ──
+  posted.length = 0;
+  await drive(mk({ id: "suite-event:57", tier: 57, observed: null, candidate: null }));
+  ok("a blind prompt still shows the card", shown());
+  ok("...and offers NO name, because there is nothing to offer",
+     !document.querySelector(".rwname"), txt(".rwname"));
+  // A Yes here would be agreeing with nothing.
+  ok("...and offers no Yes button", btns().indexOf("Yes") < 0, btns().join(" | "));
+  ok("...it opens straight into a text field", !!document.getElementById("rwtext"), btns().join(" | "));
+  // 🔑 "I got nothing" is a real ANSWER — a tier granting no blueprint is a thing that can be
+  // true, and no amount of waiting for a positive report would ever establish it.
+  ok("...and 'I got nothing' is offered as an ANSWER", btns().indexOf("I got nothing") >= 0, btns().join(" | "));
+
+  const box = document.getElementById("rwtext");
+  box.value = "WHAT I ACTUALLY GOT";
+  [...document.querySelectorAll("#rwrow .rwbtn")].find((b) => b.textContent === "Send").click();
+  await sleep(120);
+  ok("a typed answer is posted", posted.length === 1 && posted[0].name === "WHAT I ACTUALLY GOT", JSON.stringify(posted[0]));
+  ok("...as source=typed", posted[0] && posted[0].source === "typed", JSON.stringify(posted[0]));
+
+  // ── 4. Dismissing is not answering. ──
+  posted.length = 0;
+  await drive(mk({ id: "suite-event:80", tier: 80, observed: "SOMETHING", candidate: null }));
+  ok("(control) the card is up before dismissing", shown());
+  document.getElementById("rwx").click();
+  await sleep(80);
+  ok("dismissing hides the card", !shown());
+  ok("dismissing posts NOTHING — it is not an answer", posted.length === 0, String(posted.length));
+
+  // ── 5. Expiry is derived from the CROSSING, not from when the card was drawn. ──
+  // A poll can deliver a prompt most of the way through its two minutes; a timer started on
+  // render would then give it a fresh two minutes every refresh and it would never retire.
+  await drive(mk({ id: "suite-event:100", tier: 100, crossedAtMs: Date.now() - 10 * 60 * 1000 }));
+  await sleep(1200);   // the 1s countdown tick has to run at least once
+  ok("a prompt whose two minutes elapsed retires itself", !shown());
+
+  // ── 6. Reporting is opt-in, and the footer must not overclaim. ──
+  window.fetch = async (u, o) => {
+    const s = String(u);
+    // Model the sidecar: answering marks the prompt answered, so the very next /api/events
+    // stops offering it. A stub that keeps serving an answered prompt would make the card
+    // reappear on the load() that follows an answer, which is a fault in the stub and not in
+    // the widget - the real server clears it.
+    if (s.indexOf("/api/events/reward") >= 0) { posted.push(JSON.parse(o.body)); promptState = null; return new Response("{}", { status: 200 }); }
+    if (s.indexOf("/api/events") >= 0) {
+      return new Response(JSON.stringify({
+        feed: { source: "live", revision: 1, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null },
+        reporting: false,
+        rewardPrompt: mk({ id: "suite-event:15", tier: 15, observed: "SEEN" }),
+        events: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(u, o);
+  };
+  await window.__battReload();
+  await sleep(160);
+  ok("(control) the card is up with reporting off", shown());
+  ok("with reporting OFF the footer does not claim the answer helps everyone",
+     txt("#rwfoot").indexOf("for everyone") < 0, txt("#rwfoot"));
+  ok("...and says how to turn sharing on", txt("#rwfoot").indexOf("Settings") >= 0, txt("#rwfoot"));
+
+  window.fetch = realFetch;
+  return out;
+})()`;
+
 const VERSEFINDER = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
@@ -2717,6 +2879,39 @@ const LOGVIEW = `(async () => {
 const TYPINGGRAB = `(async () => {
   ${PRELUDE}
   window.__editing = false;
+  // The Event Tracker takes the grab from its tier-reward card rather than a type-mode button,
+  // so it is driven by putting a prompt in front of it. Same rule, same consequence: a grab this
+  // widget takes and never gives back locks every monitor, and hiding it UNLOADS the iframe so
+  // nothing on screen can lower it.
+  {
+    const w = WBY.battaglia;
+    setWidgetVisible(w, true);
+    await sleep(350);
+    const fw = document.getElementById("wf-battaglia") ? document.getElementById("wf-battaglia").contentWindow : null;
+    ok("battaglia: the frame is reachable", !!fw && !!fw.__battReload);
+    if (fw && fw.__battReload) {
+      const real = fw.fetch;
+      fw.fetch = async (u, o) => {
+        if (String(u).indexOf("/api/events") >= 0 && String(u).indexOf("reward") < 0) {
+          return new fw.Response(JSON.stringify({
+            feed: null, reporting: false, events: [],
+            rewardPrompt: { id: "grab:25", eventId: "grab", eventLabel: "Grab", tier: 25,
+              crossedAt: "", crossedAtMs: Date.now(), observed: null, candidate: null, answer: null, reported: false },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return real(u, o);
+      };
+      await fw.__battReload();
+      await sleep(200);
+      // POSITIVE first: if the card never rendered a text field, "the grab was released" is free.
+      ok("battaglia: a blind prompt opens a text field", !!fw.document.getElementById("rwtext"));
+      ok("battaglia: typing arms the canvas grab", window.__editing === true);
+      setWidgetVisible(w, false);
+      await sleep(200);
+      ok("battaglia: hiding it releases the grab", window.__editing === false);
+      fw.fetch = real;
+    }
+  }
   for (const key of ["twitchChat", "webView"]) {
     const w = WBY[key];
     setWidgetVisible(w, true);
@@ -5369,6 +5564,7 @@ app.whenReady().then(async () => {
       path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("logView: raw lines, the caps, the filter, the freeze", LOGVIEW, null, null, "logview.html");
     fails += await run("event feed: the reward ladder says when it is a fallback", EVENTFEED, null, null, "battaglia.html");
+    fails += await run("event rewards: a sighting and a rumour must not look the same", REWARDCARD, null, null, "battaglia.html");
     fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);

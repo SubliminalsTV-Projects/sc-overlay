@@ -36,6 +36,7 @@ import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
 import { maybeShareLog, clearSkippedBackups } from "./log-share.js";
 import { EventFeed, EVENT_REFRESH_MS } from "./event-feed.js";
+import { reportBody as rewardReportBody } from "./event-rewards.js";
 
 import {
   overlayDir, bundledDataDir, userDir, configPath, seedConfigPath, dataDir, sharedLogStatePath,
@@ -1123,6 +1124,39 @@ setInterval(() => void flushMissionFeedback(), 10 * 60_000);
 // or ten minutes pass. The delay lets the sidecar finish booting first; nothing about a
 // backlog is urgent enough to race startup for.
 setTimeout(() => void flushMissionFeedback(), 15_000);
+
+/** Push answered tier-reward questions to subliminal.gg.
+ *
+ *  🔑 SAME OPT-IN AS EVERY OTHER CROWDSOURCED SIGNAL — `config.syncEnabled` and the device
+ *  token. A player who has not connected the tracker keeps their answers locally, which is the
+ *  correct behaviour and not a degraded one: the answer still fills in THEIR ladder.
+ *  🔑 One player's answer is a CLAIM, not a fact. Corroboration happens site-side; nothing here
+ *  reaches the shipped events.json on one report. */
+async function flushRewardAnswers(): Promise<void> {
+  if (!config.syncEnabled || !config.syncToken) return;
+  const pending = tracker.unreportedRewardAnswers();
+  if (!pending.length) return;
+  const base = (process.env.SC_SYNC_BASE || "https://subliminal.gg").replace(/\/+$/, "");
+  const bodies = pending.map(rewardReportBody).filter(Boolean);
+  if (!bodies.length) return;
+  try {
+    const res = await fetch(`${base}/api/sc/event-reward`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.syncToken}` },
+      body: JSON.stringify({ reports: bodies }),
+    });
+    if (!res.ok) {
+      console.log(`[event-reward] upload refused (${res.status}) — ${pending.length} answer(s) still queued`);
+      return;
+    }
+    for (const p of pending) tracker.markRewardAnswerReported(p.id);
+    console.log(`[event-reward] uploaded ${pending.length} answer(s) to ${base}`);
+  } catch (err) {
+    console.log(`[event-reward] upload failed (${(err as Error).message}) — ${pending.length} queued`);
+  }
+}
+setInterval(() => void flushRewardAnswers(), 10 * 60_000).unref?.();
+setTimeout(() => void flushRewardAnswers(), 20_000).unref?.();
 
 // Monotonic per-process counter so two runs of the same dev scenario are two distinct
 // completions rather than one the tracker de-duplicates by missionId.
@@ -3547,7 +3581,39 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // `feed` is the provenance of the events data itself — live / cache / bundled. It rides
     // every response because Sub's standing requirement is that a player can tell when they
     // are looking at a fallback rather than having to infer it from the values being stale.
-    res.end(JSON.stringify({ events: tracker.allEventProgress(), feed: eventFeed.status() }));
+    res.end(JSON.stringify({
+      events: tracker.allEventProgress(),
+      feed: eventFeed.status(),
+      // The "you just crossed a tier — is this what you got?" question, at most one at a time.
+      // Rides the response the widget already polls rather than adding a channel: an extra
+      // endpoint would need its own poll and could then disagree with the ladder beside it.
+      rewardPrompt: tracker.eventRewardPrompts()[0] ?? null,
+      // Reporting is opt-in and rides the SAME switch as every other crowdsourced signal. The
+      // widget must know, because a card that promises to help everyone while sending nothing
+      // is worse than not asking.
+      reporting: !!(config.syncEnabled && config.syncToken),
+    }));
+    return;
+  }
+
+  // The player's answer to a tier-reward question. Loopback+Origin gated automatically by
+  // being a POST (see the mutating-request guard), like every other write here.
+  if (url === "/api/events/reward" && req.method === "POST") {
+    const body = (await readBody(req)) as { id?: unknown; name?: unknown; source?: unknown };
+    const id = typeof body.id === "string" ? body.id : "";
+    const source = body.source === "confirmed" || body.source === "corrected" || body.source === "typed" || body.source === "none"
+      ? body.source : null;
+    if (!id || !source) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "id and source are required" }));
+      return;
+    }
+    const p = tracker.answerRewardPrompt(id, typeof body.name === "string" ? body.name : null, source);
+    // Push straight away rather than waiting out the retry timer: the player just answered a
+    // question and the answer is small. A failure simply leaves it queued.
+    if (p) void flushRewardAnswers();
+    res.writeHead(p ? 200 : 409, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(p ? { ok: true } : { error: "unknown_or_already_answered" }));
     return;
   }
 
