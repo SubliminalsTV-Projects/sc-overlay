@@ -1,0 +1,232 @@
+/**
+ * WHERE IS THE PLAYER — HARVESTING THE SIGNALS `player-origin.ts` GRADES.
+ *
+ * `player-origin.ts` decides how much to believe a set of readings. It does not go and get them;
+ * this does. The split is deliberate — the grading rules are testable arithmetic, while the
+ * harvest is a pile of log-shaped special cases, and mixing them makes neither reviewable.
+ *
+ * -- WHAT ACTUALLY EXISTS, and what each one is worth ----------------------------------------
+ *
+ * 🔴 THE GAME NEVER SAYS "THE PLAYER IS AT (x, y, z)". There is no player-position line in
+ * `game.log` — three separate sessions have now looked. Every signal below is a side effect of
+ * the player DOING something, which has one consequence that governs this whole module:
+ *
+ * 🔴 NOTHING FIRES WHEN THE PLAYER LEAVES. Every reading is a last-known, never a current
+ * position, and it can only ever decay by assumption. That is why `player-origin.ts` carries a
+ * trust window per tier rather than a single freshness rule, and why this module stamps every
+ * signal with the time the LOG said it happened rather than the time we parsed it.
+ *
+ *   ASOP / inventory / freight  a NAMED PLACE. The strongest tier, and the only one that can be
+ *                               specific enough to route from. Fires when you open a terminal.
+ *   Terrain report              a BODY, every 10 minutes, but only while near one. The one signal
+ *                               that fires ON ITS OWN — everything else needs the player to act.
+ *                               🔴 It carries NO coordinates: it is `cells`, `meshes` and a name.
+ *   Quantum navigation          the SYSTEM. You cannot leave a system without a jump, and a jump
+ *                               writes more of these, so it does not decay.
+ *
+ * 🔑 A COARSER, NEWER READING IS NOT AN UPGRADE — it is evidence you MOVED. `resolveOrigin`
+ * handles that (a "near Daymar" after an "at Area18" means the Area18 fix is wrong, not merely
+ * old). This module's job is only to report each reading honestly and let it judge.
+ *
+ * -- AN UNRESOLVABLE TOKEN PRODUCES NO SIGNAL ------------------------------------------------
+ *
+ * 🔴 Not a signal with a guessed id. `hauling-locations.ts` already states the rule this follows:
+ * "an ambiguous match resolves to NOTHING, because putting the player at the wrong outpost is
+ * worse than not knowing". A signal we cannot place is silently useless; a signal placed WRONG
+ * makes the widget confidently order shops around a location the player has never been to.
+ */
+import type { OriginSignal } from "./player-origin.js";
+import type { Place } from "./location.js";
+import { matchKey, systemKey, type LocationRecord } from "./verse-proximity.js";
+
+export interface SignalInputs {
+  /** `PlaceWatcher.current()` — the terrain report's body, or space, or unknown. */
+  place?: Place | null;
+  /** `SystemWatcher.current()` — "stanton" | "pyro" | "nyx" | null. */
+  system?: string | null;
+  /** From the hauling tracker: the last place an ASOP terminal named. */
+  atLocation?: { token: string; at: number } | null;
+  /** From the hauling tracker: the last place an inventory move named. */
+  atLocationId?: { id: string; at: number } | null;
+  /** From the hauling tracker: a freight-elevator move, which names its platform. */
+  cargoMove?: { direction: "down" | "up"; platform: string; at: number } | null;
+}
+
+export interface SignalDeps {
+  locations: Record<string, LocationRecord>;
+  /**
+   * Resolve one of the game's own location tokens (`RR_ARC_LEO`, `ArcCorp_Area045`) to a starmap
+   * place id.
+   *
+   * 🔑 INJECTED rather than imported. `matchLocationToken` in `hauling-locations.ts` already does
+   * this well — it knows the alias map, the four `RR_*_LEO` orbital stations that no table
+   * derives, and the subsequence rule that joins `SamsonSonsSalvageCenter` to "Samson & Son's
+   * Salvage Center". Importing it would drag `HaulingDataStore` into this module and into every
+   * test of it; taking it as a function keeps this pure and lets the sidecar wire in the real one.
+   * Returning null must mean "I could not place it", never a guess.
+   */
+  resolveToken?: (token: string) => string | null;
+  now?: () => number;
+}
+
+/**
+ * The `OriginDeps` that MATCH the ids this collector emits.
+ *
+ * 🔴 `resolveOrigin`'s contradiction check compares `systemOf(place.id)` against the system
+ * signal's own `id`, and `bodyOfPlace(place.id)` against the body signal's `id`. Those are string
+ * equality tests, so the grader is only correct if the deps and the signals speak the SAME
+ * namespace. `player-origin.ts` is deliberately agnostic about which namespace that is — its own
+ * tests use domain tokens ("lyria", "stanton") — and this collector uses starmap UUIDs throughout,
+ * because those are what `locations-xyz` is keyed by and therefore what a distance can be computed
+ * from.
+ *
+ * 🔑 Exported from HERE, beside the code that chooses the namespace, rather than left for each
+ * call site to rebuild. Getting it wrong does not throw: it makes every place fix look like it
+ * contradicts the system it is in, so the grader silently discards the precise reading and reports
+ * the coarse one. That is exactly what happened the first time this was wired up — a fresh ASOP
+ * fix at Area18 graded as "somewhere in Stanton", and nothing anywhere said why.
+ */
+export function originDepsFor(locations: Record<string, LocationRecord>) {
+  const star = new Map<string, string | null>();
+  return {
+    /** The place's parent — a body id in the same starmap namespace. */
+    bodyOfPlace: (placeId: string): string | null => locations[placeId]?.parent ?? null,
+    /** The STAR of the place's system, memoised per system. */
+    systemOf: (id: string): string | null => {
+      const sys = systemKey(locations[id]?.system);
+      if (!sys) return null;
+      if (!star.has(sys)) star.set(sys, starOf(locations, sys)?.id ?? null);
+      return star.get(sys) ?? null;
+    },
+  };
+}
+
+/** name -> ids, over the whole starmap. Built per call; the table is ~2,000 rows and this runs
+ *  once per request, not per row. */
+function nameIndex(locations: Record<string, LocationRecord>): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const [id, rec] of Object.entries(locations)) {
+    const k = matchKey(rec?.name);
+    if (!k) continue;
+    const cur = m.get(k);
+    if (cur) cur.push(id);
+    else m.set(k, [id]);
+  }
+  return m;
+}
+
+/** Exactly one place of this name, optionally constrained to a system. Anything else is null —
+ *  see the module header on why a guess is worse than nothing. */
+function uniqueByName(
+  idx: Map<string, string[]>,
+  locations: Record<string, LocationRecord>,
+  name: string | null | undefined,
+  system?: string | null,
+): string | null {
+  const k = matchKey(name);
+  if (!k) return null;
+  let ids = idx.get(k);
+  if (!ids?.length) return null;
+  const sys = systemKey(system);
+  if (sys && ids.length > 1) {
+    const narrowed = ids.filter((id) => systemKey(locations[id]?.system) === sys);
+    if (narrowed.length) ids = narrowed;
+  }
+  return ids.length === 1 ? ids[0] : null;
+}
+
+/** The star at a system's origin. It is the root of every place in that system, which is what
+ *  makes it usable as a containment anchor for a system-level reading. */
+function starOf(
+  locations: Record<string, LocationRecord>,
+  system: string | null | undefined,
+): { id: string; label: string } | null {
+  const sys = systemKey(system);
+  if (!sys) return null;
+  for (const [id, rec] of Object.entries(locations)) {
+    if (systemKey(rec?.system) !== sys) continue;
+    // The Star is the only parentless row that has coordinates; "Stanton System" (SolarSystem)
+    // is parentless too and has none, so it cannot anchor anything.
+    if (!rec?.parent && (rec as { type?: string })?.type === "Star") {
+      return { id, label: rec.name ?? sys };
+    }
+  }
+  return null;
+}
+
+/**
+ * Turn whatever the session currently knows into a list of readings.
+ *
+ * Order is irrelevant — `resolveOrigin` picks by tier and recency — so this appends whatever it
+ * can place and drops the rest.
+ */
+export function collectOriginSignals(inputs: SignalInputs, deps: SignalDeps): OriginSignal[] {
+  const { locations } = deps;
+  const idx = nameIndex(locations);
+  const out: OriginSignal[] = [];
+  const sys = inputs.system ?? null;
+
+  const pushPlace = (id: string | null, at: number, source: string) => {
+    if (!id) return;
+    out.push({ tier: "place", id, label: locations[id]?.name ?? id, at, source });
+  };
+
+  // -- PLACE, from the three things that name one -------------------------------------------
+  // 🔑 All three are the same tier on purpose. They differ in which terminal you touched, not in
+  // how well they locate you, and inventing a hierarchy between them would be a preference
+  // dressed as evidence.
+  const token = (t: string | null | undefined): string | null => {
+    if (!t) return null;
+    const viaResolver = deps.resolveToken?.(t) ?? null;
+    if (viaResolver) return viaResolver;
+    // Fall back to a plain name match. The resolver knows far more, but it is optional and a
+    // token that IS a place name should not need it.
+    return uniqueByName(idx, locations, t, sys);
+  };
+
+  if (inputs.atLocation) {
+    pushPlace(token(inputs.atLocation.token), inputs.atLocation.at,
+              "an ASOP terminal named this place");
+  }
+  if (inputs.atLocationId) {
+    pushPlace(token(inputs.atLocationId.id), inputs.atLocationId.at,
+              "the last place the game saw you open an inventory");
+  }
+  if (inputs.cargoMove) {
+    pushPlace(token(inputs.cargoMove.platform), inputs.cargoMove.at,
+              "a freight elevator you used");
+  }
+
+  // -- BODY, from the terrain report ---------------------------------------------------------
+  // ⚠️ Only a `planet` reading locates you. A `space` reading says you are near NOTHING, which is
+  // real information but not a position — emitting it as a body would put the player at whatever
+  // place happened to share the name "space".
+  if (inputs.place && inputs.place.kind === "planet") {
+    const id = uniqueByName(idx, locations, inputs.place.name, sys);
+    if (id) {
+      out.push({
+        tier: "body", id, label: locations[id]?.name ?? inputs.place.name,
+        at: inputs.place.at,
+        source: "the game reported terrain streaming near this body",
+      });
+    }
+  }
+
+  // -- SYSTEM, from quantum navigation -------------------------------------------------------
+  if (sys) {
+    const star = starOf(locations, sys);
+    if (star) {
+      out.push({
+        tier: "system", id: star.id, label: star.label,
+        // 🔴 No timestamp rides the system reading, and `resolveOrigin` gives this tier an
+        // infinite trust window anyway — you cannot leave a system without a jump, and a jump
+        // writes more of these. Stamping it `now` is therefore honest rather than flattering:
+        // it really is current.
+        at: deps.now ? deps.now() : Date.now(),
+        source: "the last quantum route named this system",
+      });
+    }
+  }
+
+  return out;
+}
