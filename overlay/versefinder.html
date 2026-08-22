@@ -99,7 +99,14 @@
      this shop charge, and how much do I trust that" — so splitting them to opposite edges of the
      row made the eye travel to reconcile two halves of one fact. Stacked and right-aligned, the
      prices still form a scannable numeric column. */
-  .pricecol { flex: none; width: 82px; display: flex; flex-direction: column;
+  /* ⚠️ NO FIXED WIDTH (was 82px, removed 2026-08-22). Right-aligned contents in an over-wide box
+     put the unused space on the LEFT of the column, every row, forever — 62px of it, which is the
+     "wasted space" Sub reported. `fit-content` keeps the alignment (the column still butts against
+     the fixed-width `.dist` beside it, so the right edges line up) while reserving nothing.
+     🔑 The old width was presumably sized for the widest imaginable price. That is the hardcoded-
+     size-that-depends-on-content trap this codebase already names: it cost real space on every
+     row to protect against a value that may not even exist. */
+  .pricecol { flex: none; min-width: 0; display: flex; flex-direction: column;
     align-items: flex-end; gap: 3px; }
   .price { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600;
     font-size: 11.5px; color: var(--gold); }
@@ -143,8 +150,19 @@
      🔴 The distance column is deliberately NOT styled like the price. A price is a fact about a
      shop; a distance is a claim about where the PLAYER is, and those two deserve different
      confidence on sight. Minutes are dim and monospaced, containment is quieter still. */
+  /* 🔑 A FIXED 54px, AND IT IS LOAD-BEARING FOR THE ROW BESIDE IT. `.pricecol` is now sized by its
+     contents, so it needs something fixed to butt against or the prices stop lining up row to row.
+     This column is that anchor, which is why it is a `width` and not a `min-width`.
+     ⚠️ 54 is MEASURED, not chosen: every string this cell can hold was rendered in its own computed
+     font and the widest is "same body" at 52px (containment strings run 21–52; distances and jump
+     counts all fall between 28 and 39). Two pixels of slack, and no reserved space beyond that. If
+     a longer phrase is ever added here, re-measure — do not just nudge the number. */
   .dist { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.02em;
-          color: var(--cyan-dim); white-space: nowrap; text-align: right; min-width: 42px; }
+          color: var(--cyan-dim); white-space: nowrap; text-align: right;
+          flex: none; width: 54px; }
+  /* The same 54px, holding the slot open on a row that has no distance to state, so the price
+     column keeps a single right edge across mixed rows. Same width by construction. */
+  .distpad { flex: none; width: 54px; }
   .dist.est { opacity: 0.72; }
   .dist.near { color: var(--green); }
   .dist.contain { font-family: var(--sans); font-size: 9.5px; font-weight: 600; color: var(--dim);
@@ -513,6 +531,8 @@
       row.className = "shop";
 
       // 🔑 Price and age share ONE column — they answer the same question together.
+      // ⚠️ Built here but APPENDED LAST — see the append below. Keep the construction where it is;
+      // the age tooltip and band belong beside the price they describe.
       const col = document.createElement("span");
       col.className = "pricecol";
       const p = document.createElement("span");
@@ -528,7 +548,6 @@
         + "never once seen to change over a month — so an old reading is usually still correct. "
         + "The colour is how recently someone checked, not how wrong it might be.";
       col.appendChild(a);
-      row.appendChild(col);
 
       const w = document.createElement("span");
       w.className = "where";
@@ -550,7 +569,44 @@
       // distance is measured FROM — the row must never read as an absolute position.
       q.__from = (lastOrigin && lastOrigin.label) || null;
       const d = farNode(q);
-      if (d) row.appendChild(d);
+
+      // 🔴 THE PRICE COLUMN MOVED OFF THE LEFT EDGE — it used to be FIRST, and that was the
+      // wasted space.
+      //
+      // Measured on Sub's running app, 2026-08-22: `.pricecol` is a fixed 82px box whose contents
+      // are RIGHT-aligned, but it sat at the left edge of the row. A price like "265" is 20px
+      // wide, so it rendered at x=70 inside a box starting at x=8 — **62px of dead gutter on every
+      // single row**, running the whole length of the results list. Sub: "a lot of margin or
+      // padding… it's a lot of wasted space." He was describing this, not the item padding I had
+      // already trimmed.
+      //
+      // 🔑 MOVING IT ALONE WAS NOT ENOUGH, and measuring caught that. A fixed-width box with
+      // right-aligned contents keeps its dead space wherever it goes — the space is simply always
+      // on the LEFT of the column. Appending it last just relocated the 62px gutter to the middle
+      // of the row (measured: `dist` ended at 356, the price began at ~427). The column had to
+      // stop being 82px wide as well as stop being first; it is now sized by its contents.
+      //
+      // 🔑 SO WHY IS `dist` LAST RATHER THAN THE PRICE? Because an auto-width column has to butt
+      // against something FIXED for its numbers to still line up. `dist` is a fixed width, so the
+      // price column's right edge lands in the same place on every row, and the prices form the
+      // scannable column they were right-aligned for — without reserving space they do not use.
+      // Putting the price last instead would flush it right but let its LEFT edge float, dragging
+      // `dist` around row by row.
+      //
+      // ⚠️ Sub's 2026-08-21 ruling is PRESERVED: price and age stay ONE stacked column, because
+      // they answer the same question and splitting them to opposite edges made the eye travel.
+      // That ruling is about keeping the pair together, not about which side of the row it sits on.
+      row.appendChild(col);
+      // ⚠️ THE SLOT IS RESERVED EVEN WHEN THERE IS NOTHING TO PUT IN IT. `farNode` returns null
+      // whenever the server made no claim about this row — an unknown origin, or a shop that is
+      // merely "elsewhere" — and without a placeholder the price column has nothing to butt
+      // against and flushes to the panel edge instead. That is only visible when SOME rows have a
+      // distance and others do not, which is exactly the mixed case: measured, the prices split
+      // across two right edges 63px apart. The widget suite caught it; the eye would have read it
+      // as the column randomly jumping.
+      // 🔑 A separate class, not an empty `.dist` — the rule that a distance cell always says
+      // something is worth keeping, and an empty one would quietly break it.
+      row.appendChild(d || Object.assign(document.createElement("span"), { className: "distpad" }));
 
       shops.appendChild(row);
     }

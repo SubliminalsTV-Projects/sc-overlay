@@ -2482,6 +2482,55 @@ const VERSEFINDER = `(async () => {
      distCells.every((c) => c.textContent.trim().length > 0),
      distCells.length + " cells");
 
+  // ── 🔴 NO DEAD GUTTER DOWN THE LEFT (Sub, 2026-08-22: "a lot of wasted space") ──────────────
+  //
+  // The price column was a fixed 82px box with right-aligned contents, placed FIRST — so a 20px
+  // price rendered 62px in from the panel edge and every shop name started at x=99. The fix was
+  // both halves: move it off the left AND size it to its contents. Guarded because it is invisible
+  // to every other assertion here — the rows were correct, complete and readable throughout.
+  {
+    const panelRect = document.getElementById("panel").getBoundingClientRect();
+    const rows = [...document.querySelectorAll("#results .shop")];
+    const leftOf = (el) => Math.round(el.getBoundingClientRect().left - panelRect.left);
+    const rightOf = (el) => Math.round(el.getBoundingClientRect().right - panelRect.left);
+    // 🔑 POSITIVE FIRST: every claim below is free with no rows on screen.
+    ok("there are shop rows to measure the gutter on", rows.length > 0, rows.length + " rows");
+    const names = rows.map((r) => r.querySelector(".where")).filter(Boolean);
+    const starts = [...new Set(names.map(leftOf))];
+    // The item's own left padding is 7px, so a name should begin within a pixel or two of that.
+    // 99px was the bug. Anything past ~20 means a fixed-width column crept back onto the left.
+    ok("🔴 shop names start at the panel edge, not behind a reserved column",
+       starts.length > 0 && Math.max(...starts) <= 20,
+       "name left edges: " + starts.join(","));
+    // 🔑 AND THE ALIGNMENT THE COLUMN EXISTS FOR MUST SURVIVE. Sizing the price column to its
+    // contents is only safe because it butts against a fixed-width .dist; if that anchor is ever
+    // made flexible the prices go ragged, which is a regression this catches and the gutter check
+    // does not. Both halves, or the fix trades one visual bug for another.
+    const prices = rows.map((r) => r.querySelector(".price")).filter(Boolean);
+    const edges = [...new Set(prices.map(rightOf))];
+    ok("there are prices to check alignment on", prices.length > 1, prices.length + " prices");
+    ok("...and every price still right-aligns to the same column",
+       edges.length === 1, "right edges: " + edges.join(","));
+    // 🔴 AND THE COLUMN ITSELF MUST NOT RESERVE SPACE IT DOES NOT USE — this is the half the two
+    // assertions above CANNOT see, which the negative control proved: restoring the fixed 82px
+    // while leaving the column in its new position keeps names at the panel edge AND keeps the
+    // prices aligned, so both pass while 60-odd pixels of dead space quietly return to the middle
+    // of every row. The waste is a property of the BOX being wider than its contents, so that is
+    // what has to be measured.
+    {
+      const cols = rows.map((r) => r.querySelector(".pricecol")).filter(Boolean);
+      const slack = cols.map((c) => {
+        const box = c.getBoundingClientRect().width;
+        const inner = [...c.children].reduce((m, k) => Math.max(m, k.getBoundingClientRect().width), 0);
+        return Math.round(box - inner);
+      });
+      ok("there are price columns to measure slack in", cols.length > 0, cols.length + " columns");
+      ok("🔴 the price column reserves no space beyond its widest child",
+         slack.length > 0 && Math.max(...slack) <= 2,
+         "worst slack " + Math.max(...slack) + "px across " + cols.length + " columns");
+    }
+  }
+
   // 🔑 CAPTURED FROM THE LIVE RESPONSE, BEFORE THE FIXTURE BELOW REPLACES IT. These two strings are
   // built by the SERVER (originSummary and orderByProximity's note), so they are the only place the
   // real age wording can be tested. The first version of the bare-age assertion ran after the
