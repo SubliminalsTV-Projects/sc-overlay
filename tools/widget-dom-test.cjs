@@ -2901,12 +2901,25 @@ const VERSEFINDER = `(async () => {
          return h && h.textContent.trim().length > 0;
        }),
        groups.map((g) => (g.querySelector(".gplace") || {}).textContent).join(" | "));
-    // 🔴 THE SAME PLACE MUST NOT OPEN TWICE. Grouping walks CONSECUTIVE runs to preserve the
-    // proximity order, so a bug that broke a run would show up as one place heading appearing
-    // more than once — which reads as a duplicate result rather than as a sorting fault.
+    // 🔴 A GROUP MUST NEVER BREAK A CONSECUTIVE RUN. Grouping walks consecutive runs precisely so
+    // it preserves the proximity order rather than re-sorting it, and a bug in that walk shows up
+    // as two ADJACENT groups carrying the same heading.
+    //
+    // ⚠️ RE-POINTED 2026-08-22, and the reason is worth more than the fix. This asserted that no
+    // place appears twice ANYWHERE in the list, which is a claim about the ORDERING, not about the
+    // grouping - and it is only true while the ordering has something to order by. It went red on
+    // untouched code the moment the origin aged past its trust window: on the containment basis,
+    // with all eight MedPen shops landing in the same same-body bucket, there is no signal left,
+    // the stable sort keeps the incoming cheapest-first order, and Lorville legitimately appears at
+    // positions 1 and 5. The widget is behaving exactly as designed; the assertion had made the
+    // freshness of whoever last played the game part of its pass condition. Same family as the
+    // scan-box suite that asserted a user preference and went red for Sub because he had it on.
+    //
+    // The invariant that survives is adjacency: two groups in a row may not be the same place.
     const places = groups.map((g) => (g.querySelector(".gplace") || {}).textContent);
-    ok("...and no place opens a second group",
-       places.length === new Set(places).size, places.join(" | "));
+    const runBreaks = places.filter((p, i) => i > 0 && p === places[i - 1]);
+    ok("...and no two ADJACENT groups repeat a place, which would be a broken run",
+       runBreaks.length === 0, places.join(" | "));
     // 🔴 THE PLACE IS NOT REPEATED ON THE SHOPS UNDER IT — the whole point of the heading.
     let repeats = [];
     for (const g of groups) {

@@ -313,6 +313,18 @@ export class ItemShopStore {
       // perfectly good cache with zero items and report "live" - the worst of both, because it
       // looks healthy. Keep what we have and say why.
       if (!built) throw new Error("empty or malformed item payload");
+      // 🔴 A VALID OLDER PAYLOAD IS A SUCCESSFUL FETCH THAT LOSES DATA — same family as the empty
+      // body above, and much harder to see. A schema-1 site serves a perfectly well-formed table
+      // with no vehicles and no `unpriced`, so an app on this build that refreshed against a site
+      // that had not deployed yet would REPLACE a bundle carrying 179 ships with one carrying none
+      // and report "live". Every ship would vanish and the widget would look healthy doing it.
+      // Refuse it and keep what we have; `lastError` says why on the screen the player is looking
+      // at. A NEWER remote schema is fine and is not checked - extra fields are simply ignored,
+      // and refusing the future would strand every shipped build the day the site moves ahead.
+      const remoteSchema = typeof body.schema === "number" ? body.schema : 0;
+      if (remoteSchema < ITEM_SHOPS_SCHEMA) {
+        throw new Error("endpoint is on schema " + remoteSchema + ", this build needs " + ITEM_SHOPS_SCHEMA);
+      }
       this.table = {
         ...built,
         source: "live",
