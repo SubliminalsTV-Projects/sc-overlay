@@ -253,7 +253,6 @@
     letter-spacing: 0.04em; color: var(--cyan-text); white-space: nowrap; }
   #srctext { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #src.fallback #srctext { color: var(--amber); }
-  #nostock { flex: none; }
 </style>
 </head>
 <body>
@@ -296,11 +295,6 @@
              onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" />
         <span id="srctext">…</span>
       </span>
-      <!-- 🔴 "stock unknown" was the first wording and Sub had to ask what it meant, which is the
-           whole test failed: it reads like a loading state rather than a statement about the data.
-           The label now says the CONSEQUENCE for the player — a shop listed here can still be
-           sold out — and the tooltip carries why we cannot know. -->
-      <span id="nostock" title="Nobody tracks shop stock levels: UEX has no stock field for items at all, so nothing here can tell you whether a shop actually has one right now. These rows mean 'this shop sells it at this price', not 'it is on the shelf today'.">may be sold out</span>
     </div>
   </div>
 

@@ -2592,15 +2592,6 @@ const VERSEFINDER = `(async () => {
        !!credited,
        badge ? "badge alt=" + badge.getAttribute("alt") : words ? "words=" + words.textContent : "(neither present)");
   }
-  // 🔴 There is no stock field in the source AT ALL, so the panel says so rather than letting a
-  // player assume a listed shop has one on the shelf.
-  const ns = document.getElementById("nostock");
-  // ⚠️ Asserted on MEANING, not on the exact phrase. The first wording was "stock unknown" and Sub
-  // had to ask what it meant, so the words are expected to keep changing; what must not change is
-  // that the panel says a listed shop might not have the item and explains why on hover.
-  ok("the panel warns that a listed shop may not have it",
-     !!ns && /sold out|stock|shelf/i.test(ns.textContent), ns ? ns.textContent : "none");
-  ok("...and explains why on hover", !!ns && (ns.title || "").length > 60, (ns && ns.title || "").slice(0, 40));
 
   // 🔴 The age pill's colour band. Asserted as a CONSISTENCY rule between the number rendered and
   // the class chosen, rather than against hardcoded expectations — the table ages every day, so a
