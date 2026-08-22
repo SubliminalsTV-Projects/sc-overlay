@@ -81,16 +81,36 @@ export function matchLocationToken(
     for (const c of b) { if (c === a[i]) i++; if (i === a.length) return true; }
     return i === a.length;
   };
-  /** Board ids whose name matches `want`; null unless exactly one does. */
+  /**
+   * Board ids whose name matches `want`; null unless exactly one does.
+   *
+   * 🔴 AN EXACT MATCH WINS OUTRIGHT, and it did not used to. The fuzzy arm accepts a name whose
+   * letters appear IN ORDER inside the other, which is far too loose for short names: "Ita" is a
+   * subsequence of "SeraphimStation" (i…t…a), so looking up Crusader's orbital station returned
+   * TWO hits and the "exactly one" rule threw the real answer away with the coincidence.
+   *
+   * Measured on Sub's live app, 2026-08-22: he was docked at RR_CRU_LEO, the log said so, the
+   * parser produced it and the hauling tracker held it — and the Verse Finder still reported
+   * "Location unknown" with no distances, because this function returned null. Every downstream
+   * symptom was one coincidental subsequence.
+   *
+   * ⚠️ The safety property is UNCHANGED: still one answer or none, never a guess. Two exact
+   * matches are still genuinely ambiguous and still resolve to nothing — putting the player at
+   * the wrong outpost stays worse than not knowing.
+   */
   const onBoard = (want: string): string | null => {
     const w = norm(want);
     if (!w) return null;
-    const hits: string[] = [];
+    const exact: string[] = [];
+    const fuzzy: string[] = [];
     for (const [id, name] of names) {
       const n = norm(name);
-      if (n && (isSub(w, n) || isSub(n, w))) hits.push(id);
+      if (!n) continue;
+      if (n === w) exact.push(id);
+      else if (isSub(w, n) || isSub(n, w)) fuzzy.push(id);
     }
-    return hits.length === 1 ? hits[0] : null;
+    if (exact.length) return exact.length === 1 ? exact[0] : null;
+    return fuzzy.length === 1 ? fuzzy[0] : null;
   };
 
   // 1 — the dataset's own alias map, on the whole token and on the RR_-stripped form.
