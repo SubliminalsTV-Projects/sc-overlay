@@ -64,8 +64,19 @@ import { parseBoardTitle, type BoardTitle } from "./hauling-advisor.js";
  *  generator name or the contract key, because CIG names them inconsistently: the org is in the
  *  generator for Covalex/RedWind ("Covalex_Hauling") but only in the contract for GoblinG
  *  ("GoblinG_Generator" / "GoblinG_HaulCargo_L_Stanton2"). Counts across the 479-log corpus:
- *  GoblinG 322, Covalex 41, RedWind 2. */
-const HAUL_MARKERS = ["haul", "cargo"];
+ *  GoblinG 322, Covalex 41, RedWind 2.
+ *
+ *  🔴 "deliverypilot" is NOT a naming inconsistency — it is a contract CIG never labelled as
+ *  cargo at all. Siege of Orison's `ORS_MA_DeliveryPilot` (generator `TheBackpocket`) is a
+ *  genuine two-box haul: it emits pickup_/dropoff_ objectives on one mission UUID, marker
+ *  positions, ObjectiveUpserted COMPLETED, and a per-box SMarkerHandler_Hauling::OnItemRegistered
+ *  for each 1 SCU crate. Everything downstream already handles it. It was invisible ONLY because
+ *  neither "haul" nor "cargo" appears in "TheBackpocket ORS_MA_DeliveryPilot", so it was rejected
+ *  at the door — Sub, 2026-08-22, watching the app ignore boxes he had just carried off a roof.
+ *
+ *  ⚠️ Matched narrowly on purpose. The obvious broader rule — admit the event prefix `ORS_` — is
+ *  WRONG: `ORS_SA` is Strike Nine Tails Squad, a combat contract with no cargo in it. */
+const HAUL_MARKERS = ["haul", "cargo", "deliverypilot"];
 
 /**
  * A quiet stretch longer than this is a pause, not work. 20 minutes is comfortably longer than a
