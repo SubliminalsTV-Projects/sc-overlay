@@ -81,8 +81,13 @@ function groupByCommodity(quotes: TradeQuote[]): Map<string, Grouped> {
     let g = by.get(name);
     if (!g) { g = { name, buys: [], sellPlaces: 0 }; by.set(name, g); }
     // 🔴 A row can carry BOTH a buy and a sell price at the same terminal, so these are not
-    // exclusive branches. Writing them as if/else would silently drop the buy side of every
-    // terminal that also buys the commodity back - which is most of the interesting ones.
+    // exclusive branches. Written as if/else, the SECOND test never runs on a two-way terminal -
+    // negative-controlled, and it silently drops the sell count for every terminal that also sells
+    // the commodity, which is most of the interesting ones.
+    // 🔴 And `q.buy > 0` is the guard that really keeps a sell-only commodity out of the results:
+    // collect every row here and a Borase sell price becomes a "buy it here" row. Also controlled,
+    // and it reddened six assertions including a Laranite spread of 7,047-8,500 that quietly mixed
+    // a sell price into a buy range.
     if (typeof q.buy === "number" && q.buy > 0) g.buys.push(q);
     if (typeof q.sell === "number" && q.sell > 0) g.sellPlaces++;
   }
@@ -136,7 +141,12 @@ export function searchCommodities(
 
   const scored: { g: Grouped; score: number }[] = [];
   for (const g of groupByCommodity(table.quotes).values()) {
-    if (!g.buys.length) continue; // sell-only — `sellOnlyMatches` answers for these instead
+    // Sell-only — `sellOnlyMatches` answers for these instead.
+    // ⚠️ An early-out, NOT the guard. Removing this line changes nothing: `quotes` comes back empty
+    // and the `!quotes.length` check below drops the row anyway (negative-controlled, stayed
+    // green). It is here to skip scoring 36 of 122 commodities, and saying so keeps the next reader
+    // from mistaking a cheap optimisation for the rule.
+    if (!g.buys.length) continue;
     const score = scoreItem(asShopItem(g.name), qTokens, qJoined);
     if (score > 0) scored.push({ g, score });
   }

@@ -2637,11 +2637,26 @@ const VERSEFINDER = `(async () => {
   }
 
   // A miss must distinguish "no shop known" from "no such item" — the former is the common case.
+  //
+  // ⚠️ RE-POINTED 2026-08-22, and the reason is that the widget got BETTER at the thing this was
+  // guarding. It used to demand the literal words "No shop known" for every miss, which was the
+  // right defence when the app held only a COUNT of unpriced items and therefore could never tell
+  // a real armour set from a typo — one cautious sentence for both was all it was entitled to say.
+  // The table now ships the 4,962 names, so a nonsense string really has been checked against
+  // everything we hold and "Nothing found" is the honest answer rather than a flat denial that the
+  // thing exists. The RULING was never about that wording; it was that the two cases must not read
+  // the same. That is now asserted where it can actually fail, in the VERSEDEALERS suite, which
+  // drives a real unsold item and a typo and compares the two pages. Here the claim narrows to
+  // what this query can prove: a miss says something, and it does not pretend to have found
+  // anything.
   await search("zzzqqxwv");
   const empty = document.querySelector("#results .empty");
   ok("a miss renders the empty state", !!empty, empty ? "yes" : "no");
-  ok("...and does NOT flatly claim the item does not exist",
-     !!empty && /No shop known/i.test(empty.textContent), empty ? empty.textContent.slice(0, 60) : "");
+  ok("...naming what was searched for rather than a bare failure",
+     !!empty && empty.textContent.indexOf("zzzqqxwv") > -1, empty ? empty.textContent.slice(0, 70) : "");
+  ok("...and no result row is drawn beside it",
+     document.querySelectorAll("#results .item").length === 0,
+     document.querySelectorAll("#results .item").length + " items");
 
   // ── The eye: how well we can see where the player is ──────────────────────────────────────
   // Defensive lookups on BOTH the condition and the DETAIL. A detail expression is evaluated
@@ -3067,6 +3082,148 @@ const VERSEFINDER = `(async () => {
        hasAge && offenders.length === 0,
        offenders.length ? "offenders: " + offenders.join(",") : liveAgeText.trim().slice(0, 70));
   }
+
+  return out;
+})()`;
+
+// ── Suite: Verse Finder — ships, commodities, and which kind of blank ────────────────────────
+//
+// Its own suite rather than more assertions in VERSEFINDER, because it drives five DIFFERENT
+// queries and the existing suite is built around one ("cannon") whose rows it re-reads throughout.
+//
+// 🔴 EVERY NEGATIVE HERE IS PAIRED WITH A POSITIVE ABOUT THE SAME SET, and it is not decoration.
+// "No cannon row carries a rent tag" is satisfied for free by a page with no rows on it — and a
+// broken search is exactly what would empty it. The positive assertion above each negative is what
+// separates "the rule held" from "nothing was rendered at all".
+//
+// ⚠️ NO REGEX ANYWHERE IN THIS BODY. A backslash escape inside a template literal is eaten before
+// the pattern is ever compiled: \\b silently becomes a backspace byte and \\d loses its backslash,
+// so the regex compiles and never matches — which makes every "must not contain" assertion pass
+// forever. Two of three regex assertions in this widget's last suite were false passes for exactly
+// that reason. indexOf and character comparison only.
+const VERSEDEALERS = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  const box = document.getElementById("q");
+  const search = async (v) => {
+    box.value = v;
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(800);
+  };
+  const items = () => [...document.querySelectorAll("#results .item")];
+  const rows = () => [...document.querySelectorAll("#results .grow")];
+  const rents = () => [...document.querySelectorAll("#results .tag.rent")];
+  const stocks = () => [...document.querySelectorAll("#results .tag.stock")];
+  const hints = () => [...document.querySelectorAll("#results .hint .hrow")];
+  const emptyText = () => {
+    const e = document.querySelector("#results .empty");
+    return e ? e.textContent : "(no .empty element)";
+  };
+  const moreOf = (el) => {
+    const m = el ? el.querySelector(".more") : null;
+    return m ? m.textContent : "(no .more element)";
+  };
+
+  // ══ 1. SHIPS ══════════════════════════════════════════════════════════════════════════════
+  // 🔑 The query is a real hull that is BOTH sold and rented (49 vehicles are; 130 are sale-only),
+  // because a ship with only purchase rows could never fail the rent assertions and a rental-only
+  // one does not exist in the data at all. Both halves of the rule have to be populated or the
+  // pairing below is a tautology.
+  await search("100i");
+  const ship = items()[0] || null;
+  ok("🔴 a ship is a result at all", !!ship, items().length + " items");
+  ok("...named as the hull, not as a dealer listing",
+     !!ship && ship.querySelector(".iname").textContent.indexOf("100i") === 0,
+     ship ? ship.querySelector(".iname").textContent : "(none)");
+  ok("...and the category rides the name so it reads as a ship",
+     !!ship && ship.querySelector(".iname").textContent.indexOf("Ships") > -1,
+     ship ? ship.querySelector(".iname").textContent : "(none)");
+  ok("...with its manufacturer as a chip, like any other item",
+     !!ship && !!ship.querySelector(".chip.mk"),
+     ship && ship.querySelector(".chip.mk") ? ship.querySelector(".chip.mk").textContent : "(no mk chip)");
+
+  // 🔴 THE ONE DIFFERENCE HONESTY FORCES. Positive first: there must be BOTH kinds of row, or
+  // "some rows are labelled rent" and "every row is labelled rent" are indistinguishable.
+  const shipRows = rows().length;
+  const shipRents = rents().length;
+  ok("this ship really is offered both ways", shipRows > 1 && shipRents > 0 && shipRents < shipRows,
+     shipRents + " rental rows of " + shipRows);
+  ok("🔴 a rental row SAYS rent", shipRents > 0 && rents().every((t) => t.textContent.indexOf("rent") > -1),
+     shipRents ? rents()[0].textContent : "(no rent tag)");
+  // 🔴 The tag rides the SHOP, not the price — and that placement is load-bearing rather than
+  // aesthetic. Sub already ruled that price and age must stay adjacent (VERSEFINDER pins it), and
+  // a tag between them is that split. Asserting the pairing here too means a ship row is held to
+  // the same rule the item rows are, which is the only way that rule stays universal.
+  ok("...the tag rides the shop name, leaving price and age untouched",
+     shipRents > 0 && rents().every((t) => {
+       const prev = t.previousElementSibling;
+       return !!prev && prev.classList.contains("gshop");
+     }),
+     shipRents ? "previous sibling: " + ((rents()[0].previousElementSibling || {}).className || "(none)") : "(no tags)");
+  {
+    const kids = (r) => [...r.children];
+    const paired = rows().filter((r) => {
+      const ai = kids(r).findIndex((k) => k.classList.contains("age"));
+      const pi = kids(r).findIndex((k) => k.classList.contains("price"));
+      return ai >= 0 && pi >= 0 && Math.abs(ai - pi) === 1;
+    });
+    ok("🔴 price and age stay adjacent on a RENTAL row too",
+       shipRows > 0 && paired.length === shipRows, paired.length + " of " + shipRows);
+  }
+
+  // 🔴 TWO SPREADS. A single min/max over purchases and rentals would run from a 28,665 aUEC hire
+  // to a 1,089,270 aUEC sale and describe no transaction anyone can make.
+  ok("the rental price is quoted SEPARATELY from the purchase spread",
+     moreOf(ship).indexOf("rental") > -1, moreOf(ship));
+
+  // ══ 2. NOTHING ELSE MAY WEAR THE RENT TAG ═════════════════════════════════════════════════
+  await search("cannon");
+  const cannonRows = rows().length;
+  ok("the control query renders rows at all", cannonRows > 0, cannonRows + " rows");
+  ok("...and not one of them is labelled a rental", rents().length === 0, rents().length + " rent tags");
+  ok("...nor claims a stock figure, because items have no stock field anywhere",
+     stocks().length === 0, stocks().length + " stock tags");
+
+  // ══ 3. COMMODITIES ════════════════════════════════════════════════════════════════════════
+  // 🔴 This is the whole of gap 2: the data was already on the player's disk and the widget would
+  // not look at it, so this query used to return the identical blank a typo returns.
+  await search("laranite");
+  const com = items().find((el) => el.querySelector(".iname").textContent.indexOf("Commodity") > -1) || null;
+  ok("🔴 a commodity is findable from this box", !!com,
+     items().map((el) => el.querySelector(".iname").textContent).join(" | ") || "(none)");
+  const comRows = com ? [...com.querySelectorAll(".grow")] : [];
+  ok("...and it names terminals, not a single price", comRows.length > 1, comRows.length + " rows");
+  const comStock = com ? [...com.querySelectorAll(".tag.stock")] : [];
+  ok("🔑 ...carrying the stock an ITEM row cannot", comStock.length > 0, comStock.length + " stock tags");
+  ok("...stated in SCU rather than as a bare number",
+     comStock.length > 0 && comStock.every((t) => t.textContent.indexOf("SCU") > -1),
+     comStock.length ? comStock[0].textContent : "(none)");
+  ok("...and it points at the Trade widget for selling rather than guessing a sell price",
+     moreOf(com).indexOf("Trade") > -1, moreOf(com));
+
+  // ══ 4. THE BLANK THAT KNOWS IT IS NOT A TYPO ══════════════════════════════════════════════
+  // 🔴 Both of the next two searches return ZERO results. That is the point: the assertion is not
+  // about the count, it is that the two produce DIFFERENT pages. An older build rendered the same
+  // sentence for both, which told a player their armour set does not exist.
+  await search("Corbel Patina");
+  ok("a real-but-unsold item still returns no shops", items().length === 0, items().length + " items");
+  const namedHints = hints().length;
+  ok("🔴 ...but the widget NAMES it instead of shrugging", namedHints > 0, namedHints + " named");
+  ok("...and says outright that it exists", emptyText().indexOf("does exist") > -1, emptyText());
+  ok("...listing the thing that was actually typed",
+     hints().some((h) => h.textContent.indexOf("Corbel Patina") > -1),
+     hints().map((h) => h.textContent).join(" | ") || "(none)");
+
+  // ══ 5. A GENUINE TYPO IS STILL ALLOWED TO BE ONE ══════════════════════════════════════════
+  // Without this the fix above would be a way of telling every player that everything exists.
+  await search("zzqqxnothingatall");
+  ok("a typo returns no shops either", items().length === 0, items().length + " items");
+  ok("🔴 ...and NAMES nothing, unlike the case above", hints().length === 0, hints().length + " named");
+  ok("...saying it was not found, which is the only case allowed to say that",
+     emptyText().indexOf("Nothing found") > -1, emptyText());
 
   return out;
 })()`;
@@ -5947,6 +6104,7 @@ app.whenReady().then(async () => {
     fails += await run("event feed: the reward ladder says when it is a fallback", EVENTFEED, null, null, "battaglia.html");
     fails += await run("event rewards: a sighting and a rumour must not look the same", REWARDCARD, null, null, "battaglia.html");
     fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
+    fails += await run("verse finder: ships, commodities, and which kind of blank", VERSEDEALERS, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
