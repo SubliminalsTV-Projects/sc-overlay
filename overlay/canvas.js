@@ -291,6 +291,12 @@
     {
       key: "battaglia", page: "battaglia.html", title: "Event Tracker",
       def: { x: 40, y: 560 }, size: { w: 360, h: 470, minW: 300, maxW: 760, minH: 240, maxH: 900 },
+      // The tier-reward card has a free-text field, so this widget now takes the shared
+      // keyboard grab. focusFn WITHOUT onHide is the canvas-wide lockout: hiding unloads the
+      // iframe, so a grab stranded that way has no page left to lower it and every click on
+      // every monitor stops reaching the game. They ship together, always.
+      focusFn: "__battFocus",
+      onHide: (w) => { try { frameWin(w)?.__battExitTyping?.(); } catch { /* iframe gone */ } },
     },
     {
       // Hauling optimiser: what order to run the accepted contracts, and where the boxes go.
