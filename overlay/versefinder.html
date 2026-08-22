@@ -133,6 +133,54 @@
   /* ── Footer ───────────────────────────────────────────────────────────────────
      Carries the two things that stop a confident-looking answer being a lie: where the table came
      from, and that stock is not a thing we can know. */
+  /* ── How far, and the eye that says how much to trust it ────────────────────────────────────
+     🔴 The distance column is deliberately NOT styled like the price. A price is a fact about a
+     shop; a distance is a claim about where the PLAYER is, and those two deserve different
+     confidence on sight. Minutes are dim and monospaced, containment is quieter still. */
+  .dist { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.02em;
+          color: var(--cyan-dim); white-space: nowrap; text-align: right; min-width: 42px; }
+  .dist.est { opacity: 0.72; }
+  .dist.near { color: var(--green); }
+  .dist.contain { font-family: var(--sans); font-size: 9.5px; font-weight: 600; color: var(--dim);
+                  text-transform: lowercase; letter-spacing: 0.01em; }
+
+  /* The indicator. An inline SVG eye, never a glyph: this page links widget-theme.css so an emoji
+     WOULD render, but the colour-emoji face is a lazy 4.8 MB fetch and a text-presentation eye is
+     at the mercy of the OS font — the same trap that made `o7` render as a box. Drawn, it cannot
+     be missing. */
+  .eyebtn { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0;
+            padding: 1px 3px; margin: 0; cursor: pointer; font: inherit; color: var(--dim);
+            border-radius: 3px; }
+  .eyebtn:hover { background: rgba(255,255,255,0.06); }
+  .eyebtn svg { width: 12px; height: 12px; flex: none; }
+  .eyebtn .lbl { font-family: var(--sans); font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+                 max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Three states, and they are the three claims — precise, approximate, none. */
+  .eyebtn.precise { color: var(--green); }
+  .eyebtn.rough   { color: var(--amber); }
+  .eyebtn.none    { color: var(--dim); }
+  .eyebtn.none svg { opacity: 0.55; }
+
+  /* 🔴 A POPOVER, in the TOP LAYER. It is immune to every ancestor's overflow and takes NO space
+     in layout, which is what stops it growing the panel — a plain absolutely-positioned box here
+     measured the panel 541px -> 743px in an earlier widget. Anchored in CSS, never by measuring:
+     rAF and ResizeObserver do not fire in a window the compositor considers hidden. */
+  .eyepop { position: absolute; margin: 0; inset: auto; border: 1px solid var(--line);
+            background: var(--panel-top, #10161c); color: var(--fg); border-radius: 5px;
+            padding: 8px 10px; max-width: 260px; font-family: var(--sans); font-size: 10.5px;
+            line-height: 1.45; box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+            position-anchor: --eyeanchor; position-area: top span-right;
+            position-try-fallbacks: bottom span-right, top span-left, bottom span-left; }
+  .eyepop:popover-open { display: block; }
+  .eyepop b { color: var(--cyan-dim); font-weight: 700; }
+  .eyepop .sep { display: block; height: 1px; background: var(--line); margin: 6px 0; }
+  .eyebtn { anchor-name: --eyeanchor; }
+
+  /* The one sentence naming what the order means. Rendered verbatim from the server so the UI
+     cannot assemble a claim the data does not support. */
+  .ordernote { flex: none; padding: 3px 10px 0; font-family: var(--sans); font-size: 9.5px;
+               color: var(--dim); letter-spacing: 0.01em; }
+
   .foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 5px 10px 6px;
     border-top: 1px solid var(--divider); position: relative; z-index: 4;
     font-family: var(--mono); font-size: 9px; color: var(--faint); letter-spacing: 0.03em; }
@@ -151,7 +199,24 @@
 
     <div id="results"></div>
 
+    <!-- What the ordering means, in one sentence, straight from the server. -->
+    <div id="ordernote" class="ordernote" hidden></div>
+
     <div class="foot">
+      <!-- 🔑 A real <button> with popovertarget, so toggle, light-dismiss and Escape are the
+           browser's job and not a handler of ours that can get stuck — this widget family has
+           already shipped a cog that could only ever OPEN. It also earns Enter/Space for free.
+           `title` stays for hover: there is no API to open a native tooltip from script, so the
+           popover carries the click and the two coexist rather than one replacing the other. -->
+      <button id="eye" class="eyebtn none" type="button" popovertarget="eyepop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z" />
+          <circle cx="12" cy="12" r="3.2" />
+        </svg>
+        <span class="lbl" id="eyelbl">Location unknown</span>
+      </button>
+      <div id="eyepop" class="eyepop" popover="auto"></div>
       <span id="src">…</span>
       <!-- 🔴 "stock unknown" was the first wording and Sub had to ask what it meant, which is the
            whole test failed: it reads like a loading state rather than a statement about the data.
@@ -218,6 +283,91 @@
     const bits = [q.place, q.body, q.system].filter(Boolean);
     return bits.length ? bits.join(" · ") : "";
   }
+
+  /** Minutes as a player reads them: under an hour, minutes; past that, hours. */
+  function mins(m) {
+    if (m < 1) return "<1m";
+    if (m < 60) return Math.round(m) + "m";
+    const h = Math.floor(m / 60);
+    return h + "h" + (Math.round(m - h * 60) ? " " + Math.round(m - h * 60) + "m" : "");
+  }
+
+  const CONTAIN_TEXT = {
+    "same-place": "here",
+    "same-body": "same body",
+    "same-system": "in system",
+    "elsewhere": "elsewhere",
+  };
+
+  /** The distance cell, or null when the server made no claim about this row. */
+  function distNode(q) {
+    if (q.minutes != null) {
+      const s = document.createElement("span");
+      // "est" is not decoration: a route crossing a jump point is estimated, because the wormhole
+      // transit itself has never been measured. It rides the leg, so the server decides it.
+      s.className = "dist" + (q.travelBasis === "estimated" ? " est" : "")
+        + (q.minutes < 1 ? " near" : "");
+      s.textContent = (q.travelBasis === "estimated" ? "~" : "") + mins(q.minutes);
+      s.title = q.travelBasis === "estimated"
+        ? "About " + mins(q.minutes) + " away. The route crosses a jump point, and the transit "
+          + "through the wormhole has never been measured — so this leg is an estimate, and the "
+          + "whole figure is only as certain as it is."
+        : mins(q.minutes) + " away at quantum speed, from the last place we saw you. It does not "
+          + "include time spent landing, docking, or getting to your ship.";
+      return s;
+    }
+    if (q.containment && q.containment !== "elsewhere") {
+      const s = document.createElement("span");
+      s.className = "dist contain";
+      s.textContent = CONTAIN_TEXT[q.containment] || "";
+      s.title = "We know roughly where you are, but not precisely enough to give you a time. "
+        + "This shop is " + (CONTAIN_TEXT[q.containment] || "nearby") + " relative to the last "
+        + "place the game told us about.";
+      return s;
+    }
+    return null;
+  }
+
+  /**
+   * 🔴 THE EYE SAYS HOW WELL WE CAN SEE YOU — it is not an info button.
+   *
+   * Three states because there are exactly three claims: we know where you are (green), we know
+   * roughly or the reading has aged (amber), we do not know (dim). The label is the server's own
+   * `summary`, and the popover carries `from` and `howToImprove` verbatim. Sub's requirement for
+   * the hover was that it says what the player can DO about it, not merely that it is uncertain.
+   */
+  function renderEye(origin, order) {
+    const btn = $("eye"), lbl = $("eyelbl"), pop = $("eyepop");
+    if (!btn || !lbl || !pop) return;
+    const o = origin || { tier: "unknown", summary: "Location unknown", from: "", howToImprove: "", stale: true };
+    const state = o.tier === "unknown" ? "none"
+      : (o.tier === "place" && !o.stale) ? "precise" : "rough";
+    btn.className = "eyebtn " + state;
+    lbl.textContent = o.summary || "Location unknown";
+
+    const parts = [];
+    parts.push("<b>" + escapeHtml(o.summary || "Location unknown") + "</b>");
+    if (o.from) parts.push(escapeHtml(cap(o.from)) + ".");
+    if (order && order.note) parts.push('<span class="sep"></span>' + escapeHtml(order.note));
+    if (o.howToImprove) parts.push('<span class="sep"></span>' + escapeHtml(o.howToImprove));
+    pop.innerHTML = parts.join(" ");
+
+    // Hover gets the same words as the click. There is no API to open a native tooltip from
+    // script, so these are two affordances for one explanation rather than a duplication.
+    btn.title = [o.summary, o.from ? cap(o.from) + "." : "", order && order.note ? order.note : "",
+                 o.howToImprove].filter(Boolean).join("  ");
+
+    const note = $("ordernote");
+    if (note) {
+      // Only worth a line of its own when the order is NOT the plain one — otherwise it is a
+      // sentence explaining that nothing happened.
+      const show = order && order.basis && order.basis !== "none";
+      note.hidden = !show;
+      note.textContent = show ? order.note : "";
+    }
+  }
+
+  function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
   function itemNode(r) {
     const el = document.createElement("div");
@@ -287,6 +437,12 @@
       }
       row.appendChild(w);
 
+      // 🔴 How far — and ONLY what the server actually claimed. `minutes` is present exactly when
+      // the ordering was by travel time; `containment` when it was rougher. Neither is derived
+      // here, because deriving one would let the widget state a confidence the data never had.
+      const d = distNode(q);
+      if (d) row.appendChild(d);
+
       shops.appendChild(row);
     }
     el.appendChild(shops);
@@ -316,6 +472,10 @@
 
   function render(data) {
     const box = $("results");
+    // The eye is about the SESSION, not about these results, so it updates on every response —
+    // including the empty ones. A player who searched something we do not stock still deserves to
+    // know whether we can see where they are.
+    renderEye(data.origin, data.order);
     if (!data.query) {
       showEmpty("Type an item name.<br />Weapons, armour, ship components, gear.");
       return;
@@ -379,7 +539,13 @@
   async function status() {
     try {
       const r = await fetch("/api/verse/status");
-      if (r.ok) renderSource(await r.json());
+      if (r.ok) {
+        const j = await r.json();
+        renderSource(j);
+        // Status carries the origin too, so the eye is right from the first frame rather than
+        // only after the player's first search.
+        renderEye(j.origin, null);
+      }
     } catch { /* the search will report it */ }
   }
 

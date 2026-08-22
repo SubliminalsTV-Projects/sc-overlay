@@ -2372,6 +2372,81 @@ const VERSEFINDER = `(async () => {
   ok("...and does NOT flatly claim the item does not exist",
      !!empty && /No shop known/i.test(empty.textContent), empty ? empty.textContent.slice(0, 60) : "");
 
+  // ── The eye: how well we can see where the player is ──────────────────────────────────────
+  // Defensive lookups on BOTH the condition and the DETAIL. A detail expression is evaluated
+  // eagerly, so reaching straight through a missing element there kills the whole suite and the
+  // run still prints a small passing number - which is exactly how twelve assertions once went
+  // unexecuted while the summary read 4/4.
+  const eyeEl = () => document.getElementById("eye");
+  const eyeTxt = () => { const e = document.getElementById("eyelbl"); return e ? e.textContent.trim() : "(no eyelbl)"; };
+  const eyeCls = () => { const e = eyeEl(); return e ? e.className : "(no eye)"; };
+
+  ok("the location eye is present", !!eyeEl(), eyeCls());
+  ok("...drawn as an SVG, never a glyph the OS font might not have",
+     !!(eyeEl() && eyeEl().querySelector("svg path")),
+     eyeEl() ? (eyeEl().querySelector("svg") ? "svg" : "no svg") : "(no eye)");
+  ok("...and it always says something rather than sitting blank",
+     eyeTxt().length > 0, eyeTxt());
+  // Three states and only three, because there are exactly three claims it can make.
+  ok("...in exactly one of the three confidence states",
+     ["precise", "rough", "none"].filter((c) => eyeCls().split(" ").indexOf(c) >= 0).length === 1,
+     eyeCls());
+  ok("...and the hover explains it in words", (eyeEl() && eyeEl().title || "").length > 20,
+     (eyeEl() && eyeEl().title || "(no title)").slice(0, 70));
+
+  // 🔴 THE POPOVER MUST TAKE NO SPACE IN LAYOUT. That is the whole reason it is a popover in the
+  // top layer rather than an absolutely-positioned box - an earlier widget in this app measured
+  // 541px -> 743px making exactly this mistake.
+  //
+  // 🔑 MEASURE THE FOOT AND THE RESULTS, NOT THE PANEL. The first version of this assertion
+  // compared the PANEL height open vs closed and could never have failed: this page pins
+  // #panel to height 480px (100% when embedded), so it is fixed by construction and the check
+  // was a tautology wearing the most on-point name in the suite. An in-flow box inside .foot
+  // would grow the foot and, because the panel cannot grow, steal that space from #results -
+  // and both of those are free to move.
+  const footEl = document.querySelector(".foot");
+  const resEl = document.getElementById("results");
+  const popEl = document.getElementById("eyepop");
+  const footClosed = footEl ? footEl.getBoundingClientRect().height : -1;
+  const resClosed = resEl ? resEl.getBoundingClientRect().height : -1;
+  // 🔴 showPopover() EXISTS ON EVERY HTMLElement AND THROWS WITHOUT THE popover ATTRIBUTE
+  // (InvalidStateError). So a feature-test on the METHOD is not a guard at all: dropping the
+  // attribute killed this whole suite and it reported "4/4 passed" for twenty-nine assertions.
+  // Catch it, record it, and let the assertions below fail honestly instead.
+  let popOpenErr = "";
+  try { if (popEl && popEl.showPopover) popEl.showPopover(); }
+  catch (e) { popOpenErr = (e && e.name) ? e.name : String(e); }
+  await sleep(60);
+  ok("the eye box is a real popover, not a plain div",
+     popOpenErr === "", popOpenErr || "opened cleanly");
+  const footOpen = footEl ? footEl.getBoundingClientRect().height : -2;
+  const resOpen = resEl ? resEl.getBoundingClientRect().height : -2;
+  const popShown = popEl ? popEl.getBoundingClientRect().width > 0 : false;
+  ok("the eye popover really opens", popShown, popShown ? "visible" : "not visible");
+  ok("...and does not grow the footer it lives in",
+     footClosed > 0 && footClosed === footOpen, footClosed + "px closed / " + footOpen + "px open");
+  ok("...nor steal any height from the results list",
+     resClosed > 0 && resClosed === resOpen, resClosed + "px closed / " + resOpen + "px open");
+  ok("...and carries the explanation, not just a title",
+     !!(popEl && popEl.textContent.trim().length > 20),
+     popEl ? popEl.textContent.trim().slice(0, 60) : "(no popover)");
+  try { if (popEl && popEl.hidePopover) popEl.hidePopover(); } catch (e) { /* reported above */ }
+  await sleep(40);
+
+  // 🔴 A ROW MAY ONLY CLAIM A DISTANCE THE SERVER ACTUALLY GAVE IT. The sidecar under test has
+  // whatever origin the real log affords, so rather than assert a particular basis, assert the
+  // INVARIANT that holds either way: a distance is shown only when the response said so.
+  await search("cannon");
+  const noteEl = document.getElementById("ordernote");
+  const basisShown = !!(noteEl && !noteEl.hidden && noteEl.textContent.trim().length > 0);
+  const distCells = [...document.querySelectorAll("#results .dist")];
+  ok("the order note appears only when an ordering was actually applied",
+     basisShown === (distCells.length > 0) || eyeCls().indexOf("none") >= 0,
+     "note=" + basisShown + " distCells=" + distCells.length + " eye=" + eyeCls());
+  ok("...and no distance cell is ever empty",
+     distCells.every((c) => c.textContent.trim().length > 0),
+     distCells.length + " cells");
+
   return out;
 })()`;
 
