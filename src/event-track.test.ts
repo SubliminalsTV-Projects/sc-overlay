@@ -41,7 +41,13 @@ const realEvents = JSON.stringify({
     e.id === "orison-relief"
       // Deliberately prices ONE contract and leaves the other unpriced, which is what makes the
       // priced/unpriced split observable at all.
-      ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 } }
+      // 🔑 `rewards` is pinned EMPTY for the same reason `contracts` is pinned: both are live
+      // research artefacts in the shipped file, discovered by playing. Reading either straight
+      // off data/events.json makes a MECHANISM test fail the moment a measurement lands — which
+      // is exactly what happened on 2026-08-22, when confirming the 15% reward (S-38
+      // "SecondWind" Pistol) turned the unknown-vs-empty assertion red. The mechanism being
+      // tested is "empty rewards report as UNKNOWN, not as none", and it needs its own data.
+      ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 }, rewards: [] }
       : e),
 });
 writeFileSync(join(dir, "events.json"), realEvents);

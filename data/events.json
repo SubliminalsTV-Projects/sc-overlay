@@ -86,9 +86,48 @@
         }
       ],
       "journalReadingsNote": "Kept so any future correction can be re-derived from the evidence instead of from these conclusions. Each entry is a Journal total and the completions on record at that moment (from Contract Complete lines in the 12473311 logs, one journal entry each). 🔑 THE NOTIFICATION QUEUE ID IS THE DEDUPE KEY. Each notification is logged several times (Added notification, then UpdateNotificationItem for Next/StartFade/Remove) all carrying the SAME bracketed id. Counting raw lines reads one contract as three. Count only `Added notification` lines, and treat the id as the identity — this is what distinguishes a genuine simultaneous double-completion from one notification echoing.",
-      "rewards": [],
-      "rewardsNote": "EMPTY until observed in game. Note the three pool-bearing event contracts (ORS_Cr_Small/Medium/Large) all drop `TH-01 Propulsor` (item 1afc0022-b8fc-4174-8687-6dfc5b744b98, chance 1) per the 4.9 dataset — but that is a MISSION-pool drop, not a tier reward, so it does not belong here.",
-      "knownContractsNote": "All 13 ORS_ contracts are already in the shipped 4.9 dataset, verified by exact key match against real 4.10 markers. Givers: Conerstone Developments 6 (CIG's own typo for Cornerstone — match verbatim), Foxwell Enforcement 3, Covalex Independent Contractors 3, Ling Family Hauling 1. All carry rank:null and empty reputationGained, so none of them feed a normal rep track. 🔴 ORS_MA_DeliveryPilot IS A CARGO HAUL THE HAULING TRACKER CANNOT SEE. isHaulingContract() (hauling.ts:246) tests HAUL_MARKERS = [\"haul\",\"cargo\"] against \"<generator> <contractKey>\" — here \"TheBackpocket ORS_MA_DeliveryPilot\", which contains neither. Yet the mission emits everything the tracker needs: pickup_/dropoff_ objectives on one mission UUID, marker positions, ObjectiveUpserted COMPLETED, and per-box SMarkerHandler_Hauling::OnItemRegistered (1SCU MedicalSupplies + FreshFood). Admission is the ONLY thing missing."
+      "rewards": [
+        {
+          "tier": 15,
+          "name": "S-38 \"SecondWind\" Pistol",
+          "item": null
+        }
+      ],
+      "rewardsNote": "EMPTY until observed in game. Note the three pool-bearing event contracts (ORS_Cr_Small/Medium/Large) all drop `TH-01 Propulsor` (item 1afc0022-b8fc-4174-8687-6dfc5b744b98, chance 1) per the 4.9 dataset — but that is a MISSION-pool drop, not a tier reward, so it does not belong here. ✅ TIER 15 CONFIRMED 2026-08-22 by log, not by reading the bar. Sub crossed 43,200 points at 03:24:24.711Z (42,000 -> 44,000 on ORS_SA) and \"Received Blueprint: S-38 \"SecondWind\" Pistol\" landed 383 ms later. This independently CONFIRMS BOTH hand-read constants: the first marker really is at 15% and the total really is 288,000 — if either were wrong the grant would not have coincided with the crossing. He had not noticed the reward (suspected CTD), which is why the tracker looked wrong when it was right. ⚠️ THE 500 aUEC 1.5s LATER IS *NOT* PART OF THE TIER REWARD — corrected 2026-08-22 on Sub's challenge. The same session carries a SECOND \"Awarded 500 aUEC\" at 03:21:14Z, three minutes before the crossing, and both carry an all-zeros MissionId so neither can be attributed. Sub had \"A Call to Arms\" accepted at 02:47:42Z and believes that is the source. The tier reward is the BLUEPRINT only; do not model an aUEC component without isolating one.",
+      "knownContractsNote": "All 13 ORS_ contracts are already in the shipped 4.9 dataset, verified by exact key match against real 4.10 markers. Givers: Conerstone Developments 6 (CIG's own typo for Cornerstone — match verbatim), Foxwell Enforcement 3, Covalex Independent Contractors 3, Ling Family Hauling 1. All carry rank:null and empty reputationGained, so none of them feed a normal rep track. 🔴 ORS_MA_DeliveryPilot IS A CARGO HAUL THE HAULING TRACKER CANNOT SEE. isHaulingContract() (hauling.ts:246) tests HAUL_MARKERS = [\"haul\",\"cargo\"] against \"<generator> <contractKey>\" — here \"TheBackpocket ORS_MA_DeliveryPilot\", which contains neither. Yet the mission emits everything the tracker needs: pickup_/dropoff_ objectives on one mission UUID, marker positions, ObjectiveUpserted COMPLETED, and per-box SMarkerHandler_Hauling::OnItemRegistered (1SCU MedicalSupplies + FreshFood). Admission is the ONLY thing missing.",
+      "rewardCandidates": [
+        {
+          "tier": 25,
+          "points": 72000,
+          "name": "FBL-8a (Modified) armor set",
+          "confirmed": false
+        },
+        {
+          "tier": 43,
+          "points": 123840,
+          "name": "P4-AR \"SecondWind\" rifle",
+          "confirmed": false
+        },
+        {
+          "tier": 57,
+          "points": 164160,
+          "name": "ORC-mkX (XenoThreat) armor set",
+          "confirmed": false
+        },
+        {
+          "tier": 80,
+          "points": 230400,
+          "name": "Lumin V \"SecondWind\" SMG",
+          "confirmed": false
+        },
+        {
+          "tier": 100,
+          "points": 288000,
+          "name": "ADP-mk4 \"Big Boss\" armor set + unnamed undersuit",
+          "confirmed": false
+        }
+      ],
+      "rewardCandidatesNote": "⚠️ UNCONFIRMED — kept OUT of `rewards` on purpose. Reported by a viewer in Sub's chat who asked ChatGPT, 2026-08-22. Nobody in chat has actually ground the event, so there are no logs to check against. NEVER present these as fact in the UI; they are a testable prediction, not a measurement. \n\n🔑 WHY THEY ARE WORTH KEEPING ANYWAY: all six of the source's point thresholds match ours EXACTLY (43,200 / 72,000 / 123,840 / 164,160 / 230,400 / 288,000 = 15/25/43/57/80/100% of 288,000). 43% and 57% are odd, non-round positions Sub read off a progress bar; an independent source reproducing 123,840 and 164,160 is very hard to explain as coincidence or invention. So the source corroborates our total and tiers, and our MEASURED tier-15 (S-38 \"SecondWind\" Pistol) corroborates its first row. The naming also alternates weapon/armour across the ladder, which is what a real reward table looks like. \n\n➡️ One observation settles the lot: the first player to cross 72,000 either sees the FBL-8a or does not."
     },
     {
       "id": "return-of-xenothreat",
