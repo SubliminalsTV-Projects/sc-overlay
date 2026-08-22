@@ -215,5 +215,39 @@ check("but its 25 rewards are still listed", past.tiers.reduce((s, x) => s + x.r
 check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   t.eventProgress("orison-relief")!.rewardsUnknown === true);
 
+// ---- 6. A TEST SERVER STILL COUNTS FOR EVENTS (it does not for blueprints) ----
+// 🔴 These two rules look identical and are not. A blueprint receipt is dropped off-PUB because
+// `observed` is what SiteSync pushes with replace:true — it would overwrite the real collection
+// on subliminal.gg. Event progress has NO outbound path at all: sync.ts sends got/mission/patch
+// and nothing else. Gating it bought no safety and cost the feature exactly when it matters,
+// because an event reaches the PTU first. Sub, 2026-08-22, 24,000 points into Orison Relief on
+// 4.10 PTU with the widget showing him nothing.
+// The blueprint half of this rule lives in log-env.test.ts and must stay red-able there.
+{
+  const pdir = mkdtempSync(join(tmpdir(), "ev-ptu-"));
+  writeFileSync(join(pdir, "events.json"), realEvents);
+  writeFileSync(join(pdir, "blueprints.latest.json"), JSON.stringify({
+    schema: "sc-blueprint-pools/2", version: `4.10.0-PTU.${CL}`, changelist: CL, missionCount: 1,
+    missions: { ORS_MA_HaulingMedium: m("Orison Relief: Medium Supply Haul", "TheBackpocket") },
+  }));
+  const q = new MissionTracker({ dataDir: pdir, stateDir: mkdtempSync(join(tmpdir(), "ev-ptu-st-")) });
+  q.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  q.detectPatch("<2026> Environment: PTU");
+  const PMID = "c48baebd-b6da-4537-86f1-1355c5e2d488";
+  q.apply({
+    kind: "marker", ts: "2026-08-22T00:27:00.000Z", missionId: PMID,
+    contract: "ORS_MA_HaulingMedium_0", contractKey: "ORS_MA_HaulingMedium", generator: "TheBackpocket",
+    contractDefId: "x", objectiveId: "pickup_x_0", markerEntityId: "1", pos: null,
+  } as never);
+  q.apply(parseMissionEvent(ev(COMPLETE, "2026-08-22T00:27:46.100Z"))!);
+  q.apply(parseMissionEvent(ev(JOURNAL, "2026-08-22T00:27:46.316Z"))!);
+  const pp = q.eventProgress("orison-relief")!;
+  check("a PTU journal entry DOES record event progress", pp.contributions.length === 1, String(pp.contributions.length));
+  check("...priced normally, not zeroed", pp.points === 6000, String(pp.points));
+  // Non-vacuous: assert the environment genuinely reads as NOT live, or this passes for the
+  // boring reason that the gate never applied in the first place.
+  check("...and the tracker still knows it is NOT live", q.view().envIsLive === false, String(q.view().envIsLive));
+}
+
 console.log(failed ? `\nFAILED (${failed})` : "\nevent-track tests passed");
 process.exit(failed ? 1 : 0);
