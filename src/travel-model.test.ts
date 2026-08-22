@@ -65,14 +65,38 @@ check("...which is three systems, i.e. two jumps", (systemPath(gws, "Stanton", "
 check("same system is a zero-jump path", JSON.stringify(systemPath(gws, "Pyro", "Pyro")) === '["pyro"]');
 check("an unknown system has no route", systemPath(gws, "Stanton", "Magnus") === null);
 
-console.log("\n🔴 the quantum floor — a short hop is FLOWN, not jumped");
+console.log("\n🔴 the quantum floor — a short hop is FLOWN, and that no longer changes the number");
 const at = (m: number): Vec3 => ({ x: m, y: 0, z: 0 });
 const far = inSystemMinutes(at(0), at(QUANTUM_MIN_RANGE_M * 10));
 const near = inSystemMinutes(at(0), at(QUANTUM_MIN_RANGE_M / 10));
 check("a long hop uses the drive", far.quantum === true);
 check("a hop under the floor does NOT", near.quantum === false, (QUANTUM_MIN_RANGE_M / 10 / 1000) + " km");
-check("...and is therefore SLOWER despite being shorter", near.minutes > far.minutes,
-  near.minutes.toFixed(1) + " min vs " + far.minutes.toFixed(1) + " min");
+// ⚠️ RE-POINTED 2026-08-22, not deleted. This asserted "...and is therefore SLOWER despite being
+// shorter" — a deliberate property of the two-speed model, and the one that put Orison 14.83 min
+// away while New Babbage sat at 4.09. The claim was true of the code and false of the world. What
+// replaces it is the property that had to hold instead.
+check("...but is NOT quoted as slower than the longer hop — that was the shipped inversion",
+  near.minutes <= far.minutes, near.minutes.toFixed(4) + " min vs " + far.minutes.toFixed(4) + " min");
+// 🔑 MONOTONICITY, swept rather than sampled. A single pair straddling the floor passes for free
+// on any model where both sides round to zero; walking a decade either side of the boundary is
+// what makes the assertion able to fail.
+{
+  const steps: number[] = [];
+  for (let m = 1e3; m <= 1e12; m *= 1.6) steps.push(m);
+  let breaks = 0, worst = "";
+  for (let i = 1; i < steps.length; i++) {
+    const a = inSystemMinutes(at(0), at(steps[i - 1])).minutes;
+    const b = inSystemMinutes(at(0), at(steps[i])).minutes;
+    if (b < a - 1e-12) {
+      breaks++;
+      if (!worst) worst = `${(steps[i - 1] / 1000).toFixed(0)}km=${a.toFixed(3)} then ${(steps[i] / 1000).toFixed(0)}km=${b.toFixed(3)}`;
+    }
+  }
+  check("the sweep really spans the floor", steps.some((m) => m < QUANTUM_MIN_RANGE_M) && steps.some((m) => m > QUANTUM_MIN_RANGE_M),
+    steps.length + " steps, 1 km to 1e9 km");
+  check("🔴 minutes never DECREASE as distance increases, anywhere", breaks === 0,
+    breaks === 0 ? "monotone across " + steps.length + " steps" : breaks + " inversions, first " + worst);
+}
 
 console.log("\n🔴 the corrected speed reproduces a leg measured two independent ways");
 const find = (n: string): Vec3 | null => {
