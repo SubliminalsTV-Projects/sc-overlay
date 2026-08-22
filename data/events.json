@@ -86,8 +86,14 @@
         }
       ],
       "journalReadingsNote": "Kept so any future correction can be re-derived from the evidence instead of from these conclusions. Each entry is a Journal total and the completions on record at that moment (from Contract Complete lines in the 12473311 logs, one journal entry each). 🔑 THE NOTIFICATION QUEUE ID IS THE DEDUPE KEY. Each notification is logged several times (Added notification, then UpdateNotificationItem for Next/StartFade/Remove) all carrying the SAME bracketed id. Counting raw lines reads one contract as three. Count only `Added notification` lines, and treat the id as the identity — this is what distinguishes a genuine simultaneous double-completion from one notification echoing.",
-      "rewards": [],
-      "rewardsNote": "EMPTY until observed in game. Note the three pool-bearing event contracts (ORS_Cr_Small/Medium/Large) all drop `TH-01 Propulsor` (item 1afc0022-b8fc-4174-8687-6dfc5b744b98, chance 1) per the 4.9 dataset — but that is a MISSION-pool drop, not a tier reward, so it does not belong here.",
+      "rewards": [
+        {
+          "tier": 15,
+          "name": "S-38 \"SecondWind\" Pistol",
+          "item": null
+        }
+      ],
+      "rewardsNote": "EMPTY until observed in game. Note the three pool-bearing event contracts (ORS_Cr_Small/Medium/Large) all drop `TH-01 Propulsor` (item 1afc0022-b8fc-4174-8687-6dfc5b744b98, chance 1) per the 4.9 dataset — but that is a MISSION-pool drop, not a tier reward, so it does not belong here. ✅ TIER 15 CONFIRMED 2026-08-22 by log, not by reading the bar. Sub crossed 43,200 points at 03:24:24.711Z (42,000 -> 44,000 on ORS_SA) and \"Received Blueprint: S-38 \"SecondWind\" Pistol\" landed 383 ms later, followed by 500 aUEC. This independently CONFIRMS BOTH hand-read constants: the first marker really is at 15% and the total really is 288,000 — if either were wrong the grant would not have coincided with the crossing. He had not noticed the reward (suspected CTD), which is why the tracker looked wrong when it was right.",
       "knownContractsNote": "All 13 ORS_ contracts are already in the shipped 4.9 dataset, verified by exact key match against real 4.10 markers. Givers: Conerstone Developments 6 (CIG's own typo for Cornerstone — match verbatim), Foxwell Enforcement 3, Covalex Independent Contractors 3, Ling Family Hauling 1. All carry rank:null and empty reputationGained, so none of them feed a normal rep track. 🔴 ORS_MA_DeliveryPilot IS A CARGO HAUL THE HAULING TRACKER CANNOT SEE. isHaulingContract() (hauling.ts:246) tests HAUL_MARKERS = [\"haul\",\"cargo\"] against \"<generator> <contractKey>\" — here \"TheBackpocket ORS_MA_DeliveryPilot\", which contains neither. Yet the mission emits everything the tracker needs: pickup_/dropoff_ objectives on one mission UUID, marker positions, ObjectiveUpserted COMPLETED, and per-box SMarkerHandler_Hauling::OnItemRegistered (1SCU MedicalSupplies + FreshFood). Admission is the ONLY thing missing."
     },
     {
