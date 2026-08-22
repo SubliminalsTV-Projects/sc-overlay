@@ -2572,9 +2572,22 @@ const VERSEFINDER = `(async () => {
   // only because the live sentence used to begin "UEX via subliminal.gg". The credit moved to a
   // badge, so the word left the sentence and this failed on working code. The tier wording is what
   // the assertion was ever about, so it now reads the element that carries the tier.
+  // ⚠️ RE-POINTED AGAIN 2026-08-22. It matched on "subliminal.gg", which left the assertion tied to
+  // a phrase whose whole job was to name our plumbing — and Sub cut that phrase for exactly that
+  // reason ("we don't need to have that in there"). Chasing the wording a second time would be the
+  // trap; the RULING has never changed, so this now checks the thing the ruling is about: the line
+  // states WHICH TIER the table came from. Live says how fresh it is, the two fallbacks say they
+  // are offline. A footer that said neither would be the regression.
   const srctext = document.getElementById("srctext");
+  const tierWords = ["updated", "offline"];
   ok("...and it says one of the three tiers, not something vague",
-     !!srctext && /subliminal\.gg|offline/.test(srctext.textContent),
+     !!srctext && tierWords.some((w) => srctext.textContent.indexOf(w) > -1),
+     srctext ? srctext.textContent : "(no #srctext)");
+  // 🔴 Paired with the positive: the credit must NOT have crept back into the sentence. The badge
+  // carries the attribution; the sentence carries the age. Both halves asserted, because "does not
+  // mention subliminal.gg" alone is satisfied for free by an empty footer.
+  ok("...and does not re-narrate whose proxy it came through",
+     !!srctext && srctext.textContent.indexOf("subliminal.gg") === -1,
      srctext ? srctext.textContent : "(no #srctext)");
   // 🔴 THE UEX CREDIT IS ITS OWN ASSERTION NOW, because it is its own requirement (Sub,
   // 2026-08-22: "this is really mainly just them. All we're doing is putting up a wrapper for
@@ -2637,11 +2650,26 @@ const VERSEFINDER = `(async () => {
   }
 
   // A miss must distinguish "no shop known" from "no such item" — the former is the common case.
+  //
+  // ⚠️ RE-POINTED 2026-08-22, and the reason is that the widget got BETTER at the thing this was
+  // guarding. It used to demand the literal words "No shop known" for every miss, which was the
+  // right defence when the app held only a COUNT of unpriced items and therefore could never tell
+  // a real armour set from a typo — one cautious sentence for both was all it was entitled to say.
+  // The table now ships the 4,962 names, so a nonsense string really has been checked against
+  // everything we hold and "Nothing found" is the honest answer rather than a flat denial that the
+  // thing exists. The RULING was never about that wording; it was that the two cases must not read
+  // the same. That is now asserted where it can actually fail, in the VERSEDEALERS suite, which
+  // drives a real unsold item and a typo and compares the two pages. Here the claim narrows to
+  // what this query can prove: a miss says something, and it does not pretend to have found
+  // anything.
   await search("zzzqqxwv");
   const empty = document.querySelector("#results .empty");
   ok("a miss renders the empty state", !!empty, empty ? "yes" : "no");
-  ok("...and does NOT flatly claim the item does not exist",
-     !!empty && /No shop known/i.test(empty.textContent), empty ? empty.textContent.slice(0, 60) : "");
+  ok("...naming what was searched for rather than a bare failure",
+     !!empty && empty.textContent.indexOf("zzzqqxwv") > -1, empty ? empty.textContent.slice(0, 70) : "");
+  ok("...and no result row is drawn beside it",
+     document.querySelectorAll("#results .item").length === 0,
+     document.querySelectorAll("#results .item").length + " items");
 
   // ── The eye: how well we can see where the player is ──────────────────────────────────────
   // Defensive lookups on BOTH the condition and the DETAIL. A detail expression is evaluated
@@ -2886,12 +2914,25 @@ const VERSEFINDER = `(async () => {
          return h && h.textContent.trim().length > 0;
        }),
        groups.map((g) => (g.querySelector(".gplace") || {}).textContent).join(" | "));
-    // 🔴 THE SAME PLACE MUST NOT OPEN TWICE. Grouping walks CONSECUTIVE runs to preserve the
-    // proximity order, so a bug that broke a run would show up as one place heading appearing
-    // more than once — which reads as a duplicate result rather than as a sorting fault.
+    // 🔴 A GROUP MUST NEVER BREAK A CONSECUTIVE RUN. Grouping walks consecutive runs precisely so
+    // it preserves the proximity order rather than re-sorting it, and a bug in that walk shows up
+    // as two ADJACENT groups carrying the same heading.
+    //
+    // ⚠️ RE-POINTED 2026-08-22, and the reason is worth more than the fix. This asserted that no
+    // place appears twice ANYWHERE in the list, which is a claim about the ORDERING, not about the
+    // grouping - and it is only true while the ordering has something to order by. It went red on
+    // untouched code the moment the origin aged past its trust window: on the containment basis,
+    // with all eight MedPen shops landing in the same same-body bucket, there is no signal left,
+    // the stable sort keeps the incoming cheapest-first order, and Lorville legitimately appears at
+    // positions 1 and 5. The widget is behaving exactly as designed; the assertion had made the
+    // freshness of whoever last played the game part of its pass condition. Same family as the
+    // scan-box suite that asserted a user preference and went red for Sub because he had it on.
+    //
+    // The invariant that survives is adjacency: two groups in a row may not be the same place.
     const places = groups.map((g) => (g.querySelector(".gplace") || {}).textContent);
-    ok("...and no place opens a second group",
-       places.length === new Set(places).size, places.join(" | "));
+    const runBreaks = places.filter((p, i) => i > 0 && p === places[i - 1]);
+    ok("...and no two ADJACENT groups repeat a place, which would be a broken run",
+       runBreaks.length === 0, places.join(" | "));
     // 🔴 THE PLACE IS NOT REPEATED ON THE SHOPS UNDER IT — the whole point of the heading.
     let repeats = [];
     for (const g of groups) {
@@ -2957,7 +2998,14 @@ const VERSEFINDER = `(async () => {
   // stayed green when the server was reverted to "19m ago". The control is what exposed it.
   const liveNote = document.getElementById("ordernote");
   const liveEyeLbl = document.getElementById("eyelbl");
-  const liveAgeText = (liveNote ? liveNote.textContent : "") + " " + (liveEyeLbl ? liveEyeLbl.textContent : "");
+  // 🔑 #srctext joins them (2026-08-22). It is a THIRD age in the same footer — how old our copy of
+  // the table is — so it is exposed to the identical misreading and now shares the bare-Nm check
+  // below rather than needing its own. Captured here for the same reason as the other two: it is
+  // composed from a server value and the fixture render must not get a chance to overwrite it.
+  const liveSrcText = document.getElementById("srctext");
+  const liveFooterAge = liveSrcText ? liveSrcText.textContent : "";
+  const liveAgeText = (liveNote ? liveNote.textContent : "") + " " + (liveEyeLbl ? liveEyeLbl.textContent : "")
+    + " " + liveFooterAge;
 
   // ── 🔴 DISTANCE, NOT MINUTES (Sub, 2026-08-22) ─────────────────────────────────────────────
   //
@@ -3066,7 +3114,178 @@ const VERSEFINDER = `(async () => {
     ok("no age in the live footer reads as a bare Nm",
        hasAge && offenders.length === 0,
        offenders.length ? "offenders: " + offenders.join(",") : liveAgeText.trim().slice(0, 70));
+
+    // 🔴 HOW OLD OUR COPY IS, AND HOW OLD A QUOTE IS, ARE TWO LADDERS (Sub, 2026-08-22: "how about
+    // we do updated and then the minutes ago?"). The footer used ageOf, which is built for quote
+    // ages with a median of 34 DAYS — so its lowest rung is the word "today" and every possible
+    // footer value collapsed onto it, while the table is actually refreshed every six hours and the
+    // whole interesting range sits under a day.
+    // ⚠️ Extractor written FIRST and its output printed, so a failure names the string it read
+    // rather than the whole line — the ELEVENTH control lesson, which cost an assertion that
+    // measured the wrong slice.
+    {
+      const marker = "updated ";
+      const at = liveFooterAge.indexOf(marker);
+      const stated = at < 0 ? "(no 'updated' in the footer)" : liveFooterAge.slice(at + marker.length).trim();
+      // Positive first: on a cache/bundled tier the footer legitimately says "offline - ..." and
+      // there is no freshness to check, so say which case ran rather than passing silently.
+      const isLive = at >= 0;
+      ok("the footer states when our copy was last updated", isLive || liveFooterAge.indexOf("offline") > -1,
+         liveFooterAge || "(empty)");
+      if (isLive) {
+        const relative = stated.indexOf(" ago") > -1 || stated === "just now";
+        ok("...as a relative time, not a quote-age band",
+           relative, "extracted: [" + stated + "]");
+        // The exact bands ageOf would have produced. Their presence IS the regression.
+        const bands = ["today", "1d", "mo"];
+        const band = bands.filter((b) => stated === b || (b === "mo" && stated.indexOf("mo") > -1));
+        ok("...and never the quote ladder's wording", band.length === 0,
+           "extracted: [" + stated + "] matched: " + (band.join(",") || "none"));
+      }
+    }
   }
+
+  return out;
+})()`;
+
+// ── Suite: Verse Finder — ships, commodities, and which kind of blank ────────────────────────
+//
+// Its own suite rather than more assertions in VERSEFINDER, because it drives five DIFFERENT
+// queries and the existing suite is built around one ("cannon") whose rows it re-reads throughout.
+//
+// 🔴 EVERY NEGATIVE HERE IS PAIRED WITH A POSITIVE ABOUT THE SAME SET, and it is not decoration.
+// "No cannon row carries a rent tag" is satisfied for free by a page with no rows on it — and a
+// broken search is exactly what would empty it. The positive assertion above each negative is what
+// separates "the rule held" from "nothing was rendered at all".
+//
+// ⚠️ NO REGEX ANYWHERE IN THIS BODY. A backslash escape inside a template literal is eaten before
+// the pattern is ever compiled: \\b silently becomes a backspace byte and \\d loses its backslash,
+// so the regex compiles and never matches — which makes every "must not contain" assertion pass
+// forever. Two of three regex assertions in this widget's last suite were false passes for exactly
+// that reason. indexOf and character comparison only.
+const VERSEDEALERS = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  const box = document.getElementById("q");
+  const search = async (v) => {
+    box.value = v;
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(800);
+  };
+  const items = () => [...document.querySelectorAll("#results .item")];
+  const rows = () => [...document.querySelectorAll("#results .grow")];
+  const rents = () => [...document.querySelectorAll("#results .tag.rent")];
+  const stocks = () => [...document.querySelectorAll("#results .tag.stock")];
+  const hints = () => [...document.querySelectorAll("#results .hint .hrow")];
+  const emptyText = () => {
+    const e = document.querySelector("#results .empty");
+    return e ? e.textContent : "(no .empty element)";
+  };
+  const moreOf = (el) => {
+    const m = el ? el.querySelector(".more") : null;
+    return m ? m.textContent : "(no .more element)";
+  };
+
+  // ══ 1. SHIPS ══════════════════════════════════════════════════════════════════════════════
+  // 🔑 The query is a real hull that is BOTH sold and rented (49 vehicles are; 130 are sale-only),
+  // because a ship with only purchase rows could never fail the rent assertions and a rental-only
+  // one does not exist in the data at all. Both halves of the rule have to be populated or the
+  // pairing below is a tautology.
+  await search("100i");
+  const ship = items()[0] || null;
+  ok("🔴 a ship is a result at all", !!ship, items().length + " items");
+  ok("...named as the hull, not as a dealer listing",
+     !!ship && ship.querySelector(".iname").textContent.indexOf("100i") === 0,
+     ship ? ship.querySelector(".iname").textContent : "(none)");
+  ok("...and the category rides the name so it reads as a ship",
+     !!ship && ship.querySelector(".iname").textContent.indexOf("Ships") > -1,
+     ship ? ship.querySelector(".iname").textContent : "(none)");
+  ok("...with its manufacturer as a chip, like any other item",
+     !!ship && !!ship.querySelector(".chip.mk"),
+     ship && ship.querySelector(".chip.mk") ? ship.querySelector(".chip.mk").textContent : "(no mk chip)");
+
+  // 🔴 THE ONE DIFFERENCE HONESTY FORCES. Positive first: there must be BOTH kinds of row, or
+  // "some rows are labelled rent" and "every row is labelled rent" are indistinguishable.
+  const shipRows = rows().length;
+  const shipRents = rents().length;
+  ok("this ship really is offered both ways", shipRows > 1 && shipRents > 0 && shipRents < shipRows,
+     shipRents + " rental rows of " + shipRows);
+  ok("🔴 a rental row SAYS rent", shipRents > 0 && rents().every((t) => t.textContent.indexOf("rent") > -1),
+     shipRents ? rents()[0].textContent : "(no rent tag)");
+  // 🔴 The tag rides the SHOP, not the price — and that placement is load-bearing rather than
+  // aesthetic. Sub already ruled that price and age must stay adjacent (VERSEFINDER pins it), and
+  // a tag between them is that split. Asserting the pairing here too means a ship row is held to
+  // the same rule the item rows are, which is the only way that rule stays universal.
+  ok("...the tag rides the shop name, leaving price and age untouched",
+     shipRents > 0 && rents().every((t) => {
+       const prev = t.previousElementSibling;
+       return !!prev && prev.classList.contains("gshop");
+     }),
+     shipRents ? "previous sibling: " + ((rents()[0].previousElementSibling || {}).className || "(none)") : "(no tags)");
+  {
+    const kids = (r) => [...r.children];
+    const paired = rows().filter((r) => {
+      const ai = kids(r).findIndex((k) => k.classList.contains("age"));
+      const pi = kids(r).findIndex((k) => k.classList.contains("price"));
+      return ai >= 0 && pi >= 0 && Math.abs(ai - pi) === 1;
+    });
+    ok("🔴 price and age stay adjacent on a RENTAL row too",
+       shipRows > 0 && paired.length === shipRows, paired.length + " of " + shipRows);
+  }
+
+  // 🔴 TWO SPREADS. A single min/max over purchases and rentals would run from a 28,665 aUEC hire
+  // to a 1,089,270 aUEC sale and describe no transaction anyone can make.
+  ok("the rental price is quoted SEPARATELY from the purchase spread",
+     moreOf(ship).indexOf("rental") > -1, moreOf(ship));
+
+  // ══ 2. NOTHING ELSE MAY WEAR THE RENT TAG ═════════════════════════════════════════════════
+  await search("cannon");
+  const cannonRows = rows().length;
+  ok("the control query renders rows at all", cannonRows > 0, cannonRows + " rows");
+  ok("...and not one of them is labelled a rental", rents().length === 0, rents().length + " rent tags");
+  ok("...nor claims a stock figure, because items have no stock field anywhere",
+     stocks().length === 0, stocks().length + " stock tags");
+
+  // ══ 3. COMMODITIES ════════════════════════════════════════════════════════════════════════
+  // 🔴 This is the whole of gap 2: the data was already on the player's disk and the widget would
+  // not look at it, so this query used to return the identical blank a typo returns.
+  await search("laranite");
+  const com = items().find((el) => el.querySelector(".iname").textContent.indexOf("Commodity") > -1) || null;
+  ok("🔴 a commodity is findable from this box", !!com,
+     items().map((el) => el.querySelector(".iname").textContent).join(" | ") || "(none)");
+  const comRows = com ? [...com.querySelectorAll(".grow")] : [];
+  ok("...and it names terminals, not a single price", comRows.length > 1, comRows.length + " rows");
+  const comStock = com ? [...com.querySelectorAll(".tag.stock")] : [];
+  ok("🔑 ...carrying the stock an ITEM row cannot", comStock.length > 0, comStock.length + " stock tags");
+  ok("...stated in SCU rather than as a bare number",
+     comStock.length > 0 && comStock.every((t) => t.textContent.indexOf("SCU") > -1),
+     comStock.length ? comStock[0].textContent : "(none)");
+  ok("...and it points at the Trade widget for selling rather than guessing a sell price",
+     moreOf(com).indexOf("Trade") > -1, moreOf(com));
+
+  // ══ 4. THE BLANK THAT KNOWS IT IS NOT A TYPO ══════════════════════════════════════════════
+  // 🔴 Both of the next two searches return ZERO results. That is the point: the assertion is not
+  // about the count, it is that the two produce DIFFERENT pages. An older build rendered the same
+  // sentence for both, which told a player their armour set does not exist.
+  await search("Corbel Patina");
+  ok("a real-but-unsold item still returns no shops", items().length === 0, items().length + " items");
+  const namedHints = hints().length;
+  ok("🔴 ...but the widget NAMES it instead of shrugging", namedHints > 0, namedHints + " named");
+  ok("...and says outright that it exists", emptyText().indexOf("does exist") > -1, emptyText());
+  ok("...listing the thing that was actually typed",
+     hints().some((h) => h.textContent.indexOf("Corbel Patina") > -1),
+     hints().map((h) => h.textContent).join(" | ") || "(none)");
+
+  // ══ 5. A GENUINE TYPO IS STILL ALLOWED TO BE ONE ══════════════════════════════════════════
+  // Without this the fix above would be a way of telling every player that everything exists.
+  await search("zzqqxnothingatall");
+  ok("a typo returns no shops either", items().length === 0, items().length + " items");
+  ok("🔴 ...and NAMES nothing, unlike the case above", hints().length === 0, hints().length + " named");
+  ok("...saying it was not found, which is the only case allowed to say that",
+     emptyText().indexOf("Nothing found") > -1, emptyText());
 
   return out;
 })()`;
@@ -5947,6 +6166,7 @@ app.whenReady().then(async () => {
     fails += await run("event feed: the reward ladder says when it is a fallback", EVENTFEED, null, null, "battaglia.html");
     fails += await run("event rewards: a sighting and a rumour must not look the same", REWARDCARD, null, null, "battaglia.html");
     fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
+    fails += await run("verse finder: ships, commodities, and which kind of blank", VERSEDEALERS, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);

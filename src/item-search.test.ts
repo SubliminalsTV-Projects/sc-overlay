@@ -124,8 +124,15 @@ check("every quote resolves to a place we can say out loud",
   sample.every((h) => h.quotes.every((q) => !!(q.place || q.body || q.system))));
 check("quotes are cheapest-first", sample.every((h) =>
   h.quotes.every((q, i) => i === 0 || h.quotes[i - 1].price <= q.price)));
+// 🔴 `low`/`high` became nullable when rentals arrived (a set of rental quotes has no PURCHASE
+// spread). Assert they are populated here BEFORE using them, or every check below silently becomes
+// a check about null: a shop item is always for sale outright, so a null in this table is a bug and
+// not a shape to tolerate.
+check("every shop item carries a purchase spread", sample.every((h) => h.low !== null && h.high !== null),
+  sample.filter((h) => h.low === null).length + " with none");
 check("low/high span every shop, not just the returned ones",
-  sample.every((h) => h.low <= h.quotes[0].price && h.high >= h.quotes[h.quotes.length - 1].price));
+  sample.every((h) => h.low! <= h.quotes[0].price && h.high! >= h.quotes[h.quotes.length - 1].price));
+check("no shop item claims a rental price", sample.every((h) => h.rentLow === null && h.rentHigh === null));
 check("shopCount is never smaller than what was sent", sample.every((h) => h.shopCount >= h.quotes.length));
 
 console.log("\n🔴 a truncated quote list still says how many shops there are");
@@ -147,8 +154,8 @@ check("no quote carries a stock-shaped field",
 console.log("\nprice spread — 'the price' does not exist");
 const spread = searchItems(table, "arms", { limit: 200 }).filter((h) => h.shopCount > 1);
 check("multi-shop items exist in the table", spread.length > 0, String(spread.length));
-check("at least one really does vary by shop", spread.some((h) => h.low < h.high),
-  spread.filter((h) => h.low < h.high).length + " of " + spread.length);
+check("at least one really does vary by shop", spread.some((h) => h.low! < h.high!),
+  spread.filter((h) => h.low! < h.high!).length + " of " + spread.length);
 
 console.log("\nthe uuid join to our own blueprint data");
 const withUuid = table.items.filter((i) => i.u);

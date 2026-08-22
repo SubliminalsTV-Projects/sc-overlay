@@ -23,10 +23,21 @@
      the readings are old, so:
        · a result NEVER shows one price — it shows a shop, and a row per shop;
        · every row carries the age of its own reading;
-       · the panel says out loud that stock is unknowable, because the source has no stock field
-         at all and a player who flies out can still find the shelf empty;
+       · the panel says out loud that stock is unknowable FOR AN ITEM, because the item source has
+         no stock field at all and a player who flies out can still find the shelf empty;
        · when the table is a fallback (cache/bundle), the footer says so rather than staying quiet.
-     A UI that implies false precision here is worse than no UI (Sub, repeatedly). */
+     A UI that implies false precision here is worse than no UI (Sub, repeatedly).
+
+     ── WIDENED 2026-08-22: three things, one box ─────────────────────────────────────────────
+     SHIPS are rows in the same table (Sub: "it's really not any different than any other item.
+     People just need to know where it is and know how much it costs"), so there is no ship view
+     and no specs. The single visual difference is the `rent` tag, because a rental price is not a
+     purchase price and 344 of the 632 dealer rows are rentals.
+     COMMODITIES come from the trade table the app already keeps. They are the ONE row type that
+     can state stock, so they do — the caveat above is about the item source, not about every row
+     on screen, and flattening the two would mean hiding a real number to preserve a symmetry.
+     AND A BLANK NOW SAYS WHICH BLANK IT IS. See `renderNothing()`: nobody sells it / you sell it /
+     not found were one message, and two thirds of the catalogue falls in the first. */
   * { box-sizing: border-box; }
   * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb), 0.28) transparent; }
   html, body { margin: 0; height: 100%; background: transparent; }
@@ -148,6 +159,34 @@
   .more { font-size: 9.5px; color: var(--faint); margin-top: 6px; padding-top: 5px;
     border-top: 1px solid rgba(var(--accent-rgb), 0.07); }
 
+  /* ── Two tags a row can carry, and both exist because a bare price would be a lie ───────────
+     🔴 RENT. Sub's ruling is that a ship is just another row, and it is — with exactly one
+     exception: a rental price is not a purchase price. 344 of the 632 dealer rows are rentals, so
+     an unlabelled row would say a 100i costs 28,665 aUEC. It sits immediately before the price
+     because it qualifies THAT NUMBER, not the shop.
+     🔑 STOCK is the opposite case — a fact we have and the item rows do not. There is no stock
+     field anywhere in the item source (the footer says so), but commodity rows carry SCU on 98.6%
+     of buy quotes, and a price you cannot buy any of is not a price. Hiding it to keep the two row
+     types looking identical would be throwing away the most decision-shaped number on the screen.
+     Same chip family as `.age`: colour set by the class, border and background derived from
+     `currentColor`, so both retint with every manufacturer skin. */
+  .tag { flex: none; font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 1px 5px; border-radius: 5px; line-height: 1.35;
+    white-space: nowrap;
+    border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+    background: color-mix(in srgb, currentColor 12%, transparent); }
+  .tag.rent { color: var(--amber); }
+  .tag.stock { color: var(--cyan-dim); text-transform: none; letter-spacing: 0.02em;
+    font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* The empty state carries real names now, so it needs to be a readable list rather than one
+     centred sentence. Left-aligned inside a centred block: a column of item names down the middle
+     of the panel is harder to scan than the same names against an edge. */
+  .hint { margin-top: 12px; text-align: left; display: inline-block; max-width: 100%; }
+  .hint .hrow { display: flex; gap: 6px; align-items: baseline; padding: 2px 0;
+    font-size: 11px; color: var(--cyan-text); }
+  .hint .hcat { font-size: 9.5px; color: var(--faint); white-space: nowrap; }
+
   .empty { padding: 26px 18px; text-align: center; color: var(--faint); font-size: 11.5px; line-height: 1.7; }
   .empty b { color: var(--cyan-text); font-weight: 600; }
 
@@ -260,7 +299,10 @@
     <div class="head">
       <span class="dia"></span>
       <span class="h-title">Verse Finder</span>
-      <input id="q" type="text" placeholder="item name…" spellcheck="false" autocomplete="off" maxlength="60" />
+      <!-- The placeholder is the only place the widget can say what it will answer for, and it now
+           answers for three things. Naming ships explicitly matters: a player has no reason to
+           guess that a box labelled "item name" knows where to buy a Cutlass. -->
+      <input id="q" type="text" placeholder="item, ship or commodity…" spellcheck="false" autocomplete="off" maxlength="60" />
     </div>
 
     <div id="results"></div>
@@ -331,6 +373,31 @@
     if (days === 1) return "1d";
     if (days < 60) return days + "d";
     return Math.floor(days / 30) + "mo";
+  }
+
+  /**
+   * How old OUR COPY of the table is — a different question from `ageOf`, which ages a QUOTE.
+   *
+   * 🔴 They cannot share a helper, and using `ageOf` here was wrong in a way that looked fine:
+   * a quote is a median 34 DAYS old so its ladder starts at "today" and climbs in days, which
+   * collapsed every possible footer value into the single word "today". The table is refreshed
+   * every six hours, so the whole interesting range sits UNDER a day — exactly the range `ageOf`
+   * throws away (Sub: "how about we do updated and then the minutes ago?").
+   *
+   * 🔴 THE UNIT IS SPELLED OUT, matching `originSummary()` in `src/player-origin.ts` verbatim —
+   * "just now" / "19 min ago" / "2h ago". That is not fussiness: Sub read "New Babbage 4M away"
+   * as a distance when the `4m` was an age, because this widget also prints Mm and Gm, so a bare
+   * `m` is genuinely ambiguous and may not appear alone. Same footer, same rule, same wording.
+   */
+  function freshnessOf(ms) {
+    const min = (Date.now() - ms) / 60000;
+    if (!(min >= 0)) return "just now";        // a clock skew must not print "-3 min ago"
+    if (min < 1) return "just now";
+    if (min < 60) return Math.round(min) + " min ago";
+    const hours = min / 60;
+    if (hours < 24) return Math.round(hours) + "h ago";
+    const days = Math.round(hours / 24);
+    return days + (days === 1 ? " day ago" : " days ago");
   }
 
   /** Which colour band a reading falls in.
@@ -613,6 +680,35 @@
         w.title = q.terminal;
         row.appendChild(w);
 
+        // 🔴 RENT, RIGHT AFTER THE SHOP — and NOT beside the price, which is where it was first
+        // written. Putting it there felt right (it qualifies that number) and it broke an older
+        // ruling of Sub's that the widget suite already pins: price and age answer the same
+        // question and must never be separated, because splitting them makes the eye travel to
+        // reconcile two halves of one fact. A tag wedged between them is that split, four
+        // characters wide. Here it reads "Regal Luxury Rentals — RENT — 3d — 28,665 aUEC", which
+        // qualifies the row it is in and leaves the existing rule holding for EVERY row rather
+        // than carving out an exception for rentals.
+        if (q.kind === "rent") {
+          const rt = document.createElement("span");
+          rt.className = "tag rent";
+          rt.textContent = "rent";
+          rt.title = "This is a RENTAL price, not a purchase price — what it costs to hire the "
+            + "vehicle here, not to own it.";
+          row.appendChild(rt);
+        }
+
+        // Stock, commodities only. Placed before the age so the two monospaced chips sit together
+        // and the eye reads "how much is there / how old is that" as one pair.
+        if (q.stockScu != null) {
+          const st = document.createElement("span");
+          st.className = "tag stock";
+          st.textContent = fmt(q.stockScu) + " SCU";
+          st.title = "About " + fmt(q.stockScu) + " SCU was on the shelf when this was last "
+            + "reported. Commodities are the only rows that can say this — shop items have no "
+            + "stock field in the source at all.";
+          row.appendChild(st);
+        }
+
         const a = document.createElement("span");
         a.className = "age " + ageBand(q.asOf);
         a.textContent = ageOf(q.asOf);
@@ -643,7 +739,20 @@
     // 68% of items sold in more than one place cost different amounts at different shops.
     const notes = [];
     if (r.shopCount > SHOPS_SHOWN) notes.push("+" + (r.shopCount - SHOPS_SHOWN) + " more shop" + (r.shopCount - SHOPS_SHOWN === 1 ? "" : "s"));
-    if (r.low !== r.high) notes.push(fmt(r.low) + "–" + fmt(r.high) + " aUEC depending where you buy");
+    // 🔴 TWO SPREADS, NEVER ONE. `low`/`high` are the PURCHASE range and `rentLow`/`rentHigh` the
+    // rental one; a single min/max across both would run from a 28,665 aUEC hire to a 1,089,270
+    // aUEC sale and describe no transaction anybody can make. Either may be null — nothing here
+    // can be rented, or (never seen today, but the shape allows it) nothing is for sale outright.
+    if (r.low != null && r.low !== r.high) notes.push(fmt(r.low) + "–" + fmt(r.high) + " aUEC depending where you buy");
+    if (r.rentLow != null) {
+      notes.push("rental " + (r.rentLow === r.rentHigh ? fmt(r.rentLow) : fmt(r.rentLow) + "–" + fmt(r.rentHigh)) + " aUEC");
+    }
+    // 🔑 Selling is the Trade widget's job and this says so rather than guessing at it. The COUNT
+    // is a fact we hold; "sell it here for the most" is a route calculation that needs your ship
+    // and belongs where that lives.
+    if (r.kind === "commodity" && r.sellPlaces) {
+      notes.push(r.sellPlaces + " terminal" + (r.sellPlaces === 1 ? "" : "s") + " will buy it back — the Trade widget ranks which pays");
+    }
     if (notes.length) {
       const m = document.createElement("div");
       m.className = "more";
@@ -662,6 +771,70 @@
     box.appendChild(e);
   }
 
+  /**
+   * 🔴 NOTHING TO SELL YOU IS THREE DIFFERENT ANSWERS, AND THEY USED TO BE ONE BLANK.
+   *
+   * The old copy said "No shop known for X — that often means nobody has reported one" and then
+   * quoted a COUNT. It was honest and it was useless, because it said the same thing whether the
+   * player had typed a real armour set, a commodity you can only sell, or a typo. Two thirds of the
+   * catalogue (4,962 of 7,753 items) has no shop, so "we found nothing" was overwhelmingly the
+   * WRONG reading of that blank — and Armor›Full Set alone is 112 real sets somebody will type by
+   * name and, until now, be told nothing about.
+   *
+   *   NOBODY SELLS IT   we can name the item. It exists; no shop has been reported. Say which.
+   *   YOU SELL IT       a commodity with no buy price anywhere — 36 of 122. Say what it is and
+   *                     where the ranking lives, because "where do I sell this" is Trade's job.
+   *   NOT FOUND         nothing matched anything we hold. The honest wording for a typo, and the
+   *                     ONLY case that may imply the thing might not exist.
+   *
+   * ⚠️ `knowsUnpriced` gates the third message. An OLD table (schema 1, or a bundle built before
+   * this shipped) carries the count and no names, and an empty `unpriced` there means "we cannot
+   * say" rather than "we checked". Telling that player their armour set does not exist would be
+   * inventing certainty out of a missing field.
+   */
+  function renderNothing(data) {
+    const q = escapeHtml(data.query);
+    const unpriced = data.unpriced || [];
+    const sellOnly = data.sellOnly || [];
+
+    if (unpriced.length || sellOnly.length) {
+      const lead = unpriced.length
+        ? "Nothing sells <b>" + q + "</b> — but it does exist."
+        : "<b>" + q + "</b> is a commodity you SELL, not one you buy.";
+      showEmpty(lead);
+      const box = $("results").firstChild;
+      const list = document.createElement("div");
+      list.className = "hint";
+      for (const u of unpriced) {
+        const row = document.createElement("div");
+        row.className = "hrow";
+        row.appendChild(Object.assign(document.createElement("span"), { textContent: u.name }));
+        row.appendChild(Object.assign(document.createElement("span"), { className: "hcat", textContent: u.category }));
+        list.appendChild(row);
+      }
+      for (const s of sellOnly) {
+        const row = document.createElement("div");
+        row.className = "hrow";
+        row.appendChild(Object.assign(document.createElement("span"), { textContent: s.name }));
+        row.appendChild(Object.assign(document.createElement("span"), {
+          className: "hcat",
+          textContent: s.sellPlaces + " terminal" + (s.sellPlaces === 1 ? "" : "s") + " buy it — see Trade",
+        }));
+        list.appendChild(row);
+      }
+      box.appendChild(list);
+      return;
+    }
+
+    // Nothing matched at all. Only here may the copy suggest the thing might not exist — and even
+    // then it hedges on an old table, which cannot tell the difference.
+    showEmpty("Nothing found for <b>" + q + "</b>."
+      + "<br />" + (data.knowsUnpriced
+        ? "No shop, no dealer and no commodity by that name."
+        : "Check the spelling — " + fmt(data.catalogueOnly || 0) + " known items have no shop on record, "
+          + "and this copy of the table cannot name them."));
+  }
+
   function render(data) {
     const box = $("results");
     // The eye is about the SESSION, not about these results, so it updates on every response —
@@ -670,16 +843,11 @@
     lastOrigin = data.origin || null;
     renderEye(data.origin, data.order);
     if (!data.query) {
-      showEmpty("Type an item name.<br />Weapons, armour, ship components, gear.");
+      showEmpty("Type a name.<br />Weapons, armour, components, gear — ships and commodities too.");
       return;
     }
     if (!data.results.length) {
-      // 🔴 "We don't know of a shop" and "no such item" are DIFFERENT answers, and the common case
-      // is the first: roughly two thirds of the item catalogue has no reported shop at all. Saying
-      // "not found" flatly would tell the player the item does not exist, which is usually false.
-      showEmpty("No shop known for <b>" + escapeHtml(data.query) + "</b>."
-        + "<br />That often means nobody has reported one — "
-        + (data.catalogueOnly ? fmt(data.catalogueOnly) + " known items have no shop on record." : "not that it cannot be bought."));
+      renderNothing(data);
       return;
     }
     box.textContent = "";
@@ -701,12 +869,19 @@
     // is now the credit block — doing that would delete the UEX mark and wordmark on the first
     // response and leave the attribution showing only for the instant before any data arrived.
     const t = $("srctext");
-    const age = data.fetchedAt ? ageOf(Math.floor(data.fetchedAt / 1000)) : "unknown age";
+    // 🔑 `freshnessOf`, not `ageOf` — this is how old OUR COPY is (refreshed every six hours), not
+    // how old a QUOTE is (a median 34 days). See the two helpers' notes; sharing one collapsed
+    // every value here into the word "today".
+    const age = data.fetchedAt ? freshnessOf(data.fetchedAt) : "unknown age";
     if (data.source === "live") {
       el.className = "";
-      // 🔑 "UEX via" is gone from the sentence because the wordmark beside it already says UEX.
-      // Repeating it made the credit read as part of a status line rather than as a credit.
-      t.textContent = "via subliminal.gg · updated " + age;
+      // 🔑 "UEX via" went first because the wordmark beside it already says UEX — repeating it made
+      // the credit read as part of a status line rather than as a credit.
+      // 🔑 "via subliminal.gg" followed (Sub, 2026-08-22). Same reasoning one step further: WHOSE
+      // proxy the table came through is our plumbing, not the player's business. What the line is
+      // for is how old the reading is, and every word that is not that competes with it in a 9px
+      // footer. The badge still carries the attribution that actually matters.
+      t.textContent = "updated " + age;
     } else if (data.source === "cache") {
       el.className = "fallback";
       t.textContent = "offline — last download " + age;

@@ -97,6 +97,10 @@ interface Payload {
   terminals?: unknown[];
   droppedOffline?: number;
   catalogueOnly?: number;
+  /** `[name, category]` pairs — the items nobody sells. Passed straight through: without it the
+   *  bundled tier could COUNT them and never name one, so an offline player would be back to the
+   *  blank that cannot tell a real armour set from a typo. */
+  unpriced?: [string, string][];
   bundledAt?: number;
 }
 
@@ -234,6 +238,7 @@ const out = {
   terminals,
   droppedOffline: typeof body!.droppedOffline === "number" ? body!.droppedOffline : 0,
   catalogueOnly: typeof body!.catalogueOnly === "number" ? body!.catalogueOnly : 0,
+  unpriced: Array.isArray(body!.unpriced) ? body!.unpriced : [],
   bundledAt: Date.now(),
 };
 
@@ -268,7 +273,8 @@ try {
       `  terminals  ${v.terminals}${d(v.terminals, prevTerms)}\n` +
       `  quotes     ${v.quotes}\n` +
       `  offline rows dropped upstream: ${out.droppedOffline}\n` +
-      `  catalogue items with no known shop: ${out.catalogueOnly}\n` +
+      `  catalogue items with no known shop: ${out.catalogueOnly} (${out.unpriced.length} named)\n` +
+      `  vehicles among the items: ${items.filter((i) => (i as { s?: string }).s === "Vehicles").length}\n` +
       `  verified by loading it back through ItemShopStore (source=${v.source}).`,
   );
 } finally {

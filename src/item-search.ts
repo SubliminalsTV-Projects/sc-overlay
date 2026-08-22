@@ -140,6 +140,14 @@ export interface ResolvedQuote {
   price: number;
   /** Epoch seconds. The caller renders an age from it; it is never omitted. */
   asOf: number;
+  /** 🔴 A RENTAL, not a purchase. Absent on every shop item and on every commodity - only a vehicle
+   *  dealer's rental rows carry it. The widget MUST label these: 344 of the 632 dealer rows are
+   *  rentals, and an unlabelled one says a 100i costs 28,665 aUEC. */
+  kind?: "rent";
+  /** SCU on the shelf, commodities only. 🔑 Items have no stock field anywhere in the source (see
+   *  `item-shops.ts`), so this is the one axis where the commodity data is genuinely richer and it
+   *  would be a real loss to hide it for the sake of making the two row types look the same. */
+  stockScu?: number | null;
 }
 
 export interface SearchHit {
@@ -149,22 +157,39 @@ export interface SearchHit {
   section: string;
   size: string | null;
   uuid: string | null;
+  /** What kind of row this is. Absent for a shop item or a vehicle, which are the same thing as far
+   *  as this widget is concerned (Sub's ruling). `"commodity"` marks a row that came from the trade
+   *  table instead, which is the only row type that can carry stock. */
+  kind?: "commodity";
   /** How many shops sell it. Stated separately because the wire truncates `quotes`. */
   shopCount: number;
   /** Cheapest first. */
   quotes: ResolvedQuote[];
-  /** The cheapest and dearest price across ALL shops, not just the returned ones.
+  /** The cheapest and dearest PURCHASE price across ALL shops, not just the returned ones.
    *  🔴 Present even when they are equal, because "the price" does not exist - 68% of multi-shop
-   *  items vary by shop, and a single number would be wrong for most of the catalogue. */
-  low: number;
-  high: number;
+   *  items vary by shop, and a single number would be wrong for most of the catalogue.
+   *  🔴 Null when nothing here is for sale outright, which is why it is nullable at all: a spread
+   *  computed across purchases AND rentals would run from a 28,665 aUEC hire to a 1,089,270 aUEC
+   *  sale and be a true statement about nothing. */
+  low: number | null;
+  high: number | null;
+  /** The same, over RENTAL quotes. Null whenever nothing here can be rented - which is everything
+   *  except 49 vehicles. A separate pair rather than a flag on `low` because they are prices for
+   *  two different transactions and the widget has to be able to print both. */
+  rentLow: number | null;
+  rentHigh: number | null;
+  /** Terminals that will BUY this commodity from the player. Commodities only, and a count only -
+   *  where to sell it for the most is a route calculation and belongs to the Trade widget. */
+  sellPlaces?: number;
   score: number;
 }
 
 function resolve(q: ItemQuote, terminals: ShopTerminal[]): ResolvedQuote | null {
   const t = terminals[q.t];
   if (!t) return null;
-  return { terminal: t.n, system: t.sys, body: t.body, place: t.place, price: q.p, asOf: q.m };
+  const out: ResolvedQuote = { terminal: t.n, system: t.sys, body: t.body, place: t.place, price: q.p, asOf: q.m };
+  if (q.k === "rent") out.kind = "rent";
+  return out;
 }
 
 export interface SearchOptions {
@@ -216,8 +241,17 @@ export function searchItems(table: ItemShopTable, query: string, opts: SearchOpt
   for (const { item, score } of scored.slice(0, limit)) {
     const quotes = item.q.map((q) => resolve(q, table.terminals)).filter((q): q is ResolvedQuote => !!q);
     if (!quotes.length) continue;
-    let low = quotes[0].price, high = quotes[0].price;
-    for (const q of quotes) { if (q.price < low) low = q.price; if (q.price > high) high = q.price; }
+    // 🔴 TWO SPREADS, NEVER ONE. A rental and a purchase are prices for different transactions, so
+    // a single min/max over both would run from the cheapest hire to the dearest sale and describe
+    // no transaction anyone can make.
+    const span = (rows: ResolvedQuote[]): [number, number] | [null, null] => {
+      if (!rows.length) return [null, null];
+      let lo = rows[0].price, hi = rows[0].price;
+      for (const q of rows) { if (q.price < lo) lo = q.price; if (q.price > hi) hi = q.price; }
+      return [lo, hi];
+    };
+    const [low, high] = span(quotes.filter((q) => q.kind !== "rent"));
+    const [rentLow, rentHigh] = span(quotes.filter((q) => q.kind === "rent"));
     out.push({
       name: item.n,
       company: item.co,
@@ -230,10 +264,48 @@ export function searchItems(table: ItemShopTable, query: string, opts: SearchOpt
       quotes: (opts.orderQuotes ? opts.orderQuotes(quotes) : quotes).slice(0, perItem),
       low,
       high,
+      rentLow,
+      rentHigh,
       score,
     });
   }
   return out;
+}
+
+/** A catalogued item that no shop is reported to sell, matched against the query. */
+export interface UnpricedHit {
+  name: string;
+  category: string;
+  score: number;
+}
+
+/**
+ * The items UEX knows about that nobody has priced, ranked against the same query.
+ *
+ * 🔴 THIS IS THE WHOLE OF FIX #3, AND IT NEEDED NO NEW DATA - only for the answer to stop being
+ * thrown away. Two thirds of the catalogue (4,962 of 7,753) has no shop, so "we found nothing" was
+ * overwhelmingly the WRONG reading of a blank result: the common truth is "this exists and nobody
+ * has reported where to buy it", which is a completely different thing to tell a player than "no
+ * such item". Armor›Full Set is where it bites hardest - 112 real armour sets, every one of them
+ * something a person will type by name and, until now, be told nothing about.
+ *
+ * 🔑 Scored with `scoreItem` like everything else, through a synthetic `ShopItem`, so a name that
+ * would have ranked first had it been priced still ranks first here. A second, looser matcher would
+ * have made the hint fire on things the main search would not have found, which reads as the widget
+ * disagreeing with itself.
+ */
+export function searchUnpriced(table: ItemShopTable, query: string, limit = 6): UnpricedHit[] {
+  if (!table.unpriced?.length) return [];
+  const qTokens = tokenize(query);
+  if (!qTokens.length) return [];
+  const qJoined = qTokens.join("");
+  const hits: UnpricedHit[] = [];
+  for (const u of table.unpriced) {
+    const score = scoreItem({ n: u.n, co: null, c: u.c, s: "", z: null, u: null, q: [] }, qTokens, qJoined);
+    if (score > 0) hits.push({ name: u.n, category: u.c, score });
+  }
+  hits.sort((a, b) => b.score - a.score || a.name.length - b.name.length || a.name.localeCompare(b.name));
+  return hits.slice(0, Math.max(1, limit));
 }
 
 /** Provenance every response carries, whatever it is about.
@@ -251,7 +323,14 @@ export function provenance(table: ItemShopTable) {
     catalogueOnly: table.catalogueOnly,
     lastError: table.lastError,
     /** 🔴 Stated as a capability flag rather than left for the UI to remember. There is no stock
-     *  field in the source at all, so no client may ever render a shelf count. */
+     *  field in the ITEM source at all, so no client may render a shelf count on an item row.
+     *  ⚠️ Commodity rows are the exception and carry `stockScu` per quote — the flag is about this
+     *  table, not about every row the widget can draw, and the two must not be conflated. */
     hasStock: false,
+    /** 🔴 Whether the table can NAME the items nobody sells, as opposed to only counting them.
+     *  False on a schema-1 payload or an old bundle, and the UI must then fall back to the vaguer
+     *  wording rather than claiming an item does not exist — an empty `unpriced` means "we cannot
+     *  say", never "we checked and it is not there". */
+    knowsUnpriced: table.unpriced.length > 0,
   };
 }
