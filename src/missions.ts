@@ -21,6 +21,11 @@ import { parseLine } from "./parser.js";
 import { BlueprintDetailStore, type BlueprintDetail } from "./blueprint-detail.js";
 import { Phrasebook, type PhrasebookInfo } from "./localization.js";
 import type { SyncSource } from "./sync.js";
+import {
+  tiersCrossed, receiptForCrossing, candidateForTier, isPromptDue, shouldAsk,
+  RECEIPT_WINDOW_MS, PROMPT_DWELL_MS,
+  type ReceiptNote, type RewardPrompt, type PromptAnswerSource,
+} from "./event-rewards.js";
 
 // ---- dataset shape (matches tools/build-blueprint-data.sql output) ----
 export interface PoolEntry {
@@ -292,6 +297,17 @@ export interface EventDef {
   /** Tier rewards, filled in as they are seen. `name` must equal the log's
    *  `Received Blueprint: <name>` exactly, or the collected-tier bar can never light up. */
   rewards?: { tier: number; name: string; item?: string | null }[];
+  /**
+   * 🔴 UNCONFIRMED guesses at tier rewards — for Siege of Orison, five names relayed from a
+   * viewer's chatbot answer. **They must NEVER render as a reward anywhere.** `EventProgress`
+   * deliberately does not carry them, so no widget can reach one by accident.
+   *
+   * Their one sanctioned use is `src/event-rewards.ts`'s prompt, where the candidate is the
+   * thing being ASKED ABOUT ("it looks like you received X — is that right?"). Answering is
+   * exactly the mechanism that promotes a candidate to a measurement, which is why the guess
+   * may appear inside the question and nowhere else.
+   */
+  rewardCandidates?: { tier: number; name: string; confirmed?: boolean }[];
 }
 
 /** One witnessed "this completion counted toward the event" observation. */
@@ -786,6 +802,8 @@ interface Persisted {
    *  the game never restates, so losing it loses the estimate permanently. Absent in older state
    *  files, which reads correctly as "no event progress seen yet". */
   eventContributions?: Record<string, EventContribution[]>;
+  rewardPrompts?: RewardPrompt[];
+  askedTiers?: Record<string, number[]>;
 }
 
 /** Stored completed-mission record (newest first, capped). Deduped by missionId+at. */
@@ -1225,6 +1243,22 @@ export class MissionTracker extends EventEmitter {
    *  estimate is an accumulation of things we saw once and can never re-observe, exactly like
    *  repWitnessed. */
   private eventContributions = new Map<string, EventContribution[]>();
+  /** Tier-crossing questions awaiting an answer. See src/event-rewards.ts. */
+  private rewardPrompts: RewardPrompt[] = [];
+  /** Highest tier already asked about, per event id. Persisted, and it is what stops the app
+   *  re-asking about every tier a returning player cleared weeks ago — `tiersCrossed()` cannot
+   *  know that on its own, because a fresh session has no previous percentage to compare. */
+  private askedTiers = new Map<string, number[]>();
+  /**
+   * Recent `Received Blueprint:` lines, for correlating a receipt with a tier crossing.
+   *
+   * 🔴 FILLED ABOVE THE `isLiveEnv` GATE, unlike `observed`. That gate exists because `observed`
+   * is what SiteSync pushes with `replace: true`, so a PTU receipt reaching it would overwrite a
+   * player's real collection. This buffer has no such path — it is in-memory, never persisted and
+   * never synced — and an event runs on the PTU FIRST, which is exactly when these blanks need
+   * filling. Gating it would have made the whole feature silently do nothing for Sub.
+   */
+  private recentReceipts: ReceiptNote[] = [];
   /**
    * Completions waiting to be claimed by the journal entry that follows them, OLDEST FIRST.
    *
@@ -1822,6 +1856,10 @@ export class MissionTracker extends EventEmitter {
       }
       case "blueprintReceived": {
         // A test-server receipt is not part of your live collection and must never sync.
+        // Correlation buffer FIRST, above the environment gate — see `recentReceipts`. A tier
+        // reward that arrives on the PTU is still evidence of what that tier gives, and the
+        // reason `observed` is gated does not apply to a buffer nothing syncs.
+        this.noteReceiptForEvent(ev.name, ev.ts);
         // Dropped here rather than filtered later: `observed` is the authoritative set
         // SiteSync pushes with replace:true, so anything that reaches it is already live.
         if (!this.isLiveEnv) break;
@@ -1899,8 +1937,12 @@ export class MissionTracker extends EventEmitter {
         // Dedupe on the log's own timestamp, which is stable across a re-seeded replay. Two
         // genuine entries 115 ms apart have different stamps, so this cannot collapse them.
         if (!list.some((c) => c.at === at)) {
+          // Read the percentage BEFORE the contribution lands, so the crossing is a real
+          // transition rather than a comparison against a number that already includes it.
+          const before = this.eventProgress(def.id)?.pct ?? null;
           list.push({ key, title: claimed?.title ?? null, at, points });
           this.eventContributions.set(def.log, list);
+          this.noteTierCrossings(def, before, Number.isFinite(atMs) ? atMs : Date.now(), at);
           this.saveState();
           this.emit("change");
         }
@@ -3374,6 +3416,110 @@ export class MissionTracker extends EventEmitter {
     };
   }
 
+  // ── Self-filling event rewards (src/event-rewards.ts) ─────────────────────────────────────
+
+  /** Remember a blueprint receipt just long enough to correlate it with a tier crossing.
+   *  In memory only, capped, and never synced — see `recentReceipts`. */
+  private noteReceiptForEvent(rawName: string, ts?: string | null): void {
+    const atMs = ts ? Date.parse(ts) : Date.now();
+    if (!Number.isFinite(atMs)) return;
+    // Translate at the edge, exactly like `observed` does, so a German player's report names the
+    // same blueprint everyone else's does. An unrecognised name is still recorded verbatim: the
+    // whole point is to learn names we do not have.
+    const { name } = this.toEnglish(rawName);
+    this.recentReceipts.push({ name, atMs });
+    // A crossing can only claim a receipt inside RECEIPT_WINDOW_MS, so anything older than a
+    // generous multiple of that is dead weight.
+    const floor = atMs - RECEIPT_WINDOW_MS * 10;
+    this.recentReceipts = this.recentReceipts.filter((r) => r.atMs >= floor).slice(-40);
+  }
+
+  /**
+   * Raise a question for each tier this contribution crossed.
+   *
+   * 🔑 THE RECEIPT IS NOT AVAILABLE YET, and that is not a bug. The journal entry is logged ~383
+   * ms BEFORE the blueprint line, so at this moment `recentReceipts` cannot hold it. The prompt is
+   * created now with `observed: null` and filled in by `resolvePrompts()` once the window closes —
+   * which is also why `isPromptDue()` refuses to show a prompt until then. Raising the card
+   * immediately would ask "we did not see what you got" and then change its mind a third of a
+   * second later, which is worse than a card that arrives three seconds late.
+   */
+  private noteTierCrossings(def: EventDef, beforePct: number | null, crossedAtMs: number, crossedAt: string): void {
+    const after = this.eventProgress(def.id)?.pct ?? null;
+    const asked = this.askedTiers.get(def.id) ?? [];
+    const measured = (def.rewards ?? []).map((r) => r.tier);
+    for (const tier of tiersCrossed(beforePct, after, def.tiers ?? [])) {
+      if (asked.includes(tier)) continue;
+      // Record it as asked whatever happens next, so a tier whose reward is already known is
+      // never revisited if that reward is later withdrawn from events.json.
+      asked.push(tier);
+      if (!shouldAsk(tier, measured)) continue;
+      this.rewardPrompts.push({
+        id: def.id + ":" + tier,
+        eventId: def.id,
+        eventLabel: def.label,
+        tier,
+        crossedAt,
+        crossedAtMs,
+        observed: null,
+        candidate: candidateForTier(def.rewardCandidates, tier),
+        answer: null,
+        reported: false,
+      });
+    }
+    this.askedTiers.set(def.id, asked);
+    // Cap: a prompt is a question, and a backlog of them is a nag rather than a feature.
+    if (this.rewardPrompts.length > 12) this.rewardPrompts = this.rewardPrompts.slice(-12);
+  }
+
+  /** Attach the observed blueprint to any prompt whose correlation window has now closed. */
+  private resolvePrompts(nowMs: number): void {
+    for (const p of this.rewardPrompts) {
+      if (p.observed !== null || p.answer) continue;
+      if (nowMs < p.crossedAtMs + RECEIPT_WINDOW_MS) continue;   // still collecting
+      const hit = receiptForCrossing(p.crossedAtMs, this.recentReceipts);
+      if (hit) p.observed = hit.name;
+    }
+  }
+
+  /** The questions the UI should be showing right now. Never more than one — two cards stacked
+   *  over a game is a modal by accident, and the second is still there when the first is answered. */
+  eventRewardPrompts(nowMs = Date.now()): RewardPrompt[] {
+    this.resolvePrompts(nowMs);
+    const due = this.rewardPrompts.filter((p) => isPromptDue(p, nowMs));
+    return due.slice(0, 1);
+  }
+
+  /**
+   * Record the player's answer.
+   *
+   * 🔑 An empty name with source "typed" is NOT the same as "none": one is someone who started
+   * typing and gave up, the other is someone asserting the tier gave them nothing. The caller
+   * decides which it sent; this only stores it. `reportBody()` is what turns it into a claim.
+   */
+  answerRewardPrompt(id: string, name: string | null, source: PromptAnswerSource): RewardPrompt | null {
+    const p = this.rewardPrompts.find((x) => x.id === id);
+    if (!p || p.answer) return null;
+    const clean = typeof name === "string" ? name.trim().slice(0, 120) : null;
+    p.answer = { name: clean || null, source, at: new Date().toISOString() };
+    this.saveState();
+    this.emit("change");
+    return p;
+  }
+
+  /** Prompts whose answers have not yet reached the site. Drained by the sidecar. */
+  unreportedRewardAnswers(): RewardPrompt[] {
+    return this.rewardPrompts.filter((p) => p.answer && !p.reported);
+  }
+
+  /** Mark an answer as delivered, so it is never sent twice. */
+  markRewardAnswerReported(id: string): void {
+    const p = this.rewardPrompts.find((x) => x.id === id);
+    if (!p || p.reported) return;
+    p.reported = true;
+    this.saveState();
+  }
+
   giverTrack(giver: string): GrindTrack | null {
     if (!this.dataset) return null;
     const want = norm(giver);
@@ -4338,6 +4484,8 @@ export class MissionTracker extends EventEmitter {
       // not worked — which is exactly how it presented while being diagnosed.
       this.missionHistory = dedupeHistory(data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
       this.eventContributions = new Map(Object.entries(data.eventContributions ?? {}));
+      this.rewardPrompts = data.rewardPrompts ?? [];
+      this.askedTiers = new Map(Object.entries(data.askedTiers ?? {}));
     } catch {
       /* first run */
     }
@@ -4357,6 +4505,8 @@ export class MissionTracker extends EventEmitter {
       observedAt: Object.fromEntries(this.observedAt),
       missionHistory: this.missionHistory,
       eventContributions: Object.fromEntries(this.eventContributions),
+      rewardPrompts: this.rewardPrompts,
+      askedTiers: Object.fromEntries(this.askedTiers),
     };
     try {
       if (!existsSync(this.stateDir)) mkdirSync(this.stateDir, { recursive: true });

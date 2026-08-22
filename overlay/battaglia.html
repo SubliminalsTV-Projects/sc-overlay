@@ -167,6 +167,37 @@
     color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.06);
     border: 1px solid var(--divider); border-radius: 4px; }
   .evwarn { color: var(--gold); }
+  /* ── "You just crossed a tier — is this what you got?" ─────────────────────────────────
+     🔑 It sits ABOVE the body rather than inside it, so switching view tabs cannot scroll the
+     question away or replace it. Sub's brief: a pop-up, non-blocking, up for two minutes. */
+  .rwcard { flex: none; margin: 8px 12px 0; padding: 9px 10px; border-radius: 6px;
+    border: 1px solid var(--gold); background: rgba(var(--value-rgb), 0.10);
+    position: relative; z-index: 5; }
+  .rwcard[hidden] { display: none; }
+  .rwcard .rwq { font-size: 11.5px; line-height: 1.5; color: var(--cyan-text); }
+  .rwcard .rwq b { color: var(--gold); }
+  /* ⚠️ A GUESS AND A SIGHTING MUST NOT LOOK THE SAME. The candidate is an unverified name from
+     a third party; the observation is what the log actually saw. Both appear inside the
+     question, and the caption below the name says which one this is — in words, because a
+     colour difference is not something a player can be expected to decode. */
+  .rwcard .rwname { display: block; margin: 5px 0 2px; font-size: 12.5px; font-weight: 700;
+    color: var(--cyan-bright); word-break: break-word; }
+  .rwcard .rwsrc { display: block; font-size: 9.5px; color: var(--faint); }
+  .rwcard .rwrow { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 8px; }
+  .rwcard .rwbtn { font-family: var(--sans); font-size: 10.5px; font-weight: 700;
+    color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.16);
+    border: 1px solid var(--border); border-radius: 5px; padding: 4px 9px; cursor: pointer; }
+  .rwcard .rwbtn:hover { background: rgba(var(--accent-rgb), 0.28); border-color: var(--cyan); }
+  .rwcard .rwbtn.yes { color: var(--gold); border-color: var(--gold); }
+  .rwcard .rwtext { flex: 1; min-width: 130px; font-family: var(--sans); font-size: 11px;
+    color: var(--cyan-text); background: rgba(0, 0, 0, 0.32);
+    border: 1px solid var(--divider); border-radius: 5px; padding: 4px 6px; }
+  .rwcard .rwfoot { margin-top: 7px; font-size: 9.5px; line-height: 1.45; color: var(--faint); }
+  .rwcard .rwclock { font-family: var(--mono); }
+  .rwcard .rwx { position: absolute; top: 4px; right: 6px; font-size: 12px; line-height: 1;
+    color: var(--faint); background: none; border: 0; cursor: pointer; padding: 2px 4px; }
+  .rwcard .rwx:hover { color: var(--cyan-bright); }
+
 
   .tabs { flex: none; display: flex; gap: 4px; flex-wrap: wrap; padding: 7px 12px;
     border-bottom: 1px solid var(--divider); position: relative; z-index: 4; }
@@ -210,6 +241,12 @@
     </div>
 
     <div class="tabs" id="tabs" style="display:none"></div>
+    <div id="rwcard" class="rwcard" hidden>
+      <button id="rwx" class="rwx" type="button" title="Dismiss without answering">✕</button>
+      <div id="rwq" class="rwq"></div>
+      <div id="rwrow" class="rwrow"></div>
+      <div id="rwfoot" class="rwfoot"></div>
+    </div>
     <div id="body"><div class="empty" id="emptyState">Loading Battaglia track…</div></div>
   </div>
 
@@ -236,6 +273,12 @@
 
   let track = null;
   let events = [];        // dynamic-event progress from /api/events (see EventProgress in missions.ts)
+  let feed = null;        // where that event DATA came from: live / cache / bundled (EventFeedState)
+  // Mirrors RECEIPT_WINDOW_MS / PROMPT_DWELL_MS in src/event-rewards.ts. The sidecar is the
+  // authority on whether a prompt is due; these only drive the visible countdown, so a drift
+  // costs a second on a clock rather than a card that will not go away.
+  const RW_WINDOW_MS = 3000;
+  const RW_DWELL_MS = 120000;
   let view = "giver";     // "giver" = the grind track; otherwise an event id
   let mode = "rewards";   // "rewards" = the ship/item ladder, "missions" = per-rank mission list
   let tab = null;         // selected rank in mission mode
@@ -254,7 +297,20 @@
     // is its own try/catch and its own state.
     try {
       const re = await fetch("/api/events", { cache: "no-store" });
-      if (re.ok) events = (await re.json()).events || [];
+      if (re.ok) {
+        const j = await re.json();
+        events = j.events || [];
+        // Provenance of the reward/tier data itself — see src/event-feed.ts. The ladder is
+        // fetched from subliminal.gg so a reward confirmed mid-event reaches players without an
+        // app release; when that fetch is failing the player has to be able to tell.
+        feed = j.feed || null;
+        rwReporting = !!j.reporting;
+        // Only ever REPLACE the card from a poll when the sidecar still says one is due. A
+        // player halfway through typing an answer must not have the box yanked out from under
+        // them by a routine refresh, so an unchanged prompt id is left alone.
+        if (!j.rewardPrompt) rwHide();
+        else if (!rwPrompt || rwPrompt.id !== j.rewardPrompt.id) rwRender(j.rewardPrompt);
+      }
     } catch { /* keep the last good event list */ }
     render();
   }
@@ -641,6 +697,45 @@
     }
   }
 
+  /** Rough "how long ago", in the largest unit that is still honest. */
+  function ago(ms) {
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 90) return "just now";
+    const m = Math.round(s / 60);
+    if (m < 90) return m + " minute" + (m === 1 ? "" : "s") + " ago";
+    const h = Math.round(m / 60);
+    if (h < 48) return h + " hour" + (h === 1 ? "" : "s") + " ago";
+    return Math.round(h / 24) + " days ago";
+  }
+
+  /**
+   * One line, only when the player is genuinely looking at a FALLBACK reward table.
+   *
+   * 🔑 SILENT WHEN HEALTHY, on purpose. The tiers and rewards are fetched from subliminal.gg so a
+   * discovery lands without an app release; a successful (or merely quiet) fetch needs no words,
+   * and a banner on every render is the clutter Sub has ruled against elsewhere. It speaks in
+   * exactly the two cases the player cannot otherwise distinguish from "there is no reward":
+   * the shipped table with no successful fetch behind it, and a downloaded table that has since
+   * gone stale because the site is unreachable.
+   */
+  function feedCaveat(f) {
+    // `undefined` means "use whatever the last poll gave us" (the production call); an
+    // explicit null means "there is no feed", which is what a suite needs to be able to say.
+    f = f === undefined ? feed : f;
+    if (!f) return "";
+    if (f.source === "bundled") {
+      // No error yet means the first check has simply not returned. Saying anything then would
+      // be crying wolf on a request that is about to succeed.
+      if (!f.lastError) return "";
+      return '<span class="evwarn">This reward list is the one the app shipped with</span> — subliminal.gg is unreachable, so a reward confirmed since this build won\'t appear yet.';
+    }
+    if (f.lastError) {
+      return '<span class="evwarn">Reward list may be out of date</span> — downloaded ' +
+        (f.fetchedAt ? ago(f.fetchedAt) : "earlier") + ", and subliminal.gg is unreachable right now.";
+    }
+    return "";
+  }
+
   function renderEvent(ev) {
     if (!ev) return;
     $("tabs").style.display = "none";
@@ -674,6 +769,8 @@
         " not counted yet</span> — those contracts' point values haven't been measured, so the figure above is LOW.");
     }
     meta.push("The game never reports your event points to the app. Check your in-game Journal for the real number.");
+    const stale = feedCaveat();
+    if (stale) meta.push(stale);
     html.push('<div class="evmeta">' + meta.join("<br>") + "</div>");
 
     // The ladder. This is the part Sub asked for: percent -> loot.
@@ -701,6 +798,192 @@
   try { host()?.ready?.(); } catch { /* not embedded */ }
   // Per-widget settings, opened by the bar's cog. Controls that used to crowd the header live
   // here; the parent injects its Text size row into this same sheet.
+  // Diagnostic hook so the widget suite can drive the events-feed caveat with a KNOWN feed
+  // state. The page's own `feed` is filled from /api/events and is whatever the live sidecar
+  // happens to be doing, which is not something an assertion can pin.
+
+  // ── "You just crossed a tier — is this what you got?" ────────────────────────────────────
+  //
+  // The sidecar decides WHETHER to ask (src/event-rewards.ts); this only asks. Three states,
+  // and they are genuinely different questions rather than one question with a blank:
+  //
+  //   observed             -> one click. "It looks like you received X. Is that right?"
+  //   candidate, no sight  -> still one click, but the name is an UNCONFIRMED guess and the
+  //                           card says so in words. Confirming it is what promotes it.
+  //   neither              -> open question. Nothing to agree with, so no Yes button at all —
+  //                           a Yes here would be agreeing with nothing.
+  //
+  // 🔴 A CANDIDATE MUST NEVER READ AS A FACT. It comes from a viewer relaying a chatbot answer.
+  // Inside this question is the only place it may appear, because the question is what turns it
+  // into a measurement.
+  let rwPrompt = null;      // the prompt the sidecar says is due
+  let rwReporting = false;  // is crowdsourced reporting switched on for this player
+  let rwTyping = false;     // do we currently hold the canvas-wide keyboard grab
+  let rwTick = null;
+
+  // ⚠️ The free-text field takes the canvas-wide keyboard grab, which makes the WHOLE overlay
+  // swallow clicks and keys on every monitor until it is released. So: one deliberate act takes
+  // it, and every exit path gives it back — answering, dismissing, the card expiring, and the
+  // widget being hidden (which unloads the iframe, stranding the grab with no UI left to lower
+  // it). See __battExitTyping and the registry's onHide.
+  function rwSetTyping(on) {
+    const want = !!on;
+    if (want === rwTyping) return;
+    rwTyping = want;
+    try {
+      if (want) { if (host()) host().editStart(); else rwFocusInput(); }
+      else if (host()) host().editEnd();
+    } catch { /* standalone, no host bridge */ }
+    if (!want) { const a = document.activeElement; if (a && a.blur) a.blur(); }
+  }
+  function rwFocusInput() {
+    const el = document.getElementById("rwtext");
+    if (el) { try { el.focus({ preventScroll: true }); } catch { el.focus(); } }
+  }
+  window.__battFocus = () => { if (rwTyping) rwFocusInput(); };
+  window.__battExitTyping = () => rwSetTyping(false);
+
+  /** Seconds left before the card retires itself. Derived from the crossing time rather than a
+   *  timer started on render, so a poll that arrives late shows the REAL time remaining. */
+  function rwSecondsLeft(p) {
+    const ends = p.crossedAtMs + RW_WINDOW_MS + RW_DWELL_MS;
+    return Math.max(0, Math.round((ends - Date.now()) / 1000));
+  }
+
+  function rwHide() {
+    rwSetTyping(false);
+    rwPrompt = null;
+    const c = document.getElementById("rwcard");
+    if (c) c.hidden = true;
+    if (rwTick) { clearInterval(rwTick); rwTick = null; }
+  }
+
+  async function rwAnswer(source, name) {
+    const p = rwPrompt;
+    if (!p) return;
+    rwHide();
+    try {
+      await fetch("/api/events/reward", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: p.id, source: source, name: name || null }),
+      });
+    } catch { /* the sidecar keeps the answer queued; nothing useful to say here */ }
+    load();
+  }
+
+  function rwRender(p) {
+    if (!p) { rwHide(); return; }
+    // A new prompt replaces an old one outright rather than queueing: two questions stacked over
+    // a game is a modal by accident.
+    if (rwPrompt && rwPrompt.id !== p.id) rwSetTyping(false);
+    rwPrompt = p;
+    $("rwcard").hidden = false;
+
+    const q = $("rwq");
+    q.textContent = "";
+    const lead = document.createElement("span");
+    lead.appendChild(document.createTextNode("You just passed "));
+    const pct = document.createElement("b");
+    pct.textContent = p.tier + "%";
+    lead.appendChild(pct);
+    lead.appendChild(document.createTextNode(" of " + p.eventLabel + "."));
+    q.appendChild(lead);
+
+    const guess = p.observed || p.candidate || null;
+    const src = document.createElement("span");
+    src.className = "rwsrc";
+    if (guess) {
+      const nm = document.createElement("span");
+      nm.className = "rwname";
+      nm.textContent = guess;
+      q.appendChild(nm);
+      // The distinction that matters, said plainly. One of these is a sighting; the other is a
+      // rumour, and a player answering deserves to know which they are being asked to confirm.
+      src.textContent = p.observed
+        ? "The app saw this arrive a moment after you crossed. Is it the tier reward?"
+        : "This is an UNCONFIRMED guess — nobody has verified it. Did you get it?";
+    } else {
+      src.style.marginTop = "5px";
+      src.textContent = "The app did not see what you received. What did this tier give you?";
+    }
+    q.appendChild(src);
+
+    const row = $("rwrow");
+    row.textContent = "";
+    const btn = (label, cls, fn) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "rwbtn" + (cls ? " " + cls : "");
+      b.textContent = label;
+      b.addEventListener("click", fn);
+      row.appendChild(b);
+      return b;
+    };
+    const textEntry = (source) => {
+      row.textContent = "";
+      const input = document.createElement("input");
+      input.id = "rwtext";
+      input.className = "rwtext";
+      input.type = "text";
+      input.placeholder = "Name of what you received";
+      input.maxLength = 120;
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") rwAnswer(source, input.value); });
+      row.appendChild(input);
+      btn("Send", "yes", () => rwAnswer(source, input.value));
+      // 🔑 "I got nothing" is a real ANSWER, not a dismissal. A tier that grants no blueprint is
+      // a thing that can be true, and no amount of waiting for a positive report establishes it.
+      btn("I got nothing", "", () => rwAnswer("none", null));
+      rwSetTyping(true);
+      setTimeout(rwFocusInput, 0);
+    };
+
+    if (guess) {
+      // 🔑 "Yes" means the same thing to the player either way, but NOT to the data: agreeing
+      // with a sighting had two independent witnesses, agreeing with a guess had one. The
+      // sidecar records which, and the site weights them differently.
+      btn("Yes", "yes", () => rwAnswer(p.observed ? "confirmed" : "corrected", guess));
+      btn("No — it was…", "", () => textEntry("corrected"));
+    } else {
+      // Typing is the only route here, so the box is up front rather than behind a click that
+      // would just say "yes, I really do want to type in this text box".
+      textEntry("typed");
+    }
+
+    rwFoot();
+    if (rwTick) clearInterval(rwTick);
+    rwTick = setInterval(() => {
+      if (!rwPrompt) return;
+      if (rwSecondsLeft(rwPrompt) <= 0) { rwHide(); return; }
+      rwFoot();
+    }, 1000);
+  }
+
+  function rwFoot() {
+    if (!rwPrompt) return;
+    const s = rwSecondsLeft(rwPrompt);
+    const mm = Math.floor(s / 60);
+    const ss = String(s % 60).padStart(2, "0");
+    const foot = $("rwfoot");
+    foot.textContent = "";
+    // Say what the answer is FOR and what happens to it. Reporting is opt-in and rides the same
+    // switch as every other crowdsourced signal, so a player with sync off must not be told
+    // their answer is helping everyone — it is only filling in their own ladder.
+    foot.appendChild(document.createTextNode(rwReporting
+      ? "Your answer helps fill in this event's reward list for everyone. One report is a claim, not a fact — it needs a second player to agree before it ships. "
+      : "Connect the tracker in Settings to share this with other players. For now it only fills in your own ladder. "));
+    const clock = document.createElement("span");
+    clock.className = "rwclock";
+    clock.textContent = mm + ":" + ss;
+    foot.appendChild(clock);
+  }
+
+  $("rwx").addEventListener("click", () => rwHide());
+
+  window.__eventFeedCaveat = (f) => feedCaveat(f);
+  // ...and a way to force a poll, so a suite can stub fetch and see the result THIS tick
+  // rather than waiting out POLL_MS.
+  window.__battReload = () => load();
   window.__widgetSettings = () => $("wsettings").classList.add("open");
   window.__widgetSettingsRoot = () => $("wsettings");
   document.addEventListener("click", (e) => {

@@ -35,6 +35,8 @@ import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
 import { maybeShareLog, clearSkippedBackups } from "./log-share.js";
+import { EventFeed, EVENT_REFRESH_MS } from "./event-feed.js";
+import { reportBody as rewardReportBody } from "./event-rewards.js";
 
 import {
   overlayDir, bundledDataDir, userDir, configPath, seedConfigPath, dataDir, sharedLogStatePath,
@@ -322,10 +324,39 @@ function seedDataDir(): void {
 }
 seedDataDir();
 
+// The dynamic-event registry phones home, because a reward or point value is discovered by
+// PLAYING and would otherwise be stranded behind an app release. `start()` must run AFTER
+// seedDataDir() (which has just clobbered the working copy with the bundle) and BEFORE the
+// tracker is constructed, so its very first read already sees the freshest copy we hold.
+// See src/event-feed.ts for why this is freshness rather than fetch-if-missing.
+const eventFeed = new EventFeed({
+  bundledPath: join(bundledDataDir, "events.json"),
+  workingPath: join(dataDir, "events.json"),
+  cachePath: join(userDir, "events-remote.json"),
+  // SC_EVENTS_URL points a dev run at a staging copy. It is also the only way to exercise the
+  // adopt path end to end before the site has deployed the file.
+  url: process.env.SC_EVENTS_URL || "https://subliminal.gg/sc/events.json",
+});
+eventFeed.start();
+
 // ── Mission / blueprint tracker ─────────────────────────────────────────────
 // remoteBaseUrl: pull a patch's pool data from subliminal.gg if it isn't bundled
 // (offline-first — always falls back to the shipped data/ files).
 const tracker = new MissionTracker({ dataDir, remoteBaseUrl: "https://subliminal.gg/sc" });
+
+/** Re-check the events feed and re-read the file only if it actually changed. Best-effort by
+ *  construction: `refresh()` never throws and never leaves us worse off than the copy in hand. */
+async function refreshEvents(): Promise<boolean> {
+  const changed = await eventFeed.refresh();
+  if (changed) {
+    tracker.reloadEvents();
+    const s = eventFeed.status();
+    console.log(`[events] adopted revision ${s.revision} (${s.source})`);
+  }
+  return changed;
+}
+void refreshEvents();
+setInterval(() => { void refreshEvents(); }, EVENT_REFRESH_MS).unref?.();
 // Name->UUID catalog for the screen-read OCR endpoint; loaded lazily on first use.
 let screenCatalog: CatalogEntry[] | null = null;
 
@@ -1093,6 +1124,39 @@ setInterval(() => void flushMissionFeedback(), 10 * 60_000);
 // or ten minutes pass. The delay lets the sidecar finish booting first; nothing about a
 // backlog is urgent enough to race startup for.
 setTimeout(() => void flushMissionFeedback(), 15_000);
+
+/** Push answered tier-reward questions to subliminal.gg.
+ *
+ *  🔑 SAME OPT-IN AS EVERY OTHER CROWDSOURCED SIGNAL — `config.syncEnabled` and the device
+ *  token. A player who has not connected the tracker keeps their answers locally, which is the
+ *  correct behaviour and not a degraded one: the answer still fills in THEIR ladder.
+ *  🔑 One player's answer is a CLAIM, not a fact. Corroboration happens site-side; nothing here
+ *  reaches the shipped events.json on one report. */
+async function flushRewardAnswers(): Promise<void> {
+  if (!config.syncEnabled || !config.syncToken) return;
+  const pending = tracker.unreportedRewardAnswers();
+  if (!pending.length) return;
+  const base = (process.env.SC_SYNC_BASE || "https://subliminal.gg").replace(/\/+$/, "");
+  const bodies = pending.map(rewardReportBody).filter(Boolean);
+  if (!bodies.length) return;
+  try {
+    const res = await fetch(`${base}/api/sc/event-reward`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.syncToken}` },
+      body: JSON.stringify({ reports: bodies }),
+    });
+    if (!res.ok) {
+      console.log(`[event-reward] upload refused (${res.status}) — ${pending.length} answer(s) still queued`);
+      return;
+    }
+    for (const p of pending) tracker.markRewardAnswerReported(p.id);
+    console.log(`[event-reward] uploaded ${pending.length} answer(s) to ${base}`);
+  } catch (err) {
+    console.log(`[event-reward] upload failed (${(err as Error).message}) — ${pending.length} queued`);
+  }
+}
+setInterval(() => void flushRewardAnswers(), 10 * 60_000).unref?.();
+setTimeout(() => void flushRewardAnswers(), 20_000).unref?.();
 
 // Monotonic per-process counter so two runs of the same dev scenario are two distinct
 // completions rather than one the tracker de-duplicates by missionId.
@@ -3507,9 +3571,49 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   // must not be reported as an error the widget then has to distinguish from a real failure.
   // ?reload=1 re-reads events.json so a point value measured mid-event applies without a restart.
   if (url?.startsWith("/api/events") && req.method === "GET") {
-    if (new URL(req.url ?? "", "http://x").searchParams.get("reload") === "1") tracker.reloadEvents();
+    const q = new URL(req.url ?? "", "http://x").searchParams;
+    // ?reload=1 re-reads the file off disk (for a hand edit); ?refresh=1 re-checks the site
+    // first. Two switches on purpose — a hand edit must not be silently overwritten by a
+    // fetch, and a fetch must not be skipped because someone only wanted a re-read.
+    if (q.get("refresh") === "1") await refreshEvents();
+    if (q.get("reload") === "1") tracker.reloadEvents();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ events: tracker.allEventProgress() }));
+    // `feed` is the provenance of the events data itself — live / cache / bundled. It rides
+    // every response because Sub's standing requirement is that a player can tell when they
+    // are looking at a fallback rather than having to infer it from the values being stale.
+    res.end(JSON.stringify({
+      events: tracker.allEventProgress(),
+      feed: eventFeed.status(),
+      // The "you just crossed a tier — is this what you got?" question, at most one at a time.
+      // Rides the response the widget already polls rather than adding a channel: an extra
+      // endpoint would need its own poll and could then disagree with the ladder beside it.
+      rewardPrompt: tracker.eventRewardPrompts()[0] ?? null,
+      // Reporting is opt-in and rides the SAME switch as every other crowdsourced signal. The
+      // widget must know, because a card that promises to help everyone while sending nothing
+      // is worse than not asking.
+      reporting: !!(config.syncEnabled && config.syncToken),
+    }));
+    return;
+  }
+
+  // The player's answer to a tier-reward question. Loopback+Origin gated automatically by
+  // being a POST (see the mutating-request guard), like every other write here.
+  if (url === "/api/events/reward" && req.method === "POST") {
+    const body = (await readBody(req)) as { id?: unknown; name?: unknown; source?: unknown };
+    const id = typeof body.id === "string" ? body.id : "";
+    const source = body.source === "confirmed" || body.source === "corrected" || body.source === "typed" || body.source === "none"
+      ? body.source : null;
+    if (!id || !source) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "id and source are required" }));
+      return;
+    }
+    const p = tracker.answerRewardPrompt(id, typeof body.name === "string" ? body.name : null, source);
+    // Push straight away rather than waiting out the retry timer: the player just answered a
+    // question and the answer is small. A failure simply leaves it queued.
+    if (p) void flushRewardAnswers();
+    res.writeHead(p ? 200 : 409, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(p ? { ok: true } : { error: "unknown_or_already_answered" }));
     return;
   }
 
