@@ -1456,6 +1456,10 @@ function syncFull(): void {
  *  week-old log would resurrect contracts that are long gone. */
 const BACKUP_SEED_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
+/** Belt against a pathological logbackups folder. The real bound is the 12-hour window above;
+ *  this only caps how many sessions can sit inside one. */
+const MAX_SEED_BACKUPS = 12;
+
 /**
  * 🔴 A LOG ROTATION MUST NOT ERASE WHAT THE PLAYER ALREADY DID.
  *
@@ -1471,21 +1475,33 @@ const BACKUP_SEED_MAX_AGE_MS = 12 * 60 * 60 * 1000;
  * So: replay the most recent backup first, then the live log on top. Mission events are idempotent
  * — the tracker keys by missionId and objectiveId — so anything restated simply lands twice.
  *
- * ⚠️ Only the newest backup, and only if it is recent. Reading the whole folder would drag back
- * every contract the player has ever flown.
+ * 🔴 EVERY backup inside the window, not just the newest — that was a real hole, not a nicety.
+ * Sub, 2026-08-22, sat at 30,000 event points in his in-game Journal while the widget read 0.7%.
+ * Measured off his own folder: the NEWEST backup held ZERO Orison events, the one before it held
+ * SEVEN (22,000 points), and the live log held one (2,000). 2,000/288,000 = 0.69% — the tracker
+ * reported exactly what it could see, which was one completion out of eleven. Quitting to the
+ * menu and relaunching is enough to rotate a session out of reach, so "the newest backup" is not
+ * a proxy for "the last thing the player did".
+ *
+ * ⚠️ The bound is TIME, not count: only backups within BACKUP_SEED_MAX_AGE_MS, which is what
+ * stops the whole folder dragging back every contract ever flown. MAX_SEED_BACKUPS is a second
+ * belt against a pathological folder, not the primary limit.
  */
 function seedFromRotatedLog(): void {
   try {
     const dir = join(dirname(config.logPath), "logbackups");
     if (!existsSync(dir)) return;
-    const newest = readdirSync(dir)
+    const cutoff = Date.now() - BACKUP_SEED_MAX_AGE_MS;
+    const recent = readdirSync(dir)
       .filter((f) => f.toLowerCase().endsWith(".log"))
       .map((f) => join(dir, f))
       .map((p) => ({ p, at: statSync(p).mtimeMs }))
-      .sort((a, b) => b.at - a.at)[0];
-    if (!newest || Date.now() - newest.at > BACKUP_SEED_MAX_AGE_MS) return;
+      .filter((x) => x.at >= cutoff)
+      .sort((x, y) => x.at - y.at)          // OLDEST first: a later session must win
+      .slice(-MAX_SEED_BACKUPS);
+    if (!recent.length) return;
     let applied = 0;
-    for (const line of readFileSync(newest.p, "utf8").split(/\r?\n/)) {
+    for (const line of recent.flatMap((x) => readFileSync(x.p, "utf8").split(/\r?\n/))) {
       if (!line) continue;
       // 🔴 THIS LINE IS THE ENVIRONMENT GATE, AND IT WAS MISSING. `seedTrackerFromLog` calls
       // detectPatch per line; this function did not — so a rotated log replayed here never set
@@ -1500,8 +1516,12 @@ function seedFromRotatedLog(): void {
       if (ev) { tracker.apply(ev); hauling.apply(ev); applied++; }
       tradeLogLine(line, tradeDeps);
     }
-    const mins = Math.round((Date.now() - newest.at) / 60000);
-    console.log(`[seed] rotated log replayed: ${applied} mission events from ${mins}m ago (${newest.p})`);
+    const oldest = recent[0], newest = recent[recent.length - 1];
+    const span = Math.round((Date.now() - oldest.at) / 60000);
+    // Say how many FILES were replayed, not just the event count. A seed that silently read one
+    // backup and a seed that read four look identical otherwise, and that is precisely the
+    // difference that hid this bug.
+    console.log(`[seed] ${recent.length} rotated log(s) replayed: ${applied} mission events, oldest ${span}m ago (newest ${newest.p})`);
   } catch (err) {
     console.log(`[seed] rotated log skipped: ${(err as Error).message}`);
   }
