@@ -69,6 +69,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { CommodityPurchase } from "./trade-log.js";
+import { auditJournal, describeAudit, type AuditReport } from "./trade-journal-audit.js";
 
 /** One purchase still holding cargo, or the remainder of one. */
 export interface OpenLot {
@@ -153,9 +154,18 @@ export interface JournalView {
   writtenOff: WrittenOffLot[];
   today: JournalTotals;
   allTime: JournalTotals;
+  /**
+   * Whether the persisted file still agrees with itself - see `trade-journal-audit.ts`. Computed
+   * ONCE at load and carried, because drift can only ever arrive from the FILE: `apply()` pushes a
+   * key and its row in the same breath, so nothing this process does can create it.
+   *
+   * 🔑 It is on the view so a surface can say it without re-deriving the rule. Nothing renders it
+   * yet; the load-time line in `sidecar.log` is what makes it reach a person today.
+   */
+  audit: AuditReport;
 }
 
-interface JournalState {
+export interface JournalState {
   v: number;
   open: OpenLot[];
   runs: ClosedRun[];
@@ -221,8 +231,12 @@ function isToday(iso: string, now: Date): boolean {
  * the parser can revise. When the sell-quantity misread was fixed (a sell's `quantity` is SCU,
  * not containers), every stored key for a box bigger than 1 SCU stopped matching, so those sales
  * looked unseen on the next launch and were booked a SECOND time. `total` already separates two
- * purchases in the same millisecond, which is what the key was widened for. */
-function seenKey(p: CommodityPurchase): string {
+ * purchases in the same millisecond, which is what the key was widened for.
+ *
+ * ⚠️ `parseSeenKey()` in `trade-journal-audit.ts` takes this apart again. The two must agree on the
+ * field ORDER and COUNT; they are held together by a round-trip assertion in `test:jaudit` rather
+ * than by a shared constant, because the audit must not import the module it audits. */
+export function seenKey(p: CommodityPurchase): string {
   return [p.at, p.kind, p.shopName ?? "", p.resourceGuid, p.total ?? ""].join("|");
 }
 
@@ -243,11 +257,26 @@ export class TradeJournal {
   private path: string;
   private nameOf: (guid: string) => string | null;
   private dirty = false;
+  private auditReport: AuditReport;
 
   constructor(stateDir: string, nameOf: (guid: string) => string | null) {
     this.path = join(stateDir, FILE);
     this.nameOf = nameOf;
     this.state = this.read();
+    this.auditReport = auditJournal(this.state);
+    // 🔴 SAY IT WHERE A PERSON WILL SEE IT, ONCE, AND ONLY WHEN THERE IS SOMETHING TO SAY.
+    // The 2026-08-23 misdiagnosis cost hours because the drift was silent and the symptom - sells
+    // missing from the Ledger - is also exactly what an over-refusing gate would look like. This is
+    // the sidecar, so `console.log` lands in `sidecar.log` and in a copied diagnostics report; the
+    // shell's stdout goes nowhere. A clean journal stays quiet: a line every launch would be
+    // scrolled past on the launch it mattered.
+    if (!this.auditReport.ok) for (const l of describeAudit(this.auditReport).split("\n")) console.log(`[journal] ${l}`);
+  }
+
+  /** The load-time verdict. Cached rather than recomputed: `apply()` writes a key and its row
+   *  together, so no sequence of calls on a live journal can introduce drift. */
+  audit(): AuditReport {
+    return this.auditReport;
   }
 
   /**
@@ -429,12 +458,17 @@ export class TradeJournal {
       writtenOff: [...this.state.writtenOff].sort((a, b) => Date.parse(b.forgottenAt) - Date.parse(a.forgottenAt)),
       today: totals(todayRuns, todayUnmatched),
       allTime: totals(runs, unmatched),
+      audit: this.auditReport,
     };
   }
 
-  /** Wipe everything. The player's own record, so they get to clear it. */
+  /** Wipe everything. The player's own record, so they get to clear it.
+   *
+   * 🔑 This is also the sanctioned cure for drift, and it is why the audit is re-run here rather
+   * than left stale: clearing the journal clears `seen` with it, so the verdict really has changed. */
   reset(): void {
     this.state = empty();
+    this.auditReport = auditJournal(this.state);
     this.dirty = true;
     this.save();
   }
