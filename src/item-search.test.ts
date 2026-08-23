@@ -163,6 +163,21 @@ check("most items carry a game uuid", withUuid.length > 1000, String(withUuid.le
 check("they are lowercased so a join cannot miss on case",
   withUuid.every((i) => i.u === i.u!.toLowerCase()));
 
+console.log("\nmaker + model - the way a player actually types a ship");
+// Sub typed "Anvil Hawk" and got NOTHING, while "Hawk" alone found it. The maker was only ever
+// consulted when EVERY token matched it, so a query split across maker and name matched neither
+// half. Checked against the real bundled table, because the bug lived in the real catalogue.
+for (const [q, want] of [["anvil hawk", "Hawk"], ["anvil arrow", "Arrow"], ["aegis gladius", "Gladius"]]) {
+  const hits = searchItems(table, q, { limit: 5 });
+  check(q + " finds " + want, hits.some((h) => h.name === want),
+    hits.length ? hits.map((h) => h.name).join(", ") : "(nothing)");
+}
+// The pairing that stops the new tier being a free pass: a token belonging to NEITHER the name
+// nor the maker must still miss, or every ship would match every query.
+const junkMaker = searchItems(table, "anvil zzzqqxwv", { limit: 5 });
+check("a real maker plus a junk model still finds nothing", junkMaker.length === 0,
+  String(junkMaker.length));
+
 console.log("\nempty and junk queries");
 check("an empty query returns nothing, not everything", searchItems(table, "", { limit: 5 }).length === 0);
 check("whitespace is the same as empty", searchItems(table, "   ", { limit: 5 }).length === 0);

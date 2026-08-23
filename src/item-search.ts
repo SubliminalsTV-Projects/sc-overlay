@@ -53,6 +53,11 @@ const TOKENS_IN_ORDER = 6_000;
 const TOKENS_ANY_ORDER = 4_500;
 const INITIALS = 3_000;
 const TOKEN_SUBSTRING = 2_000;
+/** Query tokens split across the manufacturer AND the name - "anvil hawk" for Hawk by Anvil.
+ *  This is how a player types a ship: maker first, model second, and neither half is a hit on
+ *  its own. Below every name-only tier because part of what they typed is not this item's name,
+ *  and above COMPANY_ONLY because they did name the item and not merely its maker. */
+const MAKER_AND_NAME = 1_500;
 /** A hit that only involves the manufacturer. Below every name tier on purpose - see trap 3. */
 const COMPANY_ONLY = 1_000;
 
@@ -126,6 +131,9 @@ export function scoreItem(item: ShopItem, qTokens: string[], qJoined: string): n
     if (coTokens.length && (tokensAnyOrder(qTokens, coTokens) || tokensSubstring(qTokens, coTokens))) {
       return COMPANY_ONLY;
     }
+    // "anvil hawk": one token is the maker, the rest are the name, and neither half matches on
+    // its own. Scored against the UNION so this cannot fire unless every token is accounted for.
+    if (tokensAnyOrder(qTokens, [...nameTokens, ...coTokens])) return MAKER_AND_NAME;
   }
   return 0;
 }

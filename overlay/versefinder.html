@@ -384,16 +384,16 @@
    * every six hours, so the whole interesting range sits UNDER a day — exactly the range `ageOf`
    * throws away (Sub: "how about we do updated and then the minutes ago?").
    *
-   * 🔴 THE UNIT IS SPELLED OUT, matching `originSummary()` in `src/player-origin.ts` verbatim —
-   * "just now" / "19 min ago" / "2h ago". That is not fussiness: Sub read "New Babbage 4M away"
-   * as a distance when the `4m` was an age, because this widget also prints Mm and Gm, so a bare
-   * `m` is genuinely ambiguous and may not appear alone. Same footer, same rule, same wording.
+   * 🔴 THE UNIT WAS SPELLED OUT UNTIL 2026-08-22, when Sub asked for the short form:
+   * "just now" / "34m ago" / "2h ago", and the word "updated" dropped entirely. The older
+   * ruling was that a bare `m` reads as a distance here, because the widget also prints Mm and
+   * Gm — that risk is real but confined to the RESULT ROWS; this footer only ever prints an age.
    */
   function freshnessOf(ms) {
     const min = (Date.now() - ms) / 60000;
     if (!(min >= 0)) return "just now";        // a clock skew must not print "-3 min ago"
     if (min < 1) return "just now";
-    if (min < 60) return Math.round(min) + " min ago";
+    if (min < 60) return Math.round(min) + "m ago";
     const hours = min / 60;
     if (hours < 24) return Math.round(hours) + "h ago";
     const days = Math.round(hours / 24);
@@ -881,7 +881,7 @@
       // proxy the table came through is our plumbing, not the player's business. What the line is
       // for is how old the reading is, and every word that is not that competes with it in a 9px
       // footer. The badge still carries the attribution that actually matters.
-      t.textContent = "updated " + age;
+      t.textContent = age;
     } else if (data.source === "cache") {
       el.className = "fallback";
       t.textContent = "offline — last download " + age;

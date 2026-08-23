@@ -2579,7 +2579,9 @@ const VERSEFINDER = `(async () => {
   // states WHICH TIER the table came from. Live says how fresh it is, the two fallbacks say they
   // are offline. A footer that said neither would be the regression.
   const srctext = document.getElementById("srctext");
-  const tierWords = ["updated", "offline"];
+  // 2026-08-22: the live tier dropped the word "updated" (Sub) and now prints the bare age,
+  // so the live marker is the age itself - " ago" or "just now". The RULING is unchanged.
+  const tierWords = [" ago", "just now", "offline"];
   ok("...and it says one of the three tiers, not something vague",
      !!srctext && tierWords.some((w) => srctext.textContent.indexOf(w) > -1),
      srctext ? srctext.textContent : "(no #srctext)");
@@ -3124,9 +3126,9 @@ const VERSEFINDER = `(async () => {
     // rather than the whole line — the ELEVENTH control lesson, which cost an assertion that
     // measured the wrong slice.
     {
-      const marker = "updated ";
-      const at = liveFooterAge.indexOf(marker);
-      const stated = at < 0 ? "(no 'updated' in the footer)" : liveFooterAge.slice(at + marker.length).trim();
+      // The footer IS the age now - no "updated " prefix to slice off (Sub, 2026-08-22).
+      const at = liveFooterAge.indexOf("offline") > -1 ? -1 : 0;
+      const stated = at < 0 ? "(footer is on a fallback tier)" : liveFooterAge.trim();
       // Positive first: on a cache/bundled tier the footer legitimately says "offline - ..." and
       // there is no freshness to check, so say which case ran rather than passing silently.
       const isLive = at >= 0;
