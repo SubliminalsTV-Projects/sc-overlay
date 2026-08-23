@@ -39,6 +39,43 @@
  * over when the precise one has aged out or is contradicted. A newer coarse reading that
  * CONTAINS the older precise one is not a contradiction — being near Lyria is exactly what being
  * at a Lyria outpost looks like — so it refreshes the fix rather than replacing it.
+ *
+ * -- 🔴 A TIER THAT WAS EVALUATED AND REJECTED: SHOP TERMINALS (2026-08-23) --------------------
+ *
+ * Sub asked whether the app can tell where a player is when they buy something at a terminal:
+ * "now that I've been going to these terminals to buy things, I want you to see if we can
+ * determine where a person is when they interact with these terminals." The proposal was a fourth
+ * `place` source — learn `shopName -> place` where a shop line co-occurs with a location line,
+ * persist it, and let later visits become an immediate fix, since `shopName` survives sessions
+ * where the runtime `shopId` does not.
+ *
+ * 🔴 THE FIX IS REAL AND THE TIER IS WORTHLESS, AND THOSE ARE TWO DIFFERENT SENTENCES. A terminal
+ * does place you, to the station, reliably. It buys nothing because **a terminal is inside a
+ * station and you cannot get inside one without the app having already placed you** — docking,
+ * spawning and walking in all fire an inventory, an ASOP or a freight lift first. Measured over
+ * Sub's entire log history (533 logs, 74 sessions with shopping, 727 shop-terminal lines,
+ * 382.6 h of wall-clock):
+ *
+ *   - **0 of 727** shop lines were the first thing to place him in that session. Not rare — never.
+ *     A persisted map only ever pays at such a "cold open"; anywhere else it repeats a fix we hold.
+ *   - Counting a shop line as a place signal moves freshness coverage **57.3% -> 57.4%**: a gain
+ *     of **37 minutes across 382.6 hours**. Against the more generous baseline it is 11 minutes.
+ *   - The window cannot be chosen safely. Pairing within 60 s learns **7** shop names and nothing
+ *     wrong; within 300 s it learns 27 and **5 are already ambiguous**. There is no window where
+ *     the map is both useful and safe.
+ *
+ * 🔑 AND THE AMBIGUITY IS WORSE THAN "SOME NAMES ARE GENERIC". `SCShop_AdminOffice_Nyx_Social
+ * Station` — a name that carries a place token — sits at three different Keeger asteroid bases,
+ * two of them in ONE session of Sub's. What such a name states is the SYSTEM and the station
+ * CLASS, never the station. `shopId` really is site-unique (102 of 102 within a session) but it
+ * is re-minted per session, so it can never be persisted. The stable identifier is ambiguous and
+ * the unambiguous one is not stable, which is the whole reason this does not work.
+ *
+ * 🔑 Re-ask it after a patch with **`npm run measure:terminalorigin`**. It exits non-zero the
+ * moment a cold open appears, which is exactly the observation that would reopen the design.
+ * ⚠️ Do NOT read "the fix was fresh whenever he shopped" as the finding — that is true and beside
+ * the point, since the widget is read at arbitrary moments. Coverage is the measure, and it moved
+ * by a rounding error.
  */
 
 export type OriginTier = "place" | "body" | "system" | "unknown";
