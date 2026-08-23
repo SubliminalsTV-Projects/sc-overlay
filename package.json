@@ -72,7 +72,9 @@
     "test:eventfeed": "tsx src/event-feed.test.ts",
     "sync:events": "node tools/sync-events.mjs",
     "test:eventrewards": "tsx src/event-rewards.test.ts",
-    "measure:tradeconfirm": "tsx tools/measure-trade-confirm.mts"
+    "measure:tradeconfirm": "tsx tools/measure-trade-confirm.mts",
+    "test:itemshoplog": "tsx src/item-shop-log.test.ts",
+    "measure:itemshops": "tsx tools/measure-item-shops.mts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",

@@ -158,6 +158,35 @@ export interface ResolvedQuote {
   stockScu?: number | null;
 }
 
+/**
+ * A price the player THEMSELVES paid, read out of `game.log`.
+ *
+ * 🔴 A SEPARATE ARRAY FROM `quotes`, NEVER CONCATENATED INTO IT — the same separation the site
+ * keeps between a confirmed event reward and an unconfirmed candidate, and for the same reason.
+ * A UEX quote is a survey answer somebody typed in; this is a receipt. They are different KINDS of
+ * claim, and the one edit that would undo this whole feature is somebody merging the two arrays so
+ * an observation sorts into the cheapest-first list as though a stranger had reported it.
+ *
+ * They also cannot be reconciled even in principle today: the game names a terminal
+ * `SCShop_Orison_KelTo` and UEX names it "Kel-To - Aspire Grand - New Babbage", and **0 of 47 log
+ * shop names match a terminal name in the shipped table**. Until that join is measured an
+ * observation can sit beside the survey rows but must never claim to be one of them.
+ */
+export interface ObservedQuote {
+  /** The game's own shop token. Not a display name — the widget says so. */
+  terminal: string;
+  /** aUEC for ONE. Items: `client_price / quantity`. Commodities: per SCU. */
+  price: number;
+  /** Epoch SECONDS, matching `ResolvedQuote.asOf` so the widget's existing age helpers work
+   *  unchanged. Off the LOG LINE, not the moment of parsing. */
+  asOf: number;
+  /** How many were bought, so "7 aUEC" can show its working when the receipt was for 11. */
+  quantity: number;
+  /** 🔴 A commodity has a buy price AND a sell price at one terminal and they are not
+   *  interchangeable. Absent on every item (no item sell verb exists in 533 logs). */
+  side?: "sell";
+}
+
 export interface SearchHit {
   name: string;
   company: string | null;
@@ -165,6 +194,10 @@ export interface SearchHit {
   section: string;
   size: string | null;
   uuid: string | null;
+  /** 🔴 What the player actually paid here, newest first, at most one row per shop. Absent when
+   *  they have never bought this — which is the common case and must read as "no receipt", never
+   *  as "free" or as a missing price. See `ObservedQuote`. */
+  observed?: ObservedQuote[];
   /** What kind of row this is. Absent for a shop item or a vehicle, which are the same thing as far
    *  as this widget is concerned (Sub's ruling). `"commodity"` marks a row that came from the trade
    *  table instead, which is the only row type that can carry stock. */

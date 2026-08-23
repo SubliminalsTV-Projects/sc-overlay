@@ -107,14 +107,23 @@ const liveConfirm = new TradeConfirmations();
  *
  * 🔑 Still safe on every line of the log: one `indexOf` for all but a handful per session.
  */
-export function tradeLogLine(line: string, deps: TradeDeps): void {
+/**
+ * 🔑 RETURNS WHAT IT CONFIRMED, so a second consumer can have the same verdict without running a
+ * second gate. `price-feed.ts` needs confirmed purchases for the observed-price store, and the one
+ * thing it must not do is re-derive "did this happen" — two gates over one stream is exactly how
+ * the Verse Finder and the Ledger would end up disagreeing about a trade the player made once.
+ *
+ * The signature widened from `void`; every existing caller ignores the value and is unchanged.
+ */
+export function tradeLogLine(line: string, deps: TradeDeps): CommodityPurchase[] {
   const confirmed = liveConfirm.line(line);
   // The overwhelmingly common case: nothing came due, and no journal is touched.
-  if (!confirmed.length) return;
+  if (!confirmed.length) return confirmed;
   const j = ensureJournal(deps);
   let changed = false;
   for (const p of confirmed) if (j.apply(p)) changed = true;
   if (changed) j.save();
+  return confirmed;
 }
 
 /** How far back the one-time catch-up looks. A day, because "what did I do today" is the question
