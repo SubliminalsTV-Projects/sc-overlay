@@ -166,6 +166,28 @@
     for (const c of (plan && plan.contracts) || []) {
       for (const l of c.legs || []) legByGroup.set(l.group, { c: c, leg: l });
     }
+    /* 🔴 A BOUGHT COMMODITY IS A LIFT LIKE ANY OTHER, and this map is what names it. Without an
+       entry here `signatureOf` falls back to the word "Cargo", so 48 SCU of Processed Food came up
+       the elevator as "Cargo 6x 8 SCU" — the exact riddle this file exists to prevent, since the
+       signature's whole job is telling you WHICH lift is which at a terminal that names no mission.
+       🔑 Adapted to the {c, leg} shape the rest of this function already reads, so nothing below
+       needs a second branch. The synthetic contract carries the terminal as its title, because that
+       is what a player would call this load. */
+    for (const b of (plan && plan.buys) || []) {
+      if (!b.group) continue;
+      legByGroup.set(b.group, {
+        c: { missionId: b.group, title: b.commodity + " to " + b.to.terminal, contractKey: null, source: "log" },
+        leg: {
+          group: b.group, commodity: b.commodity, scu: b.scu,
+          destination: b.to.terminal || null, toLocation: b.to.locationId || null,
+          // ⚠️ NO `boxes` and NO `boxCount`. The step builder prefers a contract's own manifest over
+          // what got placed, which is right for a contract (the elevator shows the whole mission
+          // even when it spills into a second trip) — but a buy's manifest is already exactly what
+          // was placed, and stating it twice risks the two drifting.
+          boxes: [], boxCount: 0,
+        },
+      });
+    }
 
     const raw = (plan && plan.pack && plan.pack.placements) || [];
     const boxes = [];

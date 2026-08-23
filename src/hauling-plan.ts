@@ -1427,7 +1427,18 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       };
     })(),
     totals: {
-      scu: openLegs.reduce((s, { leg }) => s + (leg.scu ?? 0), 0),
+      /* 🔴 CONTRACT CARGO **AND** COMMODITY CARGO YOU HAVE ALREADY BOUGHT. This counted contracts
+         only, and once a buy could join the route that put a contradiction on the widget's own
+         summary strip: "to move 0 SCU" printed one line above a route moving 48 SCU of Processed
+         Food, with "stops 2" and "est. run 8m" in between — both of which already counted the buy.
+         🔑 This is the shape the Event Tracker's rep bar hit from the other direction: when two
+         figures on one screen derive the same quantity from different evidence and only one has
+         been taught about a new source, the screen is stating a contradiction.
+         ⚠️ ONLY A BOUGHT BUY. An unbought pick has no tonnage, and the honest total is the one that
+         leaves it out rather than one that guesses at it — the route says separately that its load
+         figures are a floor. */
+      scu: openLegs.reduce((s, { leg }) => s + (leg.scu ?? 0), 0)
+        + (opts.buys ?? []).reduce((s, b) => s + (routedBuys.has(b.id) && b.scu !== null && b.scu > 0 ? b.scu : 0), 0),
       capacityScu,
       liveContracts: liveContracts.length,
       unknownContracts: liveContracts.filter((c) => c.scu == null).length,

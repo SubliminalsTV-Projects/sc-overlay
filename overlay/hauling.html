@@ -1643,6 +1643,23 @@
   function legOf(group) {
     if (!group || !plan) return null;
     for (const c of plan.contracts) for (const l of c.legs) if (l.group === group) return l;
+    /* 🔴 A COMMODITY BUY IS A LEG TOO, and this is the one place that has to know it. `legOf` feeds
+       `cargoOf`, `destOf` and the Stow lift labels; without this a bought commodity is drawn in the
+       hold as "Cargo 6x 8 SCU" with no idea what it is — which is the same riddle Sub already
+       objected to on the route ("the number one pickup says 6 SCU, but it doesn't tell me what of").
+       🔑 Adapted to the leg SHAPE rather than handled separately at each call site. Three consumers
+       and one adapter, not three special cases that can each be forgotten. */
+    for (const b of (plan.buys || [])) {
+      if (b.group !== group) continue;
+      return {
+        group: b.group, commodity: b.commodity, scu: b.scu,
+        destination: b.to.terminal || null, toLocation: b.to.locationId || null,
+        fromLocation: b.from.locationId || null,
+        // The fields a contract leg has and a buy does not. Stated as nulls rather than left
+        // undefined, so a consumer reading one gets "no" instead of "undefined".
+        missionId: null, boxes: [], boxCount: 0, pickupCount: 1, exact: b.scu != null,
+      };
+    }
     return null;
   }
   /** locationId -> the name the plan settled on, so the route, the layout legend and the unrouted

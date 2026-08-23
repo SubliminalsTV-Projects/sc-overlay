@@ -12,6 +12,24 @@
    *  pickup index and bounds without walking the contract list again. */
   let legByGroupUI = new Map();
 
+  /**
+   * A load figure that may be a FLOOR — the hold on a run carrying a commodity nobody has bought
+   * yet, and the trip's peak, which is the same reading one level up.
+   *
+   * 🔴 A ZERO FLOOR IS NOT A FIGURE AND MUST NOT BE PRINTED AS ONE. "peak ≥ 0 SCU" is arithmetically
+   * true and says nothing at all — every hold is at least empty. It reads worse than that, in fact:
+   * a 0 on screen beside a run the player is about to fill looks like the app having decided the run
+   * is not worth loading, which is the same wrong-number-instead-of-no-number mistake `num()` makes
+   * on a null. When the whole load is still to be bought, the words are the honest rendering.
+   *
+   * ⚠️ A NON-ZERO floor keeps its number, because that one is genuinely useful: a board carrying
+   * 174 SCU of contracts plus an unbought buy really will hold at least 174.
+   */
+  function floorScu(scu, unknown) {
+    if (!unknown) return num(scu) + " SCU";
+    return scu > 0 ? "≥ " + num(scu) + " SCU" : "what you buy";
+  }
+
   function renderRoute() {
     commodityOfGroup = new Map();
     legByGroupUI = new Map();
@@ -33,11 +51,23 @@
       const d = document.createElement("div"); d.className = "note"; d.textContent = n;
       body.appendChild(d);
     }
+    /* 🔴 A PICK THAT COULD NOT BE ROUTED IS SAID, never silently absent — same rule as `unrouted`
+       for a contract leg. The player pressed a button and something has to have happened; a run
+       that quietly did not appear reads as the button being broken. */
+    for (const b of (plan.buys || [])) {
+      if (b.routed) continue;
+      const d = document.createElement("div"); d.className = "note";
+      d.textContent = b.commodity + ": " + b.reason + ".";
+      body.appendChild(d);
+    }
     if (!plan.trips.length) {
       const d = document.createElement("div"); d.className = "empty";
+      // ⚠️ This tab sequences BOTH sources now, so the empty state has to name both — telling a
+      // player to accept a contract when they came here to plan a commodity run is the widget
+      // describing a version of itself that no longer exists.
       d.textContent = plan.contracts.length
         ? "Nothing left to fly — every accepted leg is delivered."
-        : "Accept a hauling contract and it shows up here.";
+        : "Accept a hauling contract, or pick a run on the Commodities tab, and it shows up here.";
       body.appendChild(d);
     }
     plan.trips.forEach((trip, ti) => {
@@ -47,7 +77,10 @@
       h.textContent = plan.trips.length > 1 ? "Trip " + (ti + 1) : "Route";
       const n = document.createElement("span");
       n.className = "n";
-      n.textContent = trip.landings + " stops · " + fmtMins(trip.totalMinutes) + " · peak " + num(trip.peakScu) + " SCU";
+      // 🔴 "peak" IS A FLOOR ON A RUN CARRYING AN UNBOUGHT COMMODITY — see the hold reading below,
+      // which this is the trip-level version of. Same reasoning, same rendering.
+      n.textContent = trip.landings + " stops · " + fmtMins(trip.totalMinutes)
+        + " · peak " + floorScu(trip.peakScu, trip.unknownScu);
       // The optimiser falls back to a heuristic past 14 visits — say so rather than imply optimal.
       if (trip.method === "heuristic") n.textContent += " · approx.";
       sec.append(h, n);
@@ -230,12 +263,25 @@
             /* A split pickup shows the SPREAD, not a share dressed up as a figure — see the plan's
                MORE PICKUPS THAN DROP-OFFS note. The exact ones (pinned, or worked out from the
                others) print as one number like anything else. */
-            c.textContent = (named ? named + " " : "")
-              + (split && !lg.exact && lg.min != null && lg.max != null && lg.min !== lg.max
-                   ? lg.min + "–" + lg.max
-                   : num(split ? lg.scu : a.scu))
-              + " SCU";
-            chip.title = a.title || "";
+            /* 🔴 A COMMODITY YOU HAVE NOT BOUGHT YET HAS NO TONNAGE, AND `num()` WOULD PRINT IT AS
+               "0 SCU". That is the worst possible wording: zero is a measurement, and this is the
+               absence of one — the player would read "0 SCU of Titanium" as the app having decided
+               the run was not worth filling. Sub's design is that the tonnage arrives from the log
+               when he buys, so the chip says exactly that and no number is invented.
+               🔑 `a.scu == null` covers null and undefined and nothing else; `!a.scu` would catch a
+               genuine zero as well, which is a different claim. */
+            const unbought = a.scu == null && !split;
+            c.textContent = unbought
+              ? (named || "Commodity") + " — how much is up to you"
+              : (named ? named + " " : "")
+                + (split && !lg.exact && lg.min != null && lg.max != null && lg.min !== lg.max
+                     ? lg.min + "–" + lg.max
+                     : num(split ? lg.scu : a.scu))
+                + " SCU";
+            chip.title = unbought
+              ? "You decide how much when you get there. The app reads the real figure off your"
+                + " purchase and updates the route, the hold and the Stow tab."
+              : (a.title || "");
             chip.appendChild(c);
             /* 🔴 THE BOX GOES WHERE THE ANSWER IS. Nothing states how much comes from each pickup —
                and Sub's point settles that it never will: a 1–5 SCU spread in the game data is a
@@ -303,16 +349,35 @@
              the drop-off objective names it — so the name is inherited from the same contract's
              other legs rather than left blank. */
           const cargo = [...new Set(g.acts.map((a) => a.commodity || commodityOfGroup.get(a.group)).filter(Boolean))];
-          ld.textContent = num(moved) + " SCU" + (cargo.length === 1 ? " of " + cargo[0] : "");
-          ld.title = g.kind === "dropoff" ? "Comes off here." : "Goes on here.";
+          /* 🔴 SAME RULE AS THE CHIP: a step whose cargo is not bought yet has no tonnage, and
+             summing `a.scu || 0` prints the absence of a figure as a zero. `moved` is what is
+             KNOWN; the unbought part is said in words rather than folded into it. */
+          const anyUnknown = g.acts.some((a) => a.scu == null);
+          ld.textContent = anyUnknown && moved === 0
+            ? "you decide here"
+            : num(moved) + " SCU" + (anyUnknown ? " + what you buy" : "")
+              + (cargo.length === 1 ? " of " + cargo[0] : "");
+          ld.title = anyUnknown
+            ? "Part of this step is a commodity you have not bought yet, so this is at least what"
+              + " moves here — never the whole of it."
+            : g.kind === "dropoff" ? "Comes off here." : "Goes on here.";
           rt.appendChild(ld);
           // Where the hold ends up is a fact about the LANDING, not about this action, so it is
           // stated once, quietly, on the landing's last row.
           if (gi === groups.length - 1) {
             const hold = document.createElement("div");
             hold.className = "hold";
-            hold.textContent = "hold " + num(s.loadAfterScu);
-            hold.title = "In the hold when you leave this stop.";
+            /* 🔴 A FLOOR IS NOT A FIGURE. `trip.unknownScu` comes straight from the solver and means
+               some leg on this trip has no tonnage yet, so every hold reading on it is a LOWER
+               BOUND. Printing "hold 174" beside a run that will really carry 250 is the app telling
+               the player their ship is emptier than it is going to be — the same class of mistake as
+               a rep bar counting down to a rank the log already proved. */
+            const floor = !!trip.unknownScu;
+            hold.textContent = "hold " + floorScu(s.loadAfterScu, floor).replace(" SCU", "");
+            hold.title = floor
+              ? "At least this much when you leave — this run carries a commodity you have not"
+                + " bought yet, so the real figure can only be higher."
+              : "In the hold when you leave this stop.";
             rt.appendChild(hold);
           }
           /* 🔴 THE TONNAGE USED TO SIT BESIDE THE NAME AND EAT IT. `.rt` is flex:none, so a step

@@ -383,6 +383,79 @@
     await loadTrade();
   }
 
+  /* ── picking a run into the merged Route ─────────────────────────────────── */
+
+  /**
+   * Is this picked buy the same run as this ranked row?
+   *
+   * 🔑 MATCHED ON COMMODITY AND BOTH TERMINALS, which is what a run IS — not on price, and not on
+   * a synthetic id the row does not have. Prices move between refreshes, so a price in the key
+   * would make an already-picked row un-recognise itself the moment the table updated and offer to
+   * add it a second time.
+   */
+  function tdSameRun(buy, r) {
+    if (!buy || !r) return false;
+    const same = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+    return same(buy.commodity, r.commodity)
+      && same(buy.from.terminal, r.from.terminalShort)
+      && same(buy.to.terminal, r.to.terminalShort);
+  }
+
+  /**
+   * Send a run to the Route tab.
+   *
+   * ⚠️ The SHORT terminal name is what is sent, deliberately: it is what a player reads on the
+   * board, and it is what the route's name-merge compares against the game's own drop-off names.
+   * The long form ("Admin - Baijini Point") would never match a Deliver line and every pick would
+   * cost its own landing.
+   * ⚠️ NO TONNAGE. See the button. The body goes because the tiered travel model prices a leg off
+   * which world each end is on; without it every buy leg ties and the route stops ordering.
+   */
+  async function tdPickBuy(r) {
+    try {
+      const res = await fetch("/api/hauling/buy", {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({
+          commodity: r.commodity,
+          from: { terminal: r.from.terminalShort, body: r.from.body, system: r.from.system },
+          to: { terminal: r.to.terminalShort, body: r.to.body, system: r.to.system },
+          buyPrice: r.from.price,
+          sellPrice: r.to.price,
+        }),
+      });
+      const j = await res.json().catch(() => null);
+      // 🔴 SAID OUT LOUD, not swallowed. Without a commodity uuid the log can never match the
+      // purchase to this pick, so the tonnage will stay unknown for ever — which would otherwise
+      // look exactly like the feature being broken once the player got there and bought some.
+      tdBuyMsg(j && j.ok === false
+        ? "That run could not be added."
+        : j && j.matchable === false
+          ? "Added — but this commodity is not in the app's own table, so it cannot fill the tonnage in for you when you buy."
+          : "");
+    } catch {
+      tdBuyMsg("The app's background service is not answering, so that was not saved.");
+    }
+    await load();     // re-solve: the route is server-side and the plan is what the row reads
+    render();
+  }
+
+  async function tdDropBuy(id) {
+    try {
+      await fetch("/api/hauling/buy/forget?id=" + encodeURIComponent(id), { method: "POST", cache: "no-store" });
+      tdBuyMsg("");
+    } catch {
+      tdBuyMsg("The app's background service is not answering, so that was not removed.");
+    }
+    await load();
+    render();
+  }
+
+  /** One line under the bar, for the only two things that can go wrong here. Cleared on the next
+   *  action rather than on a timer — a message that vanishes while you are reading it is worse
+   *  than one that waits. */
+  let tdBuyNote = "";
+  function tdBuyMsg(text) { tdBuyNote = text; }
+
   /* ── the routes view ────────────────────────────────────────────────────── */
 
   function tdRenderRoutes(body) {
@@ -468,6 +541,23 @@
       if (r.crossSystem) tdChip(chips, (r.from.system || "?") + " → " + (r.to.system || "?"), "xsys");
       else if (!tradeSystem && r.from.system) tdChip(chips, r.from.system, "calm");
 
+      /* 🔴 THE ONE CONTROL THAT MAKES THIS TAB A SOURCE RATHER THAN A LIST. Picking a run sends it
+         to the merged Route, which sequences it alongside the contracts.
+         ⚠️ IT SENDS NO TONNAGE, AND MUST NEVER GROW A FIELD FOR ONE. Sub: "they don't need to pick
+         it. They can decide when they get there and when they buy it, we'll know how much they
+         bought and then it'll override it." The SCU box that would obviously belong here is exactly
+         the thing that was ruled out — a number typed here would be indistinguishable on the Route
+         screen from one the log measured.
+         🔑 The button is a TOGGLE against the plan's own list, not against local state: the plan is
+         where a pick lives (a widget iframe reloads on regroup), so the row reads its state from
+         the same place the route does and the two cannot disagree. */
+      const picked = ((plan && plan.buys) || []).find((b) => tdSameRun(b, r));
+      tdBtn(chips, picked ? "In route ✓" : "+ Route", !!picked,
+        picked
+          ? "Remove this run from the Route tab. Nothing you have already bought is forgotten — this is the plan, not the Ledger."
+          : "Sequence this run in the Route tab, alongside your contracts. It goes in with no tonnage: the app fills that in from the log when you actually buy.",
+        () => (picked ? tdDropBuy(picked.id) : tdPickBuy(r)));
+
       body.appendChild(row);
     });
   }
@@ -537,6 +627,12 @@
     }
     body.appendChild(bar);
 
+    if (tdBuyNote) {
+      const n = document.createElement("div");
+      n.className = "note";
+      n.textContent = tdBuyNote;
+      body.appendChild(n);
+    }
     tdRenderRoutes(body);
   }
 
