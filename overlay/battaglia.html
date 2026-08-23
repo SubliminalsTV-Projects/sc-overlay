@@ -1122,6 +1122,10 @@
     // arrives unbidden mid-game and must retire itself; this one was asked for, so taking it away
     // on a timer would be losing the player's own work. It closes on an answer or on ✕.
     // (`crossedAtMs` is also absent here, so the countdown would read NaN:NaN.)
+    // ⚠️ THE GUARD THE SUITE ACTUALLY TESTS IS THE ONE IN `rwFoot()` — that is what draws the
+    // clock. This early return is belt-and-braces (it stops a pointless 1 Hz timer on a card with
+    // no deadline) and removing it is a control that comes back GREEN, verified 2026-08-22. Do not
+    // read that green as coverage of this line.
     if (p.local) return;
     rwTick = setInterval(() => {
       if (!rwPrompt) return;

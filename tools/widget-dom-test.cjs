@@ -2490,6 +2490,180 @@ const REWARDCARD = `(async () => {
   return out;
 })()`;
 
+// ── Suite: the event ladder — Orison first, the guesses visible, and labelled as guesses ─────
+//
+// Three things Sub asked for on 2026-08-22, looking at this widget: put Siege of Orison first,
+// show the rewards (five of six tiers read "Reward not known yet" while events.json held a
+// candidate name for every one of them), and stop the ladder inventing precision it does not have.
+//
+// ⚠️ EVERY VALUE BELOW IS THE SUITE'S OWN. data/events.json is a live research artefact — it has
+// already turned tests red twice by being edited, once on `contracts` and once on `rewards` — so
+// this drives a stubbed /api/events and reads nothing off the shipped file. Tiers and totals are
+// the same kind of value and are next.
+const EVENTLADDER = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const FIX = {
+    feed: { source: "live", revision: 9, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null },
+    reporting: true,
+    rewardPrompt: null,
+    events: [{
+      id: "suite-orison", label: "Suite Orison", log: "Suite Orison", status: "current",
+      total: 1000, points: 150, pct: 15, unpriced: 0,
+      contractsPriced: 2, contractsKnown: 7,
+      contributions: [], rewardsUnknown: false,
+      tiers: [
+        { pct: 15, points: 150, reached: true,
+          rewards: [{ name: "SUITE MEASURED PISTOL", item: null, owned: true }], candidates: [] },
+        { pct: 40, points: 400, reached: false,
+          rewards: [], candidates: [{ name: "SUITE CANDIDATE ARMOR" }] },
+        { pct: 90, points: 900, reached: false, rewards: [], candidates: [] },
+      ],
+    }],
+  };
+
+  const realFetch = window.fetch;
+  let posted = null;
+  window.fetch = async (u, o) => {
+    const s = String(u);
+    // Ordered: the reward path contains the events path, so it has to be tested first.
+    if (s.indexOf("/api/events/reward") >= 0) {
+      posted = JSON.parse(o && o.body ? o.body : "{}");
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (s.indexOf("/api/events") >= 0) {
+      return new Response(JSON.stringify(FIX), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(u, o);
+  };
+  await window.__battReload();
+  await sleep(250);
+
+  // Defensive readers: a detail expression is evaluated EAGERLY, so reaching into an element that
+  // is not there kills the suite and reports it as a small pass.
+  const tabs = () => [].slice.call(document.querySelectorAll("#vnav .vt"));
+  const labels = () => tabs().map((b) => b.textContent);
+  const txt = (sel) => { const n = document.querySelector(sel); return n ? n.textContent : "(no " + sel + ")"; };
+  const bodyTxt = () => txt("#body");
+
+  // ── 1. Siege of Orison first, and SELECTED. Order alone would be cosmetic. ──
+  ok("the event gets a tab at all", labels().indexOf("Suite Orison") >= 0, labels().join(" | "));
+  ok("both views are offered", tabs().length === 2, labels().join(" | "));
+  ok("🔴 the event is the FIRST tab, ahead of the giver track", labels()[0] === "Suite Orison", labels().join(" | "));
+  ok("🔴 ...and it is the one SELECTED on load", !!tabs()[0] && tabs()[0].classList.contains("on"), labels().join(" | "));
+  ok("...which is what the header shows", txt("#who") === "Suite Orison", txt("#who"));
+  ok("the giver track is still reachable, just last", labels()[1] !== "Suite Orison", labels().join(" | "));
+
+  // ── 2. The rewards are ON SCREEN. This is the part Sub could not see at all. ──
+  const loot = () => [].slice.call(document.querySelectorAll("#body .evloot"));
+  const lootTxt = () => loot().map((d) => d.textContent).join(" ~ ");
+  ok("the ladder drew one loot row per tier", loot().length === 3, String(loot().length));
+  // POSITIVE FIRST: every separation assertion below is of the "X is not Y" shape, and an empty
+  // ladder satisfies all of them for free.
+  ok("the MEASURED reward is on screen", lootTxt().indexOf("SUITE MEASURED PISTOL") >= 0, lootTxt());
+  ok("🔴 the CANDIDATE is on screen too — five blanks became five leads", lootTxt().indexOf("SUITE CANDIDATE ARMOR") >= 0, lootTxt());
+  ok("a tier with neither still says so rather than rendering blank",
+     lootTxt().indexOf("not known yet") >= 0, lootTxt());
+
+  // ── 3. ...and a guess does not look like a measurement. ──
+  const cands = [].slice.call(document.querySelectorAll("#body .evloot .it.cand"));
+  const meas = [].slice.call(document.querySelectorAll("#body .evloot .it")).filter((s) => !s.classList.contains("cand"));
+  const cname = cands.length ? cands[0].textContent : "(no candidate element)";
+  const mname = meas.length ? meas[0].textContent : "(no measured element)";
+  ok("exactly one item is drawn as a candidate", cands.length === 1, String(cands.length));
+  ok("exactly one is drawn as a measurement", meas.length === 1, String(meas.length));
+  ok("...and it is the guess that is marked, not the measurement", cname.indexOf("SUITE CANDIDATE ARMOR") >= 0, cname);
+  ok("🔴 the candidate says the word UNCONFIRMED", cname.indexOf("UNCONFIRMED") >= 0, cname);
+  ok("🔴 ...and the measured reward does not", mname.indexOf("UNCONFIRMED") < 0, mname);
+  ok("🔴 a candidate is never ticked as owned", cands.length > 0 && !cands[0].classList.contains("owned"), cname);
+  ok("...and carries no check mark", cname.indexOf("✔") < 0, cname);
+  // The control for the line above: the owned measurement DOES carry one, so "no check mark" is
+  // a real difference rather than a widget that stopped drawing them.
+  ok("...while the owned measurement still does", mname.indexOf("✔") >= 0, mname);
+  const ccs = cands.length ? getComputedStyle(cands[0]) : null;
+  const mcs = meas.length ? getComputedStyle(meas[0]) : null;
+  ok("...and it is drawn differently, not merely classed differently",
+     !!ccs && !!mcs && ccs.color !== mcs.color, (ccs ? ccs.color : "?") + " vs " + (mcs ? mcs.color : "?"));
+  ok("...in italic, which nothing else in this ladder is", !!ccs && ccs.fontStyle === "italic", ccs ? ccs.fontStyle : "?");
+  ok("a legend says what UNCONFIRMED means", txt("#body .evkey").indexOf("verified") >= 0, txt("#body .evkey"));
+  ok("...and points at how to correct it", txt("#body .evkey").indexOf("Wrong?") >= 0, txt("#body .evkey"));
+
+  // ── 4. The ladder states what it cannot know, and offers no missions-to-go figure. ──
+  ok("🔴 the ladder states its own price coverage", txt("#body .evmeta").indexOf("2 of 7 contracts") >= 0, txt("#body .evmeta"));
+  ok("...and says outright it cannot turn a tier into a mission count",
+     txt("#body .evmeta").indexOf("how many missions a tier is") >= 0, txt("#body .evmeta"));
+  ok("the Journal advice survives beside it", txt("#body .evmeta").indexOf("in-game Journal") >= 0, txt("#body .evmeta"));
+
+  // ── 5. The correction path, on every tier rather than only after a crossing. ──
+  const fixes = () => [].slice.call(document.querySelectorAll("#body .evfix"));
+  ok("every tier carries a way to say we have it wrong", fixes().length === 3, String(fixes().length));
+  const card = () => document.getElementById("rwcard");
+  ok("(control) no card is up before it is pressed", card().hidden);
+  if (fixes()[1]) fixes()[1].click();
+  await sleep(80);
+  ok("pressing it raises the question card", !card().hidden, txt("#rwcard"));
+  ok("...naming the tier it is about", txt("#rwcard").indexOf("40%") >= 0, txt("#rwcard"));
+  ok("...and the name it is asking about", txt("#rwcard").indexOf("SUITE CANDIDATE ARMOR") >= 0, txt("#rwcard"));
+  ok("...and saying that name is unverified", txt("#rwcard").indexOf("UNCONFIRMED") >= 0, txt("#rwcard"));
+  // A crossing card retires itself after two minutes because it arrived unbidden. This one was
+  // asked for, so taking it away on a timer would be discarding the player's own work.
+  ok("...with no countdown, because the player opened it themselves",
+     !document.querySelector("#rwcard .rwclock"), txt("#rwfoot"));
+
+  // 🔴 The poll must not close it. The sidecar has no prompt for a self-raised correction and
+  // never will, so the plain "no prompt means hide" rule would shut it a second after it opened.
+  await window.__battReload();
+  await sleep(200);
+  ok("🔴 a routine poll does not close the card out from under the player", !card().hidden, txt("#rwcard"));
+
+  const btns = () => [].slice.call(card().querySelectorAll("button")).map((b) => b.textContent);
+  const press = (label) => {
+    const b = [].slice.call(card().querySelectorAll("button")).filter((x) => x.textContent === label)[0];
+    if (b) b.click();
+    return !!b;
+  };
+  ok("agreeing is one click", btns().indexOf("Yes") >= 0, btns().join(" | "));
+  ok("...and disagreeing is the other", btns().indexOf("No — it was…") >= 0, btns().join(" | "));
+  press("Yes");
+  await sleep(300);
+  ok("🔴 the report is posted by EVENT and TIER — it has no prompt id to answer",
+     !!posted && posted.event === "suite-orison" && posted.tier === 40, JSON.stringify(posted));
+  ok("...and carries no id, which would answer somebody else's question",
+     !!posted && !posted.id, JSON.stringify(posted));
+  ok("...carrying the name being agreed with", !!posted && posted.name === "SUITE CANDIDATE ARMOR", JSON.stringify(posted));
+  ok("...as a claim, never as a witnessed sighting", !!posted && posted.source === "corrected", JSON.stringify(posted));
+  ok("...and the card closes on the answer", card().hidden);
+
+  // A tier we already publish asks a DIFFERENT question — "is what we list right?" — because
+  // "we have this one wrong" is the report worth the most.
+  posted = null;
+  if (fixes()[0]) fixes()[0].click();
+  await sleep(80);
+  ok("a MEASURED tier can be corrected too", !card().hidden, txt("#rwcard"));
+  ok("...and is asked about as something we list, not as something the app saw",
+     txt("#rwcard").indexOf("what we list") >= 0 && txt("#rwcard").indexOf("saw this arrive") < 0, txt("#rwcard"));
+  document.getElementById("rwx").click();
+  await sleep(60);
+  ok("dismissing it posts nothing", posted === null, JSON.stringify(posted));
+
+  // ── 6. Once the player picks a tab, nothing may move them off it. ──
+  const giver = tabs().filter((b) => b.textContent !== "Suite Orison")[0];
+  ok("(control) the giver tab is there to press", !!giver, labels().join(" | "));
+  if (giver) giver.click();
+  await sleep(120);
+  ok("clicking the giver tab switches to it", txt("#who") !== "Suite Orison", txt("#who"));
+  await window.__battReload();
+  await sleep(200);
+  ok("🔴 a poll does not drag the view back to the event once a tab is chosen",
+     txt("#who") !== "Suite Orison", txt("#who"));
+
+  window.fetch = realFetch;
+  return out;
+})()`;
+
 const VERSEFINDER = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
@@ -6167,6 +6341,7 @@ app.whenReady().then(async () => {
     fails += await run("logView: raw lines, the caps, the filter, the freeze", LOGVIEW, null, null, "logview.html");
     fails += await run("event feed: the reward ladder says when it is a fallback", EVENTFEED, null, null, "battaglia.html");
     fails += await run("event rewards: a sighting and a rumour must not look the same", REWARDCARD, null, null, "battaglia.html");
+    fails += await run("event ladder: Orison first, the guesses shown and labelled", EVENTLADDER, null, null, "battaglia.html");
     fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
     fails += await run("verse finder: ships, commodities, and which kind of blank", VERSEDEALERS, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
