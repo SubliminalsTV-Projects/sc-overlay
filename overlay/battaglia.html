@@ -159,10 +159,33 @@
     font-variant-numeric: tabular-nums; min-width: 38px; }
   .evrow.hit .pc { text-shadow: 0 0 10px rgba(var(--value-rgb), 0.4); }
   .evrow .at { font-family: var(--mono); font-size: 9.5px; color: var(--faint); }
+  .evrow .sp { flex: 1; }
+  /* "We have this wrong" — one per tier, so a correction can be made at the moment the player
+     SEES the mistake rather than only in the two minutes after they cross that threshold. */
+  .evfix { flex: none; font-family: var(--sans); font-size: 9px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint);
+    background: transparent; border: 1px solid var(--divider); border-radius: 4px;
+    padding: 2px 6px; cursor: pointer; }
+  .evfix:hover { color: var(--cyan-bright); border-color: var(--cyan); }
   .evloot { margin: 0 12px 8px 59px; font-size: 11px; line-height: 1.55; color: var(--cyan-text); }
   .evloot .it { display: block; }
   .evloot .it.owned { color: var(--green); }
   .evloot .unk { color: var(--faint); font-style: italic; }
+  /* 🔴 A GUESS MUST NOT LOOK LIKE A MEASUREMENT. Sub's ruling, 2026-08-22, is that the candidates
+     found online may now be SHOWN — not that they may be shown as rewards. Three separate signals
+     carry the difference, because any one of them alone is a signal somebody can miss: a dim,
+     italic, dashed-underlined name (nothing else in this widget is drawn that way), a leading "?"
+     where a confirmed reward has "·" or "✔", and the word UNCONFIRMED beside it. The colour is
+     deliberately NOT the green a collected reward gets — a candidate has no ownership state,
+     because we do not know the name to check. */
+  .evloot .it.cand { color: var(--faint); font-style: italic;
+    text-decoration: underline dotted rgba(var(--accent-rgb), 0.45); text-underline-offset: 3px; }
+  .evloot .it.cand .tag { font-style: normal; font-size: 8.5px; font-weight: 700;
+    letter-spacing: 0.1em; color: var(--gold); margin-left: 5px; }
+  /* Said once under the ladder rather than on every row — six repetitions of the same sentence is
+     how a caveat stops being read. */
+  .evkey { margin: 2px 12px 10px; font-size: 10px; line-height: 1.5; color: var(--faint); }
+  .evkey b { color: var(--gold); font-weight: 700; }
   .evmeta { margin: 10px 12px; padding: 8px 10px; font-size: 10.5px; line-height: 1.5;
     color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.06);
     border: 1px solid var(--divider); border-radius: 4px; }
@@ -280,6 +303,10 @@
   const RW_WINDOW_MS = 3000;
   const RW_DWELL_MS = 120000;
   let view = "giver";     // "giver" = the grind track; otherwise an event id
+  // Has the player picked a tab themselves? Until they do, a live event claims the widget (see
+  // renderVNav). After they do, nothing may move them — a 20-second poll that kept dragging the
+  // view back to the event would make the giver track unreadable.
+  let viewPinned = false;
   let mode = "rewards";   // "rewards" = the ship/item ladder, "missions" = per-rank mission list
   let tab = null;         // selected rank in mission mode
   let showDone = false;   // hide tiers already cleared, so the widget shows what is NEXT
@@ -308,7 +335,11 @@
         // Only ever REPLACE the card from a poll when the sidecar still says one is due. A
         // player halfway through typing an answer must not have the box yanked out from under
         // them by a routine refresh, so an unchanged prompt id is left alone.
-        if (!j.rewardPrompt) rwHide();
+        // 🔑 A LOCALLY-OPENED CORRECTION IS NOT THE SIDECAR'S TO CLOSE. The player pressed
+        // "Wrong?" a second ago; the sidecar has no prompt for it and never will, so the plain
+        // `if (!j.rewardPrompt) rwHide()` would close the card under them on the next tick.
+        if (rwPrompt && rwPrompt.local) { /* the player's own question — leave it alone */ }
+        else if (!j.rewardPrompt) rwHide();
         else if (!rwPrompt || rwPrompt.id !== j.rewardPrompt.id) rwRender(j.rewardPrompt);
       }
     } catch { /* keep the last good event list */ }
@@ -339,9 +370,20 @@
     const pct = b.max || span <= 0 ? 100 : Math.max(0, Math.min(100, ((b.estimate - b.curMin) / span) * 100));
     $("stFill").style.width = pct.toFixed(1) + "%";
     $("stPct").textContent = b.max ? "MAX" : pct.toFixed(0) + "%";
-    $("stCur").textContent = num(b.estimate) + " rep";
-    $("stNext").textContent = b.max ? "max standing" : num((b.nextMin ?? 0) - b.estimate) + " to " + b.nextName;
-    $("stEst").textContent = "Estimated from missions this tracker has seen you complete — a lower bound.";
+    // 🔴 EVERY FIGURE ON THIS BAR IS A BOUND, AND IT USED TO BE PRINTED AS A READING.
+    // Sub, 2026-08-22: "since we don't know how much rep we're going to get per mission, this rep
+    // ladder is pretty broken, right?" He is right, and it is worse than he said — the app cannot
+    // read reputation from the game AT ALL. What it has are two floors (rep summed from witnessed
+    // completions, and the rank the giver has been seen offering work at), and `estimate` is the
+    // higher of them. A floor under where you are is a CEILING on what is left, so "2,400 to
+    // Associate" and "12 runs" were both upper bounds wearing the clothes of exact figures.
+    // They now say so. No number was removed — a bound is genuinely useful, and it is honest.
+    $("stCur").textContent = "at least " + num(b.estimate) + " rep";
+    $("stNext").textContent = b.max ? "max standing" : "≤" + num(Math.max(0, (b.nextMin ?? 0) - b.estimate)) + " to " + b.nextName;
+    // Which evidence the floor rests on changes what the player should read into it, so say which.
+    $("stEst").textContent = track.repFloorFromRank
+      ? "The game never reports reputation to the app. This is the floor of the rank you have been seen working at — you are somewhere above it, and nothing in the log says how far."
+      : "The game never reports reputation to the app. This is summed from completions this tracker witnessed, so it is a floor — everything left is 'at most'.";
   }
 
   /** A collapsed <details> holding rewards already received — visible, just out of the way. */
@@ -403,13 +445,16 @@
         const st = document.createElement("div"); st.className = "st";
         st.textContent = st8 === "have" ? (r.unsure ? "probably" : "received")
           : st8 === "open" ? "do the job"
-          : (track.bar ? num(Math.max(0, (rank?.minRep ?? 0) - track.bar.estimate)) + " to go" : "locked");
+          // "≤", for the same reason as the standing bar: the estimate is a floor, so the gap it
+          // implies is a ceiling. Printing it bare said "exactly this much left", which the app
+          // has no way to know.
+          : (track.bar ? "≤" + num(Math.max(0, (rank?.minRep ?? 0) - track.bar.estimate)) + " to go" : "locked");
         st.title = st8 === "have"
           ? (r.unsure
               ? "A mission with this exact title was completed, but another mission shares that title, so this one can't be confirmed."
               : "Mission completed - the reward was granted.")
           : st8 === "open" ? "Tier reached, so she offers this mission. Complete it to get the reward."
-          : "Rank not reached yet.";
+          : "Rank not reached yet. The game never tells the app your reputation, so this is at most how much is left — probably less.";
         row.append(tier, who, st);
         body.appendChild(row);
       }
@@ -588,6 +633,15 @@
     sec.className = "sec";
     sec.textContent = "Best rep per hour → " + (bar.nextName || "next rank");
     body.appendChild(sec);
+    // 🔴 THE "N RUNS" FIGURE IS THE ONE SUB CALLED BROKEN, and it is the sharpest case of it:
+    // exact-looking integer arithmetic on a starting point the app cannot read. Said ONCE here
+    // rather than in three row tooltips nobody opens, and the rows themselves now carry "≤".
+    const why = document.createElement("div");
+    why.className = "est";
+    why.style.padding = "0 12px 4px";
+    why.textContent = "The game never tells the app your reputation, so these counts start from a floor: "
+      + "at most this many runs, and likely fewer.";
+    body.appendChild(why);
     // Three. The top row is the answer and the two under it are the evidence that it is the
     // answer — a longer list turns a recommendation back into a table to read.
     for (const m of list.slice(0, 3)) {
@@ -599,14 +653,16 @@
       const meta = document.createElement("div"); meta.className = "gmeta";
       const bits = ["+" + num(m.rep), fmtMins(m.durMin)];
       if (m.payMax) bits.push((m.payoutEstimated ? "~" : "") + fmtK(m.payMax));
-      bits.push(Math.ceil(gap / m.rep) + " runs · ~" + fmtMins(Math.ceil(gap / m.rep) * m.durMin));
+      const runs = Math.ceil(gap / m.rep);
+      bits.push("≤" + runs + " runs · ≤" + fmtMins(runs * m.durMin));
       meta.textContent = bits.join(" · ");
       left.append(t, meta);
       const rate = document.createElement("div"); rate.className = "rate";
       rate.textContent = num(Math.round(m.repHr)) + "/hr";
       row.append(left, rate);
       row.title = "Rep per hour from this contract's own award and the game's expected run length."
-        + " The aUEC figure is modelled, not read from the game.";
+        + " The aUEC figure is modelled, not read from the game."
+        + " The run count is a ceiling — your real standing is at or above the figure it counts from.";
       if (m.key) {
         row.classList.add("linked");
         row.addEventListener("click", () => openSite("/missions/" + encodeURIComponent(m.key)));
@@ -618,6 +674,19 @@
   /* Only events worth a tab: a finished one is history, not a track to run. */
   function liveEvents() { return events.filter((e) => e.status !== "past"); }
 
+  /**
+   * The top-level tab strip.
+   *
+   * 🔑 EVENTS COME FIRST, AND THE FIRST ONE IS SELECTED. Sub, 2026-08-22, looking at this widget:
+   * *"On the event tracker tab, I want to put Siege of Orison first."* Order alone would have been
+   * cosmetic — the widget still opened on the giver track, so the event was still a click away —
+   * so the default selection moves with it. The giver track is now the LAST tab.
+   *
+   * 🔑 The ordering WITHIN the events is the sidecar's (`allEventProgress()`: current → upcoming →
+   * past, then label), not a hard-coded "Orison first". Siege of Orison is first today because it
+   * is the only live event; when a second one starts, a running event outranking an upcoming one
+   * is the rule Sub actually wants, and it needs no edit here.
+   */
   function renderVNav() {
     const evs = liveEvents();
     const nav = $("vnav");
@@ -630,17 +699,22 @@
       b.type = "button";
       b.className = "vt" + (view === id ? " on" : "");
       b.textContent = label;
-      b.addEventListener("click", () => { view = id; render(); });
+      b.addEventListener("click", () => { view = id; viewPinned = true; render(); });
       nav.appendChild(b);
     };
-    add("giver", (track && track.faction) ? track.faction : "Track");
     for (const e of evs) add(e.id, e.label);
+    add("giver", (track && track.faction) ? track.faction : "Track");
   }
 
   function render() {
     // If the selected event disappeared (it ended, or events.json changed under us), fall back
     // rather than rendering nothing — a dangling selection is how a widget goes silently blank.
     if (view !== "giver" && !liveEvents().some((e) => e.id === view)) view = "giver";
+    // Open on the live event, not on the giver track. Only until the player picks a tab: after
+    // that `viewPinned` holds, and the event does not steal the view back on the next poll.
+    // ⚠️ This lives HERE rather than beside the initial `let view`, because the events arrive from
+    // /api/events after first paint — a default set at parse time has nothing to choose from.
+    if (!viewPinned) { const first = liveEvents()[0]; if (first) view = first.id; }
     renderVNav();
     if (view !== "giver") { renderEvent(events.find((e) => e.id === view)); return; }
 
@@ -768,24 +842,72 @@
       meta.push('<span class="evwarn">' + ev.unpriced + " completion" + (ev.unpriced === 1 ? " is" : "s are") +
         " not counted yet</span> — those contracts' point values haven't been measured, so the figure above is LOW.");
     }
+    // 🔴 THE LINE THAT ANSWERS "HOW MANY MISSIONS IS A TIER?" WITH "WE CANNOT SAY."
+    // Sub, 2026-08-22: "since we don't know how much rep we're going to get per mission, this rep
+    // ladder is pretty broken, right?" He is right, and the honest fix is not a better estimate.
+    // Every point value in events.json came from a human reading their in-game Journal before and
+    // after ONE contract; interpolating the other nine would invent exactly the precision he is
+    // objecting to. So the ladder states its own coverage and stops there — no missions-to-go
+    // figure is offered anywhere, deliberately.
+    // ⚠️ Distinct from `unpriced` above, which is about completions we WATCHED. This is about the
+    // board, and it is non-zero even for a player who has run nothing.
+    if (ev.contractsKnown > 0 && ev.contractsPriced < ev.contractsKnown) {
+      meta.push('<span class="evwarn">Point values are measured for ' + ev.contractsPriced + " of " +
+        ev.contractsKnown + " contracts</span> in this event, so the app can't tell you how many missions a tier is.");
+    }
     meta.push("The game never reports your event points to the app. Check your in-game Journal for the real number.");
     const stale = feedCaveat();
     if (stale) meta.push(stale);
     html.push('<div class="evmeta">' + meta.join("<br>") + "</div>");
 
     // The ladder. This is the part Sub asked for: percent -> loot.
+    //
+    // 🔴 TWO SOURCES, RENDERED FROM TWO SEPARATE ARRAYS, NEVER CONCATENATED. `t.rewards` is what a
+    // real log saw (or the site corroborated); `t.candidates` is `events.json`'s `rewardCandidates`
+    // — five names a viewer relayed from a chatbot answer, which nobody has verified. Sub's ruling,
+    // 2026-08-22: publish them anyway, because five italic maybes beat six blanks, AND give players
+    // a way to tell us we are wrong. Merging the two arrays here is the single edit that would turn
+    // the rumour into a fact, and nothing downstream would notice.
+    let anyCandidate = false;
     for (const t of ev.tiers) {
       html.push('<div class="evrow' + (t.reached ? " hit" : "") + '"><span class="pc">' + t.pct + "%</span>" +
-        (t.points != null ? '<span class="at">' + num(t.points) + "</span>" : "") + "</div>");
-      if (!t.rewards.length) {
-        html.push('<div class="evloot"><span class="unk">Reward not known yet</span></div>');
-        continue;
+        (t.points != null ? '<span class="at">' + num(t.points) + "</span>" : "") +
+        '<span class="sp"></span>' +
+        // The correction path, on every tier — including the ones we have measured, because "we
+        // have this one wrong" is exactly the report that is worth the most.
+        '<button type="button" class="evfix" data-fixtier="' + t.pct + '" title="Tell us what this tier actually gave you">Wrong?</button>' +
+        "</div>");
+      const parts = [];
+      for (const r of t.rewards) {
+        parts.push('<span class="it' + (r.owned ? " owned" : "") + '">' + (r.owned ? "✔ " : "· ") + esc(r.name) + "</span>");
       }
-      html.push('<div class="evloot">' + t.rewards.map((r) =>
-        '<span class="it' + (r.owned ? " owned" : "") + '">' + (r.owned ? "✔ " : "· ") + esc(r.name) + "</span>").join("") + "</div>");
+      for (const c of (t.candidates || [])) {
+        anyCandidate = true;
+        // No ✔ and no owned state, ever: we cannot check a collection against a name nobody has
+        // confirmed, and a green tick beside a guess is the exact failure this separation prevents.
+        parts.push('<span class="it cand">? ' + esc(c.name) + '<span class="tag">UNCONFIRMED</span></span>');
+      }
+      if (!parts.length) parts.push('<span class="unk">Reward not known yet</span>');
+      html.push('<div class="evloot">' + parts.join("") + "</div>");
+    }
+    if (anyCandidate) {
+      html.push('<div class="evkey"><b>UNCONFIRMED</b> rewards are what we found reported online. ' +
+        "Nobody has verified them against a real log, so treat them as a lead, not a promise — " +
+        'press <b>Wrong?</b> on any tier to tell us what it really gave you.</div>');
     }
     $("body").innerHTML = html.join("");
   }
+
+  // Delegated, because renderEvent() builds the ladder as a string and replaces #body wholesale —
+  // a listener bound to a button would be thrown away by the next 20-second poll.
+  $("body").addEventListener("click", (e) => {
+    const b = e.target && e.target.closest ? e.target.closest(".evfix") : null;
+    if (!b) return;
+    const ev = events.find((x) => x.id === view);
+    const tier = Number(b.getAttribute("data-fixtier"));
+    const t = ev && ev.tiers.find((x) => x.pct === tier);
+    if (ev && t) rwOpenCorrection(ev, t);
+  });
 
   $("modeBtn").addEventListener("click", () => { mode = mode === "rewards" ? "missions" : "rewards"; render(); });
   $("doneBtn").addEventListener("click", () => { showDone = !showDone; render(); });
@@ -840,6 +962,38 @@
     const el = document.getElementById("rwtext");
     if (el) { try { el.focus({ preventScroll: true }); } catch { el.focus(); } }
   }
+
+  /**
+   * "Wrong?" on a ladder row — the same question card, raised by the player instead of by a tier
+   * crossing.
+   *
+   * 🔑 IT REUSES THE CARD RATHER THAN GROWING A SECOND SURFACE, and that is not only tidiness: the
+   * card already lives OUTSIDE #body, so it survives the 20-second poll that rebuilds the ladder,
+   * and it already owns the canvas-wide keyboard grab and every release path for the text field.
+   * An inline row inside #body would have been destroyed mid-typing by the next refresh, with the
+   * grab stranded and no UI left to lower it.
+   *
+   * 🔑 It asks about whatever we are currently SHOWING for that tier — a measured reward if we
+   * have one, otherwise the unconfirmed candidate, otherwise nothing — because the thing the
+   * player is disagreeing with is what is on their screen.
+   */
+  function rwOpenCorrection(ev, t) {
+    const known = (t.rewards && t.rewards[0]) ? t.rewards[0].name : null;
+    const cand = (t.candidates && t.candidates[0]) ? t.candidates[0].name : null;
+    rwRender({
+      local: true,
+      id: "local:" + ev.id + ":" + t.pct,
+      eventId: ev.id,
+      eventLabel: ev.label,
+      tier: t.pct,
+      // `observed` stays null and means what it always means: the log witnessed nothing. Nothing
+      // was witnessed here — the player opened this themselves — and the sidecar sends that
+      // distinction to the site untouched, so a self-reported name is never weighted as a sighting.
+      observed: null,
+      known: known,
+      candidate: cand,
+    });
+  }
   window.__battFocus = () => { if (rwTyping) rwFocusInput(); };
   window.__battExitTyping = () => rwSetTyping(false);
 
@@ -866,7 +1020,11 @@
       await fetch("/api/events/reward", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: p.id, source: source, name: name || null }),
+        // Two shapes, one route (see /api/events/reward). A crossing card answers by prompt id;
+        // a ladder correction has no prompt behind it, so it names the event and tier instead.
+        body: JSON.stringify(p.local
+          ? { event: p.eventId, tier: p.tier, source: source, name: name || null }
+          : { id: p.id, source: source, name: name || null }),
       });
     } catch { /* the sidecar keeps the answer queued; nothing useful to say here */ }
     load();
@@ -883,14 +1041,17 @@
     const q = $("rwq");
     q.textContent = "";
     const lead = document.createElement("span");
-    lead.appendChild(document.createTextNode("You just passed "));
+    lead.appendChild(document.createTextNode(p.local ? "The " : "You just passed "));
     const pct = document.createElement("b");
     pct.textContent = p.tier + "%";
     lead.appendChild(pct);
-    lead.appendChild(document.createTextNode(" of " + p.eventLabel + "."));
+    lead.appendChild(document.createTextNode((p.local ? " reward for " : " of ") + p.eventLabel + "."));
     q.appendChild(lead);
 
-    const guess = p.observed || p.candidate || null;
+    // A locally-raised correction asks about whatever the ladder is SHOWING for that tier, which
+    // may be a measured reward — the crossing card never has one, because a tier whose reward is
+    // already measured is never asked about (shouldAsk in src/event-rewards.ts).
+    const guess = p.observed || (p.local ? (p.known || p.candidate) : p.candidate) || null;
     const src = document.createElement("span");
     src.className = "rwsrc";
     if (guess) {
@@ -898,14 +1059,19 @@
       nm.className = "rwname";
       nm.textContent = guess;
       q.appendChild(nm);
-      // The distinction that matters, said plainly. One of these is a sighting; the other is a
-      // rumour, and a player answering deserves to know which they are being asked to confirm.
+      // The distinction that matters, said plainly. One of these is a sighting, one is a rumour,
+      // and one is what we already publish as fact — a player answering deserves to know which
+      // they are being asked about.
       src.textContent = p.observed
         ? "The app saw this arrive a moment after you crossed. Is it the tier reward?"
-        : "This is an UNCONFIRMED guess — nobody has verified it. Did you get it?";
+        : (p.local && p.known)
+          ? "This is what we list for this tier. Is it right?"
+          : "This is an UNCONFIRMED guess — nobody has verified it. Did you get it?";
     } else {
       src.style.marginTop = "5px";
-      src.textContent = "The app did not see what you received. What did this tier give you?";
+      src.textContent = p.local
+        ? "Nobody has reported this tier's reward. What did it give you?"
+        : "The app did not see what you received. What did this tier give you?";
     }
     q.appendChild(src);
 
@@ -952,6 +1118,15 @@
 
     rwFoot();
     if (rwTick) clearInterval(rwTick);
+    // 🔑 NO CLOCK ON A CARD THE PLAYER OPENED. The two-minute dwell exists because a crossing card
+    // arrives unbidden mid-game and must retire itself; this one was asked for, so taking it away
+    // on a timer would be losing the player's own work. It closes on an answer or on ✕.
+    // (`crossedAtMs` is also absent here, so the countdown would read NaN:NaN.)
+    // ⚠️ THE GUARD THE SUITE ACTUALLY TESTS IS THE ONE IN `rwFoot()` — that is what draws the
+    // clock. This early return is belt-and-braces (it stops a pointless 1 Hz timer on a card with
+    // no deadline) and removing it is a control that comes back GREEN, verified 2026-08-22. Do not
+    // read that green as coverage of this line.
+    if (p.local) return;
     rwTick = setInterval(() => {
       if (!rwPrompt) return;
       if (rwSecondsLeft(rwPrompt) <= 0) { rwHide(); return; }
@@ -961,9 +1136,6 @@
 
   function rwFoot() {
     if (!rwPrompt) return;
-    const s = rwSecondsLeft(rwPrompt);
-    const mm = Math.floor(s / 60);
-    const ss = String(s % 60).padStart(2, "0");
     const foot = $("rwfoot");
     foot.textContent = "";
     // Say what the answer is FOR and what happens to it. Reporting is opt-in and rides the same
@@ -972,6 +1144,10 @@
     foot.appendChild(document.createTextNode(rwReporting
       ? "Your answer helps fill in this event's reward list for everyone. One report is a claim, not a fact — it needs a second player to agree before it ships. "
       : "Connect the tracker in Settings to share this with other players. For now it only fills in your own ladder. "));
+    if (rwPrompt.local) return;
+    const s = rwSecondsLeft(rwPrompt);
+    const mm = Math.floor(s / 60);
+    const ss = String(s % 60).padStart(2, "0");
     const clock = document.createElement("span");
     clock.className = "rwclock";
     clock.textContent = mm + ":" + ss;

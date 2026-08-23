@@ -3603,22 +3603,32 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
 
   // The player's answer to a tier-reward question. Loopback+Origin gated automatically by
   // being a POST (see the mutating-request guard), like every other write here.
+  // Two shapes, one route and one upload pipe:
+  //   { id, source, name }           — answering a tier-crossing card (the original).
+  //   { event, tier, source, name }  — correcting the LADDER, with no crossing behind it. Sub's
+  //                                    ask, 2026-08-22: a player must be able to tell us we have
+  //                                    a reward wrong at the moment they SEE it wrong, not only
+  //                                    in the two minutes after they happen to cross that tier.
   if (url === "/api/events/reward" && req.method === "POST") {
-    const body = (await readBody(req)) as { id?: unknown; name?: unknown; source?: unknown };
+    const body = (await readBody(req)) as { id?: unknown; name?: unknown; source?: unknown; event?: unknown; tier?: unknown };
     const id = typeof body.id === "string" ? body.id : "";
     const source = body.source === "confirmed" || body.source === "corrected" || body.source === "typed" || body.source === "none"
       ? body.source : null;
-    if (!id || !source) {
+    const event = typeof body.event === "string" ? body.event : "";
+    const tier = typeof body.tier === "number" && Number.isFinite(body.tier) ? body.tier : null;
+    if (!source || (!id && !(event && tier != null))) {
       res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "id and source are required" }));
+      res.end(JSON.stringify({ error: "source, plus either id or event+tier, are required" }));
       return;
     }
-    const p = tracker.answerRewardPrompt(id, typeof body.name === "string" ? body.name : null, source);
+    const p = id
+      ? tracker.answerRewardPrompt(id, typeof body.name === "string" ? body.name : null, source)
+      : tracker.reportEventReward(event, tier as number, typeof body.name === "string" ? body.name : null, source);
     // Push straight away rather than waiting out the retry timer: the player just answered a
     // question and the answer is small. A failure simply leaves it queued.
     if (p) void flushRewardAnswers();
     res.writeHead(p ? 200 : 409, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(p ? { ok: true } : { error: "unknown_or_already_answered" }));
+    res.end(JSON.stringify(p ? { ok: true } : { error: id ? "unknown_or_already_answered" : "unknown_event_or_tier" }));
     return;
   }
 

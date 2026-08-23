@@ -236,8 +236,14 @@ export interface GrindMission {
 export interface GrindTrack {
   faction: string;
   scope: string;
-  /** Current standing (same witnessed-only estimate the mission drawer's rep bar uses). */
+  /** Current standing. A LOWER BOUND, and the better of the two the app can prove — see the
+   *  comment on the floor in `giverTrack()`. Unlike the mission drawer's bar this one is also
+   *  floored by `reachedRank`, so it can never contradict the reward ladder beside it. */
   bar: RepBar | null;
+  /** True when `bar` rests on the observed RANK rather than on summed completions: the number is
+   *  that rank's floor, and everything derived from it ("2,400 to Associate", "12 runs") is an
+   *  UPPER bound on what is left, not a reading. The UI has to say so. */
+  repFloorFromRank: boolean;
   ranks: { rank: number; name: string; minRep: number; missions: GrindMission[] }[];
   /** Highest rank whose mission the giver has actually OFFERED you (from inferredRank — an
    *  observed fact, unlike the rep estimate). -1 when nothing's been seen. */
@@ -339,8 +345,44 @@ export interface EventProgress {
   /** Contributions seen whose contract value is not yet in events.json. If this is non-zero the
    *  percentage is an UNDER-count and the UI must say so. */
   unpriced: number;
+  /**
+   * How much of the event's board has a MEASURED point value — `contractsPriced` of
+   * `contractsKnown`.
+   *
+   * 🔑 This is the answer to "how many missions is a tier?", and the answer is that the app
+   * cannot say. Sub, 2026-08-22: *"since we don't know how much rep we're going to get per
+   * mission, this rep ladder is pretty broken, right?"* He is right, and the fix is not a better
+   * estimate — every point value in `events.json` comes from a human reading their in-game
+   * Journal before and after ONE contract, so interpolating the rest would be inventing the very
+   * precision he is objecting to. What the ladder can honestly do is state its own coverage.
+   *
+   * `unpriced` is a different number and they are not interchangeable: that one counts
+   * completions we WATCHED and could not price, and is silent about contracts nobody has run.
+   */
+  contractsPriced: number;
+  contractsKnown: number;
   contributions: EventContribution[];
-  tiers: { pct: number; points: number | null; reached: boolean; rewards: { name: string; item: string | null; owned: boolean }[] }[];
+  tiers: {
+    pct: number;
+    points: number | null;
+    reached: boolean;
+    /** MEASURED rewards — seen in a real log, or corroborated site-side. Facts. */
+    rewards: { name: string; item: string | null; owned: boolean }[];
+    /**
+     * 🔴 UNCONFIRMED guesses at this tier's reward, from `events.json`'s `rewardCandidates`.
+     *
+     * A SEPARATE FIELD FROM `rewards`, AND IT MUST STAY SEPARATE. Sub's call, 2026-08-22:
+     * *"I know that we don't have concrete evidence, but I want to go with what we found on the
+     * internet. And then we allow people to tell us if we have it wrong."* So a candidate may now
+     * be SHOWN — it may still never be shown as a reward. Merging the two arrays anywhere (here,
+     * in the view, or in a render helper) is the one change that turns a rumour into a fact, and
+     * nothing downstream would report it.
+     *
+     * They carry no `item` and no `owned`: both would be claims about a name nobody has verified,
+     * and a green ✔ beside a guess is exactly the thing this separation exists to prevent.
+     */
+    candidates: { name: string }[];
+  }[];
   /** True when the event declares no rewards yet — the widget shows "not yet known" rather
    *  than an empty list that reads like "no rewards". */
   rewardsUnknown: boolean;
@@ -1249,6 +1291,10 @@ export class MissionTracker extends EventEmitter {
    *  re-asking about every tier a returning player cleared weeks ago — `tiersCrossed()` cannot
    *  know that on its own, because a fresh session has no previous percentage to compare. */
   private askedTiers = new Map<string, number[]>();
+  /** Per-process counter behind `reportEventReward()`'s ids. Two corrections to the same tier are
+   *  two separate claims, so they must not share an id — the second would be dropped as an
+   *  already-answered prompt and the player would never know their report went nowhere. */
+  private rewardReportSeq = 0;
   /**
    * Recent `Received Blueprint:` lines, for correlating a receipt with a tier crossing.
    *
@@ -3368,6 +3414,32 @@ export class MissionTracker extends EventEmitter {
    * yet in `events.json`; while it is non-zero the percentage is definitely an under-count and
    * the widget must not present it as a reading.
    */
+  /**
+   * How many of this event's contracts have a measured point value, out of how many the loaded
+   * dataset knows about.
+   *
+   * 🔑 THE DENOMINATOR COMES FROM THE DATASET, NOT FROM `events.json`. Counting the keys in
+   * `def.contracts` both ways would give 4 of 4 — a perfect score that means "we have measured
+   * everything we have measured". The dataset carries all 13 `ORS_` contracts (verified by exact
+   * key match against real 4.10 markers), so it is the only honest denominator available.
+   *
+   * ⚠️ It is still a floor on the real board: a contract CIG ships that our dataset has not seen
+   * counts in neither column. That is the correct direction to be wrong — it can only make our
+   * coverage look worse than it is, never better.
+   */
+  private eventContractCoverage(def: EventDef): { contractsPriced: number; contractsKnown: number } {
+    const prefixes = def.contractPrefixes ?? [];
+    if (!prefixes.length || !this.dataset) return { contractsPriced: 0, contractsKnown: 0 };
+    const keys = Object.keys(this.dataset.missions).filter((k) => prefixes.some((p) => k.startsWith(p)));
+    const priced = def.contracts ?? {};
+    return {
+      contractsKnown: keys.length,
+      // Count against the dataset's keys rather than the priced map's, so a value measured for a
+      // contract this dataset does not carry cannot inflate the fraction past 100%.
+      contractsPriced: keys.filter((k) => typeof priced[k] === "number").length,
+    };
+  }
+
   eventProgress(id: string): EventProgress | null {
     const def = this.events.find((e) => e.id === id);
     if (!def) return null;
@@ -3386,12 +3458,19 @@ export class MissionTracker extends EventEmitter {
     const total = typeof def.total === "number" && def.total > 0 ? def.total : null;
     const pct = total ? Math.min(100, (points / total) * 100) : null;
     const rewards = def.rewards ?? [];
+    const candidates = def.rewardCandidates ?? [];
     const tiers = (def.tiers ?? []).slice().sort((a, b) => a - b).map((t) => {
       const rw = rewards.filter((r) => r.tier === t).map((r) => ({
         name: r.name,
         item: r.item ?? null,
         owned: this.isOwned(r.name).owned,
       }));
+      // Built from a DIFFERENT source array and never appended to `rw`. A candidate whose name a
+      // real receipt has since confirmed is dropped here rather than shown twice — `confirmed`
+      // means it has already been promoted into `rewards` above.
+      const cd = candidates
+        .filter((c) => c.tier === t && !c.confirmed)
+        .map((c) => ({ name: c.name }));
       return {
         pct: t,
         points: total ? Math.round((t / 100) * total) : null,
@@ -3399,6 +3478,7 @@ export class MissionTracker extends EventEmitter {
         // the estimate is low, so this under-claims — which is the correct direction to be wrong.
         reached: pct != null && pct >= t,
         rewards: rw,
+        candidates: cd,
       };
     });
     return {
@@ -3412,6 +3492,7 @@ export class MissionTracker extends EventEmitter {
       unpriced,
       contributions: contributions.slice().sort((a, b) => b.at.localeCompare(a.at)),
       tiers,
+      ...this.eventContractCoverage(def),
       rewardsUnknown: rewards.length === 0,
     };
   }
@@ -3507,6 +3588,49 @@ export class MissionTracker extends EventEmitter {
     return p;
   }
 
+  /**
+   * A tier reward reported from the LADDER, with no tier crossing behind it.
+   *
+   * Sub, 2026-08-22: *"we allow people to tell us if we have it wrong. I think that's what we set
+   * up already."* Half of it was — the crossing card. But a card only ever appears at the instant
+   * a player passes a threshold, so a player who already knows the 43% reward (they crossed it
+   * last week, or they simply read the wrong name on our ladder) had nowhere to say so. This is
+   * the other half, and it deliberately reuses the SAME record and the SAME upload pipe
+   * (`unreportedRewardAnswers()` → `/api/sc/event-reward`) rather than adding a second channel:
+   * one report shape means the site cannot end up weighing two kinds of claim differently by
+   * accident.
+   *
+   * 🔑 `observed` is null and stays null. Nothing was witnessed — that is the whole difference
+   * between this and a crossing report, and `reportBody()` sends the distinction untouched.
+   */
+  reportEventReward(eventId: string, tier: number, name: string | null, source: PromptAnswerSource): RewardPrompt | null {
+    const def = this.events.find((e) => e.id === eventId);
+    // Refuse a tier the event does not declare. Without this a typo (or a stale widget still
+    // showing last patch's ladder) uploads a claim about a threshold that does not exist.
+    if (!def || !(def.tiers ?? []).includes(tier)) return null;
+    const at = new Date();
+    const clean = typeof name === "string" ? name.trim().slice(0, 120) : null;
+    const p: RewardPrompt = {
+      // Distinct from a crossing prompt's `<event>:<tier>`, so a report can never collide with —
+      // or silently answer — a real question the player has not looked at yet.
+      id: `${eventId}:${tier}:report:${++this.rewardReportSeq}`,
+      eventId,
+      eventLabel: def.label,
+      tier,
+      crossedAt: at.toISOString(),
+      crossedAtMs: at.getTime(),
+      observed: null,
+      candidate: candidateForTier(def.rewardCandidates, tier),
+      answer: { name: clean || null, source, at: at.toISOString() },
+      reported: false,
+    };
+    this.rewardPrompts.push(p);
+    if (this.rewardPrompts.length > 12) this.rewardPrompts = this.rewardPrompts.slice(-12);
+    this.saveState();
+    this.emit("change");
+    return p;
+  }
+
   /** Prompts whose answers have not yet reached the site. Drained by the sidecar. */
   unreportedRewardAnswers(): RewardPrompt[] {
     return this.rewardPrompts.filter((p) => p.answer && !p.reported);
@@ -3565,11 +3689,38 @@ export class MissionTracker extends EventEmitter {
       .flatMap((m) => m.items.map((it) => ({ ...it, rank: m.rank, mission: m.title, received: m.completed > 0, unsure: m.completed > 0 && m.byTitleOnly })))
       .sort((a, b) => (a.rank ?? -1) - (b.rank ?? -1) || a.name.localeCompare(b.name));
 
-    const pos = repLadderPosition(this.repScopes[scope], this.repWitnessed.get(giver)?.sum ?? 0);
     const canonical = entries[0][1].giver || giver; // dataset spelling wins; fall back to the query
+    const reachedRank = this.inferredRank.get(canonical) ?? this.inferredRank.get(giver) ?? -1;
+
+    /**
+     * 🔴 THE WIDGET USED TO SHOW TWO DIFFERENT STANDINGS AT ONCE, and the ladder beside the bar
+     * was the one telling the truth.
+     *
+     * There are two independent FLOORS under a player's real reputation, because the game never
+     * reports the number to the client at all:
+     *   · `repWitnessed.sum` — rep summed from completions this tracker happened to see;
+     *   · `reachedRank` — the highest rank the giver has actually been observed OFFERING work at,
+     *     which the game only does once you are there. That is an observed fact, not an estimate.
+     * The bar took only the first. Measured on Sub's own log 2026-08-22: `reachedRank` 2 (Trusted
+     * Associate, floor 6,000) beside a bar reading "Prospective Associate · 0 rep · 2,400 to
+     * Associate" — a rank the log proves he is two tiers past, and a countdown to a rank he
+     * already holds. The reward ladder in the same widget had reconciled the two for months
+     * (`currentRank()`); the bar never did.
+     *
+     * Taking the HIGHER floor is not a guess: both are lower bounds, so the larger is the better
+     * lower bound. It stays a bound — see `repFloorFromRank`, which is what lets the UI say so
+     * rather than presenting a floor as a reading.
+     */
+    const witnessedSum = this.repWitnessed.get(giver)?.sum ?? 0;
+    const rankFloor = reachedRank >= 0 ? (ladder[reachedRank]?.minRep ?? 0) : 0;
+    const pos = repLadderPosition(this.repScopes[scope], Math.max(witnessedSum, rankFloor));
     return {
       faction: canonical,
       scope,
+      /** True when the standing above rests on the observed RANK rather than on summed
+       *  completions — i.e. the number is the rank's floor and the player's real total is
+       *  somewhere above it, with no upper bound the app can name. */
+      repFloorFromRank: rankFloor > witnessedSum,
       // Same shape the panel gets, including what the next rank unlocks — an empty nextRewards
       // here while the panel's is populated would just be a trap for the next reader.
       bar: pos
@@ -3577,7 +3728,7 @@ export class MissionTracker extends EventEmitter {
             nextRewards: rewards.filter((r) => r.rank === pos.nextRank).map((r) => r.name) }
         : null,
       ranks,
-      reachedRank: this.inferredRank.get(canonical) ?? this.inferredRank.get(giver) ?? -1,
+      reachedRank,
       intro: missions.filter((m) => m.rank == null).sort((a, b) => a.title.localeCompare(b.title)),
       rewards,
     };

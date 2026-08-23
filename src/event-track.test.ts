@@ -255,5 +255,118 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   check("...and the tracker still knows it is NOT live", q.view().envIsLive === false, String(q.view().envIsLive));
 }
 
+// ---- 7. CANDIDATES REACH THE VIEW, AND STAY OUT OF `rewards` ----------------------------------
+//
+// Sub, 2026-08-22: *"I know that we don't have concrete evidence, but I want to go with what we
+// found on the internet. And then we allow people to tell us if we have it wrong."* So the
+// unconfirmed guesses in `rewardCandidates` may now be SHOWN — and may still never be shown as a
+// reward. `EventProgress.tiers[]` carries them in a second array for exactly that reason, and the
+// one edit that would undo the whole design is somebody concatenating the two.
+//
+// 🔴 EVERY VALUE HERE IS THE FIXTURE'S OWN. `data/events.json` is a live research artefact — its
+// `contracts` map has already turned this file red once, and its `rewards` list a second time.
+// `tiers`, `total` and now `rewardCandidates` are the same kind of value, so this block declares
+// an event of its own and reads nothing off the shipped file.
+{
+  const fdir = mkdtempSync(join(tmpdir(), "ev-cand-"));
+  writeFileSync(join(fdir, "blueprints.latest.json"), JSON.stringify({
+    schema: "sc-blueprint-pools/2", version: `4.10.0-LIVE.${CL}`, changelist: CL, missionCount: 4,
+    missions: {
+      // Four contracts on the fixture event's prefix, of which the registry prices two. That 2-of-4
+      // is what the coverage assertion measures, and it is deliberately neither 0 nor everything.
+      FIX_Alpha: m("Fixture Alpha", "FixtureGen"),
+      FIX_Beta: m("Fixture Beta", "FixtureGen"),
+      FIX_Gamma: m("Fixture Gamma", "FixtureGen"),
+      FIX_Delta: m("Fixture Delta", "FixtureGen"),
+      // Not on the prefix — proves the denominator is filtered rather than "every mission".
+      OTHER_Thing: m("Unrelated", "FixtureGen"),
+    },
+  }));
+  writeFileSync(join(fdir, "events.json"), JSON.stringify({
+    schema: "sc-events/1",
+    events: [{
+      id: "fixture-event", log: "Fixture Event", label: "Fixture Event", status: "current",
+      contractPrefixes: ["FIX_"], generators: ["FixtureGen"],
+      total: 1000, tiers: [10, 20, 30],
+      // 🔑 FIX_Ghost IS PRICED BUT NOT IN THE DATASET, and it is the only reason the numerator
+      // assertion can fail. Without it `Object.keys(contracts).length` and "priced keys the
+      // dataset carries" are both 2, so the buggy numerator and the correct one are the same
+      // number and no assertion over this fixture could ever separate them — the control came
+      // back green on exactly that (see the sixth control lesson in SKILL.md).
+      // It is not hypothetical either: a value measured on the PTU, for a contract the LIVE
+      // dataset has not shipped yet, is precisely this row.
+      contracts: { FIX_Alpha: 100, FIX_Beta: 200, FIX_Ghost: 500 },
+      rewards: [{ tier: 10, name: "FIXTURE MEASURED REWARD", item: null }],
+      rewardCandidates: [
+        { tier: 20, name: "FIXTURE CANDIDATE", confirmed: false },
+        // A candidate the registry has since marked confirmed lives on in `rewards`; showing it
+        // again as a guess would print the same item twice, once as fact and once as rumour.
+        { tier: 10, name: "FIXTURE MEASURED REWARD", confirmed: true },
+      ],
+    }],
+  }));
+  const f = new MissionTracker({ dataDir: fdir, stateDir: mkdtempSync(join(tmpdir(), "ev-cand-st-")) });
+  f.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  f.detectPatch("<2026> Environment: PUB");
+  const fp = f.eventProgress("fixture-event")!;
+  const tier = (pct: number) => fp.tiers.find((x) => x.pct === pct)!;
+
+  // POSITIVE FIRST. Every separation assertion below is of the "X is not in Y" shape, and those are
+  // all satisfied for free by a view that carries nothing at all.
+  check("the fixture event loaded with its three tiers", fp.tiers.length === 3, String(fp.tiers.length));
+  check("a candidate REACHES the view — the whole point of the change",
+    tier(20).candidates.map((c) => c.name).join(",") === "FIXTURE CANDIDATE",
+    JSON.stringify(tier(20).candidates));
+  check("...and the measured reward reaches it too",
+    tier(10).rewards.map((r) => r.name).join(",") === "FIXTURE MEASURED REWARD",
+    JSON.stringify(tier(10).rewards));
+
+  // Now the separation, which the two above make meaningful.
+  check("🔴 a candidate is NOT in `rewards`", tier(20).rewards.length === 0, JSON.stringify(tier(20).rewards));
+  check("🔴 a measured reward is NOT in `candidates`", tier(10).candidates.length === 0,
+    JSON.stringify(tier(10).candidates));
+  check("a candidate already promoted to `rewards` is not shown a second time as a guess",
+    !tier(10).candidates.some((c) => c.name === "FIXTURE MEASURED REWARD"),
+    JSON.stringify(tier(10).candidates));
+  check("a tier with neither carries two empty lists, not one merged one",
+    tier(30).rewards.length === 0 && tier(30).candidates.length === 0);
+  // A candidate carries no ownership state at all: we cannot check a collection against a name
+  // nobody has confirmed, and a ✔ beside a guess is what this whole separation prevents.
+  check("a candidate carries no `owned` and no `item` field",
+    !("owned" in (tier(20).candidates[0] as object)) && !("item" in (tier(20).candidates[0] as object)),
+    Object.keys(tier(20).candidates[0]).join(","));
+
+  // ---- Coverage: the answer to "how many missions is a tier?" is "we cannot say" ----
+  check("coverage counts the DATASET's contracts as the denominator, not the priced map's",
+    fp.contractsKnown === 4, String(fp.contractsKnown));
+  check("...and only the ones with a measured value THIS DATASET CARRIES as the numerator",
+    fp.contractsPriced === 2, String(fp.contractsPriced));
+  check("a price for a contract the dataset has never seen cannot push coverage past 100%",
+    fp.contractsPriced <= fp.contractsKnown, `${fp.contractsPriced}/${fp.contractsKnown}`);
+  check("a mission off the event's prefix is in neither column",
+    fp.contractsKnown === 4 && fp.contractsPriced === 2);
+  check("coverage is genuinely partial here, so any 'we can't say' UI is reachable",
+    fp.contractsPriced < fp.contractsKnown);
+
+  // ---- The correction path: a report with no crossing behind it ----
+  const rep = f.reportEventReward("fixture-event", 20, "  WHAT IT REALLY GAVE  ", "corrected");
+  check("a ladder correction is accepted for a declared tier", rep !== null, String(rep));
+  check("...and its name is trimmed and stored", rep?.answer?.name === "WHAT IT REALLY GAVE", String(rep?.answer?.name));
+  check("...with `observed` null, because nothing was witnessed", rep?.observed === null, String(rep?.observed));
+  check("...carrying the candidate it is disagreeing with", rep?.candidate === "FIXTURE CANDIDATE", String(rep?.candidate));
+  check("...and queued for upload", f.unreportedRewardAnswers().some((p) => p.id === rep?.id));
+  const rep2 = f.reportEventReward("fixture-event", 20, "SECOND OPINION", "corrected");
+  check("a SECOND correction to the same tier is its own claim, not a duplicate",
+    rep2 !== null && rep2.id !== rep?.id, `${rep?.id} vs ${rep2?.id}`);
+  check("...and both are queued", f.unreportedRewardAnswers().length === 2,
+    String(f.unreportedRewardAnswers().length));
+  check("🔴 a tier the event does not declare is REFUSED",
+    f.reportEventReward("fixture-event", 42, "nonsense", "typed") === null);
+  check("🔴 an unknown event is REFUSED",
+    f.reportEventReward("no-such-event", 20, "nonsense", "typed") === null);
+  check("...and neither refusal queued anything", f.unreportedRewardAnswers().length === 2,
+    String(f.unreportedRewardAnswers().length));
+}
+
 console.log(failed ? `\nFAILED (${failed})` : "\nevent-track tests passed");
 process.exit(failed ? 1 : 0);
