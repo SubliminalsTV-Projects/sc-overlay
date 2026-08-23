@@ -35,7 +35,7 @@ import { join, dirname } from "node:path";
 import { TradePriceStore, type PlaceInfo, type BundledCommodity, type TradeTable } from "./trade-prices.js";
 import { findRoutes, lookupCommodity, tradableNames, buyableSystems } from "./trade-finder.js";
 import { TradeJournal } from "./trade-journal.js";
-import { parseTradeLine } from "./trade-log.js";
+import { parseTradeLine, type CommodityPurchase } from "./trade-log.js";
 
 /** How often the sidecar re-asks the endpoint. The endpoint itself is what polls UEX; this is
  *  only how fast our copy of ITS copy turns over, so it does not need to be aggressive.
@@ -76,6 +76,20 @@ export interface TradeDeps {
   system?: () => string | null;
   /** The configured game.log path, used to find `logbackups/` for the journal catch-up. */
   logPath?: () => string | null;
+  /**
+   * Every purchase and sale this parser recognises, handed on to whoever else wants one.
+   *
+   * 🔴 IT IS A HOOK ON THE PARSE, NOT A FOURTH CALL SITE, AND THAT IS THE POINT. `tradeLogLine` is
+   * fed from THREE places in `overlay-server.ts` — the live watcher, the current-log seed and the
+   * rotated-log seed — and this repo has twice shipped a rule that was correct in two of the places
+   * it had to hold and missing from the third (`seedFromRotatedLog` skipping `detectPatch` counted
+   * PTU receipts as live). A consumer wired here is wired to all three by construction, and cannot
+   * be wired to two of them by accident.
+   *
+   * ⚠️ Called for a SELL as well as a BUY. The two differ by one field and reading them as one
+   * thing is a documented way to get a 100x error, so the consumer decides — this does not filter.
+   */
+  onPurchase?: (p: CommodityPurchase) => void;
 }
 
 let store: TradePriceStore | null = null;
@@ -95,6 +109,12 @@ export function tradeLogLine(line: string, deps: TradeDeps): void {
   if (!ev?.purchase) return;
   const j = ensureJournal(deps);
   if (j.apply(ev.purchase)) j.save();
+  // 🔑 AFTER the journal, and in its own try. The journal is this subsystem's own job and must not
+  // be skipped because a borrower threw; the borrower is the hauling route's commodity picks, which
+  // are a nicety beside a record of what the player spent.
+  try { deps.onPurchase?.(ev.purchase); } catch (e) {
+    console.log(`[trade] purchase listener threw: ${(e as Error).message}`);
+  }
 }
 
 /** How far back the one-time catch-up looks. A day, because "what did I do today" is the question
