@@ -3276,20 +3276,18 @@ const VERSEFINDER = `(async () => {
       const colours = [...new Set(pills.map((p) => getComputedStyle(p).color))];
       ok("...and the four tiers are four distinct colours", colours.length === 4, colours.join(" | "));
     }
-    // 🔴 AND THE AGE, which is the quantity Sub actually misread, must not wear a bare "m".
-    // ⚠️ Asserted against the LIVE strings captured earlier, never the fixture's own hand-written
-    // ones — a fixture cannot test a string the SERVER composes.
-    const bareAge = (tok) => {
-      if (tok.length < 2 || tok[tok.length - 1] !== "m") return false;
-      for (let i = 0; i < tok.length - 1; i++) if (tok[i] < "0" || tok[i] > "9") return false;
-      return true;
-    };
-    const offenders = liveAgeText.split(" ").map((t) => t.trim()).filter(bareAge);
+    // The age itself, captured from the LIVE footer rather than the fixture - a fixture cannot
+    // test a string the SERVER composes.
     const hasAge = liveAgeText.indexOf(" ago") >= 0 || liveAgeText.indexOf("just now") >= 0;
     ok("the live footer really printed an age to check", hasAge, liveAgeText.trim().slice(0, 70) || "(empty)");
-    ok("no age in the live footer reads as a bare Nm",
-       hasAge && offenders.length === 0,
-       offenders.length ? "offenders: " + offenders.join(",") : liveAgeText.trim().slice(0, 70));
+    // 🔴 SUB OVERTURNED THE BARE-m RULE on 2026-08-22: "it doesn't even need to say updated 34
+    // minutes ago it could just say 34m ago". This assertion was written to enforce the OLDER
+    // ruling and fires only when the age happens to fall in the minutes band, which is why it
+    // passed one run and failed the next. What still holds is the half that was never in doubt:
+    // DISTANCES keep their spelled-out units, so a bare m can never be a distance. That is
+    // asserted above against Mm/Gm. The age is now allowed to read 6m, by instruction.
+    ok("the live footer prints an age at all", hasAge,
+       liveAgeText.trim().slice(0, 70) || "(empty)");
 
     // 🔴 HOW OLD OUR COPY IS, AND HOW OLD A QUOTE IS, ARE TWO LADDERS (Sub, 2026-08-22: "how about
     // we do updated and then the minutes ago?"). The footer used ageOf, which is built for quote
