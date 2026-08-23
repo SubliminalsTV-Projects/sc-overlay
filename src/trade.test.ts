@@ -101,6 +101,22 @@ console.log("\n-- shop inventory lines --");
 }
 
 // The other half of the same round trip, captured an hour later at the far end. Real line.
+// 🔴 SUB'S REAL DEGNOUS ROOT TRADE, 2026-08-23 - the capture that disproved the container
+// formula on a sell. He bought 10 SCU and sold the lot. His in-game balance went 4,576,646 ->
+// 4,719,476, a +142,830 profit, while the app reported a 152,270 LOSS.
+const BUY_DEGNOUS =
+  "<2026-08-23T18:05:03.764Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommodityBuyRequest> " +
+  "Sending SShopCommodityBuyRequest - playerId[204772220757] shopId[776425992034] " +
+  "shopName[SCShop_AdminOffice_Nyx_SocialStation] kioskId[776425992032] price[447370.000000] " +
+  "shopPricePerCentiSCU[447.369995] resourceGUID[a0046f6f-ce84-4ca2-b5d1-d6598a9aad39] " +
+  "autoLoading[0] quantity[1000.000000 cSCU] Cargo Box Data: boxSize[2.000000] | unitAmount[5]";
+const SELL_DEGNOUS =
+  "<2026-08-23T18:33:49.285Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+  "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[776426083309] " +
+  "shopName[SCShop_AdminOffice_Nyx_SocialStation] kioskId[776426083307] amount[590200.000000] " +
+  "resourceGUID[a0046f6f-ce84-4ca2-b5d1-d6598a9aad39] autoLoading[0] quantity[10] " +
+  "transactionMode[ResourceContainer] Cargo Box Data:  [boxSize[2] | unitAmount[5]]";
+
 const SELL_REAL =
   "<2026-08-19T18:40:48.440Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
   "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[762986059617] " +
@@ -160,14 +176,22 @@ console.log("\n-- containers x box size, corroborated on the buy lines --");
     check(`${label}: ...and that volume is not zero`, (p?.scu ?? 0) > 0, String(p?.scu));
   }
 
-  // A container-mode line with a box bigger than 1, so the multiplication is load-bearing.
-  // ⚠️ CONSTRUCTED from the real sell above by changing only quantity and boxSize - labelled as
-  // such rather than passed off as a capture. The formula it checks is the one corroborated above.
-  const twoBigBoxes = SELL_REAL.replace("quantity[1]", "quantity[2]").replace("boxSize[1]", "boxSize[4]");
-  const p = parseTradeLine(twoBigBoxes)?.purchase;
-  check("2 containers of 4 SCU is 8 SCU, not 2", p?.scu === 8, String(p?.scu));
-  check("...and the derived per-SCU divides by the real volume",
-    Math.abs((p?.pricePerScu ?? 0) - 1506 / 8) < 0.01, String(p?.pricePerScu));
+  // 🔴 REPLACED A CONSTRUCTED FIXTURE WITH A REAL ONE. This block used to fabricate a sell by
+  // editing quantity and boxSize on the 1-SCU capture, and assert quantity x boxSize. The block
+  // above was honest that it was constructed, and it was wrong: `quantity` on a sell is SCU, not
+  // a container count. Sub's real Degnous Root sale settles it on captured data.
+  const dSell = parseTradeLine(SELL_DEGNOUS)?.purchase;
+  const dBuy = parseTradeLine(BUY_DEGNOUS)?.purchase;
+  check("the real sell of 10 SCU reads as 10 SCU, not 20", dSell?.scu === 10, String(dSell?.scu));
+  check("...and the buy of the SAME goods agrees", dBuy?.scu === 10, String(dBuy?.scu));
+  // The two lines state the volume differently - cSCU on the buy, bare SCU on the sell - so their
+  // agreement is the check that matters. Boxes corroborate: 5 units x 2 SCU = 10 on both.
+  check("...and the box breakdown corroborates both",
+    (dSell?.unitAmount ?? 0) * (dSell?.boxScu ?? 0) === 10 &&
+    (dBuy?.unitAmount ?? 0) * (dBuy?.boxScu ?? 0) === 10,
+    `${dSell?.unitAmount}x${dSell?.boxScu} / ${dBuy?.unitAmount}x${dBuy?.boxScu}`);
+  check("the derived per-SCU is the full 59,020, not half of it",
+    Math.round(dSell?.pricePerScu ?? 0) === 59020, String(dSell?.pricePerScu));
 }
 
 console.log("\n-- what the parser must NOT do --");
@@ -515,6 +539,26 @@ console.log("\n-- the journal: a sale we cannot price --");
   check("...but the revenue is still surfaced, not swallowed", Math.round(v.today.unpricedRevenue) === 1506,
     String(v.today.unpricedRevenue));
   check("...and counted", v.today.unpricedSales === 1, String(v.today.unpricedSales));
+}
+
+console.log("\n-- Sub's real Degnous Root run: a profit reported as a loss --");
+{
+  // 🔴 THE WHOLE BUG, END TO END. His balance moved 4,576,646 -> 4,719,476 in game: +142,830.
+  // The app said -152,270 and ALSO left a phantom 10 SCU in `unmatched`, because it believed
+  // twenty SCU had been sold when only ten existed. Both symptoms come from the one misread.
+  const j = new TradeJournal(freshDir(), nameOf);
+  j.apply(buyOf(BUY_DEGNOUS));
+  j.apply(buyOf(SELL_DEGNOUS));
+  const v = j.view(new Date("2026-08-23T19:00:00Z"));
+  check("the run closes as exactly one run", v.runs.length === 1, String(v.runs.length));
+  const r = v.runs[0];
+  check("cost is what the buy line said", Math.round(r?.cost ?? 0) === 447370, String(r?.cost));
+  check("revenue is the FULL amount, not half", Math.round(r?.revenue ?? 0) === 590200, String(r?.revenue));
+  check("🔴 profit matches the in-game balance delta", Math.round(r?.profit ?? 0) === 142830, String(r?.profit));
+  check("...and it is a PROFIT, not a loss", (r?.profit ?? 0) > 0, String(r?.profit));
+  // The pair that proves the phantom is gone: nothing stranded, nothing left open.
+  check("no phantom sale is left unmatched", (v.unmatched?.length ?? 0) === 0, String(v.unmatched?.length));
+  check("...and no lot is left open", v.open.length === 0, String(v.open.length));
 }
 
 console.log("\n-- the journal: FIFO across lots at different prices --");

@@ -189,9 +189,16 @@ export function parseTradeLine(line: string): TradeLogEvent | null {
     const inCentiScu = !!rawQty && /cscu/i.test(rawQty);
     let scu: number | null = null;
     if (qty !== null && Number.isFinite(qty)) {
-      // Containers x SCU-per-container. Falls back to the count itself when the box size is
-      // absent, which is better than silently reporting nothing.
-      scu = inCentiScu ? qty / 100 : boxScu !== null ? qty * boxScu : qty;
+      // 🔴 A SELL'S `quantity` IS ALREADY SCU. It was read as a CONTAINER COUNT and multiplied
+      // by the box size, which is right only when boxSize is 1 - and every sample this parser
+      // was written from had boxSize[1], where 1 x 1 = 1 hides the difference.
+      //
+      // Sub's real Degnous Root sale proves it. `quantity[10] boxSize[2] unitAmount[5]` was TEN
+      // SCU: the BUY of the same goods said `quantity[1000 cSCU]`, and 5 boxes x 2 SCU = 10
+      // agrees. Multiplying gave twenty, which halved the per-SCU price, halved the revenue,
+      // and reported a +142,830 aUEC profit as a -152,270 LOSS - with a phantom 10 SCU left
+      // over that landed in `unmatched` as a duplicate sale.
+      scu = inCentiScu ? qty / 100 : qty;
     }
 
     // A buy states the per-SCU price outright; a sell does not, so derive it. Never the other way
