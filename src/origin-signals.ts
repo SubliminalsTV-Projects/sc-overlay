@@ -202,13 +202,21 @@ export function tierOfRecord(rec: LocationRecord | undefined): "place" | "body" 
  * 🔴 EXACTLY ONE ROW, ACROSS THE WHOLE NAME, OR NOTHING. A shop name is several words and more than
  * one may be a row; two rows means the name has not identified a place and the module's standing
  * rule applies — an ambiguous match resolves to nothing, because putting the player at the wrong
- * outpost is worse than not knowing. This is also what disarms the finding that killed the
- * persisted map: `SCShop_AdminOffice_Nyx_SocialStation` sits at three different Keeger bases and
- * matches **no** row here, because "Nyx" is a Star and "SocialStation" is not a place.
+ * outpost is worse than not knowing. ⚠️ **No shipped shop name does this today** (0 of 61 resolve
+ * ambiguously), so the rule is exercised by the suite on a synthetic name rather than by a real
+ * one — a must-not-happen assertion whose subject is absent from the corpus is free forever.
  *
  * ⚠️ Words shorter than four characters are skipped. They are initials and codes (`H`, `XS`, `lt`,
  * `FW`) and matching them against a 2,000-row name table is how a two-letter shop prefix becomes a
  * confident claim about an outpost.
+ *
+ * 🔑 WHICH RULE STOPS THE MEASURED OFFENDER, because the obvious answer is the wrong one and the
+ * suite's control says so. `SCShop_AdminOffice_Nyx_SocialStation` sits at three different Keeger
+ * bases and is what killed the persisted map. It is **the four-character guard** that stops it —
+ * "Nyx" is three characters and is never looked up, while "AdminOffice" and "SocialStation" are not
+ * rows at all. Lowering that guard would not break it either: "Nyx" is a `Star`, so `tierOfRecord`
+ * would report a SYSTEM and still never a place. Two independent mechanisms, and a control that
+ * removes one comes back green — enumerate both before writing one.
  */
 function uniqueFromShopName(
   idx: Map<string, string[]>,
