@@ -1275,7 +1275,11 @@ function toTrip(
           missionId: found?.c.missionId ?? a.contractId,
           title: found?.c.title ?? null,
           commodity: a.commodity ?? null,
-          scu: a.scu,
+          // 🔑 `undefined` -> `null` at the boundary. The solver spells "nobody has said how much"
+          // as an absent field; every view type in this file spells it `null`. One convention each
+          // side, converted in the one place they meet. Contract actions always carry a number, so
+          // this is a no-op for them.
+          scu: a.scu ?? null,
           group: a.contractId,
           // Per-action, because one stop can do both and the widget must be able to say which
           // chip is a load and which is a drop.
