@@ -1038,6 +1038,121 @@ console.log("\n-- the prefilter a bulk replay uses must not narrow to the reques
     !REFUSAL_1.includes("CommodityUIProvider::Send"), "the shipped bug");
 }
 
+// -- HOW MANY REQUESTS ARE IN FLIGHT AT ONCE: SPACING vs RESIDENCY --
+//
+// Raised by the tower on 2026-08-23, and it was the right question. The census measured request
+// SPACING (min 3,655 ms) and concluded requests arrive one at a time, but spacing is not residency.
+// If several are held when a refusal lands, which one does it convict?
+//
+// 🔑 ONLY ONE IS EVER HELD, AND THE REASON IS NOT OBVIOUS: a REQUEST line is itself a stamped line,
+// so it advances the clock and releases the request before it. With every pair of requests 3,655 ms
+// apart at the tightest, against a 2,000 ms window, the previous one is always already gone.
+// **The two measured numbers are what make that true**, so widening the window past the spacing
+// breaks it — which is the regime the second block below reaches, honestly, to test the tie-break.
+{
+  const SELL_DYM =
+    "<2026-08-23T19:57:21.520Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+    "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[776283668799] " +
+    "shopName[SCShop_Levski_CargoOffice_Commodities] kioskId[776283668797] amount[531300.000000] " +
+    "resourceGUID[53513e3d-93cc-4079-b87b-cf20a4692661] autoLoading[0] quantity[21] " +
+    "transactionMode[CargoGrid] Cargo Box Data:  [boxSize[8] | unitAmount[1]] [Team_CoreGameplayFeatures][Shops][UI]";
+  const SELL_AV = SELL_DYM
+    .replace("19:57:21.520", "19:57:38.354").replace("amount[531300.000000]", "amount[429935.000000]")
+    .replace("53513e3d-93cc-4079-b87b-cf20a4692661", "5f2d394d-6e69-4cb8-afb2-81a96544936e")
+    .replace("quantity[21]", "quantity[11]");
+
+  console.log("\n-- at the real window, only ONE request is ever in flight --");
+  // 🔑 NOT ONE CLOCK LINE BETWEEN THEM: this is the bulk-replay feed, where only commodity lines
+  // reach the gate. It is the harshest case for residency, and it is still one at a time.
+  const c = new TradeConfirmations();
+  const a = c.line(SELL_DYM);
+  const held1 = c.pending().length;
+  const b = c.line(SELL_AV);
+  const held2 = c.pending().length;
+  const d = c.line(SELL_REFUSED_1);
+  const held3 = c.pending().length;
+  c.line(REFUSAL_1);
+  const rest = c.flush();
+
+  check("a request line ITSELF releases the one before it", a.length === 0 && b.length === 1, a.length + "/" + b.length);
+  check("...and the third releases the second", d.length === 1, String(d.length));
+  check("so exactly one is ever resident", held1 === 1 && held2 === 1 && held3 === 1, held1 + "/" + held2 + "/" + held3);
+  check("exactly one request was refused", c.refused().length === 1, String(c.refused().length));
+  check("...and it is the one the refusal actually followed",
+    c.refused()[0]?.at === "2026-08-23T19:57:48.914Z", String(c.refused()[0]?.at));
+  check("...leaving nothing else held", rest.length === 0, String(rest.length));
+  const booked = [...b, ...d];
+  check("both unrefused sells are confirmed", booked.length === 2 && booked.every((p) => p.confirmed === true),
+    JSON.stringify(booked.map((p) => [p.at, p.confirmed])));
+  check("...at 21 SCU and 11 SCU", JSON.stringify(booked.map((p) => p.scu)) === "[21,11]",
+    JSON.stringify(booked.map((p) => p.scu)));
+
+  console.log("\n-- ...and when they ARE all resident, the refusal still convicts the right one --");
+  // Widen the window past the request spacing and three really are resident together. This is the
+  // regime the tower was worried about, reached by changing the window rather than by pretending.
+  const wide = new TradeConfirmations(30000);
+  wide.line(SELL_DYM); wide.line(SELL_AV); wide.line(SELL_REFUSED_1);
+  check("a window wider than the spacing really does hold all three",
+    wide.pending().length === 3, String(wide.pending().length));
+  wide.line(REFUSAL_1);
+  // 🔑 THIS is where `refuse()` taking the NEWEST match earns its keep, and it is the ONLY place.
+  // At the shipped window the window filter alone settles it and the ordering is unobservable — a
+  // source control on the ordering there comes back GREEN, which is how this block came to be
+  // rewritten. Here the ordering is the only thing deciding, so an oldest-first "simplification"
+  // reddens exactly these two lines.
+  check("only one of the three dies", wide.refused().length === 1, String(wide.refused().length));
+  check("...and it is the NEWEST, not the oldest",
+    wide.refused()[0]?.at === "2026-08-23T19:57:48.914Z", String(wide.refused()[0]?.at));
+  const survivors = wide.flush();
+  check("...the other two survive to be booked", survivors.length === 2 && survivors.every((p) => p.confirmed === true),
+    JSON.stringify(survivors.map((p) => p.at)));
+}
+
+console.log("\n-- 🔴 a `seen` key with no row behind it is a PERMANENT, SILENT skip --");
+{
+  // 🔴 A REPAIR HAZARD, NOT A PARSER BUG, and it was misread as one on 2026-08-23. A journal
+  // repaired by deleting ROWS while leaving `seen` alone will never re-derive those transactions —
+  // at this launch or any future one. `apply()` returns false at the dedupe check, so the sale
+  // produces no run AND no unmatched row: it is simply absent.
+  //
+  // 🔑 THE SIGNATURE POINTS THE OPPOSITE WAY TO THE OBVIOUS READING. A key present in `seen` with
+  // nothing behind it CANNOT be the confirmation gate refusing the sale — `apply()` checks
+  // `confirmed` BEFORE it keys anything, so a refused request never reaches `seen` at all.
+  // Key present + no row means DEDUPED, every time.
+  //
+  // 👉 The only safe repair is deleting the WHOLE file. Editing rows out of it destroys history.
+  const dir = freshDir();
+  const key = "2026-08-23T19:57:21.520Z|sell|SCShop_Levski_CargoOffice_Commodities|53513e3d-93cc-4079-b87b-cf20a4692661|531300";
+  writeFileSync(pjoin(dir, "trade-journal.json"),
+    JSON.stringify({ v: 1, open: [], runs: [], unmatched: [], writtenOff: [], nextLotId: 1, seen: [key] }));
+
+  const SELL_DYM2 =
+    "<2026-08-23T19:57:21.520Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+    "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[776283668799] " +
+    "shopName[SCShop_Levski_CargoOffice_Commodities] kioskId[776283668797] amount[531300.000000] " +
+    "resourceGUID[53513e3d-93cc-4079-b87b-cf20a4692661] autoLoading[0] quantity[21] " +
+    "transactionMode[CargoGrid] Cargo Box Data:  [boxSize[8] | unitAmount[1]] [Team_CoreGameplayFeatures][Shops][UI]";
+
+  const j = new TradeJournal(dir, () => "Dymantium");
+  const p = buyOf(SELL_DYM2);
+  // POSITIVE FIRST: the gate confirmed it, so nothing about the refusal path is in play here.
+  check("the gate confirmed the sale", p.confirmed === true, String(p.confirmed));
+  check("...and the journal still declines it, on the dedupe check", j.apply(p) === false, "apply()");
+  const v = j.view(new Date("2026-08-23T23:00:00Z"));
+  check("...producing no run", v.runs.length === 0, String(v.runs.length));
+  check("...AND no unmatched row - it is simply absent", v.unmatched.length === 0, String(v.unmatched.length));
+
+  // CONTROL: the same sale against a journal with an EMPTY `seen` IS recorded, which proves the
+  // dedupe list is what stands in the way rather than anything about the sale itself.
+  const clean = freshDir();
+  writeFileSync(pjoin(clean, "trade-journal.json"),
+    JSON.stringify({ v: 1, open: [], runs: [], unmatched: [], writtenOff: [], nextLotId: 1, seen: [] }));
+  const k = new TradeJournal(clean, () => "Dymantium");
+  check("CONTROL: with `seen` cleared the very same sale is recorded", k.apply(p) === true, "apply()");
+  check("CONTROL: ...as revenue, since no purchase was replayed with it",
+    k.view().unmatched.length === 1, String(k.view().unmatched.length));
+}
+
 cleanupTmp();
 console.log(failures ? `\n${failures} FAILED\n` : "\nall passed\n");
 process.exit(failures ? 1 : 0);

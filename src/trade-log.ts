@@ -391,11 +391,20 @@ export function parseTradeLine(line: string): TradeLogEvent | null {
  * only ever show up as a wrong number in somebody's journal weeks later. Feed EVERY line, not only
  * the commodity ones - the non-commodity ones are what move the clock while tailing.
  *
- * 🔑 **A REFUSAL CLAIMS THE NEWEST MATCHING HELD REQUEST.** The server is answering the most recent
- * thing asked of it. In every session on record this is unambiguous anyway (the pairing is a
- * bijection and the tightest two requests ever get is 3,655 ms against a 2,000 ms window), so
- * newest-first is a tie-break for a case that has never occurred rather than a guess being relied
- * on.
+ * 🔑 **ONLY ONE REQUEST IS EVER RESIDENT, AND THE REASON IS NOT THE ONE YOU REACH FOR.** The tower
+ * asked what happens when a refusal lands with a queue behind it — a fair question, because the
+ * census measured request SPACING and spacing is not residency. The answer is that a REQUEST line
+ * is itself a stamped line, so it advances the clock and releases the request before it. With the
+ * tightest pair of requests 3,655 ms apart against a 2,000 ms window, the previous one is always
+ * already gone. **Both measured numbers are load-bearing**: raise the window past the spacing and
+ * several really do pile up.
+ *
+ * 🔑 **THE NEWEST MATCH IS A TIE-BREAK FOR A REGIME THE SHIPPED WINDOW NEVER ENTERS, not the thing
+ * keeping this correct.** Worth stating plainly because it was got wrong once, in this very file: a
+ * source control flipping the iteration in refuse() to oldest-first comes back GREEN at the shipped
+ * window, because the window filter alone already excludes every older request. The ordering only
+ * becomes observable — and the control only reddens — once the window is widened past the request
+ * spacing, which is exactly how the suite exercises it.
  *
  * ⚠️ Instances are cheap and hold at most a handful of entries. Use ONE for the live stream so the
  * seed and the watcher hand over inside the same window, and a FRESH one per file for a bulk

@@ -161,7 +161,24 @@ interface JournalState {
   runs: ClosedRun[];
   unmatched: UnmatchedSale[];
   writtenOff: WrittenOffLot[];
-  /** Log timestamps already folded in, so a re-seed of the same file cannot double-count. */
+  /**
+   * Log timestamps already folded in, so a re-seed of the same file cannot double-count.
+   *
+   * 🔴 IT IS A PERMANENT VERDICT LIST, AND EDITING THE ROWS WITHOUT IT DESTROYS HISTORY FOREVER.
+   * `apply()` returns false on a key it has seen, so a transaction whose ROW was removed by hand
+   * while its key stayed here **will never be re-derived** — not at this launch, not at any future
+   * one. It produces no run and no unmatched row: it is simply absent. That cost a wrong diagnosis
+   * on 2026-08-23, when two real sales missing from a hand-repaired journal were read as the
+   * confirmation gate over-refusing them.
+   *
+   * 🔑 THE SIGNATURE IS DIAGNOSTIC, AND IT POINTS THE OPPOSITE WAY TO THE OBVIOUS READING. A key
+   * in here with nothing behind it CANNOT be the gate: `apply()` tests `confirmed` BEFORE it keys
+   * anything, so a refused request never reaches this list at all. Key present + no row means
+   * deduped, every time.
+   *
+   * 👉 **The only safe repair is deleting the whole file.** Same family as `log-share.ts`: a set you
+   * write a name into forever may hold only verdicts that can never be reconsidered.
+   */
   seen: string[];
   /** Source of `OpenLot.id`. Persisted so an id is never reused after a restart. */
   nextLotId: number;
