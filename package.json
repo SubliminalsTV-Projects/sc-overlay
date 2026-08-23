@@ -70,7 +70,8 @@
     "test:loctoken": "tsx src/location-token.test.ts",
     "test:eventfeed": "tsx src/event-feed.test.ts",
     "sync:events": "node tools/sync-events.mjs",
-    "test:eventrewards": "tsx src/event-rewards.test.ts"
+    "test:eventrewards": "tsx src/event-rewards.test.ts",
+    "measure:tradeconfirm": "tsx tools/measure-trade-confirm.mts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
