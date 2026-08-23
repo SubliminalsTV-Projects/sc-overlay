@@ -657,6 +657,30 @@ const tradeDeps = { dataDir, userDir, economy, haulingData, system: currentSyste
 // Observed prices — what the player actually paid, as opposed to what UEX's survey says. Stood up
 // before any seed runs, because the seed is where a purchase from before this launch is found.
 initPriceFeed(userDir);
+
+/**
+ * Commodity display name -> `resourceGUID`, built once from the economy dataset.
+ *
+ * 🔑 Rebuilt when the dataset's size changes rather than cached forever: `loadDataset` swaps the
+ * whole economy on a patch flip, and a map pinned at boot would keep resolving names against the
+ * previous patch's commodity list. Cheap enough to check on every call (one property read) and it
+ * cannot go stale the way a boot-time snapshot can.
+ */
+let commodityUuidMap: Map<string, string> | null = null;
+let commodityUuidFor = -1;
+function commodityUuidByName(): Map<string, string> {
+  const all = economy.commodities();
+  const n = Object.keys(all).length;
+  if (commodityUuidMap && commodityUuidFor === n) return commodityUuidMap;
+  const m = new Map<string, string>();
+  for (const [uuid, c] of Object.entries(all)) {
+    const name = (c as { name?: string | null })?.name;
+    if (name) m.set(name.toLowerCase(), uuid);
+  }
+  commodityUuidMap = m;
+  commodityUuidFor = n;
+  return m;
+}
 {
   const c = haulingData.counts();
   console.log(`[hauling] ships: ${c.ships}, contracts: ${c.contracts}, locations: ${c.locations}` +
@@ -2087,6 +2111,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // What the player actually paid, borrowed read-only from the price feed. Read at request time
     // for the same reason the table above is: it changes as they shop.
     observed: () => observedPrices(),
+    // A commodity row carries no UUID (it is built from UEX's name-keyed table) while a purchase
+    // states only `resourceGUID`, so the two halves meet through our own dataset. Memoised: the
+    // map is 738 entries and the dataset only changes on a patch flip.
+    commodityUuid: (name: string) => commodityUuidByName().get(name.toLowerCase()) ?? null,
     // Read at request time, never cached: these watchers are updated by the log tail and a
     // snapshot taken at startup would pin the player wherever they were when the app launched.
     locationSignals: () => {

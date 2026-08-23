@@ -132,6 +132,24 @@ export interface VerseDeps {
    * which is the state every player is in before they buy anything anyway.
    */
   observed?: () => ObservedPriceStore | null;
+  /**
+   * A commodity's display name -> its `resourceGUID`.
+   *
+   * 🔴 THIS EXISTS BECAUSE A COMMODITY HIT CARRIES NO UUID AND AN OBSERVATION IS KEYED BY ONE.
+   * `verse-commodities.ts` builds its rows from the UEX trade table, which is keyed by NAME and has
+   * never known the game's UUID (`uuid: null`, deliberately). The purchase line, meanwhile, states
+   * `resourceGUID` and nothing else. So the one place these two halves can meet is the name, and it
+   * is resolved through the app's OWN `commodities.json` rather than by string-matching the two
+   * tables against each other.
+   *
+   * ⚠️ IT IS THE ONE NAME MATCH IN THIS FEATURE, AND IT IS DELIBERATELY NARROW. Everywhere else the
+   * join is the game's own UUID with no matching at all. Here the two sides are UEX's name and
+   * CIG's name for the same commodity; they agree today on every commodity Sub has traded, but
+   * they come from different publishers and could drift. A miss costs one receipt not being shown,
+   * never a wrong price against the wrong commodity — the lookup either resolves to the right UUID
+   * or to nothing.
+   */
+  commodityUuid?: (name: string) => string | null;
 }
 
 let store: ItemShopStore | null = null;
@@ -284,13 +302,17 @@ function originPayload(origin: OriginVerdict) {
  */
 function observedFor(hit: SearchHit, deps: VerseDeps): ObservedQuote[] | undefined {
   const store = deps.observed?.();
-  if (!store || !hit.uuid) return undefined;
+  if (!store) return undefined;
   const kind = hit.kind === "commodity" ? "commodity" : "item";
+  // An ITEM row carries the game's UUID outright. A COMMODITY row never does — see
+  // `commodityUuid` — so it is resolved from the name through our own dataset.
+  const id = kind === "commodity" ? hit.uuid ?? deps.commodityUuid?.(hit.name) ?? null : hit.uuid;
+  if (!id) return undefined;
   const rows = [
-    ...store.latestPerTerminal(kind, hit.uuid, "buy"),
+    ...store.latestPerTerminal(kind, id, "buy"),
     // Commodities only — see above. Shown so a player who sold Laranite here can see what they
     // got, which the survey half of the widget cannot tell them at all.
-    ...(kind === "commodity" ? store.latestPerTerminal(kind, hit.uuid, "sell") : []),
+    ...(kind === "commodity" ? store.latestPerTerminal(kind, id, "sell") : []),
   ];
   if (!rows.length) return undefined;
   return rows
