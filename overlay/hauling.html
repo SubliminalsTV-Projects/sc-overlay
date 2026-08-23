@@ -34,6 +34,12 @@
   body.embedded #panel { width: 100%; height: 100%; margin: 0; }
 
   .head { min-height: 40px; flex-wrap: wrap; }
+  /* The widget's name, stacked over its warning — see the note in the markup. Left-aligned rather
+     than centred, because it reads as a caption ON the title and a centred caption under a
+     left-aligned title reads as a third, unrelated thing. */
+  .hname { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    min-width: 0; }
+  .hname .expbadge { margin-left: 0; }
 
   /* 🔴 NARROW IS THE NORMAL CASE, NOT THE EDGE ONE. Sub runs this widget about as narrow as a
      phone, and at that width the head is title + EXPERIMENTAL + five tabs on one non-wrapping
@@ -41,18 +47,17 @@
      documents sized to their frame, so a plain width query is the right tool here; there is no
      parent page whose width could confuse it.
 
-     Below the breakpoint the EXPERIMENTAL badge drops to its own line (Sub: "move that down to
-     another line when stuff starts to collapse"), which buys the tabs the whole first row back.
-     The badge is the right thing to move because it is the only element here that is never
-     interacted with — losing a tab off-screen costs you the feature, losing a caption a line. */
+     ⚠️ The badge no longer moves here. It used to drop to its own full-width line below 360px
+     (Sub: "move that down to another line when stuff starts to collapse"); it is now stacked
+     under the title at EVERY width, so the first row is already the tabs' to spend and there is
+     nothing left for a breakpoint to relocate. What survives is the tabs' own wrapping, which is
+     still needed: Trading offers four tabs and the widest two are "Look up" and "Ledger". */
   @media (max-width: 360px) {
-    .expbadge { order: 10; flex-basis: 100%; margin-left: 0; margin-top: 3px; text-align: center; }
     .tabs { flex-wrap: wrap; justify-content: flex-end; row-gap: 3px; }
   }
-  /* Narrower still: the tabs get their own row entirely, and the title keeps the first one. */
+  /* Narrower still: the tabs get their own row entirely, and the name keeps the first one. */
   @media (max-width: 290px) {
     .tabs { flex-basis: 100%; margin-left: 0; justify-content: flex-start; order: 9; }
-    .expbadge { order: 10; }
   }
   .hbtn { font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
     color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.14); border: 1px solid var(--border);
@@ -90,13 +95,18 @@
     border-top: 1px solid var(--divider); background: rgba(var(--accent-rgb), 0.05); }
   .modebar .hbtn { height: 20px; padding: 0 10px; display: inline-flex; align-items: center;
     font-size: 10.5px; }
-  /* Attribution, not a button that does work — quiet by default, and it only appears on the side
-     of the widget their data actually feeds. */
+  /* Attribution, not a button that does work — it only appears on the side of the widget their
+     data actually feeds. Carries UEX's supplied badge, at the same 17px slot the Verse Finder
+     uses, so the credit is one thing in two places rather than two different-looking claims.
+     ⚠️ Pair `hidden` with a `[hidden]` guard: a bare `hidden` attribute loses to any class rule
+     setting `display`, which is how Unlock Alerts once offered to claim a blueprint it had
+     already recorded. */
   .uexbadge { margin-left: auto; background: none; border: 0; padding: 0 2px; cursor: pointer;
-    font-family: var(--sans); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
-    color: var(--faint); }
-  .uexbadge b { color: var(--cyan-dim); font-weight: 700; }
-  .uexbadge:hover b { color: var(--cyan-bright, #7fe7ff); }
+    display: inline-flex; align-items: center; }
+  .uexbadge #uexmark { height: 17px; width: auto; display: block; border-radius: 3px; }
+  /* The typographic fallback, shown only when the image cannot load. */
+  .uexbadge #uexname { font-family: var(--sans); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.04em; color: var(--cyan-text); white-space: nowrap; }
   .uexbadge[hidden] { display: none; }
 
   .tdbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
@@ -163,24 +173,49 @@
   .tdrow .money .buy { color: var(--gold, #e8c56a); }
   .tdrow .money .sell { color: var(--green, #7de6a0); }
   .tdrow .money .arrow { color: var(--faint); }
-  .tdrow .money .pct { color: var(--cyan-dim); font-family: var(--sans); font-size: 10.5px; }
+  /* 🔴 THE MARGIN IS A SIGNED PERCENTAGE, AND IT IS GREEN (Sub, 2026-08-22). "(53% margin)" spent
+     seven characters restating a word the column beside it already says, on the one line that has
+     to survive a 320px panel — it measured 55px, which is a quarter of the space that line has at
+     minimum width. "(+53%)" carries the sign, which "53% margin" never did: a negative run now
+     reads as one at a glance instead of needing the minus hunted for inside a phrase. Green
+     because it is money made, matching `.sell` — and a loss turns red, so the colour and the sign
+     say the same thing twice rather than the colour meaning nothing. */
+  .tdrow .money .pct { color: var(--green, #7de6a0); font-family: var(--sans); font-size: 10.5px;
+    font-weight: 700; }
+  .tdrow .money .pct.down { color: var(--red, #eb7878); }
   .tdrow .mid > .m + .m,
   .tdrow .money + .m { margin-top: 4px; }
-  /* Chips sit on their own baseline grid; a little vertical gap keeps a wrapped second row of
-     them from colliding with the first. */
-  .tdrow .m .badge { margin-top: 1px; }
+  /* 🔴 THE CHIP ROW IS A FLEX WRAP, AND EVERY PILL IS UNBREAKABLE. Measured 2026-08-22 at 440px,
+     which is the widget's DEFAULT width: this was a plain block of inline spans, so the only
+     break opportunities the engine had were the spaces INSIDE each pill's own label. "costs 851k"
+     rendered its left half at x=290 on line one and its right half at x=39 on line two — one
+     bordered pill sawn in half — and the row read as having wrapped early because three pills sat
+     butted edge to edge with the fourth apparently thrown away. It overflowed by FOUR PIXELS.
+     Flex + `gap` makes a pill the unit that wraps, and `white-space: nowrap` on `.badge` (shared,
+     because no pill anywhere should ever split) makes it the unit that cannot break. At 320px the
+     four still wrap — 213px cannot hold 300px of pills — but they wrap two and two, whole. */
+  .tdrow .tdchips { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
+  /* Tighter than the shared pill only on this row, and only by the margin that was missing: at
+     0.08em/4px the four chips wanted 337px of a 333px line. */
+  .tdrow .tdchips .badge { letter-spacing: 0.05em; padding: 1px 3px; }
   .tdrow .money .qty { margin-left: auto; color: var(--cyan-dim); font-size: 11px;
     font-family: var(--sans); }
 
-  /* The right column: the number, and — the fix for "is that profit?" — a word saying so. */
-  .tdcap { flex: none; min-width: 84px; text-align: right; white-space: nowrap; }
+  /* The right column: the number, and — the fix for "is that profit?" — a word saying so.
+     🔴 NO min-width. It carried 84px with its contents right-aligned, and the widest string across
+     all 25 live rows measured 56.3px — so every run row paid a 27.8px dead gutter on the LEFT of
+     this column, forever, and that gutter is most of what pushed the chips into wrapping. Same
+     shape as the Verse Finder's `.pricecol`, and the same fix: let the column size to its
+     contents. The right edge stays a single edge for free here, because this is the LAST child of
+     the row and the row's own padding pins it — measured, one distinct right edge across 25 rows. */
+  .tdcap { flex: none; text-align: right; white-space: nowrap; }
   .tdprofit { font-size: 16px; color: var(--cyan-bright, #7fe7ff); line-height: 1.15;
     font-family: var(--mono); }
   .tdcaplbl { font-size: 9px; color: var(--faint); letter-spacing: 0.1em;
     text-transform: uppercase; line-height: 1.4; }
   .tdrate { font-size: 10.5px; color: var(--cyan-dim); line-height: 1.3; }
 
-  /* The Log tab's headline: what today made. Given size because it is the one number the player
+  /* The Ledger tab's headline: what today made. Given size because it is the one number the player
      opened this tab for. */
   .tdtot { padding: 6px 12px 2px; display: flex; align-items: baseline; gap: 6px; }
   .tdtot .v { font-family: var(--mono); font-size: 24px; line-height: 1.1; }
@@ -490,7 +525,11 @@
   .srckey i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
   /* Now only the load-checklist's row state. The provenance badge that used to share this class is
      gone — a colour on the figure itself says the same thing without a chip per row (.amt.src-*). */
+  /* ⚠️ `white-space: nowrap` is load-bearing, not tidiness. A pill is a bordered box, so a line
+     break inside its label leaves half a box at the end of one line and half at the start of the
+     next. Measured doing exactly that on the Runs tab, 2026-08-22. */
   .badge { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    white-space: nowrap;
     border-radius: 4px; padding: 1px 4px; border: 1px solid var(--divider); color: var(--faint); }
   .badge.pinned { color: var(--cyan-bright); border-color: var(--border); }
   /* The three states of the track prompt. Only `todo` is an instruction — `waiting` is the state
@@ -637,7 +676,16 @@
   <div id="panel" class="wpanel">
     <div class="head">
       <span class="dia"></span>
-      <span class="h-title">Hauling</span><span class="expbadge" id="expBadge" title="EXPERIMENTAL. This widget is new and it will get things wrong — the tonnage the game never states, the order to load in, how long a run takes. Check it against your mobiGlas before you trust it, and tell Sub what it got wrong. Nothing here can affect your contracts or your cargo; it only reads the log.">EXPERIMENTAL</span>
+      <!-- 🔴 THE BADGE SITS UNDER THE TITLE, NOT BESIDE IT (Sub, 2026-08-22): "I feel like
+           experimental can be under hauling and I think that would make it look better. Right now
+           it's kind of off when it's scaled down to this size." Beside the title it was competing
+           for the one horizontal axis the tabs also need — it is the widest thing in the head and
+           the only thing there nobody ever clicks. Stacked, it costs ~5px of height once and hands
+           its whole width back to the tabs at EVERY width, which is what the two media queries
+           below used to buy only below 360px. -->
+      <span class="hname">
+        <span class="h-title">Hauling</span><span class="expbadge" id="expBadge" title="EXPERIMENTAL. This widget is new and it will get things wrong — the tonnage the game never states, the order to load in, how long a run takes. Check it against your mobiGlas before you trust it, and tell Sub what it got wrong. Nothing here can affect your contracts or your cargo; it only reads the log.">EXPERIMENTAL</span>
+      </span>
       <span class="tabs">
         <!-- 🔴 RANK LEADS. It is the tab you are on BEFORE you have a board — you read it to decide
              what to accept, and the other two only mean anything once you have accepted something.
@@ -652,7 +700,11 @@
              is in one. -->
         <button id="tabTrade" class="hbtn" type="button" title="Runs worth flying right now">Runs</button>
         <button id="tabLookup" class="hbtn" type="button" title="Look up one commodity: what it costs, where it sells">Look up</button>
-        <button id="tabJournal" class="hbtn" type="button" title="What you actually bought and sold, and what it made">Log</button>
+        <!-- 🔑 LABEL ONLY. Sub renamed this "Log" -> "Ledger" 2026-08-22; the id `tabJournal` and
+             the `journal` view name are what the code and the widget suite address, so they stay.
+             The rename also stops the word colliding with the Log View widget, which is a raw
+             game.log tail and nothing to do with money. -->
+        <button id="tabJournal" class="hbtn" type="button" title="What you actually bought and sold, and what it made">Ledger</button>
       </span>
     </div>
 
@@ -723,8 +775,16 @@
     <div id="modebar" class="modebar">
       <button id="modeHaul" class="hbtn on" type="button" title="The contracts you have accepted">Hauling</button>
       <button id="modeTrade" class="hbtn" type="button" title="Buy low somewhere, sell high somewhere else">Trading</button>
+      <!-- 🔴 UEX'S OWN BADGE, THE SAME ONE THE VERSE FINDER CARRIES (Sub, 2026-08-22). Both
+           widgets are wrappers over the same community-reported table, and until now only one of
+           them said so in UEX's own mark while the other paraphrased it in our type. The mark is
+           used UNMODIFIED — not tinted, not reskinned with the manufacturer themes — because an
+           attribution that changes to suit our theme has stopped being an attribution.
+           ⚠️ The words REPLACE the image if it cannot load; they never merely leave a gap. -->
       <button id="uexCredit" class="uexbadge" type="button" hidden
-        title="Commodity prices are community-reported through UEX. Open uexcorp.space">Powered by <b>UEX</b></button>
+        title="Commodity prices are community-reported through UEX. Open uexcorp.space"><img
+          id="uexmark" src="/logos/uex-powered.png" alt="Powered by UEX"
+          onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" /></button>
     </div>
 
     <div id="wsettings" class="wsettings">

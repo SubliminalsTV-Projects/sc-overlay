@@ -88,6 +88,22 @@
     return v.toLocaleString();
   }
 
+  /**
+   * The margin, as a SIGNED percentage (Sub, 2026-08-22: "(53% margin)" becomes "(+53%)", green).
+   *
+   * 🔑 The word "margin" was doing no work — it sits two elements away from a column labelled
+   * "profit", and it cost 55px on the one line in this row that has to survive a 320px panel.
+   * The SIGN does work the phrase never did: a losing run used to hide its minus inside a
+   * sentence, and it is now the first character, with the colour agreeing with it.
+   */
+  function tdPct(marginPct) {
+    const v = Math.round(Number(marginPct) || 0);
+    const s = document.createElement("span");
+    s.className = "pct" + (v < 0 ? " down" : "");
+    s.textContent = "(" + (v > 0 ? "+" : "") + v + "%)";
+    return s;
+  }
+
   function tdChip(parent, text, cls) {
     const s = document.createElement("span");
     s.className = "badge" + (cls ? " " + cls : "");
@@ -333,13 +349,14 @@
       // 🔑 The percentage is the figure that makes two rows comparable when their prices are
       // orders of magnitude apart — a 12,444 margin on Bexalite and a 298 on Processed Food are
       // 53% and 25%, and the second is the one whose capital you get back fastest.
-      const pc = document.createElement("span"); pc.className = "pct";
-      pc.textContent = "(" + Math.round(r.marginPct) + "% margin)";
+      const pc = tdPct(r.marginPct);
       const qt = document.createElement("span"); qt.className = "qty"; qt.textContent = "× " + num(r.moveScu) + " SCU";
       money.append(bk, bv, ar, sk, sv, pc, qt);
       mid.appendChild(money);
 
-      const chips = document.createElement("div"); chips.className = "m";
+      // `tdchips`, not just `m`: the chip row wraps by PILL, and only this class makes it flex.
+      // Left on `.m` as well so nothing selecting `.m` (the suite included) changes meaning.
+      const chips = document.createElement("div"); chips.className = "m tdchips";
       const age = tdAge(r.ageDays);
       tdChip(chips, age ? age + " old" : "age unknown", tdAgeClass(r.ageDays));
       if (r.scuBound === "unknown") tdChip(chips, "stock unknown", "warn");
@@ -686,13 +703,12 @@
         const ar = document.createElement("span"); ar.className = "arrow"; ar.textContent = "→";
         const sk = document.createElement("span"); sk.className = "k"; sk.textContent = "sell";
         const sv = document.createElement("span"); sv.className = "sell"; sv.textContent = num(Math.round(r.sellPricePerScu));
-        const pc = document.createElement("span"); pc.className = "pct";
-        pc.textContent = "(" + Math.round(r.marginPct) + "% margin)";
+        const pc = tdPct(r.marginPct);
         const qt = document.createElement("span"); qt.className = "qty"; qt.textContent = "× " + num(r.scu) + " SCU";
         money.append(bk, bv, ar, sk, sv, pc, qt);
         mid.appendChild(money);
 
-        const chips = document.createElement("div"); chips.className = "m";
+        const chips = document.createElement("div"); chips.className = "m tdchips";
         tdChip(chips, "took " + tdDur(r.minutes), "calm");
         if (r.profitPerHour !== null && r.profitPerHour !== undefined) {
           tdChip(chips, tdMoney(r.profitPerHour) + "/hr", "calm");
