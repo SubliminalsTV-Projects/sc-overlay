@@ -154,7 +154,13 @@ console.log(`distinct shopNames: ${new Set(shopLines.map((e) => e.name)).size}`)
  * 🔴 THIS IS THE NUMBER THAT DECIDES THE FEATURE. A persisted `shopName -> place` map only ever
  * pays at a "cold open" — a terminal touched before anything else in that session has said where
  * you are. Anywhere else, the map is repeating a fix the app already holds.
+ *
+ * 🔑 THIS IS THE ASSERTION, NOT JUST A FIGURE. The run exits non-zero when a cold open appears,
+ * because that is precisely the observation that would overturn "do not build this" — and a
+ * conclusion nobody can watch fail is not one worth writing down. It goes red today if you feed
+ * it a corpus where a player really does shop before the game says where they are.
  */
+let coldOpens = 0;
 {
   for (const [label, counts] of [["named lines only", ["named"]], ["named or numeric", ["named", "num"]]]) {
     let cold = 0;
@@ -166,6 +172,9 @@ console.log(`distinct shopNames: ${new Set(shopLines.map((e) => e.name)).size}`)
         if (e.kind === "shop" && !placed) cold++;
       }
     }
+    /* The named-only pass is the one that decides it: a numeric id is not a place until
+     * `haulingPlaceIds` binds it, so counting numerics would understate the cold opens. */
+    if (counts.length === 1) coldOpens = cold;
     console.log(`\n2. COLD OPENS (${label}): ${cold} of ${shopLines.length} shop lines`);
   }
 }
@@ -255,3 +264,22 @@ function coveredMs(times, first, last, win) {
   console.log(`   (a tight window learns almost nothing; a loose one learns wrong things —`);
   console.log(`    there is no window where this map is both useful and safe)`);
 }
+
+/* -- THE VERDICT, AS AN EXIT CODE --------------------------------------------------------------
+ *
+ * ⚠️ A corpus with no shop lines in it cannot say anything either way, and must NOT read as
+ * confirmation. That is the "an assertion whose cannot-measure branch is truthy measures nothing"
+ * trap: silence here would make an empty log folder look like proof.
+ */
+console.log("");
+if (!shopLines.length) {
+  console.log("INCONCLUSIVE — no shop-terminal lines in this corpus. Nothing was measured.");
+  process.exit(2);
+}
+if (coldOpens > 0) {
+  console.log(`OVERTURNED — ${coldOpens} shop lines placed the player before anything else did.`);
+  console.log("A terminal origin tier would earn its keep at those moments. Re-open the design.");
+  process.exit(1);
+}
+console.log(`HOLDS — ${shopLines.length} shop lines, not one of them the first thing to place the`);
+console.log("player. A terminal origin tier repeats a fix the app already has. Do not build it.");
