@@ -40,7 +40,35 @@
  * CONTAINS the older precise one is not a contradiction — being near Lyria is exactly what being
  * at a Lyria outpost looks like — so it refreshes the fix rather than replacing it.
  *
- * -- 🔴 A TIER THAT WAS EVALUATED AND REJECTED: SHOP TERMINALS (2026-08-23) --------------------
+ * -- 🔴 SHOP TERMINALS: REJECTED AS A COVERAGE TIER, BUILT FOR TWO OTHER REASONS ---------------
+ *
+ * ⚠️ READ THE WHOLE OF THIS SECTION BEFORE CHANGING ANYTHING ABOUT TERMINALS. The census below is
+ * still correct and still binding; what changed on 2026-08-23 is that Sub asked two questions it
+ * had never been asked, and the answers are different. The one mechanism proved to go permanently
+ * wrong — a PERSISTED `shopName -> place` map — is still not built and must not be.
+ *
+ * **1. RESILIENCE.** Sub: *"At any time CIG can update the logs to remove information. If we can
+ * get the player's location from multiple different sources, then if they change something in the
+ * future we may not even need to change anything with our app."* Coverage was the wrong measure for
+ * that question: a source worth nothing today is insurance tomorrow, but only if it is genuinely
+ * INDEPENDENT. So `origin-signals.ts` reads the shop's OWN NAME against the starmap — 28 of 61
+ * names resolve to exactly one row, 0 ambiguously — which survives every other signal being
+ * removed. A binding learned from a location line does not, and is kept separate for that reason.
+ *
+ * **2. PRECISION.** Station-level is enough for a distance and not enough for *"meet me at the
+ * cargo office at Levski"*. `shopName`/`kioskId` name a terminal INSIDE the station. That rides as
+ * `OriginSignal.detail` and moves no tier — new capability, not a duplicate one.
+ *
+ * 🔴 AND THE ONE MEASURED WARNING THAT STILL STANDS: **no terminal binding is ever persisted.**
+ * `SCShop_Cargo_Office` exists at 13 stations and a 300 s learning window already had 5 of 27
+ * pairings wrong. `PlayerLocation.shopPlaces` is in-memory, per session, and has no save path.
+ * ⚠️ One thing the census ASSERTED without measuring turns out to be false, and it is recorded here
+ * so nobody builds on either version: `shopId` is NOT re-minted per session. Across 533 logs, 11
+ * ids appear in more than one session and none ever names two places. Eleven is far too thin to
+ * persist anything on, so the in-session-only rule stands on Sub's instruction and on the shopNAME
+ * evidence — not on the re-minting claim, which was never measured.
+ *
+ * The original census, unchanged, because it is what makes all of the above judgeable:
  *
  * Sub asked whether the app can tell where a player is when they buy something at a terminal:
  * "now that I've been going to these terminals to buy things, I want you to see if we can
@@ -90,6 +118,16 @@ export interface OriginSignal {
   at: number;
   /** Which log signal produced this, for the tooltip's "where this came from". */
   source: string;
+  /**
+   * Something more specific than the place, when the signal happened to carry one — today, which
+   * terminal inside the station ("Levski Cargo Office Commodities").
+   *
+   * 🔴 IT IS NOT A SMALLER PLACE, AND IT MAY NOT BE TREATED AS ONE. The tier stays exactly what it
+   * was; nothing routes, orders or measures a distance from this. Sub's ask was *"meet me at the
+   * cargo office at Levski"* — a station-level fix is enough for a distance and not enough for a
+   * sentence, and this is the sentence half. Null on every signal that carries no such detail.
+   */
+  detail?: string | null;
 }
 
 export interface OriginVerdict {
@@ -107,6 +145,9 @@ export interface OriginVerdict {
   ageMin: number | null;
   /** Where the estimate came from, in plain language. */
   from: string;
+  /** The winning signal's `detail`, carried through untouched — see `OriginSignal.detail`. Null
+   *  whenever the winner had none, which is every tier but a terminal fix. */
+  detail: string | null;
   /** The concrete thing the player can do to improve it. Sub's requirement: the hover must say
    *  "what they need to do to sync it", not merely that the estimate is uncertain. */
   howToImprove: string;
@@ -200,6 +241,7 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
       at: s.at,
       ageMin: a,
       from: s.source,
+      detail: s.detail ?? null,
       howToImprove: improve(tier),
       // 🔑 "stale" is a softer claim than aged-out: it means believe it less, not stop believing
       // it. Half the trust window is where a reading stops being current and starts being recent.
@@ -217,6 +259,7 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
       at: expired.at,
       ageMin: age(expired),
       from: expired.source,
+      detail: expired.detail ?? null,
       howToImprove: improve(expired.tier),
       stale: true,
     };
@@ -228,6 +271,7 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
     at: null,
     ageMin: null,
     from: "nothing in this session has said where you are",
+    detail: null,
     howToImprove: improve("unknown"),
     stale: true,
   };
