@@ -6,22 +6,28 @@
  * state and every default lives here. Anything added to this feature later belongs in this file
  * too - the moment a second hook appears in the server, that promise is gone.
  *
- * Routes, all GET, all read-only:
+ * Routes — read-only GETs, and exactly one write:
  *
- *   /api/trade/status              where the prices came from and how old they are
- *   /api/trade/names               commodity names that can be BOUGHT somewhere (autocomplete)
- *   /api/trade/commodity?name=     one commodity: every terminal, as ranges
- *   /api/trade/routes?...          buy-low/sell-high runs, ranked
+ *   GET  /api/trade/status              where the prices came from and how old they are
+ *   GET  /api/trade/names               commodity names that can be BOUGHT somewhere (autocomplete)
+ *   GET  /api/trade/commodity?name=     one commodity: every terminal, as ranges
+ *   GET  /api/trade/routes?...          buy-low/sell-high runs, ranked
+ *   GET  /api/trade/journal             what you really bought and sold, with realised profit
+ *   POST /api/trade/journal/forget?lot= 🔴 the one write — "that cargo is gone, stop listing it"
  *
  * 🔑 EVERY RESPONSE CARRIES `source` AND THE TABLE'S AGE, not just the ones about prices. Sub's
  * requirement was that the user knows when they are on the fallback, and a widget can only say so
  * on the screen the user is actually looking at.
  *
- * ⚠️ These are GETs and they are unauthenticated like the rest of the widget API, which is
- * LAN-reachable (OBS browser sources on another PC). That is acceptable here because nothing in
- * this file spends a credential, writes anything, or reveals anything the player did not already
- * publish - it reads a public price table. If a WRITE is ever added, it needs the loopback gate
- * that `/api/twitch/*` uses. See references/security.md.
+ * ⚠️ The GETs are unauthenticated like the rest of the widget API, which is LAN-reachable (OBS
+ * browser sources on another PC). That is acceptable here because they spend no credential, write
+ * nothing, and reveal nothing the player did not already publish - they read a public price table.
+ * ⚠️ The journal is the exception to the "nothing private" half: it is the player's own trading
+ * record. It stays a plain GET because it names no credential and no path on disk, which is the bar
+ * `SENSITIVE_GET` sets - but if it ever grows a field of that kind, it belongs on that list.
+ * 🔑 The one WRITE is covered by the gate this note used to ask for, and by a stronger one:
+ * `overlay-server.ts` refuses every non-GET that is not from this machine AND every request
+ * carrying a foreign `Origin`, before this file is called. See references/security.md.
  */
 import type { ServerResponse } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
@@ -261,6 +267,35 @@ export function tradeRoutes(
   deps: TradeDeps,
 ): boolean {
   if (!url.startsWith("/api/trade/")) return false;
+
+  /**
+   * 🔴 THE ONE WRITE IN THIS FILE - "that cargo is gone, stop listing it".
+   *
+   * Handled BEFORE the GET-only guard below, and it is the reason that guard is now a default
+   * rather than a blanket rule. Read the file header: it says a write here "needs the loopback gate
+   * that `/api/twitch/*` uses". It already has one, and a stronger one - `overlay-server.ts` refuses
+   * every non-GET that is not from this machine, AND every request carrying a foreign `Origin`,
+   * before `tradeRoutes` is ever called. So this route is loopback + same-origin by construction
+   * and must not grow a second check that could drift from it.
+   *
+   * 🔑 THE LOT ID RIDES THE QUERY STRING, and the POST carries no body. `tradeRoutes` is handed a
+   * `{ url, method }` shape rather than a real `IncomingMessage`, so reading a body would mean
+   * widening the signature - i.e. a second hook into the server this file promises not to grow.
+   * A synthetic local id is not personal data, so there is nothing here that a query string is the
+   * wrong place for.
+   */
+  if (url === "/api/trade/journal/forget") {
+    if (req.method !== "POST") { json(res, 405, { error: "method_not_allowed" }); return true; }
+    const id = strParam(qs(req.url ?? "/"), "lot");
+    if (!id) { json(res, 400, { error: "lot_required" }); return true; }
+    const gone = ensureJournal(deps).forget(id);
+    // 🔑 `removed: false` is a 200, not a 404. The row is already off the list either way, which is
+    // what the caller asked for, and a second click on a stale widget is not an error worth
+    // colouring red. The flag is still reported so a caller CAN tell the two apart.
+    json(res, 200, { removed: !!gone, lot: gone });
+    return true;
+  }
+
   if (req.method !== "GET") { json(res, 405, { error: "method_not_allowed" }); return true; }
 
   const s = ensure(deps);

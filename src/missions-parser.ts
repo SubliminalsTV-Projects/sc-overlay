@@ -247,6 +247,30 @@ export type MissionEvent =
    *  moving, which is why it is worth having separately: it brackets a real load. */
   | { kind: "cargoKiosk"; ts: string | null; terminal: string }
   /**
+   * 🔴 THE SAME METHOD ALSO WRITES A FAILURE, AND WE WERE READING IT AS A SUCCESS.
+   *
+   *   [Notice] <…::FillUnstowRequest> [FreightElevatorKioskUIProvider]
+   *     FreightElevatorKiosk_FreightElevator_Util_HangarLarge[5260145885719] - Processed bindings…
+   *   [Error]  <…::FillUnstowRequest> [FreightElevatorKioskUIProvider]
+   *     EntityId[608068483514] is not present. [Cargo][Inventory]
+   *
+   * `kioskTerminal` matched `([A-Za-z0-9_]+)\[` on both, so the error form produced a perfectly
+   * ordinary `cargoKiosk` whose terminal was the literal word **"EntityId"**. Measured across Sub's
+   * 480 backups: **241 real kiosk presses, 41 of these**, plus 4 with a `SoftLock_Terminal_…` name
+   * that ARE real (that is a genuine kiosk class, not a failure). In the 2026-08-22 session every
+   * single one of the 37 `FillUnstowRequest` lines is the error form — so 37 of 37 `cargoKiosk`
+   * events that session were fabricated, with a place-shaped token that names no place.
+   *
+   * ⚠️ WHAT IT IS NOT. It is tempting to read this as "the game just told us destroyed cargo is
+   * gone", and to drop a held commodity on the strength of it. Measured on the same session, all
+   * five phantom ids are PERSONAL INVENTORY, not cargo: `776854825844` is
+   * `Carryable_1H_CY_banu_favour_Wikelo`, `658416443192` is an item dragged to the ground,
+   * `651720988821` is an inventory container, and two appear nowhere else in the log at all.
+   * A bought commodity has no entity identity to compare against either — see `trade-journal.ts`.
+   * So this event is diagnostic vocabulary, and nothing downstream may treat it as cargo.
+   */
+  | { kind: "cargoUnstowMissing"; ts: string | null; entityId: string }
+  /**
    * 🔴 WHERE THE PLAYER IS — the signal the router has been missing since it was written.
    *
    * `Player[IMC-SubliminaL] requested inventory for Location[Stanton3b_ArcCorp_Area045]`
@@ -459,8 +483,14 @@ const RE = {
      The tag is bare at exterior pads (just "LoadingPlatformManager"), so the name class allows a
      plain word as well as the suffixed hangar/outpost forms. */
   platformState: /Loading Platform Manager \[([A-Za-z0-9_]+)\] Platform state changed to ([A-Za-z]+)/,
-  /* "[FreightElevatorKioskUIProvider] <Terminal>[123] - Processed bindings into transfer request" */
-  kioskTerminal: /\[FreightElevatorKioskUIProvider\]\s*([A-Za-z0-9_]+)\[/,
+  /* "[FreightElevatorKioskUIProvider] <Terminal>[123] - Processed bindings into transfer request"
+     🔴 The ` - Processed bindings` tail is REQUIRED, and it is what tells a press apart from the
+     error form the same method writes (`EntityId[…] is not present`). Without it the word
+     "EntityId" parses as a terminal name — see the `cargoUnstowMissing` note. */
+  kioskTerminal: /\[FreightElevatorKioskUIProvider\]\s*([A-Za-z0-9_]+)\[\d+\]\s*-\s*Processed bindings/,
+  /* The failure form of the same method. Deliberately anchored on the whole phrase rather than on
+     `EntityId\[` alone: a bare id match would also claim any future line that happens to name one. */
+  kioskMissingEntity: /\[FreightElevatorKioskUIProvider\]\s*EntityId\[(\d+)\]\s*is not present/,
   /* "Player[IMC-SubliminaL] requested inventory for Location[Stanton3b_ArcCorp_Area045]" */
   locationInventory: /Player\[([^\]]+)\] requested inventory for Location\[([^\]]+)\]/,
   /* Two spellings of the same numeric id: ASOP's "at location [3490636373]" and the inventory
@@ -719,6 +749,10 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
     }
 
     case "CEntityComponentFreightElevatorUIProvider::FillUnstowRequest": {
+      // Two forms share this method — a press and a failure. The failure is checked FIRST because
+      // it is the cheaper test and because reading it as a press is the bug this ordering fixes.
+      const miss = m.match(RE.kioskMissingEntity);
+      if (miss) return { kind: "cargoUnstowMissing", ts: e.timestamp, entityId: miss[1] };
       const t = m.match(RE.kioskTerminal);
       return t ? { kind: "cargoKiosk", ts: e.timestamp, terminal: t[1] } : null;
     }

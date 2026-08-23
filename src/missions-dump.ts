@@ -71,6 +71,8 @@ const fmt = (e: MissionEvent): string => {
       return `CARGO    ${e.direction === "down" ? "OFFLOAD" : "LOAD   "} ${e.platform}`;
     case "cargoKiosk":
       return `KIOSK    ${e.terminal}`;
+    case "cargoUnstowMissing":
+      return `KIOSK    (entity ${e.entityId} is not present)`;
     case "playerLocation":
       return `WHEREAMI ${e.location}`;
     case "playerLocationId":

@@ -33,6 +33,38 @@
  * ⚠️ `autoLoading` is NOT part of the match. Whether cargo went to the hold or the freight
  * elevator changes how you collect it, never what it cost - matching on it would strand a lot that
  * was bought to the elevator and sold off the ship, which is the ordinary way to run one.
+ *
+ * -- 🔴 WRITING A LOT OFF, AND WHY IT HAS TO BE MANUAL -----------------------------------------
+ *
+ * An open lot closes when a sale consumes it. Cargo that is DESTROYED never produces a sale, so it
+ * sits in "still holding" forever. Sub flew a loaded ship into a wall on purpose to see what would
+ * happen, and the loot has been listed ever since: *"it's just stuck in there now."*
+ *
+ * The obvious hope is to close it automatically, and it was chased before this was built. It does
+ * not work, and the measurements are worth keeping so nobody spends the session again:
+ *
+ *   - A commodity lot's only identity is its `resourceGUID`. Swept over the whole 480-log corpus,
+ *     that uuid appears on exactly TWO line families: the buy/sell request itself, and
+ *     `CreateHaulingObjectiveHandler` (which describes a contract, not your cargo). It is never on
+ *     an inventory line, an entity line, or a destruction line. Bought commodity boxes have no
+ *     entity identity in the log at all.
+ *   - `<Vehicle Destruction>` names the hull, the zone, the driver and the cause. It never names
+ *     the contents, so even a clean "your ship exploded" signal cannot say what was in it.
+ *   - The freight elevator's `EntityId[…] is not present` error looks like the answer and is not:
+ *     all five phantom ids in the 2026-08-22 session are personal inventory (a Wikelo favour, an
+ *     item dragged to the ground, an inventory container). See `missions-parser.ts`.
+ *
+ * 👉 So the player is the only witness, and `forget()` is the cure rather than a fallback.
+ *
+ * 🔑 IT MOVES THE LOT, IT DOES NOT DELETE IT. The money left the player's account whatever
+ * happened to the boxes, so a profit total that simply forgot the cost would be optimistic - the
+ * same failure as inventing a cost basis, wearing the other sign. A written-off lot keeps its
+ * price and shop, is reported separately, and is DELIBERATELY OUTSIDE `JournalTotals` - structurally
+ * outside, not merely excluded by a filter someone can later "fix". That is the same shape as
+ * `unmatched` sales, which are revenue and never profit.
+ *
+ * ⚠️ Whole lots only. Partial loss would need the player to tell us how much survived, and nothing
+ * in the log could ever check the answer.
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -40,6 +72,10 @@ import type { CommodityPurchase } from "./trade-log.js";
 
 /** One purchase still holding cargo, or the remainder of one. */
 export interface OpenLot {
+  /** Stable handle for "remove this one". Assigned at creation and persisted; lots written by an
+   *  older build are backfilled on read, so the id can never be a position in an array — removing
+   *  a lot would renumber every one after it and the next click would hit the wrong row. */
+  id: string;
   resourceGuid: string;
   commodity: string | null;
   scu: number;
@@ -82,6 +118,15 @@ export interface UnmatchedSale {
   soldAt: string;
 }
 
+/** A lot the player says is gone. Keeps everything the open lot had, so the cost is still on the
+ *  record and the removal is legible rather than a hole where a row used to be. */
+export interface WrittenOffLot extends OpenLot {
+  /** When the player wrote it off - not when they bought it. Both are kept. */
+  forgottenAt: string;
+  /** What it cost, restated so no reader has to re-derive it from a price and a quantity. */
+  cost: number;
+}
+
 export interface JournalTotals {
   runs: number;
   scu: number;
@@ -102,6 +147,10 @@ export interface JournalView {
   runs: ClosedRun[];
   open: OpenLot[];
   unmatched: UnmatchedSale[];
+  /** 🔑 A TOP-LEVEL LIST, NOT A FIELD ON `JournalTotals`. Write-offs are the player's word rather
+   *  than the log's, so keeping them out of the totals TYPE is what stops a later change folding
+   *  them into profit by accident. */
+  writtenOff: WrittenOffLot[];
   today: JournalTotals;
   allTime: JournalTotals;
 }
@@ -111,8 +160,11 @@ interface JournalState {
   open: OpenLot[];
   runs: ClosedRun[];
   unmatched: UnmatchedSale[];
+  writtenOff: WrittenOffLot[];
   /** Log timestamps already folded in, so a re-seed of the same file cannot double-count. */
   seen: string[];
+  /** Source of `OpenLot.id`. Persisted so an id is never reused after a restart. */
+  nextLotId: number;
 }
 
 const STATE_VERSION = 1;
@@ -122,7 +174,9 @@ const FILE = "trade-journal.json";
 const MAX_RUNS = 500;
 const MAX_SEEN = 4000;
 
-const empty = (): JournalState => ({ v: STATE_VERSION, open: [], runs: [], unmatched: [], seen: [] });
+const empty = (): JournalState => ({
+  v: STATE_VERSION, open: [], runs: [], unmatched: [], writtenOff: [], seen: [], nextLotId: 1,
+});
 
 function totals(runs: readonly ClosedRun[], unmatched: readonly UnmatchedSale[]): JournalTotals {
   let scu = 0, cost = 0, revenue = 0, profit = 0, minutes = 0;
@@ -156,16 +210,31 @@ export class TradeJournal {
     this.state = this.read();
   }
 
+  /**
+   * 🔴 `STATE_VERSION` STAYS 1, AND THAT IS DELIBERATE. `read()` returns `empty()` on a version
+   * mismatch, so bumping it to add `id`/`writtenOff` would DESTROY the journal of every player who
+   * already has one - Sub's own file holds a real closed run and four open lots. The two new
+   * fields are additive and every older file is a valid newer one once they are defaulted, so the
+   * repair is a backfill, not a migration. Bump the version only for a change that genuinely
+   * cannot be read forward.
+   */
   private read(): JournalState {
     try {
       const j = JSON.parse(readFileSync(this.path, "utf8")) as Partial<JournalState>;
       if (j?.v !== STATE_VERSION) return empty();
+      const open = Array.isArray(j.open) ? j.open : [];
+      const writtenOff = Array.isArray(j.writtenOff) ? j.writtenOff : [];
+      let next = typeof j.nextLotId === "number" && j.nextLotId > 0 ? j.nextLotId : 1;
+      // Lots written by a build that had no ids. Numbered here, once, and saved on the next write.
+      for (const lot of [...open, ...writtenOff]) if (!lot.id) lot.id = `lot${next++}`;
       return {
         v: STATE_VERSION,
-        open: Array.isArray(j.open) ? j.open : [],
+        open,
         runs: Array.isArray(j.runs) ? j.runs : [],
         unmatched: Array.isArray(j.unmatched) ? j.unmatched : [],
+        writtenOff,
         seen: Array.isArray(j.seen) ? j.seen : [],
+        nextLotId: next,
       };
     } catch {
       // A missing or corrupt file means "nothing recorded yet", never "repair me".
@@ -203,6 +272,7 @@ export class TradeJournal {
 
     if (p.kind === "buy") {
       this.state.open.push({
+        id: `lot${this.state.nextLotId++}`,
         resourceGuid: p.resourceGuid,
         commodity: name,
         scu: p.scu,
@@ -264,6 +334,34 @@ export class TradeJournal {
     return true;
   }
 
+  /**
+   * The player says this lot is gone - destroyed, despawned, or simply never coming back. Moves it
+   * out of `open` and onto the written-off record; returns the lot so a caller can report WHAT it
+   * removed rather than only that something happened.
+   *
+   * 🔑 An unknown id is `null`, not a throw and not a silent success. Two clicks on the same row
+   * must not book the loss twice, and the widget re-reads after each one, so "already gone" is an
+   * ordinary outcome rather than an error.
+   */
+  forget(id: string, now: Date = new Date()): WrittenOffLot | null {
+    const idx = this.state.open.findIndex((l) => l.id === id);
+    if (idx < 0) return null;
+    const [lot] = this.state.open.splice(idx, 1);
+    const record: WrittenOffLot = {
+      ...lot,
+      forgottenAt: now.toISOString(),
+      cost: lot.pricePerScu * lot.scu,
+    };
+    this.state.writtenOff.push(record);
+    // Same bound as `runs`: a player who loses cargo every night must not grow an unbounded file.
+    if (this.state.writtenOff.length > MAX_RUNS) {
+      this.state.writtenOff.splice(0, this.state.writtenOff.length - MAX_RUNS);
+    }
+    this.dirty = true;
+    this.save();
+    return record;
+  }
+
   /** Newest first, plus rollups. */
   view(now: Date = new Date()): JournalView {
     const runs = [...this.state.runs].sort((a, b) => Date.parse(b.soldAt) - Date.parse(a.soldAt));
@@ -274,6 +372,7 @@ export class TradeJournal {
       runs,
       open: [...this.state.open].sort((a, b) => b.atMs - a.atMs),
       unmatched,
+      writtenOff: [...this.state.writtenOff].sort((a, b) => Date.parse(b.forgottenAt) - Date.parse(a.forgottenAt)),
       today: totals(todayRuns, todayUnmatched),
       allTime: totals(runs, unmatched),
     };
