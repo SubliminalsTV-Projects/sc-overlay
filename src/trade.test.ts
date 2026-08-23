@@ -541,6 +541,27 @@ console.log("\n-- the journal: a sale we cannot price --");
   check("...and counted", v.today.unpricedSales === 1, String(v.today.unpricedSales));
 }
 
+console.log("\n-- upgrading a journal must not re-book its own history --");
+{
+  // 🔴 THE FIX ALMOST SHIPPED A SECOND BUG. The idempotency key used to contain `scu`, so the
+  // moment the parser revised that figure every stored key stopped matching and the sale was
+  // booked again. It happened on Sub's own machine: one corrected run, and a phantom beside it.
+  const dir = freshDir();
+  const j1 = new TradeJournal(dir, nameOf);
+  j1.apply(buyOf(BUY_DEGNOUS));
+  j1.apply(buyOf(SELL_DEGNOUS));
+  j1.save();
+  // Reopen the SAME directory, exactly as a restart after an update would.
+  const j2 = new TradeJournal(dir, nameOf);
+  const changed = j2.apply(buyOf(SELL_DEGNOUS));
+  check("replaying the same sale changes nothing", changed === false, String(changed));
+  const v = j2.view(new Date("2026-08-23T19:00:00Z"));
+  check("still exactly one run", v.runs.length === 1, String(v.runs.length));
+  check("...and no phantom appeared", (v.unmatched?.length ?? 0) === 0, String(v.unmatched?.length));
+  check("...and the profit is still the balance delta", Math.round(v.runs[0]?.profit ?? 0) === 142830,
+    String(v.runs[0]?.profit));
+}
+
 console.log("\n-- Sub's real Degnous Root run: a profit reported as a loss --");
 {
   // 🔴 THE WHOLE BUG, END TO END. His balance moved 4,576,646 -> 4,719,476 in game: +142,830.

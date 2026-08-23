@@ -198,6 +198,29 @@ function isToday(iso: string, now: Date): boolean {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }
 
+/** The idempotency key for one purchase line.
+ *
+ * 🔴 `scu` IS DELIBERATELY NOT IN HERE. It used to be, and that made the key depend on a figure
+ * the parser can revise. When the sell-quantity misread was fixed (a sell's `quantity` is SCU,
+ * not containers), every stored key for a box bigger than 1 SCU stopped matching, so those sales
+ * looked unseen on the next launch and were booked a SECOND time. `total` already separates two
+ * purchases in the same millisecond, which is what the key was widened for. */
+function seenKey(p: CommodityPurchase): string {
+  return [p.at, p.kind, p.shopName ?? "", p.resourceGuid, p.total ?? ""].join("|");
+}
+
+/** Upgrade keys written before `scu` left the key, so an existing journal does not re-book its
+ *  own history. Old shape: at|kind|shop|guid|scu|total. New: at|kind|shop|guid|total. */
+function migrateSeen(seen: string[]): string[] {
+  const out: string[] = [];
+  for (const s of seen) {
+    const parts = s.split("|");
+    const k = parts.length === 6 ? [parts[0], parts[1], parts[2], parts[3], parts[5]].join("|") : s;
+    if (!out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
 export class TradeJournal {
   private state: JournalState;
   private path: string;
@@ -233,7 +256,7 @@ export class TradeJournal {
         runs: Array.isArray(j.runs) ? j.runs : [],
         unmatched: Array.isArray(j.unmatched) ? j.unmatched : [],
         writtenOff,
-        seen: Array.isArray(j.seen) ? j.seen : [],
+        seen: migrateSeen(Array.isArray(j.seen) ? j.seen : []),
         nextLotId: next,
       };
     } catch {
@@ -261,7 +284,7 @@ export class TradeJournal {
    */
   apply(p: CommodityPurchase): boolean {
     if (!p.resourceGuid || !p.scu || p.scu <= 0) return false;
-    const key = [p.at, p.kind, p.shopName ?? "", p.resourceGuid, p.scu, p.total ?? ""].join("|");
+    const key = seenKey(p);
     if (this.state.seen.includes(key)) return false;
     this.state.seen.push(key);
     if (this.state.seen.length > MAX_SEEN) this.state.seen.splice(0, this.state.seen.length - MAX_SEEN);
