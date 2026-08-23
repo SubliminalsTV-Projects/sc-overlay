@@ -168,7 +168,10 @@ const deps = { locations, now: () => NOW };
     const s = collectOriginSignals({ terminal: term({}), system: "nyx" }, deps);
     const p = s.find((x) => x.tier === "place");
     ok(p?.id === LEVSKI, "an UNBOUND terminal resolves through its own name", p?.label ?? "none");
-    ok(p?.source.indexOf("names this place") >= 0, "...and says that is where it came from", p?.source);
+    // Defensive: the DETAIL argument is evaluated eagerly, so reaching through a possibly-absent
+    // signal here would take the whole suite down and report it as a small pass.
+    ok((p?.source ?? "").indexOf("names this place") >= 0,
+       "...and says that is where it came from", p?.source ?? "(no place signal)");
   }
 
   // 3. 🔴 A STAR IS NOT A PLACE. Five shop names in the corpus contain "Pyro", which is a Star row.
