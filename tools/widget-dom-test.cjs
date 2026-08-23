@@ -184,6 +184,31 @@ const PAIRS = `(async () => {
     } catch { return null; }
   };
   const fits = (w) => { const o = innerFit(w); return !o || (o.overflowX <= 2 && o.overflowY <= 2); };
+  // 🔴 WAIT FOR THE FRAME TO REPORT ITSELF EMBEDDED BEFORE MEASURING IT. Identical trap to the
+  // one already fixed in the size sweep below, arriving through a different door: grouping and
+  // ungrouping re-runs a widget's page, and until it has read ?embedded and set body.embedded
+  // its #panel sits at the page's STANDALONE fixed size. Measured in that window, the check
+  // reports an overflow that is nothing but the load not having finished.
+  // 🔑 THE SIGNATURE, and it is how this was told apart from a real clip: the reported overflow
+  // equals standalone minus frame EXACTLY. Hauling is 420x560 standalone, so against logView's
+  // 520x420 box it reported -100x140 and against verseFinder's 460x480 it reported -40x80 - the
+  // arithmetic to the pixel, three times over, while a direct measurement of the same page at
+  // the same three sizes WITH ?embedded showed an overflow of 0. The suite's own later
+  // "every widget's content fits its box after all that" assertion passed in the same run,
+  // which is the other half of the tell.
+  // ⚠️ It falls through after ~1.5s and measures anyway: a widget that NEVER embeds is a real
+  // failure and must still be able to fail here.
+  const embeddedReady = async (w) => {
+    if (w.local) return true;
+    for (let i = 0; i < 60; i++) {
+      try {
+        const d = document.getElementById("wf-" + w.key).contentDocument;
+        if (d && d.body && d.body.classList.contains("embedded")) return true;
+      } catch { /* cross-document timing */ }
+      await sleep(25);
+    }
+    return false;
+  };
   // Snapshot each widget's healthy standalone frame size to compare against after a merge cycle.
   const baseline = {};
   for (const w of WIDGETS) { const r = frameBox(w); baseline[w.key] = [Math.round(r.width), Math.round(r.height)]; }
@@ -204,6 +229,7 @@ const PAIRS = `(async () => {
       // The fronted member's CONTENT must fit the shared box - this is the check that catches a
       // widget rendering clipped inside a perfectly-sized frame.
       const act = WBY[g ? g.active : a.key];
+      await embeddedReady(act);
       if (!fits(act)) {
         const o = innerFit(act);
         clipped.push(a.key + "+" + b.key + " grouped -> " + act.key + " overflows by " + o.overflowX + "x" + o.overflowY);
@@ -213,6 +239,7 @@ const PAIRS = `(async () => {
       // a widget landing at a size nobody chose, or shrinking/growing a bit more on every cycle.
       while (GROUPS.length) detachFromGroup(WBY[GROUPS[0].active]);
       await sleep(60); // mining re-measures on a timer
+      for (const w of [a, b]) { await embeddedReady(w); }
       const cycle1 = {};
       for (const w of [a, b]) { const r = frameBox(w); cycle1[w.key] = [Math.round(r.width), Math.round(r.height)]; }
       for (const w of [a, b]) {
@@ -6413,6 +6440,151 @@ const HAULING = `(async () => {
 //
 // Same technique as HAULING above: the page's own `plan` binding is assigned directly, so these are
 // rendering rules tested deterministically with no game and no sidecar state.
+// 🔴 Suite: THE RUNS ROW SURVIVES 320px - the regression this row shape exists to prevent.
+//
+// What shipped before it: the money line was one white-space:nowrap flex row inside a column
+// that shrinks, and #body is overflow-x:hidden. MEASURED against the live board at 320px (the
+// widget minW, and about as narrow as Sub runs it): ALL 25 rows clipped, the line needing
+// 254-273px of a 175-204px column. It kept buy and sell and threw away the margin and the
+// quantity, and nothing on screen said so.
+//
+// 🔑 The assertion is about the MECHANISM, not one string: the strip may wrap, and nothing in a
+// row may exceed the column it sits in. A check on particular text would pass the day someone
+// re-added nowrap with slightly shorter numbers.
+//
+// ⚠️ FIXTURE, deliberately. The rows are served by patching fetch rather than taken from the
+// live price table, because this is a LAYOUT claim and a layout claim must not pass or fail on
+// whether the sidecar happens to hold a cached UEX table. The fixture is built to stress the
+// line: the longest real terminal names and the widest real numbers on the board.
+const RUNSNARROW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  const mk = (commodity, fromT, toT, buy, sell, pct, scu, cap, profit, bound, xsys) => ({
+    commodity: commodity,
+    from: { terminalShort: fromT, system: xsys ? "Pyro" : "Stanton", price: buy },
+    to: { terminalShort: toT, system: "Stanton", price: sell },
+    marginPct: pct, moveScu: scu, scuBound: bound, capitalRequired: cap,
+    profit: profit, marginPerScu: Math.round(profit / scu), minutes: 24,
+    profitPerHour: profit * 2.5, crossSystem: !!xsys, ageDays: 13.6,
+  });
+  const FIX = {
+    capacityScu: 696, ship: "C2 Hercules",
+    routes: [
+      mk("Degnous Root", "Canard View", "CBD Lorville", 44156, 53000, 20, 696, 30732576, 6155424, "unknown", true),
+      mk("Bexalite", "HDMS-Hadley", "Sacrens Plot", 23940, 36000, 50, 507, 12137580, 6114420, "demand", true),
+      mk("Elespo", "Chawlas Beach", "Ashland", 6000, 15000, 150, 332, 1992000, 2988000, "demand", false),
+    ],
+  };
+  const origFetch = window.fetch;
+  window.fetch = function (u, o) {
+    if (String(u).indexOf("/api/trade/routes") >= 0) {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(FIX) });
+    }
+    return origFetch.call(this, u, o);
+  };
+
+  // Driven the way a player drives it. Assigning the page's own view binding would only make a global
+  // the page never reads - executeJavaScript runs in the page's GLOBAL scope, not its closure.
+  document.getElementById("modeTrade").click();
+  await sleep(300);
+  document.getElementById("tabTrade").click();
+  await sleep(1200);
+
+  const panel = document.getElementById("panel");
+  const rows = () => [].slice.call(panel.querySelectorAll(".tdrow"));
+
+  // 🔑 POSITIVE GUARD FIRST. Every check below is a must-not-overflow, and an empty board
+  // satisfies all of them for free - the shape of free pass this repo has been bitten by more
+  // than once. If this one fails, nothing after it means anything.
+  ok("there are Runs rows to measure", rows().length === 3, rows().length + " rows");
+
+  const overflowAt = async (w) => {
+    panel.style.width = w + "px";
+    await sleep(120);
+    const bad = [];
+    rows().forEach(function (r, i) {
+      [].slice.call(r.querySelectorAll(".l1, .l2, .l3, .tdchips")).forEach(function (elm) {
+        if (elm.scrollWidth > elm.clientWidth + 1) {
+          bad.push("row" + (i + 1) + " ." + elm.className.split(" ")[0]
+            + " need=" + Math.round(elm.scrollWidth) + " have=" + Math.round(elm.clientWidth));
+        }
+      });
+    });
+    return bad;
+  };
+
+  const at320 = await overflowAt(320);
+  ok("🔴 at 320px nothing in a run row runs off its column",
+     at320.length === 0, at320.length ? at320.join(" | ") : "0 of " + rows().length + " rows clip");
+  const at440 = await overflowAt(440);
+  ok("...and nothing does at 440 either",
+     at440.length === 0, at440.length ? at440.join(" | ") : "0 of " + rows().length + " rows clip");
+
+  // The MECHANISM that makes the line above true, asserted separately so a regression names
+  // itself instead of arriving as a pile of pixel numbers.
+  panel.style.width = "320px";
+  await sleep(120);
+  const strip = panel.querySelector(".tdrow .l3");
+  const wrapMode = strip ? getComputedStyle(strip).flexWrap : "(no strip)";
+  ok("🔑 the metrics strip is allowed to WRAP, which is what stops it clipping",
+     wrapMode === "wrap", wrapMode);
+  const stripH = strip ? Math.round(strip.getBoundingClientRect().height) : 0;
+  ok("...and at 320 it really does take a second line rather than losing a figure",
+     stripH > 20, stripH + "px tall");
+
+  // The profit shares line one with the name, so it reserves no width of its own. This is the
+  // other half of the fix - it is what freed the 84px the old right-hand column held open.
+  const r0 = rows()[0];
+  const l1 = r0 ? r0.querySelector(".l1") : null;
+  ok("the profit sits on line one beside the name, not in a column of its own",
+     !!(l1 && l1.querySelector(".t") && l1.querySelector(".p")),
+     l1 ? l1.className + " children: " + l1.children.length : "(no .l1)");
+  ok("...and there is no fixed-width right-hand column left to hold dead space open",
+     !!r0 && r0.querySelectorAll(".tdcap").length === 0,
+     r0 ? r0.querySelectorAll(".tdcap").length + " .tdcap elements" : "(no row)");
+
+  // 🔴 Sub asked for this once already: a big number with no noun beside it is one nobody can
+  // act on. It was .tdcaplbl under the figure; it must survive the move onto line one.
+  const pk = l1 ? l1.querySelector(".pk") : null;
+  ok("🔴 the big number still says what it IS",
+     !!(pk && pk.textContent.trim().length > 0), pk ? JSON.stringify(pk.textContent) : "(no .pk)");
+
+  // 🔑 A FORECAST IS NOT DRESSED AS A RECORD. The Runs board is crowd-reported prices, so its
+  // profit is cyan; only the Ledger, whose figures came out of the log, earns up/down colour.
+  const p0 = l1 ? l1.querySelector(".p") : null;
+  const forecastPlain = !!p0 && !p0.classList.contains("up") && !p0.classList.contains("down");
+  ok("🔑 a forecast profit is not coloured like a realised one",
+     forecastPlain, p0 ? JSON.stringify(p0.className) : "(no .p)");
+
+  // ── the head Sub asked for: name left, badge hard right, tabs on their own row ──
+  const head = panel.querySelector(".head");
+  const badge = panel.querySelector(".expbadge");
+  const tabs = panel.querySelector(".tabs");
+  const title = panel.querySelector(".h-title");
+  for (const w of [320, 440, 900]) {
+    panel.style.width = w + "px";
+    await sleep(120);
+    const pr = panel.getBoundingClientRect();
+    const br = badge.getBoundingClientRect();
+    const tr = tabs.getBoundingClientRect();
+    const ttr = title.getBoundingClientRect();
+    // Hard right: the only thing between the badge and the panel edge is the head padding.
+    ok("at " + w + "px the badge is pinned to the right edge",
+       Math.round(pr.right - br.right) <= 14, Math.round(pr.right - br.right) + "px inset");
+    ok("...with the tabs on a row of their own below it",
+       tr.top > br.bottom - 4, "tabs top " + Math.round(tr.top - pr.top)
+         + " vs badge bottom " + Math.round(br.bottom - pr.top));
+    // The gap flexing is the point Sub made - it must GROW with the widget, not stay put.
+    ok("...and the gap between name and badge is what absorbed the width",
+       br.left - ttr.right > 20, Math.round(br.left - ttr.right) + "px gap");
+  }
+  panel.style.width = "";
+  window.fetch = origFetch;
+  return out;
+})()`;
 const STOW = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
@@ -6739,6 +6911,7 @@ app.whenReady().then(async () => {
     // ⚠️ Registered AHEAD of the two hauling suites for the reason stated further up: a throw used
     // to take every suite behind it with it, and `hauling: honest loads, whole route` is the one
     // that throws. Same page, so this costs nothing to place here.
+    fails += await run("hauling: the Runs row survives 320px", RUNSNARROW, null, null, "hauling.html");
     fails += await run("hauling: the trade journal's held cargo", TRADEHOLD, null, null, "hauling.html");
     fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");
     fails += await run("hauling: stowage order + signature", STOW, null, null, "hauling.html");

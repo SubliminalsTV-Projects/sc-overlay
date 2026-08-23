@@ -33,38 +33,45 @@
   body.embedded { overflow: visible; background: transparent; }
   body.embedded #panel { width: 100%; height: 100%; margin: 0; }
 
-  .head { min-height: 40px; flex-wrap: wrap; }
-  /* The widget's name, stacked over its warning — see the note in the markup. Left-aligned rather
-     than centred, because it reads as a caption ON the title and a centred caption under a
-     left-aligned title reads as a third, unrelated thing. */
-  .hname { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-    min-width: 0; }
-  .hname .expbadge { margin-left: 0; }
+  .head { min-height: 40px; flex-wrap: wrap; row-gap: 4px; }
 
-  /* 🔴 NARROW IS THE NORMAL CASE, NOT THE EDGE ONE. Sub runs this widget about as narrow as a
-     phone, and at that width the head is title + EXPERIMENTAL + five tabs on one non-wrapping
-     row — so the tabs ran off the edge and were simply unreachable. Widget pages are their own
-     documents sized to their frame, so a plain width query is the right tool here; there is no
-     parent page whose width could confuse it.
+  /* 🔴 TWO FIXED ROWS: name + badge, then the tabs. NO BREAKPOINTS.
+     Sub, 2026-08-23: "what if we just made it be on the same row as hauling? it'll be right
+     justified and it will expand with the width of the widget as people make it smaller or
+     larger. That'll give us extra space."
 
-     ⚠️ The badge no longer moves here. It used to drop to its own full-width line below 360px
-     (Sub: "move that down to another line when stuff starts to collapse"); it is now stacked
-     under the title at EVERY width, so the first row is already the tabs' to spend and there is
-     nothing left for a breakpoint to relocate. What survives is the tabs' own wrapping, which is
-     still needed: Trading offers four tabs and the widest two are "Look up" and "Ledger". */
-  @media (max-width: 360px) {
-    .tabs { flex-wrap: wrap; justify-content: flex-end; row-gap: 3px; }
-  }
-  /* Narrower still: the tabs get their own row entirely, and the name keeps the first one. */
-  @media (max-width: 290px) {
-    .tabs { flex-basis: 100%; margin-left: 0; justify-content: flex-start; order: 9; }
-  }
+     The history is worth keeping, because this head has now been laid out three ways and every
+     one of them was answering the SAME squeeze:
+       1. badge beside the title, tabs pushed right — one row, until the tabs ran off the edge;
+       2. two media queries relocating the badge below 360px, then the tabs below 290px;
+       3. badge STACKED under the title at every width (46de003) — which spent a second line of
+          height on the title and still left the tabs sharing row one.
+     All three had the badge and the tabs competing for one horizontal axis. Giving each its own
+     row settles it by construction: the tabs can no longer run off the edge, so the two width
+     queries are DELETED rather than retuned, and the head is now identical at 1200px and at
+     320px. One shape to reason about instead of three.
+
+     🔑 The badge is `margin-left:auto` — hard right, with the gap between name and badge doing
+     all the flexing. That is what "expand with the width" buys: the two things that matter sit
+     at the two edges the eye already tracks, and every pixel the widget gains goes into the
+     space between them rather than into moving either one. */
+  .hname { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+  .hname .h-title { flex: none; }
+  .hname .expbadge { margin-left: auto; }
+  /* Row two, always. `flex-basis:100%` is what forces the break; without it the tabs rejoin row
+     one as soon as the widget is wide enough, and the layout goes back to being a function of
+     width — which is the thing all three previous versions were. */
+  .tabs { flex-basis: 100%; margin-left: 0; justify-content: flex-start; }
   .hbtn { font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
     color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.14); border: 1px solid var(--border);
     border-radius: 6px; padding: 4px 7px; cursor: pointer; white-space: nowrap; }
   .hbtn:hover { background: rgba(var(--accent-rgb), 0.24); border-color: var(--cyan); }
   .hbtn.on { background: rgba(var(--accent-rgb), 0.3); border-color: var(--cyan); }
-  .tabs { display: flex; gap: 4px; margin-left: auto; }
+  /* Ordering and spacing only. PLACEMENT (its own row, left-aligned) is decided in the .head
+     block above; this rule used to carry `margin-left:auto` and would have silently won here,
+     since it loads later. Two declarations disagreeing about one layout is how the head got
+     hard to reason about in the first place. */
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; row-gap: 3px; }
   /* Stow is shared by both modes, so it sits third in the markup for Hauling's sake (Rank, Route,
      Stow) and has to be re-ordered for Trading, where Runs is the tab you actually open. `order`
      rather than moving the node, because moving it would mean two buttons for one renderer. */
@@ -158,33 +165,93 @@
     background: rgba(var(--accent-rgb), 0.18); }
   .tdfind input::placeholder { color: var(--faint); }
 
-  /* A run. `.arow` supplies the frame; these are the parts it has no equivalent for. */
-  /* 🔑 BREATHING ROOM. Sub: "there's not a lot of space between the pills and the buy sell row".
-     The row stacks name / route / money / chips, and at 2px those last two read as one block. The
-     money line is the row's headline fact, so it gets space on BOTH sides rather than being
-     wedged between the route and the chips. */
-  .tdrow .money { display: flex; align-items: baseline; gap: 5px; margin-top: 5px; margin-bottom: 2px;
-    font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
-  .tdrow .money .k { font-family: var(--sans); font-size: 9.5px; color: var(--faint);
-    letter-spacing: 0.06em; text-transform: uppercase; }
+  /* ── A RUN, AND A LEDGER ENTRY: the SPINE row ──────────────────────────────────────────────
+     `.arow` supplies the frame; these are the four lines it has no equivalent for.
+
+     🔴 WHY THIS REPLACED THE money + tdcap SHAPE (Sub, 2026-08-23, after reviewing three mockups
+     at both widths). The old row was: name / route / one `white-space:nowrap` money line / chips,
+     with the profit in a right-hand column. MEASURED at 320px — the widget's minW, and about as
+     narrow as Sub actually runs it — that money line needed 260px and had 176. It kept
+     `buy 44,156 -> sell 53,000` and clipped away `(+20%)` and `x 696 SCU`: the margin, which is
+     the only figure that makes two rows comparable when their prices differ by orders of
+     magnitude, and the quantity, which is how much you are actually moving. Four rows on screen,
+     four rows lying. `#body` is `overflow-x:hidden`, so nothing anywhere said so.
+
+     Five changes, and the first two are the fix:
+       1. The strip WRAPS (`flex-wrap`) where the money line could not. A metrics line that runs
+          out of room now costs a second line instead of its contents. It cannot clip again.
+       2. The profit moved onto line one beside the name. It keeps the same right edge but
+          reserves no width of its own — `.t` is `flex:1` and absorbs every spare pixel — where a
+          right-hand column holds its width open on every row whatever it contains.
+       3. The `buy` / `sell` WORDS are gone. Gold, an arrow and green already say it, and the
+          section header says it once in words for the row that never can.
+       4. Capital and quantity moved out of the chip row into the strip, where the numbers live.
+       5. Chips are EXCEPTIONS ONLY. "Pyro" on a row that never leaves Pyro, or "fills your hold"
+          when nothing is binding, is a chip that costs a line to say nothing. Typically one now,
+          where it was always four.
+
+     🔑 The row keeps its `.tdrow` class and its `.tdchips` chip row on purpose: the widget suite
+     probes both by name, and renaming them would leave those assertions testing a shape the app
+     no longer renders. */
+
+  /* Line one — what it is, and what it makes. */
+  .tdrow .l1 { display: flex; align-items: baseline; gap: 6px; }
+  .tdrow .l1 .t { flex: 1; min-width: 0; }
+  .tdrow .l1 .p { flex: none; font-family: var(--mono); font-size: 15.5px; line-height: 1.2;
+    color: var(--cyan-bright, #7fe7ff); }
+  /* 🔴 THE NOUN STAYS WITH THE NUMBER. Sub, on the first cut of this tab: "Is that profit?
+     Because that's not clear." It was `.tdcaplbl` under the figure; it is beside it now. Losing
+     it in the move would have re-broken a fix that already cost a review round. */
+  .tdrow .l1 .pk { flex: none; font-size: 9px; color: var(--faint); letter-spacing: 0.1em;
+    text-transform: uppercase; }
+  /* A REALISED figure is allowed to be green or red. A FORECAST is not — same rule as `.facts
+     .est` above: a number the app worked out is never dressed like one it was told. Runs leaves
+     `.p` cyan; only the Ledger adds these. */
+  .tdrow .l1 .p.up { color: var(--green, #7de6a0); }
+  .tdrow .l1 .p.down { color: var(--red, #eb7878); }
+
+  /* Line two — where it happens, and the rate. Both ends truncate rather than wrap: a terminal
+     name is recognisable from its start, and a wrapped one would push the strip down a line. */
+  .tdrow .l2 { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; }
+  .tdrow .l2 .r { flex: 1; min-width: 0; font-family: var(--mono); font-size: 10.5px;
+    color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tdrow .l2 .hr { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--cyan-dim); }
+
+  /* Line three — the metrics strip. THE WRAP IS THE WHOLE POINT; see 1. above. */
+  .tdrow .l3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 7px;
+    margin-top: 5px; font-family: var(--mono); font-size: 11.5px; color: var(--cyan-text); }
+  /* Each item is unbreakable for the same reason a pill is: `23,940 -> 36,000` split across two
+     lines is not a price pair, it is two orphaned numbers. */
+  .tdrow .l3 > * { white-space: nowrap; }
   /* 🔴 THE PAIR SUB COULD NOT FIND. The first cut showed what a run COST and never what it sold
      for, so the only way to know the sell price was to subtract. Money out reads as cost, money
-     in reads as income. */
-  .tdrow .money .buy { color: var(--gold, #e8c56a); }
-  .tdrow .money .sell { color: var(--green, #7de6a0); }
-  .tdrow .money .arrow { color: var(--faint); }
+     in reads as income — which is also what lets the `buy` / `sell` words go. */
+  .tdrow .l3 .buy { color: var(--gold, #e8c56a); }
+  .tdrow .l3 .sell { color: var(--green, #7de6a0); }
+  .tdrow .l3 .arrow { color: var(--faint); padding: 0 1px; }
+  /* Named `mdot`, NOT `sep`: `.tdbar .sep` is already a 1px vertical divider, and one class
+     meaning two different things in one stylesheet is how a rule gets "fixed" for the wrong
+     element later. */
+  .tdrow .l3 .mdot { color: rgba(var(--accent-rgb), 0.35); }
+  .tdrow .l3 .q { color: var(--cyan-dim); }
+  /* The unit inside a figure, dimmer than the figure: "12.14M in", "8,265/SCU". */
+  .tdrow .l3 .q u { text-decoration: none; color: var(--faint); font-size: 10px; }
+
   /* 🔴 THE MARGIN IS A SIGNED PERCENTAGE, AND IT IS GREEN (Sub, 2026-08-22). "(53% margin)" spent
      seven characters restating a word the column beside it already says, on the one line that has
      to survive a 320px panel — it measured 55px, which is a quarter of the space that line has at
      minimum width. "(+53%)" carries the sign, which "53% margin" never did: a negative run now
      reads as one at a glance instead of needing the minus hunted for inside a phrase. Green
      because it is money made, matching `.sell` — and a loss turns red, so the colour and the sign
-     say the same thing twice rather than the colour meaning nothing. */
-  .tdrow .money .pct { color: var(--green, #7de6a0); font-family: var(--sans); font-size: 10.5px;
+     say the same thing twice rather than the colour meaning nothing.
+     ⚠️ Scoped to `.tdrow`, not `.tdrow .money`, so it survives the strip it now lives in. */
+  .tdrow .pct { color: var(--green, #7de6a0); font-family: var(--sans); font-size: 10.5px;
     font-weight: 700; }
-  .tdrow .money .pct.down { color: var(--red, #eb7878); }
-  .tdrow .mid > .m + .m,
-  .tdrow .money + .m { margin-top: 4px; }
+  .tdrow .pct.down { color: var(--red, #eb7878); }
+
+  .tdrow .l3 + .m { margin-top: 5px; }
+  .tdrow .mid > .m + .m { margin-top: 4px; }
+
   /* 🔴 THE CHIP ROW IS A FLEX WRAP, AND EVERY PILL IS UNBREAKABLE. Measured 2026-08-22 at 440px,
      which is the widget's DEFAULT width: this was a plain block of inline spans, so the only
      break opportunities the engine had were the spaces INSIDE each pill's own label. "costs 851k"
@@ -192,39 +259,69 @@
      bordered pill sawn in half — and the row read as having wrapped early because three pills sat
      butted edge to edge with the fourth apparently thrown away. It overflowed by FOUR PIXELS.
      Flex + `gap` makes a pill the unit that wraps, and `white-space: nowrap` on `.badge` (shared,
-     because no pill anywhere should ever split) makes it the unit that cannot break. At 320px the
-     four still wrap — 213px cannot hold 300px of pills — but they wrap two and two, whole. */
+     because no pill anywhere should ever split) makes it the unit that cannot break. */
   .tdrow .tdchips { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
   /* Tighter than the shared pill only on this row, and only by the margin that was missing: at
-     0.08em/4px the four chips wanted 337px of a 333px line. */
+     0.08em/4px the four chips wanted 337px of a 333px line. Kept now that the row typically
+     carries one chip, because "typically" is not "always" — an unknown-stock cross-system run
+     still draws three. */
   .tdrow .tdchips .badge { letter-spacing: 0.05em; padding: 1px 3px; }
-  .tdrow .money .qty { margin-left: auto; color: var(--cyan-dim); font-size: 11px;
-    font-family: var(--sans); }
 
-  /* The right column: the number, and — the fix for "is that profit?" — a word saying so.
-     🔴 NO min-width. It carried 84px with its contents right-aligned, and the widest string across
-     all 25 live rows measured 56.3px — so every run row paid a 27.8px dead gutter on the LEFT of
-     this column, forever, and that gutter is most of what pushed the chips into wrapping. Same
-     shape as the Verse Finder's `.pricecol`, and the same fix: let the column size to its
-     contents. The right edge stays a single edge for free here, because this is the LAST child of
-     the row and the row's own padding pins it — measured, one distinct right edge across 25 rows. */
-  .tdcap { flex: none; text-align: right; white-space: nowrap; }
-  .tdprofit { font-size: 16px; color: var(--cyan-bright, #7fe7ff); line-height: 1.15;
-    font-family: var(--mono); }
-  .tdcaplbl { font-size: 9px; color: var(--faint); letter-spacing: 0.1em;
-    text-transform: uppercase; line-height: 1.4; }
-  .tdrate { font-size: 10.5px; color: var(--cyan-dim); line-height: 1.3; }
+  /* ── THE LEDGER'S BALANCE BLOCK ────────────────────────────────────────────────────────────
+     🔴 A LOG IS A LIST OF THINGS THAT HAPPENED; A LEDGER IS A POSITION. This tab already held
+     the data for one and filed it in the wrong order: two stacked totals blocks (Today, then All
+     time) spent 193px — measured — before a single entry appeared, one of them usually all
+     zeroes, and the two facts that belong at the top sat at the BOTTOM under quiet headers.
+     On Sub's own journal the realised total was +304 aUEC from one 1-SCU run while 37,789 aUEC
+     across four lots was sitting in his ship, unshown. The buried number was 124x the headline.
 
-  /* The Ledger tab's headline: what today made. Given size because it is the one number the player
-     opened this tab for. */
-  .tdtot { padding: 6px 12px 2px; display: flex; align-items: baseline; gap: 6px; }
-  .tdtot .v { font-family: var(--mono); font-size: 24px; line-height: 1.1; }
-  .tdtot .v.up { color: var(--green, #7de6a0); }
-  .tdtot .v.down { color: var(--red, #eb7878); }
-  .tdtot .k { font-size: 10px; color: var(--faint); letter-spacing: 0.08em; text-transform: uppercase; }
-  .tdtotchips { padding: 0 12px 7px; }
-  .tdprofit.up { color: var(--green, #7de6a0); }
-  .tdprofit.down { color: var(--red, #eb7878); }
+     So: three account figures, side by side, above everything.
+       REALISED    — what closed trades actually made. The only one that is profit.
+       HELD        — capital currently in the hold, at cost. Not a loss and not a gain; it is
+                     money you are standing on, and it is the figure that decides what you can
+                     afford to buy next.
+       NO COST BASIS — sold, but we never saw it bought. Revenue with nothing to subtract.
+     🔑 It is a first-class figure showing an em dash when it is empty, NOT a section that only
+     appears when something is wrong. A number that materialises only on failure is one nobody
+     learns to read, and its absence is then indistinguishable from not being computed.
+
+     The period switch replaces the second totals block outright — same two numbers, one at a
+     time, in a control that also says which one you are looking at. */
+  .bal { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+    background: var(--divider); border-bottom: 1px solid var(--divider);
+    position: relative; z-index: 4; }
+  .bal > div { background: rgba(0, 0, 0, 0.18); padding: 7px 10px 8px; min-width: 0; }
+  .bal .k { font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bal .v { font-family: var(--mono); font-size: 18px; line-height: 1.3; margin-top: 1px;
+    color: var(--cyan-bright, #7fe7ff); white-space: nowrap; }
+  .bal .v.up { color: var(--green, #7de6a0); }
+  .bal .v.down { color: var(--red, #eb7878); }
+  .bal .v.held { color: var(--gold, #e8c56a); }
+  .bal .v.none { color: var(--faint); }
+  .bal .u { font-size: 9.5px; color: var(--faint); margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 🔑 THREE COLUMNS AT EVERY WIDTH, AND IT IS THE TEXT THAT WAS MADE TO FIT, NOT THE GRID.
+     The first cut folded to 2 + 1 below 380px so the figures would not be squeezed. Measured,
+     that fold cost 46px of a 415px body at 320 (block 62px -> 125px) — half a run row — and it
+     bought nothing that a shorter label did not. At 320 each cell has 86px of content box, and
+     every figure fits once the value is abbreviated the way every other big number in this
+     widget already is, and the period moves out of the LABEL and into the sub-line. The exact
+     unabbreviated figure lives in the cell tooltip, which is where this file already puts the
+     part that will not fit. */
+
+  /* 🔑 THE SECTIONS BELOW STAY AS THEY ARE, AND THE DOT IS WHAT TIES THEM TO THE BLOCK ABOVE.
+     The first cut of this rework merged Realised / Bought-not-sold / Sold-cost-unknown into one
+     time-ordered list with a per-row state stripe. It was dropped on reading what those sections
+     actually carry: a per-section explanation the merged row had nowhere to put, the past-tense
+     `autoLoaded` wording that was itself a bug fix (a lot cannot be asserted to be anywhere now),
+     and the write-off control. Merging would have re-homed three things that were corrected the
+     day before to buy a presentational tidy. One dot per section header, coloured to match its
+     figure in `.bal`, says which account you are looking at for the cost of one element. */
+  .sec .acct { flex: none; width: 7px; height: 7px; border-radius: 2px; margin-right: 2px; }
+  .sec .acct.realised { background: var(--green, #7de6a0); }
+  .sec .acct.held { background: var(--gold, #e8c56a); }
+  .sec .acct.nobasis { background: var(--red, #eb7878); }
 
   /* Chips that mean something. An age you cannot judge at a glance is an age nobody reads. */
   .badge.age0 { color: var(--green, #7de6a0); border-color: rgba(120, 230, 160, 0.45); }
@@ -309,6 +406,22 @@
   .track .th { cursor: pointer; }
   .track.done .th .k { color: var(--cyan-dim); }
   .trow { display: flex; align-items: center; gap: 7px; padding: 4px 12px; }
+  /* 🔴 THE VALUE CELL IN A .trow, AND IT IS NOT `.cap`. Three call sites in
+     hauling-tab-trade.js classed this `cap` — which is the capacity BAR segment a few rules up
+     (`.cap { position:relative; background: rgba(0,0,0,.34); border: 1px solid var(--divider) }`,
+     a dark inset well with a fill and a centred label). The collision was invisible at 440 and
+     ugly at 320: the Ledger drew each held lot's cost inside a bordered well while the name
+     broke across three lines beside it, because the well is a flex item that will not shrink.
+     Pre-existing, and fixed here rather than only noted because it is two inches under the new
+     balance block on the same tab.
+     🔑 The general rule this is an instance of: never reuse a class that already means
+     something in this stylesheet. Same reason `.mdot` is not `.sep`. */
+  .trow .tnm { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--cyan-text); }
+  .trow .tval { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px;
+    align-items: center; justify-content: flex-end; text-align: right;
+    font-family: var(--mono); font-size: 11px; color: var(--cyan-dim); }
+  /* The write-off control must never be the thing that shrinks. */
+  .trow .hbtn { flex: none; }
   .trow .t { flex: 1; min-width: 0; font-size: 12px; color: var(--cyan-text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .trow .rng { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--gold); }
@@ -676,13 +789,14 @@
   <div id="panel" class="wpanel">
     <div class="head">
       <span class="dia"></span>
-      <!-- 🔴 THE BADGE SITS UNDER THE TITLE, NOT BESIDE IT (Sub, 2026-08-22): "I feel like
-           experimental can be under hauling and I think that would make it look better. Right now
-           it's kind of off when it's scaled down to this size." Beside the title it was competing
-           for the one horizontal axis the tabs also need — it is the widest thing in the head and
-           the only thing there nobody ever clicks. Stacked, it costs ~5px of height once and hands
-           its whole width back to the tabs at EVERY width, which is what the two media queries
-           below used to buy only below 360px. -->
+      <!-- 🔴 NAME LEFT, BADGE HARD RIGHT, TABS ON THEIR OWN ROW (Sub, 2026-08-23): "what if we
+           just made it be on the same row as hauling? it'll be right justified and it will expand
+           with the width of the widget." The badge is the widest thing in this head and the only
+           thing in it nobody ever clicks, so it must never share an axis with the tabs — that
+           competition is what produced two media queries, and then a stacked title. Pinned to the
+           opposite edge of its own row it costs the tabs nothing at any width, and the gap that
+           flexes between name and badge is what makes the head read as deliberate when the widget
+           is resized rather than merely reflowed. -->
       <span class="hname">
         <span class="h-title">Hauling</span><span class="expbadge" id="expBadge" title="EXPERIMENTAL. This widget is new and it will get things wrong — the tonnage the game never states, the order to load in, how long a run takes. Check it against your mobiGlas before you trust it, and tell Sub what it got wrong. Nothing here can affect your contracts or your cargo; it only reads the log.">EXPERIMENTAL</span>
       </span>

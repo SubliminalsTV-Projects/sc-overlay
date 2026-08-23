@@ -63,6 +63,14 @@
    *  whose hold fills differ. */
   let tradeUnit = (() => { try { return localStorage.getItem(TD_UNIT_KEY) === "scu" ? "scu" : "run"; } catch { return "run"; } })();
   const TD_SYS_KEY = "sc-trade-system";
+  const TD_PERIOD_KEY = "sc-trade-period";
+  /** "today" | "all". Replaces the SECOND totals block the Ledger used to stack under the
+   *  first: the same two rollups, one at a time. Persisted, because which one a player cares
+   *  about is a habit rather than a per-visit decision. */
+  let journalPeriod = (() => {
+    try { return localStorage.getItem(TD_PERIOD_KEY) === "all" ? "all" : "today"; }
+    catch { return "today"; }
+  })();
   let tradeKnownOnly = (() => { try { return localStorage.getItem(TD_STOCK_KEY) === "1"; } catch { return false; } })();
 
   /* ── helpers ────────────────────────────────────────────────────────────── */
@@ -110,6 +118,103 @@
     s.textContent = text;
     parent.appendChild(s);
     return s;
+  }
+
+  /** `23,940 → 36,000` as ONE unbreakable item. Gold out, green in — those two colours are what
+   *  let the `buy` and `sell` words go, and dropping them is ~65px back on the line that has to
+   *  survive 320px. It is a single span so the pair can never be split across a wrap: half a
+   *  price pair is two orphaned numbers, not a price. */
+  function tdPair(parent, buy, sell) {
+    const s = document.createElement("span");
+    s.className = "pair";
+    const b = document.createElement("span"); b.className = "buy"; b.textContent = num(buy);
+    const a = document.createElement("span"); a.className = "arrow"; a.textContent = "→";
+    const v = document.createElement("span"); v.className = "sell"; v.textContent = num(sell);
+    s.append(b, a, v);
+    parent.appendChild(s);
+    return s;
+  }
+
+  /** A figure with its unit riding it, dimmer than the figure: `507 SCU`, `12.14M in`. The unit is
+   *  a real element rather than part of the string so it can be styled down — a number and its
+   *  unit set at the same weight read as one longer number. */
+  function tdQty(parent, value, unit) {
+    const s = document.createElement("span");
+    s.className = "q";
+    s.appendChild(document.createTextNode(String(value)));
+    if (unit) {
+      const u = document.createElement("u");
+      u.textContent = " " + unit;
+      s.appendChild(u);
+    }
+    parent.appendChild(s);
+    return s;
+  }
+
+  /** The separator between metrics. Its own element so it can be dimmed to the point of being
+   *  rhythm rather than content, and so a wrap never leaves one stranded at the start of a line. */
+  function tdMdot(parent) {
+    const s = document.createElement("span");
+    s.className = "mdot";
+    s.textContent = "·";
+    parent.appendChild(s);
+    return s;
+  }
+
+  /** ONE ROW SHAPE FOR RUNS AND FOR THE LEDGER — see the `.tdrow` note in hauling.html.
+   *
+   *  `spec` is: { rank, title, profit, profitClass, profitLabel, route, rate, buy, sell,
+   *               marginPct, metrics: [[value, unit], ...] }
+   *  and the caller appends its own chips to the returned `chips` element.
+   *
+   *  🔑 Shared deliberately. A forecast run and a recorded run are DIFFERENT claims — that is the
+   *  whole reason the Ledger exists — but they are the same SHAPE, and building them twice is how
+   *  the money line ended up correct in one renderer and clipped in the other. The difference
+   *  between the two lives in what the caller passes, not in a second copy of the layout. */
+  function tdSpineRow(spec) {
+    const row = document.createElement("div");
+    row.className = "arow tdrow";
+    if (spec.rank !== undefined && spec.rank !== null) {
+      const nEl = document.createElement("div");
+      nEl.className = "n";
+      nEl.textContent = String(spec.rank);
+      row.appendChild(nEl);
+    }
+    const mid = document.createElement("div"); mid.className = "mid";
+
+    const l1 = document.createElement("div"); l1.className = "l1";
+    const t = document.createElement("div"); t.className = "t"; t.textContent = spec.title;
+    const p = document.createElement("span");
+    p.className = "p" + (spec.profitClass ? " " + spec.profitClass : "");
+    p.textContent = spec.profit;
+    const pk = document.createElement("span"); pk.className = "pk";
+    pk.textContent = spec.profitLabel;
+    l1.append(t, p, pk);
+    mid.appendChild(l1);
+
+    const l2 = document.createElement("div"); l2.className = "l2";
+    const rt = document.createElement("span"); rt.className = "r"; rt.textContent = spec.route;
+    l2.appendChild(rt);
+    if (spec.rate) {
+      const hr = document.createElement("span"); hr.className = "hr"; hr.textContent = spec.rate;
+      l2.appendChild(hr);
+    }
+    mid.appendChild(l2);
+
+    const l3 = document.createElement("div"); l3.className = "l3";
+    tdPair(l3, spec.buy, spec.sell);
+    l3.appendChild(tdPct(spec.marginPct));
+    for (const m of spec.metrics || []) {
+      tdMdot(l3);
+      tdQty(l3, m[0], m[1]);
+    }
+    mid.appendChild(l3);
+
+    const chips = document.createElement("div"); chips.className = "m tdchips";
+    mid.appendChild(chips);
+
+    row.appendChild(mid);
+    return { row, chips, title: t, profit: p, strip: l3 };
   }
 
   function tdBtn(parent, label, on, title, fn) {
@@ -324,73 +429,51 @@
     body.appendChild(sec);
 
     d.routes.forEach((r, i) => {
-      const row = document.createElement("div");
-      row.className = "arow tdrow";
-      const nEl = document.createElement("div"); nEl.className = "n"; nEl.textContent = String(i + 1);
-      const mid = document.createElement("div"); mid.className = "mid";
-
-      const t = document.createElement("div"); t.className = "t";
-      t.textContent = r.commodity;
-      mid.appendChild(t);
-
-      const m = document.createElement("div"); m.className = "m";
-      m.textContent = r.from.terminalShort + "  →  " + r.to.terminalShort;
-      mid.appendChild(m);
-
-      // 🔴 THE MONEY LINE. What you pay, what you get, the return on it, and how much of it —
-      // the four facts the first cut made you derive.
-      const money = document.createElement("div");
-      money.className = "money";
-      const bk = document.createElement("span"); bk.className = "k"; bk.textContent = "buy";
-      const bv = document.createElement("span"); bv.className = "buy"; bv.textContent = num(Math.round(r.from.price));
-      const ar = document.createElement("span"); ar.className = "arrow"; ar.textContent = "→";
-      const sk = document.createElement("span"); sk.className = "k"; sk.textContent = "sell";
-      const sv = document.createElement("span"); sv.className = "sell"; sv.textContent = num(Math.round(r.to.price));
-      // 🔑 The percentage is the figure that makes two rows comparable when their prices are
-      // orders of magnitude apart — a 12,444 margin on Bexalite and a 298 on Processed Food are
-      // 53% and 25%, and the second is the one whose capital you get back fastest.
-      const pc = tdPct(r.marginPct);
-      const qt = document.createElement("span"); qt.className = "qty"; qt.textContent = "× " + num(r.moveScu) + " SCU";
-      money.append(bk, bv, ar, sk, sv, pc, qt);
-      mid.appendChild(money);
-
-      // `tdchips`, not just `m`: the chip row wraps by PILL, and only this class makes it flex.
-      // Left on `.m` as well so nothing selecting `.m` (the suite included) changes meaning.
-      const chips = document.createElement("div"); chips.className = "m tdchips";
-      const age = tdAge(r.ageDays);
-      tdChip(chips, age ? age + " old" : "age unknown", tdAgeClass(r.ageDays));
-      if (r.scuBound === "unknown") tdChip(chips, "stock unknown", "warn");
-      else if (r.scuBound === "stock") tdChip(chips, num(r.moveScu) + " on the shelf", "calm");
-      else if (r.scuBound === "demand") tdChip(chips, "buyer takes " + num(r.moveScu), "calm");
-      else tdChip(chips, "fills your hold", "calm");
-      // The system pair, and it is loud when they differ — that is the 25-minute jump.
-      if (r.crossSystem) tdChip(chips, (r.from.system || "?") + " → " + (r.to.system || "?"), "xsys");
-      else if (r.from.system) tdChip(chips, r.from.system, "calm");
-      tdChip(chips, "costs " + tdMoney(r.capitalRequired), "calm");
-      mid.appendChild(chips);
-
-      const right = document.createElement("div"); right.className = "tdcap";
-      const profit = document.createElement("div");
-      profit.className = "tdprofit";
       // 🔑 PER RUN vs PER SCU. Both are real answers to different questions: "what does this trip
       // clear" and "what is each unit worth carrying". Per-SCU is also the only figure that stays
       // comparable when two rows have wildly different hold fills, which is why it is offered
       // rather than derived in the player's head.
-      // "≤" is not decoration — with stock unreported the per-run figure is a ceiling off the
-      // hold alone. The per-SCU figure is exact either way, so it never carries one.
+      // "≤" is not decoration — with stock unreported the per-run figure is a ceiling off the hold
+      // alone. The per-SCU figure is exact either way, so it never carries one.
       const perScu = tradeUnit === "scu";
-      profit.textContent = perScu
-        ? num(Math.round(r.marginPerScu))
-        : (r.scuBound === "unknown" ? "≤ " : "") + tdMoney(r.profit);
-      const lbl = document.createElement("div");
-      lbl.className = "tdcaplbl";
-      lbl.textContent = perScu ? "per scu" : "profit";
-      const per = document.createElement("div");
-      per.className = "tdrate";
-      per.textContent = perScu ? tdMoney(r.profit) + " total" : tdMoney(r.profitPerHour) + "/hr";
-      right.append(profit, lbl, per);
+      // ⚠️ The profit stays CYAN here, never green. This is a forecast off crowd-reported prices;
+      // green and red belong to the Ledger, where the figure came out of the player's own log.
+      // Same rule as `.facts .est`: a number the app worked out is never dressed like one it was
+      // told.
+      const { row, chips } = tdSpineRow({
+        rank: i + 1,
+        title: r.commodity,
+        profit: perScu
+          ? num(Math.round(r.marginPerScu))
+          : (r.scuBound === "unknown" ? "≤ " : "") + tdMoney(r.profit),
+        profitLabel: perScu ? "per scu" : "profit",
+        route: r.from.terminalShort + "  →  " + r.to.terminalShort,
+        rate: perScu ? tdMoney(r.profit) + " total" : tdMoney(r.profitPerHour) + "/hr",
+        buy: Math.round(r.from.price),
+        sell: Math.round(r.to.price),
+        marginPct: r.marginPct,
+        // Quantity and capital, which used to be a chip each. They are numbers, so they belong on
+        // the numbers line — and "costs 12.14M" as a pill was the widest chip in the row.
+        metrics: [[num(r.moveScu), "SCU"], [tdMoney(r.capitalRequired), "in"]],
+      });
 
-      row.append(nEl, mid, right);
+      // 🔴 CHIPS ARE EXCEPTIONS ONLY NOW. Four per row was the old shape, and two of the four said
+      // nothing: "Pyro" on a run that never leaves Pyro, and "fills your hold" when neither the
+      // shelf nor the buyer is the binding constraint. A chip that is true of most rows is a chip
+      // nobody reads, and at 320px it costs a whole line to say so.
+      const age = tdAge(r.ageDays);
+      tdChip(chips, age ? age + " old" : "age unknown", tdAgeClass(r.ageDays));
+      // Which side bound the load — but only when something DID. `hold` means nothing bound it,
+      // and the section header already states the hold size.
+      if (r.scuBound === "unknown") tdChip(chips, "stock unknown", "warn");
+      else if (r.scuBound === "stock") tdChip(chips, num(r.moveScu) + " on the shelf", "calm");
+      else if (r.scuBound === "demand") tdChip(chips, "buyer takes " + num(r.moveScu), "calm");
+      // The system pair, and it is loud when they differ — that is the jump.
+      // 🔑 The same-system chip survives ONLY when the filter is showing every system, which is the
+      // one case where the row cannot be assumed to start where the last one did.
+      if (r.crossSystem) tdChip(chips, (r.from.system || "?") + " → " + (r.to.system || "?"), "xsys");
+      else if (!tradeSystem && r.from.system) tdChip(chips, r.from.system, "calm");
+
       body.appendChild(row);
     });
   }
@@ -423,9 +506,10 @@
       const row = document.createElement("div");
       row.className = "trow";
       const nm = document.createElement("div");
+      nm.className = "tnm";
       nm.textContent = e.terminalShort + (e.system ? "  · " + e.system : "");
       const val = document.createElement("div");
-      val.className = "cap";
+      val.className = "tval";
       const days = e.asOf === null || e.asOf === undefined ? null : (Date.now() - e.asOf * 1000) / 86400000;
       const scu = e.scu === null || e.scu === undefined
         ? "stock unknown"
@@ -645,37 +729,105 @@
     return String(token).replace(/^SCShop[_-]?/i, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim() || "somewhere";
   }
 
-  function tdTotalsRow(body, label, t) {
+  /** 🔑 SAME LOCAL-DAY BUCKET AS THE SERVER (`isToday` in src/trade-journal.ts). The block's
+   *  figures come from `j.today`, which the sidecar computed; the LIST is filtered here. If the
+   *  two disagreed, the headline would say two runs over a list of three and nothing on screen
+   *  would say which was lying. Same machine, same clock, same comparison. */
+  function tdIsToday(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return false;
+    const n = new Date();
+    return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth()
+      && d.getDate() === n.getDate();
+  }
+
+  /** 🔴 THE BALANCE BLOCK — the change that makes this tab a LEDGER rather than a log.
+   *
+   *  It replaces two stacked totals blocks (Today, then All time) that between them spent a
+   *  MEASURED 193px before the first entry appeared, and one of which was usually all zeroes.
+   *  Meanwhile the two facts a trader actually needs — what capital is tied up in the hold, and
+   *  what was sold with no cost basis — sat at the BOTTOM under quiet headers. On Sub's own
+   *  journal that meant a headline of +304 while 37,789 sat unshown in his ship: the buried
+   *  number was 124x the printed one.
+   *
+   *  Three accounts, side by side, above everything:
+   *    REALISED      - closed trades. The only one of the three that is profit.
+   *    HELD AT COST  - capital in unsold lots. Deliberately NOT period-filtered: it is a position
+   *                    NOW, not something that happened today, and its label omits the period so
+   *                    it cannot be read as one.
+   *    NO COST BASIS - sold, purchase never seen. Revenue with nothing to subtract.
+   *
+   *  🔑 ALL THREE ARE ALWAYS DRAWN, with an em dash when empty. A figure that appears only when
+   *  something has gone wrong is one nobody learns to read, and its absence is then
+   *  indistinguishable from it never having been computed. */
+  function tdBalance(body, t, open) {
+    const bal = document.createElement("div");
+    bal.className = "bal";
+    const per = journalPeriod === "today" ? "today" : "all time";
+
+    const cell = (label, value, cls, sub, tip) => {
+      const d = document.createElement("div");
+      const k = document.createElement("div"); k.className = "k"; k.textContent = label;
+      const v = document.createElement("div"); v.className = "v" + (cls ? " " + cls : "");
+      v.textContent = value;
+      const u = document.createElement("div"); u.className = "u"; u.textContent = sub;
+      if (tip) d.title = tip;
+      d.append(k, v, u);
+      bal.appendChild(d);
+      return d;
+    };
+
+    // 🔑 THE LABEL NEVER CARRIES THE PERIOD, and the value is abbreviated. Both exist so three
+    // columns survive 320px without folding — see the note on `.bal` in hauling.html. The
+    // period rides the sub-line, where it is still on screen and no longer the thing that
+    // decides whether the heading fits.
+    cell("Realised",
+      t.runs ? (t.profit >= 0 ? "+" : "") + tdMoney(t.profit) : "—",
+      t.runs ? (t.profit >= 0 ? "up" : "down") : "none",
+      per + (t.runs ? " · " + t.runs + (t.runs === 1 ? " run" : " runs") : " · none"),
+      "Profit from trades we saw both ends of — everything else on this row is deliberately"
+        + " outside it."
+        + (t.runs ? "\n\n" + num(Math.round(t.profit)) + " aUEC from " + t.runs
+            + (t.runs === 1 ? " run, " : " runs, ") + tdDur(t.minutes) + " in cargo." : ""));
+
+    // Held is a NOW figure — see the note above. It never takes the period.
+    const heldCost = open.reduce((a, o) => a + (Number(o.pricePerScu) || 0) * (Number(o.scu) || 0), 0);
+    const heldScu = open.reduce((a, o) => a + (Number(o.scu) || 0), 0);
+    cell("Held at cost",
+      open.length ? tdMoney(heldCost) : "—",
+      open.length ? "held" : "none",
+      open.length ? open.length + (open.length === 1 ? " lot · " : " lots · ") + num(heldScu) + " SCU"
+        : "nothing unsold",
+      "What you paid for cargo you have not sold yet. Not a profit and not a loss — it is the"
+        + " money you are standing on, and what you have left to buy the next run with."
+        + (open.length ? "\n\n" + num(Math.round(heldCost)) + " aUEC across " + open.length
+            + (open.length === 1 ? " lot." : " lots.") : ""));
+
+    cell("No cost basis",
+      t.unpricedSales ? tdMoney(t.unpricedRevenue) : "—",
+      t.unpricedSales ? "down" : "none",
+      per + (t.unpricedSales ? " · " + t.unpricedSales
+        + (t.unpricedSales === 1 ? " sale" : " sales") : " · none"),
+      "Sold, but we never saw it bought, so there is no cost to subtract. Reported as revenue"
+        + " and deliberately kept out of the profit figure."
+        + (t.unpricedSales ? "\n\n" + num(Math.round(t.unpricedRevenue)) + " aUEC of revenue." : ""));
+    body.appendChild(bal);
+  }
+
+  /** A section heading with the swatch that ties it to its figure in the balance block. */
+  function tdAcctSec(body, label, acct, note) {
     const sec = document.createElement("div");
     sec.className = "sec";
+    const dot = document.createElement("span");
+    dot.className = "acct " + acct;
     const h = document.createElement("span"); h.textContent = label;
-    const n = document.createElement("span"); n.className = "n";
-    n.textContent = t.runs + (t.runs === 1 ? " run" : " runs");
-    sec.append(h, n);
+    sec.append(dot, h);
+    if (note) {
+      const n = document.createElement("span"); n.className = "n"; n.textContent = note;
+      sec.appendChild(n);
+    }
     body.appendChild(sec);
-
-    const big = document.createElement("div");
-    big.className = "tdtot";
-    const v = document.createElement("span");
-    v.className = "v " + (t.profit >= 0 ? "up" : "down");
-    v.textContent = (t.profit >= 0 ? "+" : "") + num(Math.round(t.profit));
-    const k = document.createElement("span"); k.className = "k"; k.textContent = "aUEC profit";
-    big.append(v, k);
-    body.appendChild(big);
-
-    const chips = document.createElement("div");
-    chips.className = "m tdtotchips";
-    tdChip(chips, num(Math.round(t.scu)) + " SCU moved", "calm");
-    tdChip(chips, tdDur(t.minutes) + " in cargo", "calm");
-    if (t.profitPerHour !== null && t.profitPerHour !== undefined) {
-      tdChip(chips, tdMoney(t.profitPerHour) + "/hr", "calm");
-    }
-    tdChip(chips, "turned " + tdMoney(t.cost) + " into " + tdMoney(t.revenue), "calm");
-    // 🔴 Never inside the profit figure. Surfaced so it cannot be mistaken for missing money.
-    if (t.unpricedSales) {
-      tdChip(chips, tdMoney(t.unpricedRevenue) + " unpriced", "warn");
-    }
-    body.appendChild(chips);
+    return sec;
   }
 
   function renderJournal() {
@@ -684,7 +836,18 @@
 
     const bar = document.createElement("div");
     bar.className = "tdbar";
-    tdProvenance(bar, tradeStatus);
+    // 🔴 THE PERIOD SWITCH REPLACES THE SECOND TOTALS BLOCK. The same two rollups, one at a time,
+    // in a control that also states which one you are reading - where two stacked blocks made you
+    // recover that from a heading you had already scrolled past.
+    const setPeriod = (p) => {
+      journalPeriod = p;
+      try { localStorage.setItem(TD_PERIOD_KEY, p); } catch { /* private mode */ }
+      render();
+    };
+    tdBtn(bar, "Today", journalPeriod === "today", "What today's closed trades made",
+      () => setPeriod("today"));
+    tdBtn(bar, "All time", journalPeriod === "all", "Every closed trade on record",
+      () => setPeriod("all"));
     const sep = document.createElement("span"); sep.className = "sep"; bar.appendChild(sep);
     tdBtn(bar, "Refresh", false, "Re-read the journal", () => loadJournal());
     body.appendChild(bar);
@@ -696,7 +859,16 @@
       body.appendChild(e);
       return;
     }
-    if (!j.runs.length && !j.open.length && !j.unmatched.length) {
+
+    const t = journalPeriod === "today" ? j.today : j.allTime;
+    const runs = journalPeriod === "today" ? j.runs.filter((r) => tdIsToday(r.soldAt)) : j.runs;
+
+    // 🔑 THE BLOCK IS DRAWN EVEN WHEN EVERY FIGURE IS EMPTY. Three em dashes are a reading; a
+    // blank screen is not, and "the app is broken" is the other way to read one.
+    tdBalance(body, t, j.open);
+
+    if (!j.runs.length && !j.open.length && !j.unmatched.length
+        && !(j.writtenOff && j.writtenOff.length)) {
       const e = document.createElement("div"); e.className = "empty";
       e.textContent = "Nothing recorded yet.";
       body.appendChild(e);
@@ -710,61 +882,44 @@
       return;
     }
 
-    tdTotalsRow(body, "Today", j.today);
-    if (j.allTime.runs > j.today.runs) tdTotalsRow(body, "All time", j.allTime);
+    if (runs.length) {
+      tdAcctSec(body, journalPeriod === "today" ? "Sold today" : "Sold", "realised",
+        runs.length + (runs.length === 1 ? " run" : " runs"));
 
-    if (j.runs.length) {
-      const sec = document.createElement("div");
-      sec.className = "sec";
-      const h = document.createElement("span"); h.textContent = "Runs";
-      sec.appendChild(h);
-      body.appendChild(sec);
-
-      for (const r of j.runs.slice(0, 40)) {
-        const row = document.createElement("div");
-        row.className = "arow tdrow";
-        const mid = document.createElement("div"); mid.className = "mid";
-
-        const t = document.createElement("div"); t.className = "t";
-        t.textContent = r.commodity || "Unknown commodity";
-        mid.appendChild(t);
-
-        const m = document.createElement("div"); m.className = "m";
-        m.textContent = tdShop(r.buyShop) + "  →  " + tdShop(r.sellShop);
-        mid.appendChild(m);
-
-        const money = document.createElement("div");
-        money.className = "money";
-        const bk = document.createElement("span"); bk.className = "k"; bk.textContent = "buy";
-        const bv = document.createElement("span"); bv.className = "buy"; bv.textContent = num(Math.round(r.buyPricePerScu));
-        const ar = document.createElement("span"); ar.className = "arrow"; ar.textContent = "→";
-        const sk = document.createElement("span"); sk.className = "k"; sk.textContent = "sell";
-        const sv = document.createElement("span"); sv.className = "sell"; sv.textContent = num(Math.round(r.sellPricePerScu));
-        const pc = tdPct(r.marginPct);
-        const qt = document.createElement("span"); qt.className = "qty"; qt.textContent = "× " + num(r.scu) + " SCU";
-        money.append(bk, bv, ar, sk, sv, pc, qt);
-        mid.appendChild(money);
-
-        const chips = document.createElement("div"); chips.className = "m tdchips";
-        tdChip(chips, "took " + tdDur(r.minutes), "calm");
+      for (const r of runs.slice(0, 40)) {
+        // ⚠️ The SAME row shape as the Runs board, and the one difference is the one that matters:
+        // this figure is green or red because it came out of the player's own log. A forecast may
+        // never be dressed this way - see the note on `.tdrow .l1 .p` in hauling.html.
+        const { row, chips } = tdSpineRow({
+          title: r.commodity || "Unknown commodity",
+          profit: (r.profit >= 0 ? "+" : "") + tdMoney(r.profit),
+          profitClass: r.profit >= 0 ? "up" : "down",
+          profitLabel: "profit",
+          route: tdShop(r.buyShop) + "  →  " + tdShop(r.sellShop),
+          rate: new Date(r.soldAt).toLocaleString([], {
+            month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+          }),
+          buy: Math.round(r.buyPricePerScu),
+          sell: Math.round(r.sellPricePerScu),
+          marginPct: r.marginPct,
+          metrics: [[num(r.scu), "SCU"], [tdDur(r.minutes), "held"]],
+        });
+        // One chip, and only when there is a rate to state. `profitPerHour` is null when the buy
+        // and the sell share a timestamp, which is not a rate of zero - it is no rate at all.
         if (r.profitPerHour !== null && r.profitPerHour !== undefined) {
           tdChip(chips, tdMoney(r.profitPerHour) + "/hr", "calm");
         }
-        tdChip(chips, new Date(r.soldAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }), "calm");
-        mid.appendChild(chips);
-
-        const right = document.createElement("div"); right.className = "tdcap";
-        const p = document.createElement("div");
-        p.className = "tdprofit " + (r.profit >= 0 ? "up" : "down");
-        p.textContent = (r.profit >= 0 ? "+" : "") + tdMoney(r.profit);
-        const lbl = document.createElement("div"); lbl.className = "tdcaplbl"; lbl.textContent = "profit";
-        right.append(p, lbl);
-
-        row.append(mid, right);
         body.appendChild(row);
       }
+    } else if (journalPeriod === "today" && j.allTime.runs) {
+      // 🔑 Not a bare "nothing" - an empty TODAY beside a non-empty record reads as a broken app
+      // unless the record is named and the way to it is on screen.
+      const e = document.createElement("div"); e.className = "empty";
+      e.textContent = "No closed trades today. "
+        + j.allTime.runs + (j.allTime.runs === 1 ? " run" : " runs") + " on record — "
+        + "switch to All time to see them.";
+      body.appendChild(e);
     }
-
     /* ── bought and not yet sold ───────────────────────────────────────────────
        🔴 THIS SECTION SAID TWO CONTRADICTORY THINGS AT ONCE. The heading was "Still aboard" and a
        row under it could read "on the elevator" — which means the exact opposite, i.e. NOT aboard.
@@ -789,17 +944,19 @@
     if (j.open.length) {
       const sec = document.createElement("div");
       sec.className = "sec";
+      const dot = document.createElement("span"); dot.className = "acct held";
       const h = document.createElement("span"); h.textContent = "Bought, not sold";
       const n = document.createElement("span"); n.className = "n";
       n.textContent = num(j.open.reduce((a, o) => a + o.scu, 0)) + " SCU unsold";
-      sec.append(h, n);
+      sec.append(dot, h, n);
       body.appendChild(sec);
       for (const o of j.open.slice(0, 20)) {
         const row = document.createElement("div");
         row.className = "trow";
         const nm = document.createElement("div");
+        nm.className = "tnm";
         nm.textContent = (o.commodity || "Unknown") + " · " + num(o.scu) + " SCU";
-        const val = document.createElement("div"); val.className = "cap";
+        const val = document.createElement("div"); val.className = "tval";
         val.textContent = "cost " + num(Math.round(o.pricePerScu)) + "/SCU · " + tdShop(o.shopName)
           + " · " + tdAgo(o.at);
         row.append(nm, val);
@@ -845,8 +1002,9 @@
     if (j.unmatched.length) {
       const sec = document.createElement("div");
       sec.className = "sec";
+      const dot = document.createElement("span"); dot.className = "acct nobasis";
       const h = document.createElement("span"); h.textContent = "Sold — cost unknown";
-      sec.appendChild(h);
+      sec.append(dot, h);
       body.appendChild(sec);
       const why = document.createElement("div");
       why.className = "note";
@@ -857,8 +1015,9 @@
         const row = document.createElement("div");
         row.className = "trow";
         const nm = document.createElement("div");
+        nm.className = "tnm";
         nm.textContent = (u.commodity || "Unknown") + " · " + num(u.scu) + " SCU";
-        const val = document.createElement("div"); val.className = "cap";
+        const val = document.createElement("div"); val.className = "tval";
         val.textContent = num(Math.round(u.revenue)) + " revenue · " + tdShop(u.sellShop);
         row.append(nm, val);
         body.appendChild(row);
