@@ -3147,6 +3147,101 @@ const VERSEFINDER = `(async () => {
     }
   }
 
+  /* ── 🔴 THE CREDIT ENDS THE LINE, AND THE ⓘ KEEPS TWO AGES APART (Sub, 2026-08-22) ──────────
+     "UEX logo right-justified, the age beside it, and an information icon explaining how often
+     the table refreshes."
+
+     🔑 THE ORDER ASSERTION ALONE WOULD BE A TAUTOLOGY. #src used to carry flex:1, which stretched
+     it from just after the location button to the right edge - so the mark, as the LAST child,
+     would sit against that edge either way and a right-edge check stays green under the exact
+     regression. What separates the two is where the AGE sits: stretched, it stays at the far left
+     of that box with a canyon between it and the badge; sized to its contents, it is beside it.
+     So the gaps are what is measured, and the control (restoring flex:1) reddens them. */
+  {
+    var creditFoot = document.querySelector(".foot");
+    var creditMark = document.getElementById("uexmark") || document.getElementById("uexname");
+    var creditAge = document.getElementById("srctext");
+    var creditBlock = document.getElementById("src");
+    var creditInfo = document.getElementById("fresh");
+    ok("the footer carries a credit, an age and the ⓘ that qualifies it",
+       !!creditFoot && !!creditMark && !!creditAge && !!creditInfo,
+       [creditFoot ? "foot" : "no foot", creditMark ? "mark" : "no mark",
+        creditAge ? "age" : "no age", creditInfo ? "info" : "no info"].join(" "));
+
+    if (creditFoot && creditMark && creditAge && creditInfo && creditBlock) {
+      var fR = creditFoot.getBoundingClientRect();
+      var mR = creditMark.getBoundingClientRect();
+      var aR = creditAge.getBoundingClientRect();
+      var iR = creditInfo.getBoundingClientRect();
+      // Nothing in the footer may sit to the right of the mark - that is what "right-justified"
+      // means, and it is checked against every laid-out child rather than against one number.
+      var pastMark = [].slice.call(creditFoot.children).filter(function (c) {
+        var r = c.getBoundingClientRect();
+        return r.width > 0 && r.left > mR.right + 1;
+      });
+      ok("nothing sits to the right of the UEX mark",
+         pastMark.length === 0,
+         pastMark.length ? "past it: " + pastMark.map(function (c) { return c.id || c.className; }).join(",")
+                         : "mark right " + Math.round(mR.right) + " of footer " + Math.round(fR.right));
+      // The gaps. The footer and the credit block both use a 7px flex gap, so anything much over
+      // that is dead space - exactly what a stretched box puts between the age and the badge.
+      var gapAgeInfo = Math.round(iR.left - aR.right);
+      var gapInfoMark = Math.round(mR.left - iR.right);
+      ok("🔴 the age sits BESIDE the badge, not at the far end of a stretched box",
+         gapAgeInfo >= 0 && gapAgeInfo < 14 && gapInfoMark >= 0 && gapInfoMark < 14,
+         "age->ⓘ " + gapAgeInfo + "px, ⓘ->mark " + gapInfoMark + "px");
+    }
+
+    // The ⓘ itself. Positive first: it must really open, or every claim about its words below is
+    // a claim about an empty string.
+    var freshPop = document.getElementById("freshpop");
+    var freshOpened = false;
+    if (creditInfo && freshPop) {
+      var footBefore = creditFoot ? creditFoot.getBoundingClientRect().height : 0;
+      var resBefore = document.getElementById("results").getBoundingClientRect().height;
+      creditInfo.click();
+      freshOpened = freshPop.matches(":popover-open");
+      var footAfter = creditFoot ? creditFoot.getBoundingClientRect().height : 0;
+      var resAfter = document.getElementById("results").getBoundingClientRect().height;
+      ok("the refresh ⓘ opens on a click", freshOpened, freshOpened ? "open" : "did not open");
+      /* 🔑 MEASURED ON BOXES THAT ARE FREE TO MOVE. #panel is pinned to 480px in this page's own
+         CSS, so "the panel did not grow" can never fail and would read as the most on-point check
+         here. The footer and the results list are in flow and really do move - an in-flow version
+         of this popover took the footer 26px -> 162.75px when it was last measured. */
+      ok("...in the top layer, so it costs the footer and the results nothing",
+         footAfter === footBefore && resAfter === resBefore,
+         "foot " + Math.round(footBefore) + "->" + Math.round(footAfter)
+           + ", results " + Math.round(resBefore) + "->" + Math.round(resAfter));
+
+      /* 🔴 WHAT IT HAS TO SAY, as a RULING rather than as wording. Two claims, and the second is
+         the load-bearing one: the six-hour cadence is how often OUR COPY is redownloaded, and a
+         reader must not carry that number over onto the prices. Measured against the live table
+         on 2026-08-22 a quote's median age is 38 days, so someone reading "34m ago" as the price
+         age is wrong by about five weeks. An ⓘ that stated only the cadence would MAKE that
+         misreading rather than prevent it, which is why the denial is asserted separately.
+         ⚠️ If the wording is rewritten, move these tokens - do not delete the rule. */
+      var freshWords = freshPop.textContent.toLowerCase();
+      ok("...it states how often our copy is refreshed",
+         freshWords.indexOf("6 hours") > -1 || freshWords.indexOf("six hours") > -1,
+         // ⚠️ fromCharCode, not an escape, and this comment cost a run to learn: a suite body is
+         // a template literal, so EVERY backslash in it - including one inside a comment - is
+         // consumed before the code exists. A whitespace regex loses its backslash and silently
+         // matches the bare letter instead; a newline escape becomes a real newline, which ends
+         // the comment it was written in and turns the rest of the line into code.
+         freshPop.textContent.split(String.fromCharCode(10)).join(" ").trim().slice(0, 80));
+      var freshDenial = freshWords.indexOf("not how old the prices are");
+      ok("🔴 ...and says outright that this is NOT how old the prices are",
+         freshDenial > -1,
+         freshDenial > -1 ? "denial at char " + freshDenial
+                          : (freshWords.indexOf("not") > -1
+                              ? "there is a 'not' but it is not about the prices"
+                              : "no denial anywhere in the popover"));
+      creditInfo.click();
+      ok("...and closes again on a second click", !freshPop.matches(":popover-open"),
+         freshPop.matches(":popover-open") ? "still open" : "closed");
+    }
+  }
+
   return out;
 })()`;
 
@@ -6001,6 +6096,68 @@ const HAULING = `(async () => {
   ok("the legend says which colour is which drop",
      wantLegend > 0 && document.querySelectorAll(".legend span").length === wantLegend,
      document.querySelectorAll(".legend span").length + " spans for " + wantLegend + " drop-off stops");
+
+  /* ── 🔴 A PILL WRAPS AS A PILL, OR NOT AT ALL (Sub, 2026-08-22) ─────────────────────────────
+     Measured on the Runs tab at 440px, the widget's DEFAULT width: the chip row was a block of
+     inline spans, so the ONLY break opportunities the engine had were the spaces inside each
+     pill's own label. "costs 851k" put its left half at x=290 on line one and its right half at
+     x=39 on line two - one bordered box sawn in half - and it overflowed by four pixels.
+
+     🔑 SYNTHETIC, ON PURPOSE, and this is the interesting part. The real Runs rows need a live
+     commodity table, so an assertion over them would pass or fail on whether this machine has
+     trade data - the same rot as the assertion that depended on how recently Sub had played. The
+     RULE under test is pure CSS, so it is tested against a pill built here: a deliberately long
+     multi-word label in a box far too narrow for it. That is hermetic, it is exercised on every
+     run, and both halves go red under their own control (nowrap removed, flex removed).
+
+     ⚠️ Positive first. "No pill is split" is satisfied for free by a page with no pills on it. */
+  var pillProbe = document.createElement("div");
+  pillProbe.className = "tdrow";
+  pillProbe.style.position = "absolute";
+  pillProbe.style.left = "-9999px";
+  pillProbe.style.width = "600px";
+  var pillRow = document.createElement("div");
+  pillRow.className = "m tdchips";
+  ["3 on the shelf", "Pyro to Stanton", "costs 851k"].forEach(function (label) {
+    var b = document.createElement("span");
+    b.className = "badge calm";
+    b.textContent = label;
+    pillRow.appendChild(b);
+  });
+  pillProbe.appendChild(pillRow);
+  document.body.appendChild(pillProbe);
+
+  /* ⚠️ MEASURE THE BOX, NEVER PICK IT. The first version pinned the probe at 90px, which is
+     NARROWER THAN ONE PILL - so every pill overflowed on a line of its own and the wrap assertion
+     failed on working code. The box has to be wide enough for the widest pill and too narrow for
+     all three, and only the page can say what those numbers are. Laid out wide first, measured,
+     then squeezed. */
+  var probePills = [].slice.call(pillRow.children);
+  var pillWidths = probePills.map(function (b) { return b.getBoundingClientRect().width; });
+  var widestPill = Math.max.apply(null, pillWidths);
+  var allPills = pillWidths.reduce(function (a, w) { return a + w; }, 0);
+  pillProbe.style.width = Math.ceil(widestPill + 8) + "px";
+  var probeW = pillRow.getBoundingClientRect().width;
+  ok("there are pills to check, in a box that fits one of them and not all three",
+     probePills.length === 3 && probeW >= widestPill && probeW < allPills,
+     probePills.length + " pills, widest " + Math.round(widestPill)
+       + "px, all three " + Math.round(allPills) + "px, box " + Math.round(probeW) + "px");
+  var splitPills = probePills.filter(function (b) { return b.getClientRects().length > 1; });
+  ok("🔴 no pill is ever sawn in half across two lines",
+     probePills.length === 3 && splitPills.length === 0,
+     splitPills.length ? "split: " + splitPills.map(function (b) { return b.textContent; }).join(", ")
+                       : "all " + probePills.length + " render as one box each");
+  /* And the row that holds them wraps BY PILL. With the pills unbreakable but the row still a
+     block of inline spans, three of these would overflow a 90px box in one long line instead of
+     stacking - so this measures that they really took more than one line and stayed inside. */
+  var probeYs = {};
+  probePills.forEach(function (b) { probeYs[Math.round(b.getBoundingClientRect().top)] = 1; });
+  var probeRight = pillRow.getBoundingClientRect().right;
+  var probeOverflow = probePills.filter(function (b) { return b.getBoundingClientRect().right > probeRight + 1; });
+  ok("...and the row wraps them onto fresh lines rather than running off its edge",
+     Object.keys(probeYs).length > 1 && probeOverflow.length === 0,
+     Object.keys(probeYs).length + " lines, " + probeOverflow.length + " pills past the right edge");
+  pillProbe.remove();
 
   return out;
 })()`;
