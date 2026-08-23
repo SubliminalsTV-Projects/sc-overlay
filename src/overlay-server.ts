@@ -3049,11 +3049,31 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       res.end(JSON.stringify({ ok: false, error: "commodity_and_both_ends_required" }));
       return;
     }
+    /* 🔴 THE UUID IS RESOLVED HERE, NOT SENT BY THE WIDGET. The price table knows a commodity by
+       NAME and carries no uuid at all, while the log writes only a uuid — so somebody has to make
+       the join, and the sidecar is the side that holds `commodities.json`. Doing it here also means
+       a widget cannot get it wrong: this is the field that decides whether a purchase can ever be
+       matched to this pick, and a pick with a wrong one is unfillable in a way nothing on screen
+       would explain.
+       🔑 EXACTLY ONE MATCH OR NOTHING. An ambiguous name tells us nothing, and guessing between two
+       uuids would silently attach the tonnage of one commodity to a run in another. The caller is
+       told (`matchable`) so the row can say the tonnage will have to be watched for by hand rather
+       than appearing to be broken. */
+    const guidOf = (name: string): string | null => {
+      const want = name.trim().toLowerCase();
+      let hit: string | null = null;
+      try {
+        for (const [uuid, c] of Object.entries(economy.commodities() as Record<string, { name?: string | null }>)) {
+          if ((c?.name ?? "").trim().toLowerCase() !== want) continue;
+          if (hit) return null;     // ambiguous — see above
+          hit = uuid;
+        }
+      } catch { return null; }      // no dataset: the pick still routes, it just cannot self-fill
+      return hit;
+    };
     const buy = haulingBuys.add({
       commodity,
-      // The uuid the log will write. Without it the purchase can never be matched to this pick and
-      // the tonnage stays unknown for ever — so it is worth saying when it is absent.
-      resourceGuid: str(body.resourceGuid, 64) || null,
+      resourceGuid: guidOf(commodity),
       from, to,
       buyPrice: numOrNull(body.buyPrice),
       sellPrice: numOrNull(body.sellPrice),
