@@ -6438,6 +6438,128 @@ const HAULING = `(async () => {
 // from it (missions deepest-first, destinations deepest-first inside a mission), and about the one
 // case where the whole view must disappear — an open hauler, whose boxes the station's arm places.
 //
+// 🔴 Suite: ONE FLAT TAB ROW, AND THE CREDIT FOLLOWS THE DATA (2026-08-23).
+//
+// The widget had two MODES with a bottom switch, each owning its own tabs, because there were two
+// Route surfaces - contracts in Hauling, commodity runs in Trading. Merging Route into one
+// cargo-agnostic tab removed the reason for the split, so the modes went and the five tabs became
+// one row. Two things then have to be pinned, and they fail in completely different ways:
+//
+//  1. THE ROW ITSELF. Sub chose "Commodities" over "Planner" knowing it wraps to two lines at the
+//     320px minimum (measured: the row is 296px, five tabs need 328.8px). So the assertion is NOT
+//     "it fits" - it is that wrapping is what happens and the PAGE still does not scroll sideways.
+//     A row that overflowed instead of wrapping would leave a tab unreachable at minW.
+//  2. THE UEX CREDIT. It used to live in the mode bar and show in Trading mode. The bar is gone
+//     and the credit could not go with it: UEX's data is on the Commodities tab, and an
+//     attribution has to be present where the data is. Both halves are asserted - present there,
+//     absent everywhere else - because "not shown on Route" is satisfied for free by a credit that
+//     never shows at all, which is the exact regression that would strip the attribution.
+//
+// 🔑 VISIBILITY IS READ FROM COMPUTED display, NEVER from `el.hidden`. `.creditbar` sets
+// display:flex, and a bare `hidden` attribute loses to any class rule setting display - so an
+// assertion starting at `.hidden` would stay green with the `[hidden]` guard deleted and the
+// credit painted on every tab. That guard is load-bearing and the control proves it.
+const TABROW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(600);
+
+  const rowPanel = document.getElementById("panel");
+  const rowTabs = rowPanel ? rowPanel.querySelector(".tabs") : null;
+  const rowBtns = () => rowTabs ? [].slice.call(rowTabs.querySelectorAll(".hbtn")) : [];
+  const rowLabels = () => rowBtns().map((b) => b.textContent.trim());
+
+  // POSITIVE FIRST. Every must-not-exist below is free on an empty row, and an empty row is
+  // exactly what a bad merge produces.
+  ok("the head carries a tab row with five tabs in it", rowBtns().length === 5,
+     rowBtns().length + ": " + rowLabels().join(" | "));
+  ok("...and they are the merged five, in the order Sub picked",
+     rowLabels().join("|") === "Contracts|Commodities|Route|Stow|Ledger",
+     rowLabels().join("|"));
+  ok("...every one of them reachable, with nothing hidden behind a mode",
+     rowBtns().length > 0 && rowBtns().every((b) => !b.hidden && getComputedStyle(b).display !== "none"),
+     rowBtns().filter((b) => b.hidden).length + " hidden");
+  // Paired with the positive above: the switch itself is really gone, not merely unstyled.
+  ok("...and the Hauling / Trading mode switch is gone",
+     !document.getElementById("modeHaul") && !document.getElementById("modeTrade"),
+     document.getElementById("modeHaul") ? "modeHaul still present" : "absent");
+  // The retired Market tab. Its two sidecar routes still answer; only the tab went.
+  ok("...as is the Market tab it replaced", !document.getElementById("tabLookup"),
+     document.getElementById("tabLookup") ? "tabLookup still present" : "absent");
+
+  // ── the row at both ends of the width range ──────────────────────────────
+  // 🔑 Measured at the WIDGET's own limits: canvas.js gives hauling w 440, minW 320. A tab row
+  // that only behaves at the default has not been checked at the end Sub was describing.
+  const rowAt = async (w) => {
+    document.body.classList.add("embedded");
+    document.body.style.width = w + "px";
+    await sleep(120);
+    const tops = [];
+    for (const b of rowBtns()) {
+      const t = Math.round(b.getBoundingClientRect().top);
+      if (tops.indexOf(t) < 0) tops.push(t);
+    }
+    const right = rowTabs.getBoundingClientRect().right;
+    let past = 0;
+    for (const b of rowBtns()) if (b.getBoundingClientRect().right > right + 0.5) past++;
+    return { lines: tops.length, past: past, scroll: document.body.scrollWidth,
+             h: Math.round(rowTabs.getBoundingClientRect().height) };
+  };
+
+  const row320 = await rowAt(320);
+  ok("at the 320px minimum the row WRAPS rather than overflowing",
+     row320.lines === 2 && row320.past === 0,
+     row320.lines + " line(s), " + row320.past + " tab(s) past the right edge, " + row320.h + "px tall");
+  // 🔴 The invariant the wrap exists to protect. body.scrollWidth once read 333 at a 320px
+  // viewport on this very widget, which nobody had reported and only measuring at minW found.
+  ok("...and the page still does not scroll sideways there",
+     row320.scroll <= 320, "body.scrollWidth " + row320.scroll);
+
+  const row440 = await rowAt(440);
+  ok("at the 440px default it is a single line", row440.lines === 1 && row440.past === 0,
+     row440.lines + " line(s), " + row440.h + "px tall");
+  ok("...so the wrap really is a narrow-width behaviour, not the normal one",
+     row320.h > row440.h, row320.h + "px at 320 vs " + row440.h + "px at 440");
+  document.body.style.width = "";
+  await sleep(120);
+
+  // ── the credit follows the data ──────────────────────────────────────────
+  const rowBar = document.getElementById("creditbar");
+  // 🔑 COMPUTED display, not the attribute. See the header note: the attribute alone cannot see
+  // the deleted [hidden] guard, and that is the regression that paints the credit everywhere.
+  const rowBarUp = () => !!rowBar && getComputedStyle(rowBar).display !== "none"
+    && rowBar.getBoundingClientRect().height > 0;
+  const rowGo = async (id) => { document.getElementById(id).click(); await sleep(700); };
+
+  ok("the credit strip survived the mode bar it used to live in", !!rowBar,
+     rowBar ? "present" : "(no #creditbar)");
+
+  await rowGo("tabTrade");
+  ok("🔴 UEX is credited on Commodities, where their data is on screen", rowBarUp(),
+     rowBar ? "display=" + getComputedStyle(rowBar).display + " h=" + Math.round(rowBar.getBoundingClientRect().height) : "none");
+  // EITHER the badge OR the words, because the markup swaps one for the other when the image
+  // cannot load. Asserting the <img> alone goes red for the fallback that keeps the credit up.
+  const rowMark = document.getElementById("uexmark");
+  const rowWords = document.getElementById("uexname");
+  const rowCredited = (rowMark && rowMark.getAttribute("alt") && rowMark.getAttribute("alt").toLowerCase().indexOf("uex") > -1)
+    || (rowWords && rowWords.textContent.toLowerCase().indexOf("uex") > -1);
+  ok("...by badge or by name, whichever the image could manage", !!rowCredited,
+     rowMark ? "badge alt=" + rowMark.getAttribute("alt") : rowWords ? "words=" + rowWords.textContent : "(neither)");
+
+  // The other half, and it is the half that makes it an attribution rather than a logo.
+  const rowElsewhere = [];
+  for (const id of ["tabAdvisor", "tabRoute", "tabLayout", "tabJournal"]) {
+    await rowGo(id);
+    if (rowBarUp()) rowElsewhere.push(document.getElementById(id).textContent.trim());
+  }
+  ok("...and nowhere else, because none of those tabs render a UEX quote",
+     rowElsewhere.length === 0,
+     rowElsewhere.length ? "credited on " + rowElsewhere.join(", ") : "hidden on all four");
+
+  return out;
+})()`;
+
 // Same technique as HAULING above: the page's own `plan` binding is assigned directly, so these are
 // rendering rules tested deterministically with no game and no sidecar state.
 // 🔴 Suite: THE RUNS ROW SURVIVES 320px - the regression this row shape exists to prevent.
@@ -6488,9 +6610,15 @@ const RUNSNARROW = `(async () => {
 
   // Driven the way a player drives it. Assigning the page's own view binding would only make a global
   // the page never reads - executeJavaScript runs in the page's GLOBAL scope, not its closure.
-  document.getElementById("modeTrade").click();
-  await sleep(300);
-  document.getElementById("tabTrade").click();
+  // ⚠️ RE-POINTED 2026-08-23. This used to click #modeTrade first, because the tab was hidden
+  // behind a Trading mode. The modes are merged away and that button no longer exists, so the
+  // click threw on null and took the whole suite with it. One click now, and the tab is a peer of
+  // Contracts and Route rather than something you have to switch modes to reach.
+  var tradeTab = document.getElementById("tabTrade");
+  ok("the Commodities tab is reachable without switching modes", !!tradeTab && !tradeTab.hidden,
+     tradeTab ? "label=" + tradeTab.textContent : "(no #tabTrade)");
+  if (!tradeTab) return out;
+  tradeTab.click();
   await sleep(1200);
 
   const panel = document.getElementById("panel");
@@ -6911,6 +7039,7 @@ app.whenReady().then(async () => {
     // ⚠️ Registered AHEAD of the two hauling suites for the reason stated further up: a throw used
     // to take every suite behind it with it, and `hauling: honest loads, whole route` is the one
     // that throws. Same page, so this costs nothing to place here.
+    fails += await run("hauling: one flat tab row, and the credit follows the data", TABROW, null, null, "hauling.html");
     fails += await run("hauling: the Runs row survives 320px", RUNSNARROW, null, null, "hauling.html");
     fails += await run("hauling: the trade journal's held cargo", TRADEHOLD, null, null, "hauling.html");
     fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");

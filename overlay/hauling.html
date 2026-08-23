@@ -71,14 +71,16 @@
      block above; this rule used to carry `margin-left:auto` and would have silently won here,
      since it loads later. Two declarations disagreeing about one layout is how the head got
      hard to reason about in the first place. */
+  /* 🔴 WRAPPING IS THE DESIGN, NOT A FALLBACK — and Sub signed it off on the measurement.
+     Five tabs need 328.8px and the row is 296px at the 320px minimum, so it wraps to two lines
+     there (24px -> 51px tall) and sits on one line at 380px and above. `row-gap` is what makes the
+     wrapped state look deliberate rather than collapsed.
+     ⛔ Do NOT "fix" this with a narrow-width media query shrinking `.hbtn`: this head had two of
+     those removed for making the chrome change size as the widget is resized, and Sub chose the
+     wrap over that explicitly.
+     The `.tabs.trading` re-ordering rules that used to live here went with the modes — order is
+     markup order now, decided in one place. */
   .tabs { display: flex; gap: 4px; flex-wrap: wrap; row-gap: 3px; }
-  /* Stow is shared by both modes, so it sits third in the markup for Hauling's sake (Rank, Route,
-     Stow) and has to be re-ordered for Trading, where Runs is the tab you actually open. `order`
-     rather than moving the node, because moving it would mean two buttons for one renderer. */
-  .tabs.trading #tabTrade { order: 1; }
-  .tabs.trading #tabLookup { order: 2; }
-  .tabs.trading #tabJournal { order: 3; }
-  .tabs.trading #tabLayout { order: 4; }
 
   /* ── Trade tab ──────────────────────────────────────────────────────────────
      Rebuilt 2026-08-19 against Sub's review of the first cut. Four of his notes were real BUGS
@@ -96,25 +98,28 @@
      4. Every chip was the same faint colour, so nothing stood out. Age and warnings now carry
         their meaning in their colour. */
 
-  /* The mode bar: which of the widget's two jobs you are doing. Pinned below the scrolling body,
-     so it is always reachable however long the list gets. */
-  .modebar { flex: none; display: flex; align-items: center; gap: 4px; padding: 5px 12px;
+  /* The credit strip. It was the MODE BAR (Hauling / Trading) until the modes were merged away;
+     the switch went, the attribution stayed, and the strip kept the same geometry so the badge
+     sits exactly where it has always sat. Pinned below the scrolling body, so it is always
+     reachable however long the list gets.
+     🔑 ONE OWNER OF ITS VISIBILITY, and it is this element. The badge inside used to carry its own
+     `hidden` as well, which is two mechanisms for one behaviour and the kind of pair that drifts
+     — and worse, makes a negative control on either one come back green. */
+  .creditbar { flex: none; display: flex; align-items: center; gap: 4px; padding: 5px 12px;
     border-top: 1px solid var(--divider); background: rgba(var(--accent-rgb), 0.05); }
-  .modebar .hbtn { height: 20px; padding: 0 10px; display: inline-flex; align-items: center;
-    font-size: 10.5px; }
+  /* ⚠️ Pair `hidden` with a `[hidden]` guard: a bare `hidden` attribute loses to any class rule
+     setting `display`, which is how Unlock Alerts once offered to claim a blueprint it had
+     already recorded. `.creditbar` sets `display:flex`, so without this the bar is ALWAYS on. */
+  .creditbar[hidden] { display: none; }
   /* Attribution, not a button that does work — it only appears on the side of the widget their
      data actually feeds. Carries UEX's supplied badge, at the same 17px slot the Verse Finder
-     uses, so the credit is one thing in two places rather than two different-looking claims.
-     ⚠️ Pair `hidden` with a `[hidden]` guard: a bare `hidden` attribute loses to any class rule
-     setting `display`, which is how Unlock Alerts once offered to claim a blueprint it had
-     already recorded. */
+     uses, so the credit is one thing in two places rather than two different-looking claims. */
   .uexbadge { margin-left: auto; background: none; border: 0; padding: 0 2px; cursor: pointer;
     display: inline-flex; align-items: center; }
   .uexbadge #uexmark { height: 17px; width: auto; display: block; border-radius: 3px; }
   /* The typographic fallback, shown only when the image cannot load. */
   .uexbadge #uexname { font-family: var(--sans); font-size: 10px; font-weight: 700;
     letter-spacing: 0.04em; color: var(--cyan-text); white-space: nowrap; }
-  .uexbadge[hidden] { display: none; }
 
   .tdbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
     padding: 6px 12px 4px; border-bottom: 1px solid var(--divider); }
@@ -156,14 +161,9 @@
     font-size: 11.5px; line-height: 1.45; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.6); }
   .tdpop:popover-open { position: fixed; inset: auto; left: 12px; bottom: 40px; }
 
-  /* The commodity field. A normal in-flow input — see note 2 above. */
-  .tdfind { display: flex; gap: 5px; padding: 8px 12px 4px; }
-  .tdfind input { flex: 1; min-width: 0; height: 24px; padding: 0 8px; border-radius: 6px;
-    border: 1px solid var(--border); background: rgba(var(--accent-rgb), 0.10);
-    color: var(--cyan-text); font-family: var(--sans); font-size: 12.5px; }
-  .tdfind input:focus { outline: none; border-color: var(--cyan);
-    background: rgba(var(--accent-rgb), 0.18); }
-  .tdfind input::placeholder { color: var(--faint); }
+  /* ⛔ `.tdfind` — the commodity lookup field — went with the Market tab (2026-08-23). It was the
+     only thing that class ever styled. Note 2 in the header block above still describes why that
+     input had to be in flow rather than inside `.psug`; that lesson outlives the input. */
 
   /* ── A RUN, AND A LEDGER ENTRY: the SPINE row ──────────────────────────────────────────────
      `.arow` supplies the frame; these are the four lines it has no equivalent for.
@@ -800,20 +800,29 @@
       <span class="hname">
         <span class="h-title">Hauling</span><span class="expbadge" id="expBadge" title="EXPERIMENTAL. This widget is new and it will get things wrong — the tonnage the game never states, the order to load in, how long a run takes. Check it against your mobiGlas before you trust it, and tell Sub what it got wrong. Nothing here can affect your contracts or your cargo; it only reads the log.">EXPERIMENTAL</span>
       </span>
+      <!-- 🔴 ONE FLAT ROW, NO MODES (Sub, 2026-08-23). The widget used to have two MODES at the
+           bottom — contract hauling and commodity trading — each with its own tabs up here. That
+           split existed because there were two Route surfaces, one per mode. There is one now, so
+           the mode switch was buying nothing and costing a bottom bar and a piece of remembered
+           state that could disagree with `view`.
+           ORDER IS THE ORDER OF THE DECISIONS: what to accept, where to buy, what order to fly it,
+           how to stow it, what it made. Contracts and Commodities are the two SOURCES and they sit
+           together; Route sequences whatever came out of either.
+           🔑 The order is now plain MARKUP ORDER — the `.tabs.trading` re-ordering rules are gone
+           with the modes, so there is one place that decides this and it is here. -->
       <span class="tabs">
-        <!-- 🔴 RANK LEADS. It is the tab you are on BEFORE you have a board — you read it to decide
-             what to accept, and the other two only mean anything once you have accepted something.
-             Sub asked for it first; the order now matches the order of the decisions. -->
         <button id="tabAdvisor" class="hbtn on" type="button" title="Which contracts to go looking for, and how far the next rank is">Contracts</button>
-        <button id="tabRoute" class="hbtn" type="button" title="What order to fly the stops">Route</button>
+        <!-- 🔑 SUB PICKED "Commodities" OVER "Planner" (2026-08-23), measured rather than guessed.
+             At the 320px minimum the tab row is 296px and the other four labels eat 237.6px of it,
+             so the fifth has a 58.4px budget before the row wraps. "Commodities" is 91.2px and
+             wraps to two rows there; he took that trade knowingly — the row already wraps (flex
+             with a 3px row-gap), it costs 27px of height, and only at the narrowest width. At the
+             440px default it fits one line with 87px to spare.
+             "Planner" was the other candidate and it misses a single row at 320px by 1.30px; it
+             also now describes what Route does, which is the better reason it lost. -->
+        <button id="tabTrade" class="hbtn" type="button" title="Commodity runs worth buying into right now">Commodities</button>
+        <button id="tabRoute" class="hbtn" type="button" title="What order to fly the stops — contracts and commodity buys together">Route</button>
         <button id="tabLayout" class="hbtn" type="button" title="What to load first, and where it goes on your ship">Stow</button>
-        <!-- 🔑 TRADING'S OWN SUB-TABS. Sub's structure (2026-08-19): the widget has two MODES at
-             the bottom — contract hauling and commodity trading — and each mode's own tabs live
-             up here. Which of these five are shown is decided by `mode`; Stow appears under both
-             and is rendered by the SAME `renderStow()`, so the tab is in two places and the code
-             is in one. -->
-        <button id="tabTrade" class="hbtn" type="button" title="Runs worth flying right now">Planner</button>
-        <button id="tabLookup" class="hbtn" type="button" title="Look up one commodity: what it costs, where it sells">Market</button>
         <!-- 🔑 LABEL ONLY. Sub renamed this "Log" -> "Ledger" 2026-08-22; the id `tabJournal` and
              the `journal` view name are what the code and the widget suite address, so they stay.
              The rename also stops the word colliding with the Log View widget, which is a raw
@@ -880,22 +889,22 @@
 
     <div id="body"><div class="empty" id="emptyState">Waiting for a hauling contract…</div></div>
 
-    <!-- 🔑 THE MODE BAR. Two things this widget does, and they are different jobs: fly the
-         contracts the game gave you, or buy and sell on your own account. Sub's call to split
-         them rather than let Trade sit as a fourth peer of Rank/Route/Stow — those three are all
-         about one board, and Trade is not about a board at all.
-         The UEX credit lives here because this is where their data is on screen: it shows only in
-         Trading mode, since nothing on the hauling side comes from them. -->
-    <div id="modebar" class="modebar">
-      <button id="modeHaul" class="hbtn on" type="button" title="The contracts you have accepted">Hauling</button>
-      <button id="modeTrade" class="hbtn" type="button" title="Buy low somewhere, sell high somewhere else">Trading</button>
+    <!-- 🔴 THE MODE BAR IS GONE, AND THIS STRIP SURVIVES ONLY TO CARRY THE CREDIT.
+         It used to hold Hauling / Trading, the switch Sub disliked. With one Route tab sequencing
+         both sources there are no longer two modes to switch between, so the buttons went and the
+         bar kept its one remaining job.
+         ⚠️ The credit could NOT simply go with them. UEX's data is on screen on the Commodities
+         tab, and an attribution has to be present where the data is — so this strip now shows on
+         exactly the tabs that render UEX quotes and is hidden everywhere else. It is not chrome
+         that can be dropped for tidiness. -->
+    <div id="creditbar" class="creditbar" hidden>
       <!-- 🔴 UEX'S OWN BADGE, THE SAME ONE THE VERSE FINDER CARRIES (Sub, 2026-08-22). Both
            widgets are wrappers over the same community-reported table, and until now only one of
            them said so in UEX's own mark while the other paraphrased it in our type. The mark is
            used UNMODIFIED — not tinted, not reskinned with the manufacturer themes — because an
            attribution that changes to suit our theme has stopped being an attribution.
            ⚠️ The words REPLACE the image if it cannot load; they never merely leave a gap. -->
-      <button id="uexCredit" class="uexbadge" type="button" hidden
+      <button id="uexCredit" class="uexbadge" type="button"
         title="Commodity prices are community-reported through UEX. Open uexcorp.space"><img
           id="uexmark" src="/logos/uex-powered.png" alt="Powered by UEX"
           onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" /></button>
@@ -939,11 +948,14 @@
   let objective = "auec-per-hour";
   let showDone = false;
   let shipPick = "";          // "" = trust the log
-  /* Which of the widget's two jobs is on screen: "hauling" (the contracts you accepted) or
-     "trading" (buying and selling on your own account). Remembered, because a player works one
-     of them for hours at a time. */
-  const MODE_KEY = "sc-hauling-mode";
-  let mode = (() => { try { return localStorage.getItem(MODE_KEY) === "trading" ? "trading" : "hauling"; } catch { return "hauling"; } })();
+  /* ⛔ `mode` IS GONE, along with `MODE_KEY` and the localStorage value behind it. It named which
+     of two jobs the widget was doing, and the only thing that made them two jobs was having two
+     Route surfaces. `view` was always the thing that decided what got drawn; `mode` merely decided
+     which tabs were on offer, and the two were restored from different places, which is why
+     `hauling.html` needed a line reconciling them at startup.
+     ⚠️ A player who last used Trading now opens on Contracts rather than on Runs. That is the
+     intended behaviour of a flat row and not a lost preference — the stale `sc-hauling-mode` key
+     is simply never read again. */
   // Where the player says they are. localStorage, not config: it is a fact about right now, and a
   // stale one is worse than none — so it is dropped the moment the plan stops containing it.
   const START_KEY = "sc-hauling-start";
@@ -1646,27 +1658,18 @@
   const cargoOf = (leg) => leg && leg.commodity ? leg.commodity : leg && leg.scu != null ? num(leg.scu) + " SCU" : "cargo";
 
   function render() {
-    /* 🔑 TWO MODES, ONE SET OF RENDERERS. `mode` decides which tabs are on offer; `view` still
-       decides what gets drawn, exactly as before. Stow is listed under BOTH modes and is drawn by
-       the same `renderStow()` — the tab is in two places, the code is in one. */
-    const trading = mode === "trading";
-    $("tabAdvisor").hidden = trading;
-    $("tabRoute").hidden = trading;
-    $("tabTrade").hidden = !trading;
-    $("tabLookup").hidden = !trading;
-    $("tabJournal").hidden = !trading;
-    $("modeHaul").classList.toggle("on", !trading);
-    $("modeTrade").classList.toggle("on", trading);
-    /* Credit UEX only where their data is on screen. */
-    $("uexCredit").hidden = !trading;
-    document.querySelector(".tabs").classList.toggle("trading", trading);
-
+    /* 🔑 ONE ROW, ONE SET OF RENDERERS. Every tab is always on offer now, so the only thing this
+       decides is which one is LIT — and `view` alone decides that. The block that used to hide
+       four of the six buttons went with the modes. */
+    $("tabAdvisor").classList.toggle("on", view === "advisor");
+    $("tabTrade").classList.toggle("on", view === "trade");
     $("tabRoute").classList.toggle("on", view === "route");
     $("tabLayout").classList.toggle("on", view === "layout");
-    $("tabAdvisor").classList.toggle("on", view === "advisor");
-    $("tabTrade").classList.toggle("on", view === "trade" && tradeMode === "routes");
-    $("tabLookup").classList.toggle("on", view === "trade" && tradeMode === "commodity");
     $("tabJournal").classList.toggle("on", view === "journal");
+    /* 🔴 CREDIT UEX WHERE THEIR DATA IS ON SCREEN, and nowhere else — that is what makes it an
+       attribution rather than a logo. Commodities renders their quotes; the Ledger is the player's
+       own log and Route/Stow/Contracts are the game's own data, so none of those may carry it. */
+    $("creditbar").hidden = view !== "trade";
     $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
     $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
     $("departBtn").textContent = departOff ? "Reminder off" : "Reminder on";
@@ -1702,38 +1705,12 @@
   $("tabRoute").addEventListener("click", () => { view = "route"; render(); });
   $("tabLayout").addEventListener("click", () => { view = "layout"; render(); });
   $("tabAdvisor").addEventListener("click", () => { view = "advisor"; if (!advisor) loadAdvisor(); render(); });
-  $("tabTrade").addEventListener("click", () => {
-    view = "trade"; tradeMode = "routes"; if (!tradeData) openTrade(); render();
-  });
-  $("tabLookup").addEventListener("click", () => {
-    view = "trade"; tradeMode = "commodity"; loadTradeNames(); if (!tradeStatus) loadTradeStatus(); render();
-  });
+  $("tabTrade").addEventListener("click", () => { view = "trade"; if (!tradeData) openTrade(); render(); });
   $("tabJournal").addEventListener("click", () => { view = "journal"; loadJournal(); render(); });
 
-  /* ── mode switching ───────────────────────────────────────────────────────
-     🔑 Each mode remembers a SENSIBLE view rather than the last one you were on. Landing in
-     Trading on the Stow tab — which is about contract cargo — would look like the switch had
-     failed, so Trading opens on Runs unless Stow was deliberately chosen from within it. */
-  function setMode(next) {
-    if (mode === next) return;
-    mode = next;
-    try { localStorage.setItem(MODE_KEY, mode); } catch { /* private mode */ }
-    if (mode === "trading") {
-      if (view !== "layout" && view !== "journal") { view = "trade"; tradeMode = tradeMode || "routes"; }
-      if (!tradeData) openTrade();
-    } else if (view === "trade" || view === "journal") {
-      view = "advisor";
-      if (!advisor) loadAdvisor();
-    }
-    render();
-  }
-  $("modeHaul").addEventListener("click", () => setMode("hauling"));
-  $("modeTrade").addEventListener("click", () => setMode("trading"));
-  /* 🔴 RESTORING `mode` MUST ALSO PLACE `view`, or the widget opens in Trading with the Rank tab
-     rendered underneath it — and clicking Trading cannot fix it, because `setMode` correctly
-     early-returns when the mode is already what you asked for. The two pieces of state are
-     restored from different places (localStorage and a literal), so nothing else reconciles them. */
-  if (mode === "trading" && view !== "layout" && view !== "journal") { view = "trade"; openTrade(); }
+  /* ⛔ `setMode`, the two mode listeners and the startup line that reconciled `mode` with `view`
+     are all gone. That reconciliation existed only because two pieces of state were restored from
+     different places and could disagree; with one flat row there is one piece of state. */
   /* https only, through the shell — never a bare target=_blank, which would put a second
      always-on-top window over the game. */
   $("uexCredit").addEventListener("click", () => {

@@ -1,18 +1,28 @@
 /**
- * HAULING - THE TRADE TAB: buy low somewhere, haul it, sell high somewhere else.
+ * HAULING - THE COMMODITIES TAB: buy low somewhere, haul it, sell high somewhere else.
  *
- * Phase 2. The Route/Stow/Rank tabs are all about CONTRACTS the game gave you; this one is about
- * cargo you choose to buy with your own money, which is why it is a tab and not a section of
- * Route. Nothing here comes from the log - it is the one tab that works with the game closed.
+ * Phase 2. Contracts/Route/Stow are about work the GAME gave you; this one is about cargo you
+ * choose to buy with your own money. Nothing here comes from the log - it is the one tab that
+ * works with the game closed.
+ *
+ * ⚠️ RENAMED "Planner" -> "Commodities" 2026-08-23 (Sub), when the two modes were merged into one
+ * flat tab row. The id `tabTrade`, the `trade` view name and every `trade`/`td` prefix in here are
+ * what the code and the widget suite address, so they stay - only the LABEL moved. Same rule the
+ * Log -> Ledger rename followed.
+ *
+ * 🔴 IT IS ONE OF TWO SOURCES, NOT A DESTINATION. It used to be a tab BECAUSE it was not part of
+ * Route; that stopped being true when Route became cargo-agnostic. What is picked here is meant to
+ * end up sequenced in Route alongside the contracts - opportunistically, filling the hold the
+ * contracts leave empty. Route never ranks the two against each other: contracts rank among
+ * themselves in their tab, commodities among themselves in this one.
  *
  * Same file conventions as its siblings: a classic script sharing one lexical scope with
  * hauling.html, so every name here is prefixed `trade`/`td` and nothing is exported.
  *
  * 🔴 THE STANDING CONSTRAINT, AND THE REASON HALF THIS FILE EXISTS: prices are per-terminal and
- * they move. There is no such thing as "the price of Titanium". So the commodity view prints a
- * RANGE with its terminal count and age spread; every route row carries its own age, which is the
- * OLDER of its two quotes; and where stock is unreported the profit is a CEILING, marked with a
- * `≤`, never a bare number.
+ * they move. There is no such thing as "the price of Titanium". So every route row carries its own
+ * age, which is the OLDER of its two quotes; and where stock is unreported the profit is a
+ * CEILING, marked with a `≤`, never a bare number.
  *
  * -- Rebuilt 2026-08-19 after Sub reviewed the first cut ------------------------------------
  *
@@ -44,16 +54,17 @@
   /* ── state ──────────────────────────────────────────────────────────────── */
 
   let tradeData = null;        // last /api/trade/routes response
-  let tradeLookup = null;      // last /api/trade/commodity response
-  let tradeNames = null;       // autocomplete list
   let tradeStatus = null;      // last provenance block, for first paint before any query
   let tradeBusy = false;
   let tradeErr = "";
-  /** "routes" | "commodity". Backhaul is a FILTER on routes rather than a third mode, because it
-   *  is the same question with the destination pinned. */
-  let tradeMode = "routes";
+  /* ⛔ `tradeMode` IS GONE. It chose between "routes" and "commodity" — the Runs list and the
+     one-commodity lookup — and the lookup was the Market tab, which Sub retired when the tabs were
+     merged (the Verse Finder already answers "where can I buy X", and the Runs list answers "what
+     is worth carrying"). With one view left there is nothing to choose, so `tradeLookup`,
+     `tradeNames` and `tradeQuery` went with it.
+     🔑 Backhaul was never a mode — it is a FILTER on routes, the same question with the
+     destination pinned — so it is unaffected. */
   let tradeToBody = null;
-  let tradeQuery = "";
   /** "" = every system. Defaulted from the log once, then it is the player's choice. */
   let tradeSystem = null;      // null = not yet defaulted
   const TD_STOCK_KEY = "sc-trade-known-stock";
@@ -361,27 +372,10 @@
     } catch { /* the routes call reports its own failure */ }
   }
 
-  async function loadTradeNames() {
-    if (tradeNames) return;
-    try {
-      const r = await fetch("/api/trade/names", { cache: "no-store" });
-      if (r.ok) tradeNames = (await r.json()).names || [];
-    } catch { /* autocomplete is a nicety, never a blocker */ }
-  }
-
-  async function loadTradeCommodity(name) {
-    tradeQuery = name;
-    if (!name) { tradeLookup = null; render(); return; }
-    try {
-      const r = await fetch("/api/trade/commodity?name=" + encodeURIComponent(name), { cache: "no-store" });
-      const j = await r.json();
-      tradeLookup = r.ok ? j : Object.assign({ error: (j && j.error) || "HTTP " + r.status, commodity: name }, j);
-      tradeStatus = j;
-    } catch {
-      tradeLookup = { error: "sidecar unreachable", commodity: name };
-    }
-    if (view === "trade") render();
-  }
+  /* ⛔ `loadTradeNames` / `loadTradeCommodity` went with the Market tab (2026-08-23). They fed the
+     one-commodity lookup, whose whole surface was that tab. `GET /api/trade/names` and
+     `GET /api/trade/commodity` are untouched on the sidecar and still answer — if a commodity
+     picker on the merged Route wants either, it calls them; it does not need this code back. */
 
   /** Kick everything the tab needs, in the order that makes the first paint correct. */
   async function openTrade() {
@@ -478,91 +472,6 @@
     });
   }
 
-  /* ── the commodity view ─────────────────────────────────────────────────── */
-
-  function tdRenderSide(body, label, s, ends, kind) {
-    const sec = document.createElement("div");
-    sec.className = "sec";
-    const h = document.createElement("span"); h.textContent = label;
-    const n = document.createElement("span"); n.className = "n";
-    if (!s) {
-      n.textContent = kind === "buy" ? "nowhere sells it to you" : "nowhere buys it";
-      sec.append(h, n); body.appendChild(sec);
-      return;
-    }
-    n.textContent = s.terminals + (s.terminals === 1 ? " terminal" : " terminals");
-    sec.append(h, n);
-    body.appendChild(sec);
-
-    const range = document.createElement("div");
-    range.className = "note";
-    // 🔑 Low-high first, median beside it. A median standing alone is the false-precision trap.
-    range.textContent = s.low === s.high
-      ? num(s.low) + " aUEC/SCU at every terminal"
-      : num(s.low) + " – " + num(s.high) + " aUEC/SCU (middle " + num(s.median) + ")";
-    body.appendChild(range);
-
-    for (const e of ends.slice(0, 8)) {
-      const row = document.createElement("div");
-      row.className = "trow";
-      const nm = document.createElement("div");
-      nm.className = "tnm";
-      nm.textContent = e.terminalShort + (e.system ? "  · " + e.system : "");
-      const val = document.createElement("div");
-      val.className = "tval";
-      const days = e.asOf === null || e.asOf === undefined ? null : (Date.now() - e.asOf * 1000) / 86400000;
-      const scu = e.scu === null || e.scu === undefined
-        ? "stock unknown"
-        : num(e.scu) + " SCU " + (kind === "buy" ? "in stock" : "wanted");
-      val.textContent = num(e.price) + "  ·  " + scu;
-      row.append(nm, val);
-      const a = tdAge(days);
-      if (a) tdChip(val, a, tdAgeClass(days));
-      body.appendChild(row);
-    }
-    if (ends.length > 8) {
-      const more = document.createElement("div");
-      more.className = "note";
-      more.textContent = "…and " + (ends.length - 8) + " more.";
-      body.appendChild(more);
-    }
-  }
-
-  function tdRenderCommodity(body) {
-    const l = tradeLookup;
-    if (!l) {
-      const e = document.createElement("div"); e.className = "empty";
-      e.textContent = "Type a commodity to see what it costs and where it sells.";
-      body.appendChild(e);
-      return;
-    }
-    if (l.error) {
-      const e = document.createElement("div"); e.className = "empty";
-      e.textContent = l.error === "unknown_commodity"
-        ? "Nothing called “" + (l.name || tradeQuery) + "” in the price data."
-        : "Could not look that up (" + l.error + ").";
-      body.appendChild(e);
-      return;
-    }
-    const sec = document.createElement("div");
-    sec.className = "sec";
-    const h = document.createElement("span"); h.textContent = l.commodity;
-    sec.appendChild(h);
-    body.appendChild(sec);
-
-    tdRenderSide(body, "Buy it at", l.buy, l.buyAt || [], "buy");
-    tdRenderSide(body, "Sell it at", l.sell, l.sellAt || [], "sell");
-
-    if (l.buy && l.sell && l.sell.high > l.buy.low) {
-      const best = document.createElement("div");
-      best.className = "note";
-      best.textContent = "Best spread on this table: " + num(l.sell.high - l.buy.low)
-        + " aUEC/SCU, buying at " + num(l.buy.low) + " and selling at " + num(l.sell.high)
-        + " — two different terminals, and each price is only as good as its age above.";
-      body.appendChild(best);
-    }
-  }
-
   /* ── the tab ────────────────────────────────────────────────────────────── */
 
   function renderTrade() {
@@ -575,87 +484,60 @@
     bar.className = "tdbar";
     tdProvenance(bar, tradeStatus);
 
-    // ⚠️ Runs / Look up used to be buttons in here. They are TOP TABS now (Sub's two-mode
-    // structure), so this bar carries only the filters that belong to whichever one is showing.
-    if (tradeMode === "routes") {
-      const sep2 = document.createElement("span"); sep2.className = "sep"; bar.appendChild(sep2);
-      // 🔑 THE SYSTEM FILTER. Built from the systems that actually have a buy terminal, so it can
-      // never offer a choice that only ever returns nothing.
-      const systems = (tradeStatus && tradeStatus.systems) || [];
-      if (systems.length > 1) {
-        const lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = "buy in";
-        bar.appendChild(lbl);
-        const pick = (s) => {
-          tradeSystem = s;
-          try { localStorage.setItem(TD_SYS_KEY, s); } catch { /* private mode */ }
-          loadTrade();
-        };
-        tdBtn(bar, "All", tradeSystem === "", "Every system", () => pick(""));
-        for (const s of systems) {
-          const isHere = tradeStatus && tradeStatus.here
-            && s.toLowerCase() === String(tradeStatus.here).toLowerCase();
-          tdBtn(bar, s, tradeSystem === s, isHere ? "Where the log says you are" : "Buy in " + s,
-            () => pick(s));
-        }
+    // ⚠️ Runs / Look up used to be buttons in here, then TOP TABS. Look up (Market) is retired
+    // and this bar carries only the Runs filters, unconditionally — the `tradeMode` guard that used
+    // to wrap all of this went with the second view it was choosing between.
+    const sep2 = document.createElement("span"); sep2.className = "sep"; bar.appendChild(sep2);
+    // 🔑 THE SYSTEM FILTER. Built from the systems that actually have a buy terminal, so it can
+    // never offer a choice that only ever returns nothing.
+    const systems = (tradeStatus && tradeStatus.systems) || [];
+    if (systems.length > 1) {
+      const lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = "buy in";
+      bar.appendChild(lbl);
+      const pick = (s) => {
+        tradeSystem = s;
+        try { localStorage.setItem(TD_SYS_KEY, s); } catch { /* private mode */ }
+        loadTrade();
+      };
+      tdBtn(bar, "All", tradeSystem === "", "Every system", () => pick(""));
+      for (const s of systems) {
+        const isHere = tradeStatus && tradeStatus.here
+          && s.toLowerCase() === String(tradeStatus.here).toLowerCase();
+        tdBtn(bar, s, tradeSystem === s, isHere ? "Where the log says you are" : "Buy in " + s,
+          () => pick(s));
       }
+    }
 
-      const sep3 = document.createElement("span"); sep3.className = "sep"; bar.appendChild(sep3);
-      // 🔴 A FIXED LABEL. The first cut swapped between "Any stock" and "Confirmed stock only",
-      // which made it impossible to tell the state from the action.
-      tdBtn(bar, "Confirmed stock", tradeKnownOnly,
-        "Only show runs where someone has reported how much is actually on the shelf", () => {
-          tradeKnownOnly = !tradeKnownOnly;
-          try { localStorage.setItem(TD_STOCK_KEY, tradeKnownOnly ? "1" : "0"); } catch { /* private mode */ }
+    const sep3 = document.createElement("span"); sep3.className = "sep"; bar.appendChild(sep3);
+    // 🔴 A FIXED LABEL. The first cut swapped between "Any stock" and "Confirmed stock only",
+    // which made it impossible to tell the state from the action.
+    tdBtn(bar, "Confirmed stock", tradeKnownOnly,
+      "Only show runs where someone has reported how much is actually on the shelf", () => {
+        tradeKnownOnly = !tradeKnownOnly;
+        try { localStorage.setItem(TD_STOCK_KEY, tradeKnownOnly ? "1" : "0"); } catch { /* private mode */ }
+        loadTrade();
+      });
+
+    const sep4 = document.createElement("span"); sep4.className = "sep"; bar.appendChild(sep4);
+    const setUnit = (u) => {
+      tradeUnit = u;
+      try { localStorage.setItem(TD_UNIT_KEY, u); } catch { /* private mode */ }
+      render();   // a display choice; the data is unchanged, so no refetch
+    };
+    tdBtn(bar, "Per run", tradeUnit === "run", "What the whole trip clears", () => setUnit("run"));
+    tdBtn(bar, "Per SCU", tradeUnit === "scu", "What one SCU is worth carrying", () => setUnit("scu"));
+
+    const dest = tdPlanDestination();
+    if (dest) {
+      tdBtn(bar, "Backhaul", !!tradeToBody,
+        "You are already flying to " + dest + " — what is worth carrying along?", () => {
+          tradeToBody = tradeToBody ? null : dest;
           loadTrade();
         });
-
-      const sep4 = document.createElement("span"); sep4.className = "sep"; bar.appendChild(sep4);
-      const setUnit = (u) => {
-        tradeUnit = u;
-        try { localStorage.setItem(TD_UNIT_KEY, u); } catch { /* private mode */ }
-        render();   // a display choice; the data is unchanged, so no refetch
-      };
-      tdBtn(bar, "Per run", tradeUnit === "run", "What the whole trip clears", () => setUnit("run"));
-      tdBtn(bar, "Per SCU", tradeUnit === "scu", "What one SCU is worth carrying", () => setUnit("scu"));
-
-      const dest = tdPlanDestination();
-      if (dest) {
-        tdBtn(bar, "Backhaul", !!tradeToBody,
-          "You are already flying to " + dest + " — what is worth carrying along?", () => {
-            tradeToBody = tradeToBody ? null : dest;
-            loadTrade();
-          });
-      }
     }
     body.appendChild(bar);
 
-    if (tradeMode === "commodity") {
-      const wrap = document.createElement("div");
-      wrap.className = "tdfind";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.id = "tradeQ";
-      input.placeholder = "Commodity name — try Titanium";
-      input.value = tradeQuery;
-      input.setAttribute("list", "tradeNames");
-      input.setAttribute("autocomplete", "off");
-      input.addEventListener("change", () => loadTradeCommodity(input.value.trim()));
-      wrap.appendChild(input);
-      if (tradeNames && tradeNames.length) {
-        const dl = document.createElement("datalist");
-        dl.id = "tradeNames";
-        for (const nm of tradeNames) {
-          const o = document.createElement("option");
-          o.value = nm;
-          dl.appendChild(o);
-        }
-        wrap.appendChild(dl);
-      }
-      body.appendChild(wrap);
-      tdRenderCommodity(body);
-    } else {
-      tdRenderRoutes(body);
-    }
+    tdRenderRoutes(body);
   }
 
   /* ── the log: what you actually did ─────────────────────────────────────────
