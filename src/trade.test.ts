@@ -7,7 +7,7 @@
 // freight elevator - plus a Shubin buy and a shop inventory line). Synthetic fixtures would have
 // agreed with whatever the parser happened to do; these agree with the game.
 
-import { parseTradeLine, type CommodityPurchase } from "./trade-log.js";
+import { parseTradeLine, TradeConfirmations, TRADE_LOG_MARKER, type CommodityPurchase } from "./trade-log.js";
 import { findRoutes, lookupCommodity, legMinutes, type TradeRoute } from "./trade-finder.js";
 import type { TradeQuote } from "./trade-prices.js";
 
@@ -490,10 +490,21 @@ import { TradeJournal } from "./trade-journal.js";
 
 const NAMES: Record<string, string> = { "accacd33-3a1a-4ec7-8b4a-14b9f028047c": "Processed Food" };
 const nameOf = (g: string): string | null => NAMES[g.toLowerCase()] ?? null;
-/** Parse a known-good fixture. Throws rather than returning undefined, so a broken fixture fails
- *  loudly here instead of silently making every journal assertion vacuous. */
+/**
+ * Parse a known-good fixture AND take it through the real confirmation gate. Throws rather than
+ * returning undefined, so a broken fixture fails loudly here instead of silently making every
+ * journal assertion vacuous.
+ *
+ * 🔴 THE GATE IS NOT OPTIONAL AND IS NOT STUBBED HERE. `parseTradeLine` yields a REQUEST, which
+ * the journal refuses by design — see the invented-profit bug in `trade-log.ts`. A fixture line
+ * with no refusal behind it is a transaction that went through, and `flush()` is exactly how the
+ * sidecar states that at the end of a complete log. Hand-setting `confirmed: true` would have made
+ * every assertion below test a path the app does not use.
+ */
 const buyOf = (line: string): CommodityPurchase => {
-  const p = parseTradeLine(line)?.purchase;
+  const c = new TradeConfirmations();
+  c.line(line);
+  const [p] = c.flush();
   if (!p) throw new Error("fixture did not parse as a purchase: " + line.slice(0, 60));
   return p;
 };
@@ -756,6 +767,275 @@ console.log("\n-- the journal: an older file is READ FORWARD, never wiped --");
   const j3 = new TradeJournal(dir, nameOf).view();
   check("...and stays removed across a restart", j3.open.length === 1 && j3.writtenOff.length === 1,
     `${j3.open.length}/${j3.writtenOff.length}`);
+}
+
+// ── 🔴 A REQUEST IS NOT A TRANSACTION ───────────────────────────────────────
+//
+// Every line below is copied byte-for-byte out of Sub's `Game.log` for 2026-08-23. He tried to
+// sell Compboard at Levski three times; the terminal errored every time; the Ledger showed the
+// sales as completed and credited him +428,872 aUEC of profit that never existed.
+//
+// 🔑 The fixtures are REQUEST/ERROR PAIRS, not requests alone. A suite that feeds only successful
+// transactions certifies nothing about this bug — it is the refusal that has to be in the stream.
+
+/** 10 SCU of Compboard at 28,113.75/SCU, total 281,138. The cost basis for the phantom profit. */
+const BUY_COMPBOARD =
+  "<2026-08-23T18:52:32.982Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommodityBuyRequest> " +
+  "Sending SShopCommodityBuyRequest - playerId[204772220757] shopId[776426083309] " +
+  "shopName[SCShop_AdminOffice_Nyx_SocialStation] kioskId[776426083307] price[281138.000000] " +
+  "shopPricePerCentiSCU[281.137512] resourceGUID[9177e3bb-6714-49f5-8beb-46a981226ff6] " +
+  "autoLoading[0] quantity[1000.000000 cSCU] Cargo Box Data: boxSize[2.000000] | unitAmount[5] " +
+  "[Team_CoreGameplayFeatures][Shops][UI]";
+
+/** The first refused sale: 1 SCU for 242,550 aUEC. */
+const SELL_REFUSED_1 =
+  "<2026-08-23T19:57:48.914Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+  "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[776283668799] " +
+  "shopName[SCShop_Levski_CargoOffice_Commodities] kioskId[776283668797] amount[242550.000000] " +
+  "resourceGUID[9177e3bb-6714-49f5-8beb-46a981226ff6] autoLoading[0] quantity[1] " +
+  "transactionMode[Entities] Cargo Box Data:  [Team_CoreGameplayFeatures][Shops][UI]";
+/** 336 ms later. Note what it does NOT carry: no resourceGUID, no amount, nothing naming the
+ *  request it answers. Proximity and direction are all there is. */
+const REFUSAL_1 =
+  "<2026-08-23T19:57:49.250Z> [Error] <CEntityComponentCommodityUIProvider::RmToken_CommodityTransactionResponse> " +
+  "Commodity Transaction Response Error - playerId[204772220757] result[TransactionCostMismatch] " +
+  "type[Selling] [Team_CoreGameplayFeatures][Shops]";
+
+/** His retry, 56 seconds later. Identical request. */
+const SELL_REFUSED_2 = SELL_REFUSED_1.replace("19:57:48.914", "19:58:45.444");
+/** 258 ms after the retry. */
+const REFUSAL_2 = REFUSAL_1.replace("19:57:49.250", "19:58:45.702");
+
+/** A line that is not ours at all, used as the CLOCK — this is what releases a held request while
+ *  tailing, and it is why `tradeLogLine` has to be called on every line rather than the
+ *  interesting ones. */
+const clockLine = (iso: string): string =>
+  `<${iso}> [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> unrelated traffic`;
+
+const NAMES2: Record<string, string> = { "9177e3bb-6714-49f5-8beb-46a981226ff6": "Compboard" };
+const nameOf2 = (g: string): string | null => NAMES2[g.toLowerCase()] ?? null;
+
+/** Feed a whole stream through one confirmer into one journal, the way the sidecar does. */
+function replay(lines: readonly string[], j: TradeJournal, c = new TradeConfirmations()): TradeConfirmations {
+  for (const l of lines) for (const p of c.line(l)) j.apply(p);
+  return c;
+}
+
+console.log("\n-- the refusal line parses at all --");
+{
+  const r = parseTradeLine(REFUSAL_1)?.response;
+  check("an [Error] response line is recognised", !!r);
+  check("...as a refusal", r?.refused === true, String(r?.refused));
+  check("...carrying the result verbatim", r?.result === "TransactionCostMismatch", String(r?.result));
+  check("...and the direction", r?.direction === "sell", String(r?.direction));
+  // 🔑 It used to fall through to `unknownMethod`, which is the mechanism working exactly as
+  // designed — a new verb announced itself and nobody looked at it for four days.
+  check("...and it is NOT reported as an unmodelled verb",
+    parseTradeLine(REFUSAL_1)?.unknownMethod === undefined, String(parseTradeLine(REFUSAL_1)?.unknownMethod));
+  // A `[Notice]` response is a shape never seen in 533 log files. The safe reading of an unseen
+  // shape is "this refuses nothing", so the commit rule is unchanged by one.
+  const notice = parseTradeLine(REFUSAL_1.replace("[Error]", "[Notice]"))?.response;
+  check("a response that is not an [Error] refuses nothing", notice?.refused === false, String(notice?.refused));
+  // The other two result values on record. Recorded, never interpreted.
+  for (const res of ["EntityQueryFailed", "WaitingForPendingResult"]) {
+    check(`result[${res}] is a refusal too`,
+      parseTradeLine(REFUSAL_1.replace("TransactionCostMismatch", res))?.response?.refused === true, res);
+  }
+}
+
+console.log("\n-- 🔴 Sub's three refused Compboard sales are not booked --");
+{
+  const j = new TradeJournal(freshDir(), nameOf2);
+  const c = replay([
+    BUY_COMPBOARD,
+    clockLine("2026-08-23T18:52:40.000Z"),      // releases the buy
+    SELL_REFUSED_1, REFUSAL_1,
+    clockLine("2026-08-23T19:57:55.000Z"),
+    SELL_REFUSED_2, REFUSAL_2,
+    clockLine("2026-08-23T19:58:55.000Z"),
+  ], j);
+  const v = j.view(new Date("2026-08-23T21:00:00Z"));
+
+  // 🔑 POSITIVE FIRST, always. Every assertion after this one is about something NOT being in a
+  // list, and a pipeline that booked nothing at all — a broken fixture, a parser that stopped
+  // matching — satisfies all of them for free.
+  check("the buy really was booked", v.open.length === 1 && v.open[0].scu === 10,
+    JSON.stringify(v.open.map((o) => o.scu)));
+  check("...at the price the log stated", Math.round(v.open[0]?.pricePerScu ?? 0) === 28114,
+    String(v.open[0]?.pricePerScu));
+  check("...and the two refusals were SEEN, not merely missed", c.refused().length === 2,
+    String(c.refused().length));
+  check("...each carrying why", c.refused().every((p) => p.refusedBecause === "TransactionCostMismatch"),
+    JSON.stringify(c.refused().map((p) => p.refusedBecause)));
+  check("...and marked refused rather than left undecided", c.refused().every((p) => p.confirmed === false),
+    JSON.stringify(c.refused().map((p) => p.confirmed)));
+
+  // 🔴 THE BUG. Both of these were closed runs in his Ledger.
+  check("no refused sale becomes a closed run", v.runs.length === 0, String(v.runs.length));
+  check("...nor an unpriced sale", v.unmatched.length === 0, String(v.unmatched.length));
+  check("...so the phantom profit is zero", v.allTime.profit === 0, String(v.allTime.profit));
+  check("...and the cargo is still listed as held", v.open.length === 1 && v.open[0].scu === 10,
+    JSON.stringify(v.open.map((o) => o.scu)));
+  check("nothing is left held by the confirmer", c.pending().length === 0, String(c.pending().length));
+}
+
+console.log("\n-- ...and the CONTROL: with the refusals out of the stream, the fiction comes back --");
+{
+  // 🔴 THE ONE THAT MATTERS. This is not a hypothetical regression — it is the shipped code, and
+  // it is reachable through a prefilter narrowed to `::Send`, which is what `backfillFromBackups`
+  // used to do. If this block ever goes quiet, the suite has stopped testing the bug.
+  //
+  // 🔑 Two independent mechanisms hold the fix up, so each gets its own control below: the gate
+  // withholding a refused request, and the journal refusing anything not `confirmed === true`.
+  const j = new TradeJournal(freshDir(), nameOf2);
+  const stream = [BUY_COMPBOARD, clockLine("2026-08-23T18:52:40.000Z"),
+    SELL_REFUSED_1, REFUSAL_1, clockLine("2026-08-23T19:57:55.000Z"),
+    SELL_REFUSED_2, REFUSAL_2, clockLine("2026-08-23T19:58:55.000Z")];
+  // CONTROL A: the prefilter that only lets requests through — the back door into this bug.
+  replay(stream.filter((l) => !l.includes("RmToken_")), j);
+  const v = j.view(new Date("2026-08-23T21:00:00Z"));
+  check("CONTROL: without the refusals, both failed sales book as runs", v.runs.length === 2,
+    String(v.runs.length));
+  check("CONTROL: ...inventing the exact profit Sub was shown",
+    Math.round(v.allTime.profit) === 428872, String(Math.round(v.allTime.profit)));
+  // 🔑 The margin smell, printed rather than gated on: 762% against a real one of 23%. It is a
+  // coincidence of this case and the response line is the evidence — see `trade-log.ts`.
+  check("CONTROL: ...at an implausible margin nobody should have to notice",
+    Math.round(v.runs[0]?.marginPct ?? 0) === 763, String(v.runs[0]?.marginPct));
+}
+
+console.log("\n-- ...and CONTROL B: the journal's own lock, independent of the gate --");
+{
+  // Belt and braces, and each brace is controlled separately: a caller that forgets the gate must
+  // get an EMPTY journal, loudly, rather than the original bug in silence.
+  const raw = parseTradeLine(SELL_REFUSED_1)?.purchase;
+  check("a raw parse is UNDECIDED, not confirmed", raw?.confirmed === null, String(raw?.confirmed));
+  const j = new TradeJournal(freshDir(), nameOf2);
+  check("...and the journal refuses to book it", j.apply(raw!) === false, "apply()");
+  check("...so nothing lands", j.view().runs.length === 0 && j.view().unmatched.length === 0, "view");
+  // CONTROL B: the same record with the flag flipped by hand DOES land — which is what proves the
+  // flag is the thing standing in the way, rather than some other refusal in `apply()`.
+  const k = new TradeJournal(freshDir(), nameOf2);
+  check("CONTROL: the same record marked confirmed is booked",
+    k.apply({ ...raw!, confirmed: true }) === true, "apply()");
+  check("CONTROL: ...and shows up as revenue", k.view().unmatched.length === 1,
+    String(k.view().unmatched.length));
+}
+
+console.log("\n-- a successful sale is still booked, which is the other half of the rule --");
+{
+  // 🔑 THE RULE IS "COMMIT UNLESS REFUSED", NOT "COMMIT WHEN CONFIRMED". A success emits NO line
+  // at all — 26 of the 65 requests in the 533-log corpus have no response behind them — so a gate
+  // waiting for an acknowledgement would throw every real trade away. This is the assertion that
+  // would catch someone "tightening" it.
+  const j = new TradeJournal(freshDir(), nameOf);
+  replay([BUY_DEGNOUS, clockLine("2026-08-23T18:05:10.000Z"),
+    SELL_DEGNOUS, clockLine("2026-08-23T18:33:55.000Z")], j);
+  const v = j.view(new Date("2026-08-23T19:00:00Z"));
+  check("the silent round trip closes as a run", v.runs.length === 1, String(v.runs.length));
+  check("...with the profit his balance really moved by", Math.round(v.runs[0]?.profit ?? 0) === 142830,
+    String(v.runs[0]?.profit));
+}
+
+console.log("\n-- the window: sized off the corpus, at both ends --");
+{
+  // The slowest refusal on record is 565 ms behind its request. Anything inside the window kills.
+  const j = new TradeJournal(freshDir(), nameOf2);
+  replay([SELL_REFUSED_1, REFUSAL_1.replace("19:57:49.250", "19:57:49.479"),  // +565 ms
+    clockLine("2026-08-23T19:58:00.000Z")], j);
+  check("a refusal at the slowest latency on record still kills the request",
+    j.view().unmatched.length === 0 && j.view().runs.length === 0, JSON.stringify(j.view().unmatched));
+
+  // 🔴 THE OTHER END, and it is the failure mode nobody thinks about: a window wide enough to
+  // reach BACK past an earlier request would delete a trade that really happened. The tightest two
+  // requests ever get in the corpus is 3,655 ms, so a refusal that far behind must claim nothing.
+  const k = new TradeJournal(freshDir(), nameOf2);
+  const c = replay([SELL_REFUSED_1,
+    REFUSAL_1.replace("19:57:49.250", "19:57:52.569"),   // +3,655 ms: outside the window
+    clockLine("2026-08-23T19:58:00.000Z")], k);
+  check("a refusal 3,655 ms late claims nothing", c.refused().length === 0, String(c.refused().length));
+  check("...and the request it did not claim is booked", k.view().unmatched.length === 1,
+    String(k.view().unmatched.length));
+}
+
+console.log("\n-- the clock is the LOG's, not the wall's --");
+{
+  // 🔴 THE DESIGN CONSTRAINT. A wall-clock timer behaves one way while tailing and another while
+  // replaying a rotated log — and the replay is where it would commit a request before the refusal
+  // two lines down had been read. Nothing here sleeps, and everything below turns on timestamps.
+  const c = new TradeConfirmations();
+  check("a request is HELD, not returned", c.line(SELL_REFUSED_1).length === 0, "on the request line");
+  check("...still held a second later", c.line(clockLine("2026-08-23T19:57:49.900Z")).length === 0, "+986 ms");
+  check("...and released by a line past the window", c.line(clockLine("2026-08-23T19:57:51.000Z")).length === 1, "+2,086 ms");
+  check("...exactly once", c.line(clockLine("2026-08-23T19:57:59.000Z")).length === 0, "no double release");
+
+  // End of a COMPLETE file is the same rule, not an exception to it: no refusal ever arrived.
+  const d = new TradeConfirmations();
+  d.line(SELL_REFUSED_1);
+  check("flush() releases what a finished log left held", d.flush().length === 1, "flush");
+  check("...and pending() said so beforehand", new TradeConfirmations().line(SELL_REFUSED_1).length === 0, "held");
+
+  // A line with no readable timestamp is not evidence that time passed.
+  const e = new TradeConfirmations();
+  e.line(SELL_REFUSED_1);
+  check("an unstamped line releases nothing", e.line("a continuation line with no timestamp").length === 0, "unstamped");
+  check("...and the request is still there to be released", e.flush().length === 1, "flush");
+}
+
+console.log("\n-- a refusal only claims its own direction --");
+{
+  // All 39 refusals on record are type[Selling]. The field names a direction, so Buying is a shape
+  // the game can write and the app must not assume away.
+  const c = new TradeConfirmations();
+  c.line(SELL_REFUSED_1);
+  c.line(REFUSAL_1.replace("type[Selling]", "type[Buying]"));
+  check("a Buying refusal does not kill a held SELL", c.refused().length === 0, String(c.refused().length));
+  check("...and the sell survives to be booked", c.flush().length === 1, "flush");
+
+  const d = new TradeConfirmations();
+  d.line(BUY_COMPBOARD);
+  d.line(REFUSAL_1.replace("19:57:49.250", "2026-08-23T18:52:33.318").replace("type[Selling]", "type[Buying]")
+    .replace("<2026-08-23T19:57:49.250Z>", "<2026-08-23T18:52:33.318Z>"));
+  check("...while a Buying refusal DOES kill a held buy", d.refused().length === 1, String(d.refused().length));
+}
+
+console.log("\n-- the seam between the startup seed and the live watcher --");
+{
+  // 🔴 ONE CONFIRMER SPANS BOTH, and that is the whole reason `liveConfirm` is a module singleton
+  // in `trade-routes.ts`. The seed reads the current log up to a byte and the watcher takes over
+  // from exactly there, so a request in the seed's last bytes has its refusal in the watcher's
+  // first ones. A fresh instance — or a `flush()` at the handover — commits the phantom sale.
+  const j = new TradeJournal(freshDir(), nameOf2);
+  const c = new TradeConfirmations();
+  for (const p of c.line(SELL_REFUSED_1)) j.apply(p);     // ...end of the seed read
+  for (const p of c.line(REFUSAL_1)) j.apply(p);          // first line the watcher tails
+  for (const p of c.line(clockLine("2026-08-23T19:58:00.000Z"))) j.apply(p);
+  check("a refusal on the far side of the seam still kills the request",
+    j.view().unmatched.length === 0 && c.refused().length === 1,
+    `${j.view().unmatched.length} unmatched / ${c.refused().length} refused`);
+
+  // CONTROL: flushing at the seam is precisely the mistake, and it books the fiction.
+  const k = new TradeJournal(freshDir(), nameOf2);
+  const seed = new TradeConfirmations();
+  seed.line(SELL_REFUSED_1);
+  for (const p of seed.flush()) k.apply(p);              // <- the mistake
+  const tail = new TradeConfirmations();
+  for (const p of tail.line(REFUSAL_1)) k.apply(p);
+  check("CONTROL: flushing at the seam books the refused sale", k.view().unmatched.length === 1,
+    String(k.view().unmatched.length));
+}
+
+console.log("\n-- the prefilter a bulk replay uses must not narrow to the requests --");
+{
+  // 🔴 THE BACK DOOR. `backfillFromBackups` skips lines cheaply before parsing them, and its old
+  // filter was `CommodityUIProvider::Send` — which matches every request and not one refusal. The
+  // marker is exported from the parser so the two cannot drift apart again.
+  check("the exported marker matches a request", SELL_REFUSED_1.includes(TRADE_LOG_MARKER), TRADE_LOG_MARKER);
+  check("...AND matches a refusal", REFUSAL_1.includes(TRADE_LOG_MARKER), TRADE_LOG_MARKER);
+  check("...and still excludes an unrelated line", !clockLine("2026-08-23T19:00:00.000Z").includes(TRADE_LOG_MARKER), "");
+  // The narrowed filter, stated as the thing it must never be again.
+  check("CONTROL: the old `::Send` filter would have dropped the refusal",
+    !REFUSAL_1.includes("CommodityUIProvider::Send"), "the shipped bug");
 }
 
 cleanupTmp();
