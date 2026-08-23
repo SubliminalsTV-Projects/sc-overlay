@@ -6143,6 +6143,133 @@ const STOW = `(async () => {
 })()`;
 
 
+/* ── the trade journal: cargo that can never leave ──────────────────────────────────────────────
+   Two complaints from Sub, one section. He flew a loaded ship into a wall to see what would happen
+   and the loot has been listed ever since; and a lot he had sold down from reads "on the elevator"
+   under a heading that says "Still aboard", which is the opposite claim. *"I don't even know what
+   that's supposed to mean."*
+
+   🔑 THE FIXTURE IS THE RIGHT TOOL HERE AND THE WRONG ONE ONE LINE LATER. Rendering rules are what
+   this suite is for, so a hand-written journal is correct — it makes every row shape reachable on
+   a machine where nobody has traded. But the round trip (does the button really remove the lot)
+   is NOT assertable that way: a fixture would be asserting my own object. That half is covered by
+   `npm run test:trade`, which drives the real `TradeJournal` including a restart. What IS checked
+   here is the wiring in between: the button issues the right request, with the right lot id. */
+const TRADEHOLD = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  /* Clicked, not assigned — the view lives in a let inside the page's own closure, so setting it
+     from here would only make a global the page never reads. Same trap the route suite documents. */
+  const tab = document.getElementById("tabJournal");
+  ok("the journal tab exists to be driven", !!tab, tab ? "found" : "(no #tabJournal)");
+  if (!tab) return out;
+  tab.click();
+  await sleep(500);   // let the load() that click fires come back before overwriting it
+
+  /* Sub's own board, as the sidecar really reports it: two lots bought to the elevator, two loaded
+     straight in, and one already written off. The elevator lot is the one he was reading. */
+  const lot = (id, name, scu, price, auto, ago) => ({
+    id: id, resourceGuid: "g-" + id, commodity: name, scu: scu, pricePerScu: price,
+    shopName: "TDD_SCShop-001", at: new Date(Date.now() - ago).toISOString(),
+    atMs: Date.now() - ago, autoLoaded: auto,
+  });
+  const DAY = 86400000;
+  tradeJournal = {
+    runs: [], unmatched: [],
+    open: [lot("lot2", "Processed Food", 1, 1201.95, false, 3 * DAY),
+           lot("lot3", "Carbon", 8, 268.83, true, 3 * DAY)],
+    writtenOff: [Object.assign(lot("lot1", "Tungsten", 4, 8265, false, 3 * DAY),
+                               { forgottenAt: new Date().toISOString(), cost: 33060 })],
+    today: { runs: 0, scu: 0, cost: 0, revenue: 0, profit: 0, minutes: 0, profitPerHour: null,
+             unpricedRevenue: 0, unpricedSales: 0 },
+    allTime: { runs: 0, scu: 0, cost: 0, revenue: 0, profit: 0, minutes: 0, profitPerHour: null,
+               unpricedRevenue: 0, unpricedSales: 0 },
+  };
+  render();
+  await sleep(120);
+
+  const body = document.getElementById("body");
+  const text = body ? body.textContent : "(no #body)";
+
+  /* Defensive, and it matters in the DETAIL as much as in the condition: the detail argument is
+     evaluated eagerly, so reaching through a missing element there kills the whole suite and the
+     run reports a small pass. */
+  const rows = Array.prototype.slice.call(document.querySelectorAll(".trow"));
+  const rowText = (r) => (r && r.textContent) ? r.textContent : "(empty row)";
+  const secs = Array.prototype.slice.call(document.querySelectorAll(".sec"));
+  const secText = (s) => (s && s.textContent) ? s.textContent : "(empty section)";
+
+  // ── 🔑 POSITIVE FIRST. Everything below is "the page does not say X", and a page that rendered
+  // nothing satisfies all of it for free.
+  ok("the held lots render at all", rows.length >= 2, rows.length + " rows");
+  const held = rows.filter((r) => rowText(r).indexOf("Processed Food") >= 0
+                                || rowText(r).indexOf("Carbon") >= 0);
+  ok("...both of them", held.length === 2, held.length + " of 2");
+
+  // ── the heading no longer contradicts the rows underneath it
+  const heading = secs.map(secText).join(" | ");
+  ok("the section says what the journal actually knows", heading.indexOf("Bought, not sold") >= 0, heading);
+  ok('...and drops "Still aboard", which the rows below it contradicted',
+     heading.indexOf("Still aboard") < 0, heading);
+
+  // ── the location chip is a fact about the PURCHASE, so it is past tense
+  const elevatorRow = held.filter((r) => rowText(r).indexOf("Processed Food") >= 0)[0];
+  const elevatorText = rowText(elevatorRow);
+  ok("an elevator lot still says where the game put it", elevatorText.indexOf("elevator") >= 0, elevatorText);
+  ok('...in the PAST tense — "went to the elevator", not "on the elevator"',
+     elevatorText.indexOf("went to the elevator") >= 0 && elevatorText.indexOf("on the elevator") < 0,
+     elevatorText);
+  ok("...and its age is stated, because the claim is three days old",
+     elevatorText.indexOf("d ago") >= 0 || elevatorText.indexOf("h ago") >= 0, elevatorText);
+  const chips = elevatorRow ? elevatorRow.querySelectorAll(".badge") : [];
+  const chipTitle = chips.length ? (chips[chips.length - 1].title || "") : "(no chip)";
+  ok("...with the explanation on the chip rather than in the row",
+     chipTitle.indexOf("nothing in the log says where it is now") >= 0, chipTitle);
+
+  // ── 🔴 THE CONTROL SUB ASKED FOR
+  const xOf = (r) => {
+    const bs = r ? Array.prototype.slice.call(r.querySelectorAll("button")) : [];
+    return bs.filter((b) => b.textContent === "\\u2715")[0] || null;
+  };
+  ok("every held lot carries a remove control", held.length > 0 && held.every((r) => !!xOf(r)),
+     held.map((r) => (xOf(r) ? "x" : "-")).join(""));
+  ok("...that says what it does without being clicked",
+     (xOf(elevatorRow) ? xOf(elevatorRow).title : "").indexOf("Cargo gone") >= 0,
+     xOf(elevatorRow) ? xOf(elevatorRow).title : "(no button)");
+
+  /* Stub the page's fetch so the click is observable without needing a real held lot on whatever
+     machine this runs on. Restored below — a suite that leaves fetch stubbed poisons every suite
+     after it. */
+  const realFetch = window.fetch;
+  let asked = "(nothing was requested)";
+  window.fetch = function (u, o) {
+    const s = String(u);
+    if (s.indexOf("/forget") >= 0) { asked = ((o && o.method) || "GET") + " " + s; }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(tradeJournal) });
+  };
+  const btn = xOf(elevatorRow);
+  if (btn) btn.click();
+  await sleep(200);
+  window.fetch = realFetch;
+
+  ok("clicking it asks the sidecar to forget that lot", asked.indexOf("/api/trade/journal/forget") >= 0, asked);
+  ok("...as a POST, so the loopback gate applies to it", asked.indexOf("POST ") === 0, asked);
+  ok("...naming the row that was clicked, not the first one",
+     asked.indexOf("lot=lot2") >= 0, asked);
+
+  // ── the money is still on the record, and still out of the profit
+  ok("a written-off lot is reported rather than silently gone",
+     text.indexOf("written off") >= 0, text.slice(-220));
+  ok("...saying plainly that it is NOT in the profit above",
+     text.indexOf("not counted in the profit") >= 0, text.slice(-220));
+
+  return out;
+})()`;
+
+
 app.whenReady().then(async () => {
   let fails = 0;
   const region0 = await readScanRegion();
@@ -6211,6 +6338,10 @@ app.whenReady().then(async () => {
     fails += await run("chrome over the native view", VIEWMASK, null);
     fails += await run("mining call-outs by verdict", MININGSAY, null, null, "mining.html");
     fails += await run("chat links + slash menu", CHATLINKS, null, null, "chat.html");
+    // ⚠️ Registered AHEAD of the two hauling suites for the reason stated further up: a throw used
+    // to take every suite behind it with it, and `hauling: honest loads, whole route` is the one
+    // that throws. Same page, so this costs nothing to place here.
+    fails += await run("hauling: the trade journal's held cargo", TRADEHOLD, null, null, "hauling.html");
     fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");
     fails += await run("hauling: stowage order + signature", STOW, null, null, "hauling.html");
     fails += await run("completion card holds while you use it", REPORTHOLD, null);
