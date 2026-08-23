@@ -506,6 +506,143 @@ check("an empty board quotes no rate at all",
     !!trip && trip.totalMinutes < 26.9, trip ? String(Math.round(trip.totalMinutes * 100) / 100) : "no trip");
 }
 
+// ── 🔴 COMMODITY BUYS IN THE SAME ROUTE ────────────────────────────────────
+//
+// The merged Route sequences whatever the player picked, from either source. What makes that
+// cheap is that `hauling-route.ts` was already cargo-agnostic: a buy is a pickup at the shop and a
+// drop-off at the buyer, with precedence between them, which is a haul. No second solver.
+//
+// Three rules are pinned here, and each fails differently:
+//   • an unbought pick routes with NO tonnage and the trip says its load figures are a floor;
+//   • a bought one carries its real tonnage and the caveat goes away;
+//   • a pick at a place the board already visits is ONE landing, not a sixth stop.
+{
+  const buy = (over: Record<string, unknown> = {}) => ({
+    id: "b1", resourceGuid: "accacd33-3a1a-4ec7-8b4a-14b9f028047c", commodity: "Processed Food",
+    from: { terminal: "TDD Area 18", body: "ArcCorp", system: "Stanton" },
+    to: { terminal: "Baijini Point", body: "ArcCorp", system: "Stanton" },
+    buyPrice: 1202, sellPrice: 1506, addedAt: 1, scu: null, boughtAt: null, shopName: null,
+    boxScu: null, boxCount: null, purchaseKey: null, autoLoaded: null,
+    ...over,
+  });
+  // The whole scenario set, because a single-contract board solves to no trip at all and every
+  // "nothing changed" assertion below would then be true for the most boring reason there is.
+  const board = () => viewOf(HAUL_SCENARIOS);
+
+  // POSITIVE FIRST, and it is the control for everything below: a board with no picks is exactly
+  // what it was, so any difference the fixture makes is the fixture's.
+  const bare = buildHaulingPlan(board(), data, { ship: "CRUS_Starlifter_C2" });
+  check("a board with no commodity picks has none, and no trip is caveated",
+    bare.trips.length > 0 && bare.buys.length === 0 && bare.trips.every((t) => !t.unknownScu),
+    `${bare.trips.length} trip(s), ${bare.trips[0]?.stops.length} stop(s)`);
+
+  // ⚠️ SOLD SOMEWHERE THE BOARD DOES NOT GO. The dev-replay board already visits Baijini Point by
+  // name, so a pick selling THERE merges into that landing — which is the next block's subject and
+  // would make "two new stops" false here for the right reason. Two fixtures, two rules.
+  const AWAY = { terminal: "Port Tressler", body: "microTech", system: "Stanton" };
+  const open = buildHaulingPlan(board(), data, { ship: "CRUS_Starlifter_C2", buys: [buy({ to: AWAY })] as never });
+  check("🔴 a pick with no tonnage yet is still ROUTED",
+    open.buys.length === 1 && open.buys[0].routed === true && open.buys[0].scu === null,
+    open.buys[0]?.reason ?? "routed");
+  check("...adding two stops to the run", open.trips[0].stops.length === bare.trips[0].stops.length + 2,
+    `${bare.trips[0].stops.length} -> ${open.trips[0].stops.length}`);
+  check("...with the shop before the buyer, exactly as a pickup precedes its drop-off", (() => {
+    const seq = open.trips[0].stops.flatMap((s) => s.actions.filter((a) => a.group === open.buys[0].group).map((a) => a.kind));
+    return seq.join(",") === "pickup,dropoff";
+  })(), open.trips[0].stops.flatMap((s) => s.actions.filter((a) => a.group === open.buys[0].group).map((a) => a.kind)).join(","));
+  check("...and the terminals are named, never numbered 'Site N'",
+    open.locationNames[open.buys[0].from.locationId ?? ""] === "TDD Area 18"
+    && open.locationNames[open.buys[0].to.locationId ?? ""] === "Port Tressler",
+    `${open.locationNames[open.buys[0].from.locationId ?? ""]} -> ${open.locationNames[open.buys[0].to.locationId ?? ""]}`);
+  check("...so the naming box never asks about a place the player just chose off a list",
+    open.unnamedPlaces.every((u) => u.locationId !== open.buys[0].from.locationId),
+    open.unnamedPlaces.map((u) => u.locationId).join(" "));
+  // 🔴 THE HONESTY RULE. An unknown quantity is not a zero, and the trip has to say so or the
+  // player reads a hold figure that will be wrong the moment they buy.
+  check("🔴 the trip says its load figures are a FLOOR", open.trips[0].unknownScu === true);
+  check("...and the unknown tonnage adds nothing to the peak",
+    open.trips[0].peakScu === bare.trips[0].peakScu,
+    `${bare.trips[0].peakScu} -> ${open.trips[0].peakScu}`);
+
+  // ── once the log has said ────────────────────────────────────────────────
+  const bought = buildHaulingPlan(board(), data, {
+    ship: "CRUS_Starlifter_C2",
+    buys: [buy({ scu: 24, boxScu: 8, boxCount: 3, shopName: "TDD_SCShop-001", autoLoaded: true,
+                 boughtAt: "2026-08-19T17:43:31.000Z", purchaseKey: "k" })] as never,
+  });
+  check("🔴 a bought pick carries the tonnage the log stated", bought.buys[0].scu === 24, String(bought.buys[0].scu));
+  check("...the caveat is gone, because nothing on the trip is unknown any more",
+    bought.trips[0].unknownScu === false);
+  check("...and the peak rises by exactly that much",
+    bought.trips[0].peakScu === bare.trips[0].peakScu + 24,
+    `${bare.trips[0].peakScu} -> ${bought.trips[0].peakScu}`);
+  // 🔑 STOW READS THE LOG'S OWN MANIFEST — three boxes of 8, not a partition of 24. This is the
+  // half of Sub's ruling that is easy to forget: the real figure "will override it", and the thing
+  // it overrides includes what the hold diagram plans against.
+  const boughtBoxes = (bought.pack?.placements ?? []).filter((p) => p.group === bought.buys[0].group);
+  check("🔴 Stow gets the bought cargo, as the boxes the line stated",
+    boughtBoxes.length === 3 && boughtBoxes.every((p) => p.scu === 8),
+    `${boughtBoxes.length} box(es): ${boughtBoxes.map((p) => String(p.scu)).join(",")}`);
+  // Paired negative: an UNBOUGHT pick has no tonnage, so it has no boxes and must draw none.
+  check("...while an unbought pick contributes no boxes at all",
+    (open.pack?.placements ?? []).every((p) => p.group !== open.buys[0].group));
+
+  // ── a pick at a place the board already visits is ONE landing ────────────
+  // 🔑 This is what "opportunistic" means — buy where you are already going. It falls out of the
+  // same name-merge that fixed two markers keying to one spaceport, which is why it needed no
+  // proximity rule and no second id space.
+  {
+    // POSITIVE FIRST: the board really does visit a place called Baijini Point, by the game's own
+    // Deliver line. Without this the merge below is "two things that both do not exist agree".
+    const boardPlace = Object.entries(bare.locationNames).find(([, n]) => n === "Baijini Point");
+    check("the board really visits a place the game NAMED",
+      !!boardPlace, boardPlace ? boardPlace.join(" = ") : Object.values(bare.locationNames).join(", "));
+
+    const merged = buildHaulingPlan(board(), data, {
+      ship: "CRUS_Starlifter_C2",
+      buys: [buy({ to: { terminal: "Baijini Point", body: "ArcCorp", system: "Stanton" } })] as never,
+    });
+    check("🔴 selling where the board already goes resolves to the board's OWN stop",
+      merged.buys[0].to.locationId === boardPlace?.[0],
+      `${merged.buys[0].to.locationId} vs ${boardPlace?.[0]}`);
+    /* The consequence, and the claim is deliberately narrower than "it costs nothing": ONE end
+       merged, so the run costs ONE new landing — the shop — where selling away costs two.
+       ⚠️ The first version of this assertion said "no extra landing" and was WRONG, which the
+       measurement caught: bare 3, merged 4, away 5. The shop is a place the board does not go, and
+       no amount of name-merging changes that. A pick is opportunistic at the end where it overlaps
+       and full price at the end where it does not. Both sides are measured so "fewer landings"
+       cannot be satisfied by a route that simply lost a stop. */
+    const landings = (p: typeof merged) => p.trips[0].stops.filter((s) => !s.sameSpot).length;
+    check("...so the run costs ONE new landing, where selling away costs two",
+      landings(merged) === landings(bare) + 1 && landings(open) === landings(bare) + 2,
+      `bare ${landings(bare)} · merged ${landings(merged)} · away ${landings(open)}`);
+    // ⚠️ And the merge must not eat the marker. A buy id carries no coordinates, so if it won the
+    // canonical slot the origin snap — which matches the player's read position against marker XYZ
+    // — would silently stop resolving at that place.
+    check("...and the MARKER id wins the merge, so the place keeps its coordinates",
+      (merged.buys[0].to.locationId ?? "").startsWith("@"), merged.buys[0].to.locationId ?? "null");
+  }
+
+  // ── a pick that cannot be routed is REPORTED, never dropped ──────────────
+  const broken = buildHaulingPlan(board(), data, {
+    ship: "CRUS_Starlifter_C2",
+    buys: [buy({ id: "b2", to: { terminal: "", body: null, system: null } })] as never,
+  });
+  check("a pick missing an end is listed with a reason, not silently discarded",
+    broken.buys.length === 1 && broken.buys[0].routed === false && !!broken.buys[0].reason,
+    broken.buys[0]?.reason ?? "(no reason)");
+  check("...and its stops are nowhere in the route",
+    broken.trips[0].stops.length === bare.trips[0].stops.length,
+    `${broken.trips[0].stops.length} vs ${bare.trips[0].stops.length}`);
+
+  // 🔴 CONTRACTS AND COMMODITIES ARE NEVER CO-RANKED, and the mechanism is that no buy ever gets a
+  // payout. Sub ruled out a shared profit-per-hour currency outright; this is what stops one
+  // appearing by accident.
+  check("🔴 a buy earns the route no payout, so nothing can weigh it against a contract",
+    open.rates.projected?.auec === bare.rates.projected?.auec,
+    `${bare.rates.projected?.auec} vs ${open.rates.projected?.auec}`);
+}
+
 // The bundle really is on disk where the server will look for it.
 check("the shipped orders file is the schema this module reads",
   JSON.parse(readFileSync(join(DATA_DIR, "hauling-orders.json"), "utf8")).schema === "sc-hauling-orders/1");

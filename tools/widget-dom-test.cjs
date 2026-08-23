@@ -6438,6 +6438,271 @@ const HAULING = `(async () => {
 // from it (missions deepest-first, destinations deepest-first inside a mission), and about the one
 // case where the whole view must disappear — an open hauler, whose boxes the station's arm places.
 //
+// 🔴 Suite: A COMMODITY IN THE ROUTE, BEFORE AND AFTER THE PURCHASE (2026-08-23).
+//
+// The merged Route sequences commodity buys alongside contracts, and a buy enters it with NO
+// tonnage — Sub decides how much at the kiosk and the log tells us afterwards. Everything here is
+// about the gap between those two moments, because that is where the widget can lie:
+//
+//   `num()` is `Number(n || 0).toLocaleString()`, so a null tonnage renders as "0". "0 SCU of
+//   Titanium" is not a missing figure, it is a WRONG one — it reads as the app having decided the
+//   run was not worth filling. Three places had to learn the difference: the action chip, the
+//   step's own tonnage line, and the hold/peak readings, which become FLOORS for the whole trip.
+//
+// ⚠️ FIXTURE, deliberately, and driven by assigning the page's `plan` binding the way the sibling
+// hauling suites do. This is a RENDERING claim: it must not pass or fail on whether the sidecar
+// happens to hold a picked run, and it must not write one into the player's own state to find out.
+const BUYROUTE = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  // One contract leg with a real tonnage, and one commodity buy with none. Both in one trip, so
+  // the two renderings sit side by side and cannot be confused for a whole-page state.
+  const brStop = (name, kind, group, commodity, scu, hold, extra) => ({
+    id: name + ":" + kind, locationId: name, name: name, kind: kind,
+    minutes: 2, handlingMinutes: 1, loadAfterScu: hold, sameSpot: false,
+    actions: [{ missionId: "m1", title: "A contract", commodity: commodity, scu: scu, group: group, kind: kind }]
+      .concat(extra || []),
+  });
+  // The aboard argument is contract cargo with a REAL tonnage riding along, which is what makes the
+  // trip's floor non-zero. Both branches of the floor rendering need a fixture, or one is never
+  // exercised at all.
+  const brPlan = (bought, aboard) => ({
+    updatedAt: Date.now(),
+    ship: { className: "CRUS_Starlifter_C2", displayName: "Crusader C2", totalScu: 696, grids: [], source: "manual" },
+    contracts: [], buys: [{
+      id: "b1", group: "buyleg:b1", commodity: "Titanium", resourceGuid: "g1",
+      from: { terminal: "TDD Area 18", body: "ArcCorp", system: "Stanton", locationId: "TDD Area 18" },
+      to: { terminal: "Port Tressler", body: "microTech", system: "Stanton", locationId: "Port Tressler" },
+      buyPrice: 100, sellPrice: 140, scu: bought ? 48 : null,
+      boughtAt: bought ? "2026-08-23T13:07:44.000Z" : null, shopName: bought ? "TDD_SCShop-001" : null,
+      routed: true, reason: null,
+    }],
+    untracked: [], trackedMissionId: null,
+    trips: [{
+      stops: [
+        brStop("TDD Area 18", "pickup", "buyleg:b1", "Titanium", bought ? 48 : null, (bought ? 48 : 0) + (aboard || 0),
+               aboard ? [{ missionId: "m9", title: "Contract cargo", commodity: "Waste", scu: aboard, group: "g9", kind: "pickup" }] : null),
+        brStop("Port Tressler", "dropoff", "buyleg:b1", "Titanium", bought ? 48 : null, aboard || 0),
+      ],
+      landings: 2, totalMinutes: 8, travelMinutes: 4, handlingMinutes: 4,
+      peakScu: (bought ? 48 : 0) + (aboard || 0), unknownScu: !bought, method: "exact",
+    }],
+    stranded: [], locationNames: { "TDD Area 18": "TDD Area 18", "Port Tressler": "Port Tressler" },
+    unnamedPlaces: [], completedPickups: [],
+    startResolved: { asked: null, resolved: null, detected: null, detectedToken: null, detectedAt: null },
+    unrouted: [], pack: null, aboardScu: 0, onPadScu: 0,
+    rates: { actual: null, projected: null, payoutModelled: false },
+    autoLoad: { hull: false, eligible: 0, live: 0 },
+    totals: { scu: bought ? 48 : 0, capacityScu: 696, liveContracts: 0, unknownContracts: 0, recentPayout: 0, totalMinutes: 8 },
+    notes: [],
+  });
+
+  /* Driven the way a player drives it — the view lives in a let inside the page's own closure, so
+     assigning it from here would only make a global the page never reads. Click, then wait for the
+     load() that click fires to come back BEFORE the fixture is assigned, or the sidecar's real
+     (empty) board lands on top of it. */
+  document.getElementById("tabRoute").click();
+  await sleep(900);
+
+  /* ⚠️ A BARE ASSIGNMENT TO plan, NEVER ONE QUALIFIED WITH window. The page declares plan with let
+     at script top level, so the binding lives in the global LEXICAL environment and an own-property
+     on the window object is shadowed by it — the page goes on reading its own value while the suite
+     believes it swapped it. The first cut of this suite did exactly that and measured the sidecar's
+     real board, which happened to hold a bought commodity, so three assertions passed for entirely
+     the wrong reason and three failed for it. */
+  const brShow = (bought, aboard) => {
+    plan = brPlan(bought, aboard);
+    render();
+    return document.getElementById("body");
+  };
+  const brText = (el) => (el && el.textContent ? el.textContent : "");
+
+  // ── before the purchase ─────────────────────────────────────────────────
+  const openBody = brShow(false);
+  // POSITIVE FIRST. Every "does not say 0 SCU" assertion below is free on a page that drew
+  // nothing at all, which is exactly what a broken fixture produces.
+  const openSteps = [].slice.call(openBody.querySelectorAll(".stop"));
+  ok("the commodity run really renders as route steps", openSteps.length === 2,
+     openSteps.length + " step(s)");
+  ok("...naming the terminals it was picked between",
+     brText(openBody).indexOf("TDD Area 18") > -1 && brText(openBody).indexOf("Port Tressler") > -1,
+     brText(openBody).slice(0, 90));
+  // 🔴 THE RULE. A tonnage nobody has stated must not render as a number, and zero is a number.
+  ok("🔴 an unbought commodity never renders as a tonnage",
+     brText(openBody).indexOf("0 SCU") === -1,
+     brText(openBody).indexOf("0 SCU") > -1 ? brText(openBody).slice(Math.max(0, brText(openBody).indexOf("0 SCU") - 40), brText(openBody).indexOf("0 SCU") + 10) : "no 0 SCU anywhere");
+  ok("...it says the amount is the player's to decide",
+     brText(openBody).toLowerCase().indexOf("up to you") > -1
+     || brText(openBody).toLowerCase().indexOf("you decide") > -1,
+     brText(openBody).slice(0, 160));
+  // 🔴 AND THE HOLD READINGS BECOME FLOORS. A run that will really carry 48 must not print a
+  // confident "hold 0" — the same class of mistake as a rep bar counting down to a rank already held.
+  // 🔴 A ZERO FLOOR IS NOT A FIGURE. With the whole load still to be bought the honest reading is
+  // words: a "greater-or-equal zero" is arithmetically true, says nothing at all (every hold is at
+  // least empty) and reads as the app having decided the run is not worth loading. The first cut of
+  // this suite asserted the marker alone and so accepted exactly that.
+  const openHold = openBody.querySelector(".hold");
+  ok("🔴 a hold that is entirely still to be bought says so in words, not as a zero",
+     brText(openHold).indexOf("0") === -1 && brText(openHold).length > 5,
+     brText(openHold) || "(no .hold element)");
+  const openHead = openBody.querySelector(".sec");
+  ok("...and so does the trip's peak",
+     brText(openHead).indexOf("peak 0") === -1 && brText(openHead).indexOf("peak ≥ 0") === -1,
+     brText(openHead));
+
+  // The OTHER branch, and without it the floor-with-a-number rendering is never exercised at all:
+  // contract cargo aboard makes the floor real, and a real floor KEEPS its number, because a run
+  // that will hold at least 174 SCU is worth saying.
+  const mixBody = brShow(false, 174);
+  ok("🔴 a floor with contract cargo under it keeps its number, marked as a floor",
+     brText(mixBody.querySelector(".hold")).indexOf("≥") > -1
+     && brText(mixBody.querySelector(".hold")).indexOf("174") > -1,
+     brText(mixBody.querySelector(".hold")) || "(no .hold element)");
+  ok("...and so does the peak", brText(mixBody.querySelector(".sec")).indexOf("peak ≥ 174") > -1,
+     brText(mixBody.querySelector(".sec")));
+
+  // ── after the purchase ──────────────────────────────────────────────────
+  // The other half, and it is what tells the rules above apart from a widget that simply never
+  // prints a tonnage. Same fixture, one field different.
+  const doneBody = brShow(true);
+  ok("🔴 a bought commodity renders the tonnage the log stated",
+     brText(doneBody).indexOf("48 SCU") > -1, brText(doneBody).slice(0, 160));
+  ok("...and the floor markers are gone, because nothing is unknown any more",
+     brText(doneBody.querySelector(".hold")).indexOf("≥") === -1
+     && brText(doneBody.querySelector(".sec")).indexOf("≥") === -1,
+     brText(doneBody.querySelector(".sec")) + " | " + brText(doneBody.querySelector(".hold")));
+  ok("...and it does not still claim the amount is up to you",
+     brText(doneBody).toLowerCase().indexOf("up to you") === -1, brText(doneBody).slice(0, 160));
+
+  return out;
+})()`;
+
+//
+// 🔴 Suite: ONE FLAT TAB ROW, AND THE CREDIT FOLLOWS THE DATA (2026-08-23).
+//
+// The widget had two MODES with a bottom switch, each owning its own tabs, because there were two
+// Route surfaces - contracts in Hauling, commodity runs in Trading. Merging Route into one
+// cargo-agnostic tab removed the reason for the split, so the modes went and the five tabs became
+// one row. Two things then have to be pinned, and they fail in completely different ways:
+//
+//  1. THE ROW ITSELF. Sub chose "Commodities" over "Planner" knowing it wraps to two lines at the
+//     320px minimum (measured: the row is 296px, five tabs need 328.8px). So the assertion is NOT
+//     "it fits" - it is that wrapping is what happens and the PAGE still does not scroll sideways.
+//     A row that overflowed instead of wrapping would leave a tab unreachable at minW.
+//  2. THE UEX CREDIT. It used to live in the mode bar and show in Trading mode. The bar is gone
+//     and the credit could not go with it: UEX's data is on the Commodities tab, and an
+//     attribution has to be present where the data is. Both halves are asserted - present there,
+//     absent everywhere else - because "not shown on Route" is satisfied for free by a credit that
+//     never shows at all, which is the exact regression that would strip the attribution.
+//
+// 🔑 VISIBILITY IS READ FROM COMPUTED display, NEVER from `el.hidden`. `.creditbar` sets
+// display:flex, and a bare `hidden` attribute loses to any class rule setting display - so an
+// assertion starting at `.hidden` would stay green with the `[hidden]` guard deleted and the
+// credit painted on every tab. That guard is load-bearing and the control proves it.
+const TABROW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(600);
+
+  const rowPanel = document.getElementById("panel");
+  const rowTabs = rowPanel ? rowPanel.querySelector(".tabs") : null;
+  const rowBtns = () => rowTabs ? [].slice.call(rowTabs.querySelectorAll(".hbtn")) : [];
+  const rowLabels = () => rowBtns().map((b) => b.textContent.trim());
+
+  // POSITIVE FIRST. Every must-not-exist below is free on an empty row, and an empty row is
+  // exactly what a bad merge produces.
+  ok("the head carries a tab row with five tabs in it", rowBtns().length === 5,
+     rowBtns().length + ": " + rowLabels().join(" | "));
+  ok("...and they are the merged five, in the order Sub picked",
+     rowLabels().join("|") === "Contracts|Commodities|Route|Stow|Ledger",
+     rowLabels().join("|"));
+  ok("...every one of them reachable, with nothing hidden behind a mode",
+     rowBtns().length > 0 && rowBtns().every((b) => !b.hidden && getComputedStyle(b).display !== "none"),
+     rowBtns().filter((b) => b.hidden).length + " hidden");
+  // Paired with the positive above: the switch itself is really gone, not merely unstyled.
+  ok("...and the Hauling / Trading mode switch is gone",
+     !document.getElementById("modeHaul") && !document.getElementById("modeTrade"),
+     document.getElementById("modeHaul") ? "modeHaul still present" : "absent");
+  // The retired Market tab. Its two sidecar routes still answer; only the tab went.
+  ok("...as is the Market tab it replaced", !document.getElementById("tabLookup"),
+     document.getElementById("tabLookup") ? "tabLookup still present" : "absent");
+
+  // ── the row at both ends of the width range ──────────────────────────────
+  // 🔑 Measured at the WIDGET's own limits: canvas.js gives hauling w 440, minW 320. A tab row
+  // that only behaves at the default has not been checked at the end Sub was describing.
+  const rowAt = async (w) => {
+    document.body.classList.add("embedded");
+    document.body.style.width = w + "px";
+    await sleep(120);
+    const tops = [];
+    for (const b of rowBtns()) {
+      const t = Math.round(b.getBoundingClientRect().top);
+      if (tops.indexOf(t) < 0) tops.push(t);
+    }
+    const right = rowTabs.getBoundingClientRect().right;
+    let past = 0;
+    for (const b of rowBtns()) if (b.getBoundingClientRect().right > right + 0.5) past++;
+    return { lines: tops.length, past: past, scroll: document.body.scrollWidth,
+             h: Math.round(rowTabs.getBoundingClientRect().height) };
+  };
+
+  const row320 = await rowAt(320);
+  ok("at the 320px minimum the row WRAPS rather than overflowing",
+     row320.lines === 2 && row320.past === 0,
+     row320.lines + " line(s), " + row320.past + " tab(s) past the right edge, " + row320.h + "px tall");
+  // 🔴 The invariant the wrap exists to protect. body.scrollWidth once read 333 at a 320px
+  // viewport on this very widget, which nobody had reported and only measuring at minW found.
+  ok("...and the page still does not scroll sideways there",
+     row320.scroll <= 320, "body.scrollWidth " + row320.scroll);
+
+  const row440 = await rowAt(440);
+  ok("at the 440px default it is a single line", row440.lines === 1 && row440.past === 0,
+     row440.lines + " line(s), " + row440.h + "px tall");
+  ok("...so the wrap really is a narrow-width behaviour, not the normal one",
+     row320.h > row440.h, row320.h + "px at 320 vs " + row440.h + "px at 440");
+  document.body.style.width = "";
+  await sleep(120);
+
+  // ── the credit follows the data ──────────────────────────────────────────
+  const rowBar = document.getElementById("creditbar");
+  // 🔑 COMPUTED display, not the attribute. See the header note: the attribute alone cannot see
+  // the deleted [hidden] guard, and that is the regression that paints the credit everywhere.
+  const rowBarUp = () => !!rowBar && getComputedStyle(rowBar).display !== "none"
+    && rowBar.getBoundingClientRect().height > 0;
+  const rowGo = async (id) => { document.getElementById(id).click(); await sleep(700); };
+
+  ok("the credit strip survived the mode bar it used to live in", !!rowBar,
+     rowBar ? "present" : "(no #creditbar)");
+
+  await rowGo("tabTrade");
+  ok("🔴 UEX is credited on Commodities, where their data is on screen", rowBarUp(),
+     rowBar ? "display=" + getComputedStyle(rowBar).display + " h=" + Math.round(rowBar.getBoundingClientRect().height) : "none");
+  // EITHER the badge OR the words, because the markup swaps one for the other when the image
+  // cannot load. Asserting the <img> alone goes red for the fallback that keeps the credit up.
+  const rowMark = document.getElementById("uexmark");
+  const rowWords = document.getElementById("uexname");
+  const rowCredited = (rowMark && rowMark.getAttribute("alt") && rowMark.getAttribute("alt").toLowerCase().indexOf("uex") > -1)
+    || (rowWords && rowWords.textContent.toLowerCase().indexOf("uex") > -1);
+  ok("...by badge or by name, whichever the image could manage", !!rowCredited,
+     rowMark ? "badge alt=" + rowMark.getAttribute("alt") : rowWords ? "words=" + rowWords.textContent : "(neither)");
+
+  // The other half, and it is the half that makes it an attribution rather than a logo.
+  const rowElsewhere = [];
+  for (const id of ["tabAdvisor", "tabRoute", "tabLayout", "tabJournal"]) {
+    await rowGo(id);
+    if (rowBarUp()) rowElsewhere.push(document.getElementById(id).textContent.trim());
+  }
+  ok("...and nowhere else, because none of those tabs render a UEX quote",
+     rowElsewhere.length === 0,
+     rowElsewhere.length ? "credited on " + rowElsewhere.join(", ") : "hidden on all four");
+
+  return out;
+})()`;
+
 // Same technique as HAULING above: the page's own `plan` binding is assigned directly, so these are
 // rendering rules tested deterministically with no game and no sidecar state.
 // 🔴 Suite: THE RUNS ROW SURVIVES 320px - the regression this row shape exists to prevent.
@@ -6488,9 +6753,15 @@ const RUNSNARROW = `(async () => {
 
   // Driven the way a player drives it. Assigning the page's own view binding would only make a global
   // the page never reads - executeJavaScript runs in the page's GLOBAL scope, not its closure.
-  document.getElementById("modeTrade").click();
-  await sleep(300);
-  document.getElementById("tabTrade").click();
+  // ⚠️ RE-POINTED 2026-08-23. This used to click #modeTrade first, because the tab was hidden
+  // behind a Trading mode. The modes are merged away and that button no longer exists, so the
+  // click threw on null and took the whole suite with it. One click now, and the tab is a peer of
+  // Contracts and Route rather than something you have to switch modes to reach.
+  var tradeTab = document.getElementById("tabTrade");
+  ok("the Commodities tab is reachable without switching modes", !!tradeTab && !tradeTab.hidden,
+     tradeTab ? "label=" + tradeTab.textContent : "(no #tabTrade)");
+  if (!tradeTab) return out;
+  tradeTab.click();
   await sleep(1200);
 
   const panel = document.getElementById("panel");
@@ -6911,6 +7182,8 @@ app.whenReady().then(async () => {
     // ⚠️ Registered AHEAD of the two hauling suites for the reason stated further up: a throw used
     // to take every suite behind it with it, and `hauling: honest loads, whole route` is the one
     // that throws. Same page, so this costs nothing to place here.
+    fails += await run("hauling: one flat tab row, and the credit follows the data", TABROW, null, null, "hauling.html");
+    fails += await run("hauling: a commodity in the route, before and after the buy", BUYROUTE, null, null, "hauling.html");
     fails += await run("hauling: the Runs row survives 320px", RUNSNARROW, null, null, "hauling.html");
     fails += await run("hauling: the trade journal's held cargo", TRADEHOLD, null, null, "hauling.html");
     fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");

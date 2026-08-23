@@ -34,7 +34,22 @@ export interface Vec3 {
 export interface StopAction {
   contractId: string;
   kind: "pickup" | "dropoff";
-  scu: number;
+  /**
+   * How much cargo this action moves, in SCU.
+   *
+   * 🔴 OPTIONAL, AND ONLY EVER BECAUSE THE PLAYER HAS NOT BOUGHT IT YET. A hauling contract always
+   * states its tonnage, so every contract action carries a number and nothing about contract
+   * routing changes. A COMMODITY leg does not: Sub decides how much to buy when he is standing at
+   * the kiosk, and the log then says what he really bought. Sub: "they don't need to pick it. They
+   * can decide when they get there and when they buy it, we'll know how much they bought and then
+   * it'll override it."
+   *
+   * ⚠️ So `undefined` means UNKNOWN, never zero. It is not a solver variable and nothing here ever
+   * chooses a value for it — an unknown quantity simply contributes no load, and every plan
+   * carrying one says so through `RoutePlan.unknownScu` so a load figure is read as a FLOOR
+   * rather than as a measurement.
+   */
+  scu?: number;
   commodity?: string;
 }
 
@@ -55,10 +70,17 @@ export interface RouteContract {
   title?: string;
 }
 
-/** One commodity moving from A to B for a contract — the shape `buildStops` consumes. */
+/**
+ * One commodity moving from A to B — the shape `buildStops` consumes.
+ *
+ * 🔑 `contractId` is a GROUPING KEY, not a mission reference. It is what makes a pickup and its
+ * drop-off the same piece of work, which is exactly as true of a commodity bought to sell as it is
+ * of a contract's cargo. Nothing in this module reads it as a mission.
+ */
 export interface HaulLeg {
   contractId: string;
-  scu: number;
+  /** SCU. Omit when the player has not bought it yet — see `StopAction.scu`. */
+  scu?: number;
   fromLocation: string;
   toLocation: string;
   commodity?: string;
@@ -121,6 +143,13 @@ export interface RoutePlan {
   auecPerHour: number;
   /** Most SCU held at any point — what the ship actually has to be able to carry. */
   peakScu: number;
+  /**
+   * 🔴 TRUE WHEN SOME LEG IN THIS TRIP HAS NO QUANTITY YET, which makes `peakScu` and every
+   * `loadAfterScu` a FLOOR rather than a figure. A caller that prints either without saying so is
+   * telling the player their hold is emptier than it will be. False for every contract-only route,
+   * because a contract always states its tonnage.
+   */
+  unknownScu: boolean;
   contractIds: string[];
   method: "exact" | "heuristic";
 }
@@ -132,6 +161,8 @@ export interface RunPlan {
   totalMinutes: number;
   payout: number;
   auecPerHour: number;
+  /** True when ANY trip carries a leg of unknown quantity — see `RoutePlan.unknownScu`. */
+  unknownScu: boolean;
 }
 
 const DEFAULTS = {
@@ -161,9 +192,25 @@ function euclidean(a: Vec3, b: Vec3): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
+/** SCU an action moves. An UNKNOWN quantity moves nothing we can count — never zero, see below. */
+const actScu = (a: StopAction): number => a.scu ?? 0;
+
+/**
+ * Net SCU this visit adds to the hold.
+ *
+ * 🔴 AN UNKNOWN QUANTITY COUNTS AS NOTHING, AND THAT IS THE ONLY HONEST CHOICE AVAILABLE. The
+ * alternatives are worse in both directions: assume a number and the solver refuses routes over a
+ * capacity nobody has spent, or refuse to route the leg at all and the player cannot plan the buy
+ * they opened the tab to plan. Counting nothing makes the load model a FLOOR — every figure derived
+ * from it is at least this much — which `unknownScu` then states outright so no caller can mistake
+ * a floor for a measurement.
+ */
 function delta(stop: RouteStop): number {
-  return stop.actions.reduce((sum, a) => sum + (a.kind === "pickup" ? a.scu : -a.scu), 0);
+  return stop.actions.reduce((sum, a) => sum + (a.kind === "pickup" ? actScu(a) : -actScu(a)), 0);
 }
+
+/** Does this visit move cargo whose quantity nobody has stated yet? */
+const hasUnknown = (stop: RouteStop): boolean => stop.actions.some((a) => a.scu == null);
 
 const locOf = (s: RouteStop): string => s.locationId ?? s.id;
 
@@ -451,8 +498,8 @@ function toPlan(ctx: Ctx, solved: Solved, contracts: readonly RouteContract[], o
     const d = sameSpot ? 0 : a && b ? dist(a, b) : null;
     if (d !== null) totalDistanceM += d;
     // Drop off before picking up — that is the order at an elevator, and it keeps the peak honest.
-    for (const act of stop.actions) if (act.kind === "dropoff") load -= act.scu;
-    for (const act of stop.actions) if (act.kind === "pickup") load += act.scu;
+    for (const act of stop.actions) if (act.kind === "dropoff") load -= actScu(act);
+    for (const act of stop.actions) if (act.kind === "pickup") load += actScu(act);
     for (const act of stop.actions) carried.add(act.contractId);
     peakScu = Math.max(peakScu, load);
     legs.push({
@@ -475,6 +522,9 @@ function toPlan(ctx: Ctx, solved: Solved, contracts: readonly RouteContract[], o
     payout,
     auecPerHour: solved.minutes > 0 ? payout / (solved.minutes / 60) : 0,
     peakScu,
+    // Only the visits this trip actually flies count — a leg left for a later trip is not a reason
+    // to caveat this one's numbers.
+    unknownScu: solved.order.some((i) => hasUnknown(ctx.stops[i])),
     contractIds: done.map((c) => c.id),
     method: solved.method,
   };
@@ -518,7 +568,7 @@ export function planRun(
   const placesOf = new Map<string, Set<string>>();
   for (const s of stops) {
     for (const a of s.actions) {
-      if (a.kind === "pickup") scuOf.set(a.contractId, (scuOf.get(a.contractId) ?? 0) + a.scu);
+      if (a.kind === "pickup") scuOf.set(a.contractId, (scuOf.get(a.contractId) ?? 0) + actScu(a));
       if (!placesOf.has(a.contractId)) placesOf.set(a.contractId, new Set());
       placesOf.get(a.contractId)!.add(locOf(s));
     }
@@ -577,5 +627,6 @@ function summarise(trips: RoutePlan[], stranded: string[]): RunPlan {
     totalMinutes,
     payout,
     auecPerHour: totalMinutes > 0 ? payout / (totalMinutes / 60) : 0,
+    unknownScu: trips.some((t) => t.unknownScu),
   };
 }

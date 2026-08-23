@@ -18,6 +18,8 @@ import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
 import { canAutoLoad } from "./hauling-autoload.js";
 import { buildHaulingPlan, gridsOf } from "./hauling-plan.js";
+import { HaulingBuys } from "./hauling-buys.js";
+import type { CommodityPurchase } from "./trade-log.js";
 import { tradeRoutes, tradeLogLine, tradeTable } from "./trade-routes.js";
 import { verseRoutes } from "./verse-routes.js";
 import { largestBoxScu } from "./cargo-boxes.js";
@@ -646,9 +648,30 @@ const economy = new MiningEconomyStore(dataDir);
 // Bundled reference data for the hauling optimiser (see HaulingDataStore). Served via
 // /api/ships, /api/hauling-orders and /api/locations; the widget is not built yet.
 const haulingData = new HaulingDataStore(dataDir);
+/**
+ * The commodity runs the player picked in the Commodities tab, to be sequenced into the same route
+ * as the contracts. See `hauling-buys.ts` — the tonnage on one of these is NEVER chosen, it arrives
+ * from the log when the purchase happens.
+ */
+const haulingBuys = new HaulingBuys(userDir);
 /** Everything the commodity-trading subsystem needs. Declared once so the route handler and the
  *  three log-feed sites cannot drift apart; every field is read lazily inside that module. */
-const tradeDeps = { dataDir, userDir, economy, haulingData, system: currentSystem, logPath: () => config.logPath };
+const tradeDeps = {
+  dataDir, userDir, economy, haulingData, system: currentSystem, logPath: () => config.logPath,
+  /* 🔴 THE PURCHASE OVERRIDE, HOOKED ON THE PARSE RATHER THAN AT THE THREE FEED SITES. This is the
+     other half of "they don't need to pick it… we'll know how much they bought and then it'll
+     override it": a pick routed with an unknown tonnage learns the real one here, and the route,
+     the hold figures and the Stow diagram all follow from that.
+     🔑 The re-broadcast is a CHANGE SIGNAL, not the payload — the widget re-asks for the plan,
+     which it must anyway because the plan depends on the player's own overrides too. Without it a
+     purchase made while the widget is open would sit in the file until something else moved. */
+  onPurchase: (p: CommodityPurchase) => {
+    const filled = haulingBuys.applyPurchase(p);
+    if (!filled) return;
+    console.log(`[hauling] buy filled from the log: ${filled.commodity} ${filled.scu} SCU at ${filled.shopName ?? "an unnamed shop"}`);
+    if (haulingClients.size) haulingSend({ kind: "state", view: hauling.view() });
+  },
+};
 {
   const c = haulingData.counts();
   console.log(`[hauling] ships: ${c.ships}, contracts: ${c.contracts}, locations: ${c.locations}` +
@@ -2991,6 +3014,86 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.end(JSON.stringify({ ok: !!id }));
     return;
   }
+  /**
+   * 🔴 THE COMMODITY PICKS — the two writes that let a commodity run into the route.
+   *
+   * ⚠️ THEY ARE SERVER-SIDE STATE, NOT `localStorage`, and that is not a preference. A widget
+   * iframe RELOADS whenever the player regroups or hides it, so anything the route must survive a
+   * regroup with has to live where the plan is solved. The same rule the chat widget's pins follow.
+   *
+   * ⚠️ NEITHER TAKES A TONNAGE, and neither may ever grow one. See hauling-buys.ts: the quantity
+   * comes from the purchase line and from nowhere else. A `scu` parameter here would be the exact
+   * optimiser Sub ruled out, wearing a different hat.
+   *
+   * Both are POSTs, so `overlay-server.ts` has already refused anything that is not from this
+   * machine AND anything carrying a foreign `Origin` before either is reached.
+   */
+  if (url === "/api/hauling/buy" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    const str = (v: unknown, max = 120): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    const numOrNull = (v: unknown): number | null => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    const end = (v: unknown) => {
+      const o = (v ?? {}) as Record<string, unknown>;
+      return { terminal: str(o.terminal), body: str(o.body) || null, system: str(o.system, 40) || null };
+    };
+    const from = end(body.from), to = end(body.to);
+    const commodity = str(body.commodity, 80);
+    // 🔑 Refused rather than stored half-formed. A pick with no commodity or no ends cannot be
+    // routed and cannot be filled from the log either, so it would sit in the file as a row the
+    // player can only delete — which reads as the button being broken.
+    if (!commodity || !from.terminal || !to.terminal) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: "commodity_and_both_ends_required" }));
+      return;
+    }
+    /* 🔴 THE UUID IS RESOLVED HERE, NOT SENT BY THE WIDGET. The price table knows a commodity by
+       NAME and carries no uuid at all, while the log writes only a uuid — so somebody has to make
+       the join, and the sidecar is the side that holds `commodities.json`. Doing it here also means
+       a widget cannot get it wrong: this is the field that decides whether a purchase can ever be
+       matched to this pick, and a pick with a wrong one is unfillable in a way nothing on screen
+       would explain.
+       🔑 EXACTLY ONE MATCH OR NOTHING. An ambiguous name tells us nothing, and guessing between two
+       uuids would silently attach the tonnage of one commodity to a run in another. The caller is
+       told (`matchable`) so the row can say the tonnage will have to be watched for by hand rather
+       than appearing to be broken. */
+    const guidOf = (name: string): string | null => {
+      const want = name.trim().toLowerCase();
+      let hit: string | null = null;
+      try {
+        for (const [uuid, c] of Object.entries(economy.commodities() as Record<string, { name?: string | null }>)) {
+          if ((c?.name ?? "").trim().toLowerCase() !== want) continue;
+          if (hit) return null;     // ambiguous — see above
+          hit = uuid;
+        }
+      } catch { return null; }      // no dataset: the pick still routes, it just cannot self-fill
+      return hit;
+    };
+    const buy = haulingBuys.add({
+      commodity,
+      resourceGuid: guidOf(commodity),
+      from, to,
+      buyPrice: numOrNull(body.buyPrice),
+      sellPrice: numOrNull(body.sellPrice),
+    }, Date.now());
+    hauling.emit("change");   // re-solve and push, so the route picks it up immediately
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, buy, matchable: !!buy.resourceGuid }));
+    return;
+  }
+  if (url === "/api/hauling/buy/forget" && req.method === "POST") {
+    const id = new URL(req.url ?? "/", "http://localhost").searchParams.get("id") ?? "";
+    const gone = id ? haulingBuys.remove(id) : null;
+    if (gone) hauling.emit("change");
+    // 🔑 `removed: false` is a 200, not a 404 — the row is off the list either way, which is what
+    // the caller asked for, and a second click on a stale widget is not an error worth colouring
+    // red. Same rule as the trade journal's own forget. The flag is reported so a caller CAN tell.
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, removed: !!gone, buy: gone }));
+    return;
+  }
   // The solved plan: route order, box layout, and every load figure tagged with where it came
   // from. Computed HERE rather than in the widget because the solver and the datasets are both
   // server-side — the page only draws what this returns.
@@ -3032,6 +3135,9 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         ? { ...haulingLocate.pos, at: haulingLocate.at }
         : null,
       snapMetres: HAULING_LOCATE_SNAP_M,
+      // The commodity runs the player picked, sequenced into the same route — never ranked against
+      // the contracts. Read fresh on every plan so a purchase that landed a second ago is in it.
+      buys: haulingBuys.list(),
     });
     // 🔑 LEARN EVERY NAME THE GAME STATES. locations.json does not carry city spaceports —
     // "Riker Memorial Spaceport" is not in its 1,968 rows — so the dataset alone cannot offer the

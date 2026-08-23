@@ -44,12 +44,12 @@ function violations(plan: RoutePlan, all: readonly RouteStop[], capacity = Numbe
     const stop = all.find((s) => s.id === id)!;
     for (const a of stop.actions) {
       if (a.kind === "dropoff" && !picked.has(a.contractId)) bad.push(`${a.contractId} dropped at ${id} before pickup`);
-      if (a.kind === "dropoff") load -= a.scu;
+      if (a.kind === "dropoff") load -= a.scu ?? 0;
     }
     for (const a of stop.actions) {
       if (a.kind === "pickup") {
         picked.add(a.contractId);
-        load += a.scu;
+        load += a.scu ?? 0;
       }
     }
     if (load < 0) bad.push(`negative hold (${load}) after ${id}`);
@@ -189,6 +189,56 @@ check("a board past the exact limit falls back to the heuristic",
   manyStops.length > 14 && wide !== null && wide.method === "heuristic", `${manyStops.length} visits`);
 check("...and the heuristic route is still legal", wide !== null && violations(wide, manyStops).length === 0,
   wide ? violations(wide, manyStops).join(" | ") : "no plan");
+
+// ── 🔴 A QUANTITY NOBODY HAS STATED YET ────────────────────────────────────
+// The one change that lets a commodity leg into this solver. Sub buys when he gets there, and the
+// log then says how much — so a leg may enter the route with no tonnage at all. It is NOT a solver
+// variable: nothing here ever picks a number, it simply counts as no load and the plan says so.
+
+// POSITIVE FIRST, because every "unknownScu is false" assertion below is free if the fixture has
+// no quantities in it at all. This is what tells "the rule held" apart from "nothing was measured".
+check("the contract fixture really does state every tonnage",
+  stops.length > 0 && stops.every((s) => s.actions.length > 0 && s.actions.every((a) => typeof a.scu === "number")),
+  `${stops.reduce((n, s) => n + s.actions.length, 0)} actions`);
+check("...so a contract-only route is never caveated", plan.unknownScu === false);
+check("...at every capacity, and split across trips too",
+  inA2!.unknownScu === false && tight.unknownScu === false && tight.trips.every((t) => !t.unknownScu));
+
+// A leg with no `scu` at all. Same shape as a contract leg minus the one field.
+const openLegs: HaulLeg[] = [
+  { contractId: "buy1", fromLocation: "A", toLocation: "B", commodity: "Titanium" },
+];
+const openStops = buildStops(openLegs, forkPos);
+const open = planRoute(openStops, [{ id: "buy1", payout: 0 }]);
+check("a leg with no quantity still routes", open !== null && open.order.length === 2,
+  open ? open.order.join(" -> ") : "no plan");
+check("...buying before selling, exactly as a pickup precedes its drop-off",
+  open !== null && locOf(open.order[0]) === "A" && locOf(open.order[1]) === "B",
+  open ? open.order.map(locOf).join(" -> ") : "no plan");
+check("...and the plan says the load figures are a floor", open !== null && open.unknownScu === true);
+
+// 🔴 THE CAPACITY RULE, WITH BOTH SIDES POPULATED. A known tonnage over the hold is stranded; an
+// unknown one is not, because refusing it would be the solver asserting a number it was never
+// given. Asserting only the second half passes for free on a solver that strands nothing.
+const oneScu = { capacityScu: 1 };
+const knownTooBig = planRun(buildStops([{ contractId: "big", scu: 100, fromLocation: "A", toLocation: "B" }], forkPos),
+  [{ id: "big", payout: 1 }], oneScu);
+check("a KNOWN tonnage over the hold is stranded", knownTooBig.stranded.join() === "big", knownTooBig.stranded.join());
+check("...while an UNKNOWN one is not, at the same hold size",
+  planRun(openStops, [{ id: "buy1", payout: 0 }], oneScu).stranded.length === 0);
+
+// Mixed: a contract and a commodity buy over the same pair of places. The contract's tonnage is
+// counted exactly; the unknown one adds nothing to the peak, and the caveat rides along.
+const mixedStops = buildStops([
+  { contractId: "haul", scu: 50, fromLocation: "A", toLocation: "B" },
+  { contractId: "buy1", fromLocation: "A", toLocation: "B", commodity: "Titanium" },
+], forkPos);
+const mixed = planRoute(mixedStops, [{ id: "haul", payout: 90_000 }, { id: "buy1", payout: 0 }]);
+check("a mixed run carries both", mixed !== null && mixed.contractIds.sort().join() === "buy1,haul",
+  mixed ? mixed.contractIds.join() : "no plan");
+check("...the contract's own tonnage is counted exactly", mixed !== null && mixed.peakScu === 50, `peak ${mixed?.peakScu}`);
+check("...the unknown one adds nothing to it, and the plan admits the peak is a floor",
+  mixed !== null && mixed.unknownScu === true);
 
 // ── degenerate inputs ──────────────────────────────────────────────────────
 check("an empty board has no route", planRoute([], contracts) === null);

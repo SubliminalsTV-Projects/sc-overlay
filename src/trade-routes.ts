@@ -76,6 +76,20 @@ export interface TradeDeps {
   system?: () => string | null;
   /** The configured game.log path, used to find `logbackups/` for the journal catch-up. */
   logPath?: () => string | null;
+  /**
+   * Every purchase and sale this parser recognises, handed on to whoever else wants one.
+   *
+   * 🔴 IT IS A HOOK ON THE PARSE, NOT A FOURTH CALL SITE, AND THAT IS THE POINT. `tradeLogLine` is
+   * fed from THREE places in `overlay-server.ts` — the live watcher, the current-log seed and the
+   * rotated-log seed — and this repo has twice shipped a rule that was correct in two of the places
+   * it had to hold and missing from the third (`seedFromRotatedLog` skipping `detectPatch` counted
+   * PTU receipts as live). A consumer wired here is wired to all three by construction, and cannot
+   * be wired to two of them by accident.
+   *
+   * ⚠️ Called for a SELL as well as a BUY. The two differ by one field and reading them as one
+   * thing is a documented way to get a 100x error, so the consumer decides — this does not filter.
+   */
+  onPurchase?: (p: CommodityPurchase) => void;
 }
 
 let store: TradePriceStore | null = null;
@@ -113,7 +127,15 @@ export function tradeLogLine(line: string, deps: TradeDeps): void {
   if (!confirmed.length) return;
   const j = ensureJournal(deps);
   let changed = false;
-  for (const p of confirmed) if (j.apply(p)) changed = true;
+  for (const p of confirmed) {
+    if (j.apply(p)) changed = true;
+    // 🔑 AFTER the journal, and in its own try. The journal is this subsystem's own job and must not
+    // be skipped because a borrower threw; the borrower is the hauling route's commodity picks, which
+    // are a nicety beside a record of what the player spent.
+    try { deps.onPurchase?.(p); } catch (e) {
+      console.log(`[trade] purchase listener threw: ${(e as Error).message}`);
+    }
+  }
   if (changed) j.save();
 }
 
