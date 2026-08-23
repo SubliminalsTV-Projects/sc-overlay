@@ -35,7 +35,7 @@ import { join, dirname } from "node:path";
 import { TradePriceStore, type PlaceInfo, type BundledCommodity, type TradeTable } from "./trade-prices.js";
 import { findRoutes, lookupCommodity, tradableNames, buyableSystems } from "./trade-finder.js";
 import { TradeJournal } from "./trade-journal.js";
-import { parseTradeLine } from "./trade-log.js";
+import { TradeConfirmations, TRADE_LOG_MARKER, type CommodityPurchase } from "./trade-log.js";
 
 /** How often the sidecar re-asks the endpoint. The endpoint itself is what polls UEX; this is
  *  only how fast our copy of ITS copy turns over, so it does not need to be aggressive.
@@ -83,18 +83,38 @@ let timer: NodeJS.Timeout | null = null;
 let journal: TradeJournal | null = null;
 
 /**
+ * 🔴 ONE CONFIRMER FOR THE WHOLE LIVE STREAM, AND IT MUST NOT BE FLUSHED.
+ *
+ * `overlay-server.ts` feeds this the rotated-log seed, then the current log's seed, then the
+ * watcher's tail — one continuous, in-order stream. A held request therefore hands over from the
+ * seed to the watcher inside its own window, which is the seam a fresh instance (or a `flush()`)
+ * would break: the seed would commit a request whose refusal is in the very next bytes.
+ */
+const liveConfirm = new TradeConfirmations();
+
+/**
  * Feed one raw log line to the trade subsystem. Besides the route handler this is the ONLY thing
  * `overlay-server.ts` calls, and it is deliberately shaped to drop into both the live watcher and
  * the rotated-log seed with no other change.
  *
- * 🔑 Safe on every line of the log: one regex test, then an immediate return for anything that is
- * not a CommodityUIProvider line — which is all but a handful per session.
+ * 🔴 A LINE MAY BOOK A PURCHASE FROM AN EARLIER LINE, AND USUALLY THAT IS WHAT HAPPENS. The log
+ * records REQUESTS; the server refuses some of them on a separate line up to 565 ms later, so
+ * nothing is booked until the window has passed in silence. See `TradeConfirmations`.
+ *
+ * ⚠️ EVERY line has to arrive here, including the ones that are not commodity lines — they are the
+ * clock. Narrowing the call site to "interesting" lines would strand held purchases until the next
+ * trade.
+ *
+ * 🔑 Still safe on every line of the log: one `indexOf` for all but a handful per session.
  */
 export function tradeLogLine(line: string, deps: TradeDeps): void {
-  const ev = parseTradeLine(line);
-  if (!ev?.purchase) return;
+  const confirmed = liveConfirm.line(line);
+  // The overwhelmingly common case: nothing came due, and no journal is touched.
+  if (!confirmed.length) return;
   const j = ensureJournal(deps);
-  if (j.apply(ev.purchase)) j.save();
+  let changed = false;
+  for (const p of confirmed) if (j.apply(p)) changed = true;
+  if (changed) j.save();
 }
 
 /** How far back the one-time catch-up looks. A day, because "what did I do today" is the question
@@ -137,12 +157,24 @@ function backfillFromBackups(deps: TradeDeps, j: TradeJournal): void {
       .slice(-BACKFILL_FILES);
     let found = 0;
     for (const f of files) {
+      // 🔴 A FRESH CONFIRMER PER FILE, FLUSHED AT THE END. Each of these is a COMPLETE session:
+      // a request with no refusal after it in the same file is a request that went through, and
+      // there are no further bytes that could change that. The opposite handling — one shared
+      // confirmer — is what the LIVE stream needs, for the opposite reason.
+      const confirm = new TradeConfirmations();
+      const apply = (ps: readonly CommodityPurchase[]): void => {
+        for (const p of ps) if (j.apply(p)) found++;
+      };
       for (const line of readFileSync(f.p, "utf8").split(/\r?\n/)) {
         // Cheap prefilter: the marker is a fixed substring, so most lines cost one indexOf.
-        if (!line.includes("CommodityUIProvider::Send")) continue;
-        const ev = parseTradeLine(line);
-        if (ev?.purchase && j.apply(ev.purchase)) found++;
+        // 🔴 IT COVERS THE WHOLE COMPONENT, NOT JUST `::Send`. Narrowed to the requests, this loop
+        // would never see a single refusal and would re-book every failed sale on the next launch
+        // — the exact bug, arriving through the back door. `TRADE_LOG_MARKER` is exported so the
+        // two cannot drift.
+        if (!line.includes(TRADE_LOG_MARKER)) continue;
+        apply(confirm.line(line));
       }
+      apply(confirm.flush());
     }
     if (found) {
       j.save();

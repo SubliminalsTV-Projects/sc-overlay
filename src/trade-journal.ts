@@ -281,8 +281,22 @@ export class TradeJournal {
    * newest rotated one at startup, and a player who restarts the app twice would otherwise book the
    * same sale three times. The key has to include more than the timestamp: the game writes two
    * purchases in the same millisecond often enough to matter.
+   *
+   * 🔴 ONLY A CONFIRMED PURCHASE IS BOOKED, AND `confirmed: null` IS REFUSED TOO.
+   *
+   * The log records what the client ASKED for. When the server refuses a sale the request line is
+   * still there, identical to one that worked, and booking it puts money in the Ledger that the
+   * player never earned - Sub's two refused Compboard sales on 2026-08-23 came to +428,872 aUEC of
+   * fiction. `TradeConfirmations` in `trade-log.ts` is what settles the question; this method is
+   * the second lock on the same door.
+   *
+   * 🔑 REFUSING `null` IS THE POINT, not an oversight. `parseTradeLine` leaves it null because one
+   * line cannot know, so a caller that forgets the gate and hands raw parses straight here gets an
+   * EMPTY journal - loud, immediate, and obviously wrong. Accepting null would make the same
+   * mistake reproduce the original bug in silence, which is how it got here in the first place.
    */
   apply(p: CommodityPurchase): boolean {
+    if (p.confirmed !== true) return false;
     if (!p.resourceGuid || !p.scu || p.scu <= 0) return false;
     const key = seenKey(p);
     if (this.state.seen.includes(key)) return false;
