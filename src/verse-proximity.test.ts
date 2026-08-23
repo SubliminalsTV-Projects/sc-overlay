@@ -145,7 +145,7 @@ const quotes: ResolvedQuote[] = [
 
 const verdict = (over: Partial<OriginVerdict>): OriginVerdict => ({
   tier: "place", id: AREA18, label: "Area18", at: Date.now(), ageMin: 1,
-  from: "test", howToImprove: "", stale: false, ...over,
+  from: "test", detail: null, howToImprove: "", stale: false, ...over,
 });
 const deps = (o: OriginVerdict): ProximityDeps => ({ index, locations, travel, origin: o });
 

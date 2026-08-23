@@ -3482,6 +3482,99 @@ const VERSEFINDER = `(async () => {
   return out;
 })()`;
 
+// ── Suite: Verse Finder — the eye, and which terminal placed you ─────────────────────────────
+//
+// 🔴 EVERY ASSERTION HERE IS FIXTURE-DRIVEN, AND THAT IS THE POINT. The obvious test for this
+// flight is "the eye no longer says Location unknown" against the live sidecar — and that would be
+// an assertion about HOW LONG AGO SUB LAST PLAYED, not about the code. This widget already went
+// red once on untouched code for exactly that reason. The live acceptance is a thing to look at;
+// what belongs in a suite is the render, driven from origins the fixture chooses.
+//
+// ⚠️ NO REGEX AND NO BACKSLASH ESCAPES IN THIS BODY, comments included — a template literal eats
+// them before the code exists. indexOf and character comparison only.
+const VERSEEYE = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  // Defensive lookups. A missing element must FAIL its own assertion, not throw and take the run
+  // down — and the DETAIL argument is evaluated eagerly, so it needs the same care as the
+  // condition. A suite that dies here reports a small PASS for everything it never reached.
+  const eyeLbl = () => { const e = document.getElementById("eyelbl"); return e ? e.textContent : "(no #eyelbl)"; };
+  const eyePop = () => { const e = document.getElementById("eyepop"); return e ? e.textContent : "(no #eyepop)"; };
+  const eyeCls = () => { const e = document.getElementById("eye"); return e ? e.className : "(no #eye)"; };
+  const eyeTitle = () => { const e = document.getElementById("eye"); return e ? (e.title || "") : "(no #eye)"; };
+
+  const TERMDETAIL = "Levski Cargo Office Commodities";
+  const originOf = (over) => Object.assign({
+    tier: "place", label: "Levski", summary: "Levski . just now", ageMin: 0, stale: false,
+    from: "the shop terminal you used names this place", detail: null, howToImprove: "improve me",
+  }, over);
+
+  // ── 1. A TERMINAL FIX. Positive first: the fix has to RENDER before anything about where its
+  //       parts landed can mean a thing, and a renderEye that silently did nothing would satisfy
+  //       every must-not check below for free.
+  {
+    renderEye(originOf({ detail: TERMDETAIL }), null);
+    await sleep(60);
+    ok("a terminal-sourced fix renders its summary on the face",
+       eyeLbl().indexOf("Levski") >= 0, eyeLbl());
+    ok("...and the face reads as a precise fix, not as unknown",
+       eyeCls().indexOf("precise") >= 0, eyeCls());
+
+    // 🔑 THE PRECISION HALF — which desk inside the station. Sub's ask was the difference between
+    // "at Levski" and "meet me at the cargo office at Levski".
+    ok("...the popover names WHICH terminal placed you",
+       eyePop().indexOf(TERMDETAIL) >= 0, eyePop().slice(0, 150));
+    ok("...and the hover carries the same words as the click",
+       eyeTitle().indexOf(TERMDETAIL) >= 0, eyeTitle().slice(0, 150));
+
+    // 🔴 AND IT STAYS OFF THE FACE. That is a decision, not an omission: the face sits a few pixels
+    // from an age, a distance and a travel time, and the last thing appended there was read as a
+    // distance. Paired with the positive above, so an empty render cannot satisfy it.
+    ok("...but the FACE stays the place alone, beside three other quantities",
+       eyeLbl().indexOf("Cargo Office") < 0, eyeLbl());
+  }
+
+  // ── 2. THE LINE IS CONDITIONAL. Every other tier carries no detail, and must not grow a
+  //       sentence about a terminal nobody touched.
+  {
+    renderEye(originOf({ from: "an ASOP terminal named this place", detail: null }), null);
+    await sleep(60);
+    ok("a fix with no terminal still renders", eyeLbl().indexOf("Levski") >= 0, eyeLbl());
+    ok("...and says nothing about where you were standing",
+       eyePop().indexOf("You were at") < 0, eyePop().slice(0, 150));
+  }
+
+  // ── 3. UNKNOWN still says so, and still asks for something. This is the state the flight exists
+  //       to make rare — it must stay correct rather than being papered over.
+  {
+    renderEye({ tier: "unknown", label: "Unknown", summary: "Location unknown", ageMin: null,
+                stale: true, from: "nothing in this session has said where you are",
+                detail: null, howToImprove: "Opening your inventory will." }, null);
+    await sleep(60);
+    ok("an unknown origin still says Location unknown",
+       eyeLbl() === "Location unknown", eyeLbl());
+    ok("...and wears the state that asks the player for something",
+       eyeCls().indexOf("none") >= 0, eyeCls());
+    ok("...and still tells them what to do about it",
+       eyePop().indexOf("Opening your inventory") >= 0, eyePop().slice(0, 150));
+  }
+
+  // ── 4. THE WIDGET DOES NOT COMPOSE THE SUMMARY. It is the server's own string, worded once in
+  //       originSummary so every surface says it identically. A widget that rebuilt it would be a
+  //       second place for the spelled-out age rule to drift out of.
+  {
+    renderEye(originOf({ summary: "somewhere in Pyro . 3h ago", tier: "system", label: "Pyro" }), null);
+    await sleep(60);
+    ok("the face is the server's summary verbatim",
+       eyeLbl() === "somewhere in Pyro . 3h ago", eyeLbl());
+  }
+
+  return out;
+})()`;
+
 // ── Suite: Verse Finder — ships, commodities, and which kind of blank ────────────────────────
 //
 // Its own suite rather than more assertions in VERSEFINDER, because it drives five DIFFERENT
@@ -7137,6 +7230,7 @@ app.whenReady().then(async () => {
     fails += await run("event ladder: Orison first, the guesses shown and labelled", EVENTLADDER, null, null, "battaglia.html");
     fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
     fails += await run("verse finder: ships, commodities, and which kind of blank", VERSEDEALERS, null, null, "versefinder.html");
+    fails += await run("verse finder: the eye names the terminal that placed you", VERSEEYE, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);

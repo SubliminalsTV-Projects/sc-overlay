@@ -96,6 +96,13 @@ export interface LocationRecord {
   system?: string;
   parent?: string | null;
   parentName?: string | null;
+  /** The starmap's own classification — `Star`, `Planet`, `Moon`, `LandingZone`, `Manmade`,
+   *  `Outpost`, `Asteroid`… 🔑 Declared because it is LOAD-BEARING, not decorative: it is what
+   *  decides which TIER a name resolves at. "Pyro" is a row in this table and it is a Star, so a
+   *  source that merely mentions the word may not report a place — see `tierOfRecord` in
+   *  `origin-signals.ts`. `starOf` below had been casting for this field for want of a
+   *  declaration. */
+  type?: string;
 }
 
 /* ── The terminal -> starmap place index ─────────────────────────────────────────────────────── */

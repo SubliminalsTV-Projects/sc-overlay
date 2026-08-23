@@ -267,6 +267,9 @@ function originPayload(origin: OriginVerdict) {
     ageMin: origin.ageMin,
     stale: origin.stale,
     from: origin.from,
+    // Which terminal inside the station, when a terminal is what placed the player. Never a
+    // smaller place — see `OriginSignal.detail`; the widget shows it and nothing measures from it.
+    detail: origin.detail,
     howToImprove: origin.howToImprove,
   };
 }

@@ -645,16 +645,28 @@
     btn.className = "eyebtn " + state;
     lbl.textContent = o.summary || "Location unknown";
 
+    // 🔑 WHICH TERMINAL, when a terminal is what placed the player. Sub's ask was the difference
+    // between "at Levski" and "meet me at the cargo office at Levski" — a station is enough for a
+    // distance and not enough for a sentence.
+    // 🔴 IT STAYS OFF THE FACE, and that is a decision rather than an omission. The face is a
+    // strip a few pixels from three other quantities (an age, a distance, minutes of travel) and
+    // the last thing appended there was read as a distance — see the three-quantity trap above.
+    // A terminal name is not a place claim either: it is the game's asset name for the desk, so
+    // it belongs beside the explanation of where the fix came from, not beside the fix.
+    const where = o.detail ? "You were at the " + o.detail + "." : "";
+
     const parts = [];
     parts.push("<b>" + escapeHtml(o.summary || "Location unknown") + "</b>");
     if (o.from) parts.push(escapeHtml(cap(o.from)) + ".");
+    if (where) parts.push(escapeHtml(where));
     if (order && order.note) parts.push('<span class="sep"></span>' + escapeHtml(order.note));
     if (o.howToImprove) parts.push('<span class="sep"></span>' + escapeHtml(o.howToImprove));
     pop.innerHTML = parts.join(" ");
 
     // Hover gets the same words as the click. There is no API to open a native tooltip from
     // script, so these are two affordances for one explanation rather than a duplication.
-    btn.title = [o.summary, o.from ? cap(o.from) + "." : "", order && order.note ? order.note : "",
+    btn.title = [o.summary, o.from ? cap(o.from) + "." : "", where,
+                 order && order.note ? order.note : "",
                  o.howToImprove].filter(Boolean).join("  ");
 
     const note = $("ordernote");

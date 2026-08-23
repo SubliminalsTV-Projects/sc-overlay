@@ -39,6 +39,29 @@ import type { OriginSignal } from "./player-origin.js";
 import type { Place } from "./location.js";
 import { matchKey, systemKey, type LocationRecord } from "./verse-proximity.js";
 
+/**
+ * What a shop terminal can say. Assembled by `PlayerLocation`, graded here.
+ *
+ * 🔑 TWO INDEPENDENT PATHS AND ONE LABEL, and keeping them apart is the entire design:
+ *   - `boundToken` is what a location line named while the player stood at this terminal. Precise
+ *     and certain, and NOT independent — it dies with the signal it learned from.
+ *   - `shopName` is the game's own asset name for the shop, resolved against the starmap. That one
+ *     is genuinely independent of every other signal, which is what makes it insurance.
+ *   - `label` is only ever WHICH DESK. It is never evidence of a place.
+ */
+export interface TerminalFix {
+  at: number;
+  /** The game's asset name, e.g. `SCShop_Levski_CargoOffice_Commodities`. */
+  shopName: string;
+  /** The specific physical kiosk inside the shop, when the line carried one. Opaque, and kept for
+   *  precision: it is the difference between "at Levski" and "at this desk at Levski". */
+  kioskId: string | null;
+  /** `shopName` made readable — "Levski Cargo Office Commodities". */
+  label: string;
+  /** The place token bound to this terminal in THIS session, or null. Never persisted. */
+  boundToken: string | null;
+}
+
 export interface SignalInputs {
   /** `PlaceWatcher.current()` — the terrain report's body, or space, or unknown. */
   place?: Place | null;
@@ -50,6 +73,19 @@ export interface SignalInputs {
   atLocationId?: { id: string; at: number } | null;
   /** From the hauling tracker: a freight-elevator move, which names its platform. */
   cargoMove?: { direction: "down" | "up"; platform: string; at: number } | null;
+  /**
+   * `atLocationId` after `PlayerLocation` has resolved it to a readable token.
+   *
+   * 🔴 THE RAW FIELD ABOVE CAN NEVER PRODUCE A SIGNAL, and for a long time nobody noticed. The game
+   * writes "where am I" as a readable token at a location inventory and as a bare NUMBER at the
+   * ASOP, at any item moved to local storage, and at the freight kiosk. `resolveToken` cannot turn
+   * `3490636373` into anything, so the more frequent of the two shapes was dropped in silence.
+   * Measured over 533 logs, feeding it in is worth **+11.2 points of place-tier freshness (135.8 h)**
+   * — and place is the only tier a per-station distance can come from.
+   */
+  boundPlace?: { token: string; at: number } | null;
+  /** The last shop terminal the player used. See `TerminalFix`. */
+  terminal?: TerminalFix | null;
 }
 
 export interface SignalDeps {
@@ -135,6 +171,76 @@ function uniqueByName(
   return ids.length === 1 ? ids[0] : null;
 }
 
+/**
+ * WHICH TIER A STARMAP ROW MAY BE REPORTED AT — decided by the row, never by the source.
+ *
+ * 🔴 THE RULE EXISTS BECAUSE A NAME IS NOT A TIER. "Pyro" is a row in `locations.json` and its type
+ * is `Star`; five of the shop names in the corpus contain it. Resolving one and reporting a `place`
+ * would put the player at the centre of a sun, and every distance computed from it would be wrong
+ * by an orbit. The row already carries the answer, so the source never has to guess.
+ *
+ * `SolarSystem` rows are excluded outright rather than mapped to `system`: they are parentless AND
+ * coordinate-less (`starOf` says so below), so nothing can be measured from one.
+ */
+export function tierOfRecord(rec: LocationRecord | undefined): "place" | "body" | "system" | null {
+  const t = String(rec?.type ?? "");
+  if (!t) return null;
+  if (t === "Star") return "system";
+  if (t === "SolarSystem") return null;
+  if (t === "Planet" || t === "Moon") return "body";
+  return "place";
+}
+
+/**
+ * Read a place out of a shop's own asset name.
+ *
+ * 🔑 THE INDEPENDENT SOURCE. Every other signal in this module comes from the game telling us where
+ * the player is; this one comes from what the shop calls itself, so it keeps working if CIG stops
+ * writing the others. Measured over 533 logs: **28 of 61 distinct shop names resolve to exactly one
+ * starmap row and 0 resolve ambiguously**, covering 1,873 of 2,549 shop lines.
+ *
+ * 🔴 EXACTLY ONE ROW, ACROSS THE WHOLE NAME, OR NOTHING. A shop name is several words and more than
+ * one may be a row; two rows means the name has not identified a place and the module's standing
+ * rule applies — an ambiguous match resolves to nothing, because putting the player at the wrong
+ * outpost is worse than not knowing. ⚠️ **No shipped shop name does this today** (0 of 61 resolve
+ * ambiguously), so the rule is exercised by the suite on a synthetic name rather than by a real
+ * one — a must-not-happen assertion whose subject is absent from the corpus is free forever.
+ *
+ * ⚠️ Words shorter than four characters are skipped. They are initials and codes (`H`, `XS`, `lt`,
+ * `FW`) and matching them against a 2,000-row name table is how a two-letter shop prefix becomes a
+ * confident claim about an outpost.
+ *
+ * 🔑 WHICH RULE STOPS THE MEASURED OFFENDER, because the obvious answer is the wrong one and the
+ * suite's control says so. `SCShop_AdminOffice_Nyx_SocialStation` sits at three different Keeger
+ * bases and is what killed the persisted map. It is **the four-character guard** that stops it —
+ * "Nyx" is three characters and is never looked up, while "AdminOffice" and "SocialStation" are not
+ * rows at all. Lowering that guard would not break it either: "Nyx" is a `Star`, so `tierOfRecord`
+ * would report a SYSTEM and still never a place. Two independent mechanisms, and a control that
+ * removes one comes back green — enumerate both before writing one.
+ */
+function uniqueFromShopName(
+  idx: Map<string, string[]>,
+  locations: Record<string, LocationRecord>,
+  shopName: string,
+): { id: string; tier: "place" | "body" | "system" } | null {
+  const stem = shopName.replace(/^SCShop_?/i, "").replace(/-\d+$/, "");
+  const hits = new Map<string, string>();   // match key -> the single id it named
+  for (const raw of stem.split(/[_\-]+/)) {
+    const k = matchKey(raw);
+    if (!k || k.length < 4) continue;
+    const ids = idx.get(k);
+    // A word naming several rows is not an identification; it also must not be allowed to sink the
+    // whole name, because "Levski Cargo Office" would then lose to the word "Office" naming twelve
+    // outposts. It contributes nothing, which is what `continue` says.
+    if (!ids || ids.length !== 1) continue;
+    hits.set(k, ids[0]);
+  }
+  const ids = [...new Set(hits.values())];
+  if (ids.length !== 1) return null;
+  const tier = tierOfRecord(locations[ids[0]]);
+  return tier ? { id: ids[0], tier } : null;
+}
+
 /** The star at a system's origin. It is the root of every place in that system, which is what
  *  makes it usable as a containment anchor for a system-level reading. */
 function starOf(
@@ -195,6 +301,42 @@ export function collectOriginSignals(inputs: SignalInputs, deps: SignalDeps): Or
   if (inputs.cargoMove) {
     pushPlace(token(inputs.cargoMove.platform), inputs.cargoMove.at,
               "a freight elevator you used");
+  }
+  // The game's numeric location id, already turned back into a token by `PlayerLocation`. Same
+  // tier as the three above and for the same reason: it is the same fact from a different terminal.
+  if (inputs.boundPlace) {
+    pushPlace(token(inputs.boundPlace.token), inputs.boundPlace.at,
+              "the game's own location id for where you were");
+  }
+
+  // -- A SHOP TERMINAL ------------------------------------------------------------------------
+  // 🔴 Two paths, and the ORDER states the preference: what a location line named here beats what
+  // the shop's asset name says about itself, because the first is an observation and the second is
+  // a label. The fallback is not redundancy for its own sake — it is the only source here that
+  // survives CIG removing the location line, which is the whole reason it exists.
+  if (inputs.terminal) {
+    const t = inputs.terminal;
+    const bound = t.boundToken ? token(t.boundToken) : null;
+    if (bound) {
+      out.push({
+        tier: "place", id: bound, label: locations[bound]?.name ?? t.boundToken!, at: t.at,
+        source: "a shop terminal you used, at a place the log had named",
+        detail: t.label,
+      });
+    } else {
+      const named = uniqueFromShopName(idx, locations, t.shopName);
+      // ⚠️ The RECORD decides the tier. Five shop names in the corpus resolve to "Pyro", which is a
+      // Star — reporting those as a place would put the player at the centre of a sun.
+      if (named) {
+        out.push({
+          tier: named.tier, id: named.id, label: locations[named.id]?.name ?? named.id, at: t.at,
+          source: named.tier === "place"
+            ? "the shop terminal you used names this place"
+            : "the shop terminal you used names this system",
+          detail: t.label,
+        });
+      }
+    }
   }
 
   // -- BODY, from the terrain report ---------------------------------------------------------

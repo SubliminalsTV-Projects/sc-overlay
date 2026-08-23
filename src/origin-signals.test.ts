@@ -120,6 +120,128 @@ const deps = { locations, now: () => NOW };
      "no system and nothing else yields no signals at all");
 }
 
+// ── The numeric location id, once PlayerLocation has resolved it ──────────────────────────────
+//
+// 🔴 THE POSITIVE ASSERTION COMES FIRST, deliberately. The bug being guarded against is a signal
+// that is silently DROPPED, and every "it is not wrong" check is satisfied for free by an empty
+// list — which is exactly what the bug produces.
+{
+  const raw = collectOriginSignals(
+    { atLocationId: { id: "3490636373", at: NOW - 60_000 }, system: "stanton" }, deps);
+  ok(!raw.some((s) => s.tier === "place"),
+     "a RAW numeric id still produces no place — a number names nothing",
+     `${raw.filter((s) => s.tier === "place").length} place signals`);
+
+  const bound = collectOriginSignals({
+    atLocationId: { id: "3490636373", at: NOW - 60_000 },
+    boundPlace: { token: "Area18", at: NOW - 60_000 },
+    system: "stanton",
+  }, deps);
+  const p = bound.find((s) => s.tier === "place");
+  ok(!!p, "...and the same id, BOUND, does produce one", p?.label ?? "none");
+  ok(p?.id === AREA18, "...on the right starmap id", p?.id ?? "none");
+  ok(p?.at === NOW - 60_000, "...stamped when the id was seen, not when we resolved it");
+}
+
+// ── A shop terminal: the bound path, the independent path, and the refusals ───────────────────
+{
+  const term = (over: Record<string, unknown>) => ({
+    at: NOW - 30_000, shopName: "SCShop_Levski_CargoOffice_Commodities",
+    kioskId: "776283668769", label: "Levski Cargo Office Commodities", boundToken: null, ...over,
+  });
+  const LEVSKI = idOf("Levski", "nyx");
+
+  // 1. BOUND — what a location line named while the player stood here. Precise and certain.
+  {
+    const s = collectOriginSignals({ terminal: term({ boundToken: "Area18" }), system: "stanton" }, deps);
+    const p = s.find((x) => x.tier === "place");
+    ok(p?.id === AREA18, "a terminal bound to a place this session grades as that PLACE", p?.label ?? "none");
+    ok(p?.detail === "Levski Cargo Office Commodities",
+       "...and carries WHICH terminal as detail, not as a place", p?.detail ?? "none");
+    ok(!s.some((x) => x.id === LEVSKI),
+       "...and the shop's own name does NOT also fire — the observation outranks the label");
+  }
+
+  // 2. INDEPENDENT — the shop's own name against the starmap. The insurance path: this is the one
+  //    that still works if CIG stops writing the location line the bound path learns from.
+  {
+    const s = collectOriginSignals({ terminal: term({}), system: "nyx" }, deps);
+    const p = s.find((x) => x.tier === "place");
+    ok(p?.id === LEVSKI, "an UNBOUND terminal resolves through its own name", p?.label ?? "none");
+    // Defensive: the DETAIL argument is evaluated eagerly, so reaching through a possibly-absent
+    // signal here would take the whole suite down and report it as a small pass.
+    ok((p?.source ?? "").indexOf("names this place") >= 0,
+       "...and says that is where it came from", p?.source ?? "(no place signal)");
+  }
+
+  // 3. 🔴 A STAR IS NOT A PLACE. Five shop names in the corpus contain "Pyro", which is a Star row.
+  {
+    const s = collectOriginSignals(
+      { terminal: term({ shopName: "SCShop_Pyro_RestStop_Rund_Admin", label: "Pyro Rest Stop Rund Admin" }) },
+      deps);
+    const anyPlace = s.filter((x) => x.tier === "place");
+    ok(anyPlace.length === 0, "a shop name whose only match is a STAR reports no place",
+       anyPlace.map((x) => x.label).join(",") || "none");
+    const sys = s.find((x) => x.tier === "system");
+    ok(!!sys, "...it reports a SYSTEM, which is all the name ever said", sys?.label ?? "none");
+    ok(sys?.label === "Pyro", "...and names the right one", sys?.label ?? "none");
+  }
+
+  // 4. 🔴 THE MEASURED TRAP. This exact name sits at three different Keeger asteroid bases — two of
+  //    them inside ONE session of Sub's — and it is what killed the persisted map.
+  //    ⚠️ TWO mechanisms stop it and only one is obvious. It is the FOUR-CHARACTER GUARD that
+  //    does the work: "Nyx" is three characters and is never looked up. Lowering that guard would
+  //    still not produce a place, because "Nyx" is a `Star` and `tierOfRecord` caps it at a system.
+  //    So the assertion is written as "no PLACE" rather than "no signal": the second is true today
+  //    and is true for a reason that could change without the rule being broken.
+  {
+    const s = collectOriginSignals(
+      { terminal: term({ shopName: "SCShop_AdminOffice_Nyx_SocialStation", label: "Admin Office Nyx Social Station" }) },
+      deps);
+    ok(!s.some((x) => x.tier === "place"),
+       "the name that sits at three Keeger bases claims no place",
+       s.map((x) => x.tier + ":" + x.label).join(",") || "none");
+  }
+
+  // 5. The other measured offender: a generic desk name at 13 stations, carrying no token at all.
+  {
+    const s = collectOriginSignals({ terminal: term({ shopName: "SCShop_Cargo_Office", label: "Cargo Office" }) }, deps);
+    ok(s.length === 0, "a generic desk name claims nothing whatsoever",
+       s.map((x) => x.tier + ":" + x.label).join(",") || "none");
+  }
+
+  // 6. 🔴 TWO RESOLVING WORDS IS NOT AN IDENTIFICATION — and the fixture is SYNTHETIC on purpose.
+  //    No shipped shop name resolves ambiguously (0 of 61, measured), so an assertion driven by a
+  //    real name could never fail and would read as the most on-point test in the file. This one
+  //    puts two real, singly-resolving place names in one string, which is the only way to make
+  //    the rule expressible at all. The positive control below is what proves it is not free.
+  {
+    const both = collectOriginSignals(
+      { terminal: term({ shopName: "SCShop_Levski_Orison_Depot", label: "Levski Orison Depot" }) }, deps);
+    ok(!both.length, "a name matching TWO places identifies neither",
+       both.map((x) => x.tier + ":" + x.label).join(",") || "none");
+    // Positive control, in the suite rather than by hand: each half alone DOES resolve, so the
+    // refusal above is the ambiguity rule and not the two words being unknown.
+    const one = collectOriginSignals({ terminal: term({ shopName: "SCShop_Levski_Depot" }) }, deps);
+    ok(one.some((x) => x.id === LEVSKI), "...and the same name with one of them resolves fine",
+       one.map((x) => x.label).join(",") || "none");
+  }
+
+  // 7. 🔴 A WORD SHARED BY MANY ROWS CONTRIBUTES NOTHING — it must not be resolved to whichever one
+  //    got indexed first. This is a separate rule from #6 and needed its own control: relaxing the
+  //    PER-WORD test leaves #6 green, because there the two words each name one row and the
+  //    whole-name test still catches them. Only a word that is itself shared can tell them apart.
+  //    ⚠️ The subject really is in the shipped starmap — the name `<= PLACEHOLDER =>` is on 12 rows
+  //    and `<= UNINITIALIZED =>` on 20 — so this is not a must-not assertion about something absent.
+  {
+    const dupKey = Object.values(locations).filter((r) => matchKey(r.name) === "placeholder").length;
+    ok(dupKey > 1, "the fixture word really is shared by several starmap rows", `${dupKey} rows`);
+    const s = collectOriginSignals({ terminal: term({ shopName: "SCShop_Placeholder_Trader" }) }, deps);
+    ok(!s.length, "a word shared by many rows resolves to none of them",
+       s.map((x) => x.tier + ":" + x.label).join(",") || "none");
+  }
+}
+
 // ── End to end, through the real resolveOrigin ────────────────────────────────────────────────
 {
   // 🔑 The deps come from `originDepsFor`, NOT hand-rolled here. A hand-rolled `systemOf`
