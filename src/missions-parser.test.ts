@@ -142,4 +142,37 @@ assert.equal(jurisdictionJournal?.subject, "Jurisdiction: Hurston Dynamics",
 assert(orisonJournal.subject.length > 0 && jurisdictionJournal.subject.length > 0,
   "both journal subjects must be non-empty — an empty subject matches every event name");
 
+// ---------------------------------------------------------------------------------------------
+// 🔴 `FillUnstowRequest` WRITES TWO DIFFERENT THINGS, AND WE READ BOTH AS A KIOSK PRESS.
+//
+// All four lines below are VERBATIM from Sub's own logs. The `SoftLock_Terminal_…` one is included
+// because it LOOKS like the failure form and is not — it is a real kiosk class, so a fix that
+// merely rejected odd-looking names would break 4 genuine presses to fix 41 fake ones.
+//
+// Counts behind this, measured over the 480-file corpus: 241 real presses, 41 `EntityId … is not
+// present` errors, 4 `SoftLock_Terminal_…` presses. In the 2026-08-22 session 37 of 37 were the
+// error form, so every `cargoKiosk` that session was fabricated.
+const realKioskPress = '<2025-08-01T22:21:09.632Z> [Notice] <CEntityComponentFreightElevatorUIProvider::FillUnstowRequest> [FreightElevatorKioskUIProvider] FreightElevatorKiosk_FreightElevator_Util_HangarLarge[5260145885719] - Processed bindings into transfer request - Entities: 6, Location: 1752411604 - RequestId: 2, ItemBank: 0 [Team_CGP7][Cargo][Inventory]';
+const realSoftLockPress = '<2026-08-17T18:51:41.305Z> [Notice] <CEntityComponentFreightElevatorUIProvider::FillUnstowRequest> [FreightElevatorKioskUIProvider] SoftLock_Terminal_Standard_LowTech_FreightElevatorKiosk_1_a[758375613929] - Processed bindings into transfer request - Entities: 0, Location: 1180994372 - RequestId: 5, ItemBank: 0 [Team_CoreGameplayFeatures][Cargo][Inventory]';
+const realUnstowMissing = '<2026-08-22T22:01:42.574Z> [Error] <CEntityComponentFreightElevatorUIProvider::FillUnstowRequest> [FreightElevatorKioskUIProvider] EntityId[608068483514] is not present. [Team_CoreGameplayFeatures][Cargo][Inventory]';
+
+const kioskPress = parseMissionEvent(parseLine(realKioskPress));
+assert(kioskPress?.kind === "cargoKiosk", "a real kiosk press must still parse as cargoKiosk");
+assert.equal(kioskPress.terminal, "FreightElevatorKiosk_FreightElevator_Util_HangarLarge",
+  "the terminal is the kiosk's own name");
+
+const softLockPress = parseMissionEvent(parseLine(realSoftLockPress));
+assert(softLockPress?.kind === "cargoKiosk", "SoftLock_Terminal_… is a REAL kiosk class, not a failure");
+assert.equal(softLockPress.terminal, "SoftLock_Terminal_Standard_LowTech_FreightElevatorKiosk_1_a");
+
+const unstowMissing = parseMissionEvent(parseLine(realUnstowMissing));
+// 🔑 Two assertions, and the FIRST is the one that catches the shipped bug: the old regex made
+// this a cargoKiosk with terminal "EntityId". Asserting only "it is cargoUnstowMissing" would also
+// pass on a build that returned null for it, which is a different and less useful outcome.
+assert(unstowMissing?.kind !== "cargoKiosk",
+  'the error form must NOT be a kiosk press — it used to parse as terminal "EntityId"');
+assert(unstowMissing?.kind === "cargoUnstowMissing",
+  "the error form has its own kind, so it is diagnosable rather than merely discarded");
+assert.equal(unstowMissing.entityId, "608068483514", "the phantom entity id is carried verbatim");
+
 console.log("missions-parser tests passed");

@@ -591,6 +591,108 @@ console.log("\n-- the journal: replaying the same log twice must not double-coun
     String(k.view().open.length));
 }
 
+console.log("\n-- the journal: writing off cargo that is never coming back --");
+{
+  // Sub's exact situation, minus the wall: two lots held, one of them destroyed. He flew a loaded
+  // ship into a wall on purpose and the loot has been listed ever since.
+  const dir = freshDir();
+  const j = new TradeJournal(dir, nameOf);
+  j.apply(buyOf(BUY_AUTOLOAD));
+  j.apply(buyOf(BUY_ELEVATOR));
+
+  // 🔑 POSITIVE FIRST. Every assertion below is about something leaving a list, and a list that was
+  // empty to begin with satisfies all of them for free.
+  const before = j.view();
+  check("two lots are held before anything is written off", before.open.length === 2, String(before.open.length));
+  check("...and each one has an id to remove it BY", before.open.every((o) => !!o.id),
+    JSON.stringify(before.open.map((o) => o.id)));
+  check("...that are distinct", new Set(before.open.map((o) => o.id)).size === 2,
+    JSON.stringify(before.open.map((o) => o.id)));
+
+  const target = before.open.find((o) => o.autoLoaded === false);
+  const gone = j.forget(target!.id, new Date("2026-08-22T22:00:00Z"));
+  check("forgetting a held lot reports what it removed", gone?.id === target!.id, String(gone?.id));
+  check("...with the cost it really carried", Math.round(gone?.cost ?? 0) === 1202, String(gone?.cost));
+
+  const after = j.view(new Date("2026-08-22T23:00:00Z"));
+  check("the lot leaves the held list", after.open.length === 1, String(after.open.length));
+  check("...and it is the RIGHT one that left",
+    after.open[0]?.id !== target!.id && after.open[0]?.autoLoaded === true,
+    JSON.stringify(after.open.map((o) => [o.id, o.autoLoaded])));
+  check("...landing on the written-off record rather than vanishing",
+    after.writtenOff.length === 1 && after.writtenOff[0]?.id === target!.id,
+    JSON.stringify(after.writtenOff.map((w) => w.id)));
+
+  // 🔴 THE RULE THIS FEATURE MUST NOT BREAK. The money left the account, so the cost stays on the
+  // record — and it must never reach a profit total, in either direction. Asserting "profit is 0"
+  // alone would pass on a build that folded the loss in and happened to net to zero, so the
+  // unpriced-revenue and run counts are checked beside it.
+  check("a write-off never becomes profit or loss", after.allTime.profit === 0, String(after.allTime.profit));
+  check("...nor a closed run", after.allTime.runs === 0, String(after.allTime.runs));
+  check("...nor unpriced revenue", after.allTime.unpricedRevenue === 0, String(after.allTime.unpricedRevenue));
+
+  // Two clicks on the same row must not book the loss twice — the widget re-reads after each one,
+  // so a stale row is ordinary rather than an error.
+  check("forgetting the same lot twice is a no-op", j.forget(target!.id) === null, "second call");
+  check("...leaving exactly one write-off", j.view().writtenOff.length === 1, String(j.view().writtenOff.length));
+  check("an unknown id removes nothing", j.forget("lot-that-never-was") === null, "unknown id");
+
+  // It has to survive the app being restarted, which is the whole point of a persisted journal.
+  const reopened = new TradeJournal(dir, nameOf).view();
+  check("the write-off survives a restart", reopened.writtenOff.length === 1, String(reopened.writtenOff.length));
+  check("...and the lot does not come back", reopened.open.length === 1, String(reopened.open.length));
+}
+
+import { writeFileSync } from "node:fs";
+
+console.log("\n-- the journal: an older file is READ FORWARD, never wiped --");
+{
+  // 🔴 THE TRAP THIS PINS. `read()` returns an empty journal on a version mismatch, so bumping
+  // STATE_VERSION to add `id`/`writtenOff` would have DESTROYED the record of every player who
+  // already had one. This is Sub's own file shape, verbatim: v:1, lots with no `id`, no
+  // `writtenOff`, no `nextLotId`, and one real closed run he would not have got back.
+  const dir = freshDir();
+  const legacy = {
+    v: 1,
+    open: [
+      { resourceGuid: "accacd33-3a1a-4ec7-8b4a-14b9f028047c", commodity: "Processed Food", scu: 1,
+        pricePerScu: 1201.95, shopName: "TDD_SCShop-001", at: "2026-08-19T17:43:47.243Z",
+        atMs: 1787161427243, autoLoaded: false },
+      { resourceGuid: "60f116f4-c02a-45b2-9ded-333747795124", commodity: "Tungsten", scu: 4,
+        pricePerScu: 8265.0002, shopName: "SCShop_ht_delta_shubin_m_store", at: "2026-08-19T17:23:33.458Z",
+        atMs: 1787160213458, autoLoaded: false },
+    ],
+    runs: [{ commodity: "Processed Food", resourceGuid: "accacd33-3a1a-4ec7-8b4a-14b9f028047c", scu: 1,
+      buyPricePerScu: 1201.95, sellPricePerScu: 1506, cost: 1201.95, revenue: 1506, profit: 304.05,
+      marginPct: 25.3, buyShop: "TDD_SCShop-001", sellShop: "SCShop_Admin_lt_base_g",
+      boughtAt: "2026-08-19T17:43:31.000Z", soldAt: "2026-08-19T18:40:48.440Z", minutes: 57.29,
+      profitPerHour: 318.43 }],
+    unmatched: [],
+    seen: ["2026-08-19T17:43:31.000Z|buy|TDD_SCShop-001|accacd33-3a1a-4ec7-8b4a-14b9f028047c|1|1202"],
+  };
+  writeFileSync(pjoin(dir, "trade-journal.json"), JSON.stringify(legacy));
+
+  const v = new TradeJournal(dir, nameOf).view();
+  check("an id-less file keeps its lots", v.open.length === 2, String(v.open.length));
+  check("...keeps the closed run and its profit", v.runs.length === 1 && Math.round(v.runs[0].profit) === 304,
+    JSON.stringify(v.runs.map((r) => r.profit)));
+  check("...and every lot is given an id it did not have", v.open.every((o) => !!o.id),
+    JSON.stringify(v.open.map((o) => o.id)));
+  check("...distinct ones, or the ✕ would remove the wrong row",
+    new Set(v.open.map((o) => o.id)).size === 2, JSON.stringify(v.open.map((o) => o.id)));
+  check("...and writtenOff defaults to a list rather than undefined",
+    Array.isArray(v.writtenOff) && v.writtenOff.length === 0, JSON.stringify(v.writtenOff));
+
+  // The backfilled ids have to be usable, not just present: an id assigned on read but never
+  // persisted would work once and then name nothing after a restart.
+  const j2 = new TradeJournal(dir, nameOf);
+  const id = j2.view().open[0].id;
+  check("a backfilled id can actually be removed by", j2.forget(id) !== null, id);
+  const j3 = new TradeJournal(dir, nameOf).view();
+  check("...and stays removed across a restart", j3.open.length === 1 && j3.writtenOff.length === 1,
+    `${j3.open.length}/${j3.writtenOff.length}`);
+}
+
 cleanupTmp();
 console.log(failures ? `\n${failures} FAILED\n` : "\nall passed\n");
 process.exit(failures ? 1 : 0);

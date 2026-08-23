@@ -593,6 +593,43 @@
     if (view === "journal") render();
   }
 
+  /**
+   * How long ago, from an ISO timestamp. Coarse on purpose — the question this answers is "is this
+   * from this session or from last week", and a lot bought four days ago does not need a minute
+   * count to make the point.
+   *
+   * 🔑 It states the age and asserts NOTHING ELSE. An old unsold lot is very likely gone, but
+   * "likely" would have to be a threshold nobody has measured, and this file's whole discipline is
+   * that a figure is either read or it is not claimed. The age is read; the conclusion is the
+   * player's, and the ✕ beside it is how they record it.
+   */
+  function tdAgo(iso) {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return "at an unknown time";
+    const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (mins < 60) return mins + "m ago";
+    const hrs = Math.round(mins / 60);
+    if (hrs < 48) return hrs + "h ago";
+    return Math.round(hrs / 24) + "d ago";
+  }
+
+  /**
+   * Take a lot off the list. Re-reads rather than splicing the local copy: the server owns this
+   * state, and a widget that edited its own array would show a removal that had not actually been
+   * written and would come back on the next refresh.
+   *
+   * ⚠️ No confirm dialog. This is one row of a personal ledger, the action is recorded rather than
+   * destructive (the lot is kept, written off), and a modal over a game is worse than a mis-click.
+   */
+  async function forgetLot(lot) {
+    if (!lot || !lot.id) return;
+    try {
+      await fetch("/api/trade/journal/forget?lot=" + encodeURIComponent(lot.id), { method: "POST" });
+    } catch { /* offline sidecar: the reload below simply shows the unchanged list */ }
+    await loadJournal();
+    render();
+  }
+
   /** "57m" / "2h 14m". Minutes, because a trade run is a minutes-scale thing. */
   function tdDur(mins) {
     const m = Math.max(0, Math.round(Number(mins) || 0));
@@ -728,12 +765,33 @@
       }
     }
 
+    /* ── bought and not yet sold ───────────────────────────────────────────────
+       🔴 THIS SECTION SAID TWO CONTRADICTORY THINGS AT ONCE. The heading was "Still aboard" and a
+       row under it could read "on the elevator" — which means the exact opposite, i.e. NOT aboard.
+       Sub, looking at his own board: *"the stuff that I turned in, it says on the elevator. I don't
+       even know what that's supposed to mean."*
+
+       Two separate faults, and only one of them was the wording:
+
+       1. 🔑 `autoLoaded` IS A FACT ABOUT THE MOMENT OF PURCHASE, NOT A LOCATION. It is the
+          `autoLoading[0|1]` flag off the buy line: where the game put the cargo when you paid for
+          it. Nothing in the log ever updates it, so rendering it in the present tense is a claim
+          the app cannot keep true for one minute past the sale, let alone the three days Sub's lot
+          had been sitting there. Past tense, and the age beside it, is the whole repair — the
+          information is still useful ("that one is a walk"), it just stops being asserted as now.
+       2. The lot Sub was reading really was a leftover, and the journal was right about it: he
+          bought 2 SCU of Processed Food on 2026-08-19, one auto-loaded and one to the elevator,
+          and sold 1. FIFO closed the auto-loaded lot and left the elevator one. Verified against
+          the corpus: there has been no commodity buy or sell in ANY log since 18:49 that day, so
+          nothing is missing from the record. It reads wrong because it is worded wrong.
+
+       ⚠️ The heading no longer says where anything is, because the journal does not know. */
     if (j.open.length) {
       const sec = document.createElement("div");
       sec.className = "sec";
-      const h = document.createElement("span"); h.textContent = "Still aboard";
+      const h = document.createElement("span"); h.textContent = "Bought, not sold";
       const n = document.createElement("span"); n.className = "n";
-      n.textContent = num(j.open.reduce((a, o) => a + o.scu, 0)) + " SCU held";
+      n.textContent = num(j.open.reduce((a, o) => a + o.scu, 0)) + " SCU unsold";
       sec.append(h, n);
       body.appendChild(sec);
       for (const o of j.open.slice(0, 20)) {
@@ -742,13 +800,46 @@
         const nm = document.createElement("div");
         nm.textContent = (o.commodity || "Unknown") + " · " + num(o.scu) + " SCU";
         const val = document.createElement("div"); val.className = "cap";
-        val.textContent = "cost " + num(Math.round(o.pricePerScu)) + "/SCU · " + tdShop(o.shopName);
+        val.textContent = "cost " + num(Math.round(o.pricePerScu)) + "/SCU · " + tdShop(o.shopName)
+          + " · " + tdAgo(o.at);
         row.append(nm, val);
-        // 🔑 Where it physically IS decides what you do next — the freight elevator is a walk.
-        if (o.autoLoaded === false) tdChip(val, "on the elevator", "warn");
-        else if (o.autoLoaded === true) tdChip(val, "in the hold", "calm");
+        // Past tense on purpose — see the note above. The title carries the part that will not fit.
+        if (o.autoLoaded === false) {
+          tdChip(val, "went to the elevator", "warn").title =
+            "When you bought it, the game put it on the freight elevator rather than into the ship. "
+            + "That is where it started; nothing in the log says where it is now.";
+        } else if (o.autoLoaded === true) {
+          tdChip(val, "loaded straight in", "calm").title =
+            "When you bought it, the game put it straight into the ship. That is where it started; "
+            + "nothing in the log says where it is now.";
+        }
+        /* 🔴 THE ONE CONTROL THIS FLIGHT ADDS. Cargo that was destroyed never produces a sale, so
+           the lot can never close on its own — Sub flew a loaded ship into a wall to see what would
+           happen and it has been listed ever since. There is no automatic cure: a commodity lot's
+           only identity is its `resourceGUID`, which never appears on an inventory or destruction
+           line anywhere in the 480-log corpus, so nothing the game writes can be joined to it. The
+           player is the only witness. See `trade-journal.ts` for the measurements.
+           🔑 It writes the lot OFF rather than deleting it — the money really was spent, so the
+           cost stays on the record and out of the profit total. */
+        tdBtn(row, "✕", false,
+          "Cargo gone? Take it off the list. The cost stays on record and out of profit.",
+          () => forgetLot(o));
         body.appendChild(row);
       }
+    }
+
+    /* 🔑 ONE LINE, NOT A SECTION. Write-offs are the player's word rather than the log's, so they
+       have to be visible — a profit total quietly ignoring cargo you paid for is optimistic in
+       exactly the way this file refuses to be about revenue. But they are also the least
+       interesting thing here, and Sub asked for this stuff to go AWAY. So: stated, once, with the
+       money named, and never folded into anything above. */
+    if (j.writtenOff && j.writtenOff.length) {
+      const w = document.createElement("div");
+      w.className = "note";
+      const cost = j.writtenOff.reduce((a, x) => a + (Number(x.cost) || 0), 0);
+      w.textContent = j.writtenOff.length + (j.writtenOff.length === 1 ? " lot" : " lots")
+        + " written off · " + tdMoney(cost) + " spent and not counted in the profit above.";
+      body.appendChild(w);
     }
 
     if (j.unmatched.length) {
