@@ -272,7 +272,23 @@
   .foot { flex: none; display: flex; align-items: center; gap: 9px; padding: 8px 10px 9px 7px;
     border-top: 1px solid var(--divider); position: relative; z-index: 4;
     font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: 0.03em; }
-  #src { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; }
+  /* 🔴 PUSHED RIGHT, not stretched. It carried `flex: 1`, which made it start immediately after
+     the location button and left its dead space on the RIGHT — so the badge floated in the middle
+     of the footer with nothing after it. `margin-left: auto` moves the whole credit block to the
+     right edge and lets it size to its contents; the age can still shrink and ellipsis, because
+     `#srctext` keeps `min-width: 0`. Same reasoning as the Verse Finder's price column: the dead
+     space belongs to the BOX, so it travels with the box unless the box stops reserving it. */
+  #src { margin-left: auto; min-width: 0; display: flex; align-items: center; gap: 7px; }
+  /* The refresh-cadence ⓘ. Same construction as `.eyebtn` and for the same two reasons: a real
+     <button> with `popovertarget` so toggle, light-dismiss and Escape are the browser's job rather
+     than a handler of ours that can stick open, and the glyph DRAWN rather than typed, because
+     this page bundles no colour-emoji face and a literal ⓘ is at the mercy of the OS font. */
+  .infobtn { flex: none; display: inline-flex; align-items: center; background: none; border: 0;
+    margin: 0; padding: 0; cursor: pointer; color: var(--dim); anchor-name: --freshanchor; }
+  .infobtn:hover { color: var(--cyan-dim); }
+  .infobtn svg { width: 11px; height: 11px; display: block; }
+  /* Its own anchor — an id beats `.eyepop`'s class, so this one points at the ⓘ and not at #eye. */
+  #freshpop { position-anchor: --freshanchor; }
   /* 🔴 UEX'S OWN "Powered by UEX" BADGE, supplied by Sub 2026-08-22 — so it is used UNMODIFIED,
      which is the entire point of a brand badge. It is not tinted, not recoloured by the
      manufacturer skins, and not clipped: an attribution that changes to suit our theme stops being
@@ -330,13 +346,46 @@
       <!-- 🔴 THE CREDIT, not a source line. Sub: "this is really mainly just them. All we're doing
            is putting up a wrapper for it." The mark is a drop-in (see #uexmark) and the wordmark
            stands alone until it exists, so the attribution is never absent. -->
+      <!-- 🔴 RIGHT-JUSTIFIED, AND THE MARK IS THE LAST THING ON THE LINE (Sub, 2026-08-22).
+           Reading order now ENDS on UEX instead of starting on them and trailing off into our own
+           status text. The badge sits hard against the right edge, the age sits beside it, and the
+           ⓘ between the two belongs to the age it qualifies. -->
       <span id="src">
+        <span id="srctext">…</span>
+        <!-- 🔴 THE ⓘ ANSWERS "HOW OFTEN DOES THIS UPDATE", AND ITS ONE JOB IS TO KEEP TWO AGES
+             APART. The number beside it is how old OUR COPY of the table is; we redownload it
+             every six hours. It is NOT how old the prices are — a quote is one player's reading
+             from whenever they took it, and measured against the live table on 2026-08-22 the
+             median is 38 days, with 79% of readings over a fortnight old. Anyone reading "34m ago"
+             as "these prices are 34 minutes old" would be wrong by about five weeks, and that is
+             precisely the misreading this popover exists to stop — the same family as Sub reading
+             a position-fix age as a distance (see renderEye's three-quantity note).
+             ⚠️ A real <button> with popovertarget, and the glyph DRAWN rather than typed, for both
+             of the reasons already written out on #eye above. -->
+        <button id="fresh" class="infobtn" type="button" popovertarget="freshpop"
+                title="We redownload UEX's price table every 6 hours, and this is when that last happened. It is not how old the prices are — each shop row carries its own age.">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9.5" />
+            <path d="M12 11v5.5" />
+            <path d="M12 7.6v0.1" stroke-width="2.6" />
+          </svg>
+        </button>
         <!-- ⚠️ The fallback REPLACES rather than removes: an attribution that can vanish because an
              image 404'd is not an attribution. If the badge cannot load, the words take its place. -->
         <img id="uexmark" src="/logos/uex-powered.png" alt="Powered by UEX"
              onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" />
-        <span id="srctext">…</span>
       </span>
+      <!-- ⚠️ OUTSIDE #src, exactly as #eyepop sits outside #eye. Inside, these words would join
+           `#src.textContent` and turn the suite's "the footer names where the table came from"
+           into a tautology that no regression could ever fail. -->
+      <div id="freshpop" class="eyepop" popover="auto">
+        <b>Updated every 6 hours.</b> That is how often this widget redownloads UEX's price table,
+        and the time beside this icon is when it last did.
+        <span class="sep"></span>
+        It is <b>not</b> how old the prices are. Every price is a reading a player reported at
+        their own moment — most are weeks old — so each shop row carries its own age.
+      </div>
     </div>
   </div>
 
