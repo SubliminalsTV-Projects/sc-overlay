@@ -46,7 +46,8 @@ import type { ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ItemShopStore, type ItemShopTable } from "./item-shops.js";
-import { searchItems, searchUnpriced, provenance, type SearchHit, type ResolvedQuote } from "./item-search.js";
+import { searchItems, searchUnpriced, provenance, type SearchHit, type ResolvedQuote, type ObservedQuote } from "./item-search.js";
+import type { ObservedPriceStore } from "./observed-prices.js";
 import { searchCommodities, sellOnlyMatches } from "./verse-commodities.js";
 import type { TradeTable } from "./trade-prices.js";
 import {
@@ -119,6 +120,36 @@ export interface VerseDeps {
    * which is a smaller loss than the search failing.
    */
   commodities?: () => TradeTable | null;
+  /**
+   * Observed prices — what this player actually paid, read out of `game.log`.
+   *
+   * 🔴 A BORROW, NOT A SECOND STORE, exactly like `commodities` above. `price-feed.ts` owns the
+   * confirmation gates and the state file; this widget only reads. Building a second store here
+   * would mean a second answer to "did that purchase go through", and the Verse Finder and the
+   * Ledger could then disagree about a trade the player made once.
+   *
+   * Optional like everything else here: without it the widget simply never mentions receipts,
+   * which is the state every player is in before they buy anything anyway.
+   */
+  observed?: () => ObservedPriceStore | null;
+  /**
+   * A commodity's display name -> its `resourceGUID`.
+   *
+   * 🔴 THIS EXISTS BECAUSE A COMMODITY HIT CARRIES NO UUID AND AN OBSERVATION IS KEYED BY ONE.
+   * `verse-commodities.ts` builds its rows from the UEX trade table, which is keyed by NAME and has
+   * never known the game's UUID (`uuid: null`, deliberately). The purchase line, meanwhile, states
+   * `resourceGUID` and nothing else. So the one place these two halves can meet is the name, and it
+   * is resolved through the app's OWN `commodities.json` rather than by string-matching the two
+   * tables against each other.
+   *
+   * ⚠️ IT IS THE ONE NAME MATCH IN THIS FEATURE, AND IT IS DELIBERATELY NARROW. Everywhere else the
+   * join is the game's own UUID with no matching at all. Here the two sides are UEX's name and
+   * CIG's name for the same commodity; they agree today on every commodity Sub has traded, but
+   * they come from different publishers and could drift. A miss costs one receipt not being shown,
+   * never a wrong price against the wrong commodity — the lookup either resolves to the right UUID
+   * or to nothing.
+   */
+  commodityUuid?: (name: string) => string | null;
 }
 
 let store: ItemShopStore | null = null;
@@ -253,6 +284,56 @@ function originPayload(origin: OriginVerdict) {
  * the name is only used to ASK the dataset, and the answer is accepted only when a returned UUID
  * equals the one UEX gave us. No uuid on either side means no claim.
  */
+/**
+ * What the player has actually paid for this, if anything.
+ *
+ * 🔑 THE JOIN IS THE GAME'S OWN UUID, so there is no name matching anywhere: `itemClassGUID` from
+ * the purchase line IS `ShopItem.u`, and `resourceGUID` IS the key of `commodities.json`. Measured
+ * 2026-08-23: 89 of the 128 distinct items in Sub's logs (69.5%) resolve to a Verse Finder row.
+ * The rest are things UEX simply has no shop for — a receipt for one of those is still recorded,
+ * it just has no row here to hang off yet.
+ *
+ * 🔴 THE KIND DECIDES THE NAMESPACE. Items and commodities are keyed by different UUIDs from
+ * different datasets; looking one up in the other's namespace would silently return nothing
+ * forever, which is indistinguishable from "you have never bought this".
+ *
+ * ⚠️ A SELL is only ever offered for a commodity, and only alongside its buy rows. An item cannot
+ * be sold back at all (no sell verb exists in 533 logs), so an item row can never carry one.
+ */
+function observedFor(hit: SearchHit, deps: VerseDeps): ObservedQuote[] | undefined {
+  const store = deps.observed?.();
+  if (!store) return undefined;
+  const kind = hit.kind === "commodity" ? "commodity" : "item";
+  // An ITEM row carries the game's UUID outright. A COMMODITY row never does — see
+  // `commodityUuid` — so it is resolved from the name through our own dataset.
+  const id = kind === "commodity" ? hit.uuid ?? deps.commodityUuid?.(hit.name) ?? null : hit.uuid;
+  if (!id) return undefined;
+  const rows = [
+    ...store.latestPerTerminal(kind, id, "buy"),
+    // Commodities only — see above. Shown so a player who sold Laranite here can see what they
+    // got, which the survey half of the widget cannot tell them at all.
+    ...(kind === "commodity" ? store.latestPerTerminal(kind, id, "sell") : []),
+  ];
+  if (!rows.length) return undefined;
+  return rows
+    .sort((a, b) => b.at - a.at)
+    .slice(0, OBSERVED_SHOWN)
+    .map((r) => ({
+      terminal: r.terminal,
+      price: r.unitPrice,
+      // Seconds, to match `ResolvedQuote.asOf` — the widget's age helpers are shared and a
+      // milliseconds value would render as a date in 1970 without failing anything.
+      asOf: Math.round(r.at / 1000),
+      quantity: r.quantity,
+      ...(r.side === "sell" ? { side: "sell" as const } : {}),
+    }));
+}
+
+/** Receipts shown per item. A player who buys ammunition every session has dozens; the newest few
+ *  are the answer to "what does this cost now", and the rest are history the widget does not have
+ *  room to be honest about. */
+const OBSERVED_SHOWN = 3;
+
 function craftInfo(hit: SearchHit, tracker: TrackerLike | undefined): { craftable: true; owned: boolean } | null {
   if (!tracker || !hit.uuid) return null;
   let uuids: string[];
@@ -332,7 +413,7 @@ export function verseRoutes(
     const nothing = q && !hits.length;
     json(res, 200, {
       query: q,
-      results: hits.map((h) => ({ ...h, craft: craftInfo(h, deps.tracker) })),
+      results: hits.map((h) => ({ ...h, craft: craftInfo(h, deps.tracker), observed: observedFor(h, deps) })),
       unpriced: nothing ? searchUnpriced(table, q) : [],
       sellOnly: nothing ? sellOnlyMatches(commodityTable, q) : [],
       origin: px ? originPayload(px.origin) : null,

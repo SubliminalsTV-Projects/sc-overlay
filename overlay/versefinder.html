@@ -175,6 +175,31 @@
     white-space: nowrap;
     border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
     background: color-mix(in srgb, currentColor 12%, transparent); }
+  /* ── What you paid ─────────────────────────────────────────────────────────────────────────
+     🔴 A RECEIPT IS NOT A SURVEY ANSWER, and the chrome has to carry that rather than the wording:
+     a label is the first thing a skimming reader drops. Its own box, its own heading, and it sits
+     ABOVE the shop list. Same reasoning the site keeps between a confirmed event reward and an
+     unconfirmed candidate — the two must never be able to be read as one list.
+     🔑 Tinted with the accent rather than a colour of its own, so it retints with all 16
+     manufacturer skins like everything else here. */
+  .observed { margin: 7px 0 2px; padding: 6px 7px 4px;
+    border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
+    background: color-mix(in srgb, var(--green) 7%, transparent); border-radius: 7px; }
+  .obhead { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .oblabel { flex: none; font-size: 9px; font-weight: 700; letter-spacing: 0.07em;
+    text-transform: uppercase; color: var(--green); }
+  .obrow { padding-left: 0; }
+  /* ⚠️ `.obage`, NOT `.age.fresh`. `ageBand()` already returns the word "fresh" as a class for the
+     survey rows, so styling `.age.fresh` here would silently restyle every 0–7-day-old UEX quote
+     in the list below — a change to rows this feature has nothing to do with. Same trap the widget
+     suite's class-reuse rule is about; a receipt gets its own name.
+     🔑 `--green` and not `--good`: `--good` is defined in NO theme (checked all 16 skins plus
+     `widget-theme.css`), so it would have rendered with no colour at all while looking deliberate
+     in the source. `--green` is defined in all 16 and retints with the manufacturer skin. */
+  .age.obage { color: var(--green); }
+  .tag.sold { color: var(--cyan-dim); }
+  .tag.qty { color: var(--faint); text-transform: none; letter-spacing: 0.02em;
+    font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .tag.rent { color: var(--amber); }
   .tag.stock { color: var(--cyan-dim); text-transform: none; letter-spacing: 0.02em;
     font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -422,6 +447,34 @@
     if (days === 1) return "1d";
     if (days < 60) return days + "d";
     return Math.floor(days / 30) + "mo";
+  }
+
+  /**
+   * Age of a RECEIPT — a third question again, and it needs its own ladder for the same reason the
+   * table-age helper does.
+   *
+   * 🔴 `ageOf` BOTTOMS OUT AT "today", WHICH IS EXACTLY THE RESOLUTION THIS FEATURE IS ABOUT.
+   * A survey quote is a median 86 days old, so a ladder that starts at "today" and climbs in days
+   * is right for it. A receipt is usually SECONDS old — Sub's whole test is buying something and
+   * watching the number move — and rendering that as "today" would hide the freshness that is the
+   * entire point. Reusing `ageOf` here would have looked completely correct and said nothing.
+   */
+  function receiptAge(sec) {
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - sec));
+    if (s < 45) return "just now";
+    if (s < 3600) return Math.max(1, Math.round(s / 60)) + "m";
+    if (s < 86400) return Math.round(s / 3600) + "h";
+    const d = Math.floor(s / 86400);
+    return d === 1 ? "1d" : d < 60 ? d + "d" : Math.floor(d / 30) + "mo";
+  }
+
+  /** The game's shop token made readable — `SCShop_Orison_KelTo` -> "Orison KelTo".
+   *  ⚠️ A READING CONVENIENCE ONLY. There is no real display name for these shops (they do not
+   *  join to the UEX terminal list at all), so the raw token stays on the row's `title` and this
+   *  never pretends to be canonical. */
+  function shopToken(t) {
+    const s = String(t || "").replace(/^SCShop[_-]?/i, "").replace(/[_-]+/g, " ").trim();
+    return s || String(t || "");
   }
 
   /**
@@ -675,6 +728,86 @@
     // already says Seraphim Station is the same word twice. `shortName()` strips it — measured
     // across the whole table: 449 of 461 shortened, 0 emptied, and 0 collisions (no two shops at
     // one place end up reading identically), which is the property that makes it safe.
+    // ══ WHAT YOU PAID ══════════════════════════════════════════════════════════════════════
+    //
+    // 🔴 ABOVE THE SHOP LIST AND IN ITS OWN BOX, NEVER MERGED INTO IT. Everything below this is a
+    // UEX survey answer — somebody typed a number in, a median 86 days ago. This is a RECEIPT,
+    // read out of the player's own `game.log`, and the two are different KINDS of claim. Merging
+    // them into the cheapest-first list would let a receipt sort in among strangers' reports and
+    // lose exactly the thing that makes it worth having.
+    //
+    // 🔑 It also cannot be reconciled with them yet: the game calls a terminal
+    // `SCShop_Orison_KelTo` and UEX calls it "Kel-To - Aspire Grand - New Babbage", and 0 of 47
+    // log shop names match a table terminal name. So this sits BESIDE the survey and never claims
+    // to be one of its rows.
+    if (r.observed && r.observed.length) {
+      const ob = document.createElement("div");
+      ob.className = "observed";
+      const oh = document.createElement("div");
+      oh.className = "obhead";
+      oh.appendChild(Object.assign(document.createElement("span"), {
+        className: "oblabel", textContent: "you paid",
+      }));
+      oh.appendChild(Object.assign(document.createElement("span"), { className: "grule" }));
+      ob.appendChild(oh);
+
+      for (const o of r.observed) {
+        const row = document.createElement("div");
+        row.className = "grow obrow";
+
+        const w = document.createElement("span");
+        w.className = "gshop";
+        // ⚠️ THE GAME'S OWN SHOP TOKEN, TIDIED FOR READING ONLY. It is not a display name and there
+        // is no display name to be had — this shop is not joinable to the UEX terminal list. The
+        // raw token stays on hover so a player can report it or search for it.
+        w.textContent = shopToken(o.terminal);
+        w.title = o.terminal + " — the game's own name for this shop. It cannot be matched to the "
+          + "shop names below, which come from UEX, so this is shown separately rather than "
+          + "merged with them.";
+        row.appendChild(w);
+
+        // 🔴 A COMMODITY HAS A BUY PRICE AND A SELL PRICE AT ONE TERMINAL AND THEY ARE NOT
+        // INTERCHANGEABLE. An unlabelled sell row would say a shop sells Laranite for what it
+        // pays you for it. Items never carry this — you cannot sell one back.
+        if (o.side === "sell") {
+          const st = document.createElement("span");
+          st.className = "tag sold";
+          st.textContent = "sold";
+          st.title = "This is what you SOLD it for here, not what it costs to buy.";
+          row.appendChild(st);
+        }
+
+        // 🔑 SHOW THE WORKING WHEN THE RECEIPT WAS FOR MORE THAN ONE. `client_price` is the stack
+        // total and a quarter of real purchases are qty > 1, so "7 aUEC" off a 77 aUEC receipt is
+        // a division the player did not see us do. Saying "x11" makes it checkable.
+        if (o.quantity > 1) {
+          const qt = document.createElement("span");
+          qt.className = "tag qty";
+          qt.textContent = "x" + fmt(o.quantity);
+          qt.title = "You bought " + fmt(o.quantity) + " at once. The price shown is per one — "
+            + "the log records the total for the whole stack.";
+          row.appendChild(qt);
+        }
+
+        const a = document.createElement("span");
+        a.className = "age obage";
+        a.textContent = receiptAge(o.asOf);
+        a.title = "You bought this " + receiptAge(o.asOf) + " ago. This is a receipt from your own "
+          + "game log, not a price somebody reported — it is what the shop actually charged you.";
+        row.appendChild(a);
+
+        const p = document.createElement("span");
+        p.className = "price";
+        p.textContent = fmt(Math.round(o.price));
+        p.appendChild(Object.assign(document.createElement("span"), {
+          className: "unit", textContent: " aUEC",
+        }));
+        row.appendChild(p);
+        ob.appendChild(row);
+      }
+      el.appendChild(ob);
+    }
+
     const shops = document.createElement("div");
     shops.className = "shops";
 

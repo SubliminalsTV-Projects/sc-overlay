@@ -20,7 +20,12 @@ import { canAutoLoad } from "./hauling-autoload.js";
 import { buildHaulingPlan, gridsOf } from "./hauling-plan.js";
 import { HaulingBuys } from "./hauling-buys.js";
 import type { CommodityPurchase } from "./trade-log.js";
-import { tradeRoutes, tradeLogLine, tradeTable } from "./trade-routes.js";
+import { tradeRoutes, tradeTable } from "./trade-routes.js";
+// 🔑 The log feed goes through `priceFeedLine` rather than `tradeLogLine` at all three read sites.
+// It still does everything `tradeLogLine` did — the trade journal is untouched — and additionally
+// records observed ITEM prices, the half of the shop data the app had never read. One wrapper so
+// the three sites cannot drift; see `price-feed.ts`.
+import { initPriceFeed, observedPrices, priceFeedLine } from "./price-feed.js";
 import { verseRoutes } from "./verse-routes.js";
 import { largestBoxScu } from "./cargo-boxes.js";
 import {
@@ -672,6 +677,33 @@ const tradeDeps = {
     if (haulingClients.size) haulingSend({ kind: "state", view: hauling.view() });
   },
 };
+// Observed prices — what the player actually paid, as opposed to what UEX's survey says. Stood up
+// before any seed runs, because the seed is where a purchase from before this launch is found.
+initPriceFeed(userDir);
+
+/**
+ * Commodity display name -> `resourceGUID`, built once from the economy dataset.
+ *
+ * 🔑 Rebuilt when the dataset's size changes rather than cached forever: `loadDataset` swaps the
+ * whole economy on a patch flip, and a map pinned at boot would keep resolving names against the
+ * previous patch's commodity list. Cheap enough to check on every call (one property read) and it
+ * cannot go stale the way a boot-time snapshot can.
+ */
+let commodityUuidMap: Map<string, string> | null = null;
+let commodityUuidFor = -1;
+function commodityUuidByName(): Map<string, string> {
+  const all = economy.commodities();
+  const n = Object.keys(all).length;
+  if (commodityUuidMap && commodityUuidFor === n) return commodityUuidMap;
+  const m = new Map<string, string>();
+  for (const [uuid, c] of Object.entries(all)) {
+    const name = (c as { name?: string | null })?.name;
+    if (name) m.set(name.toLowerCase(), uuid);
+  }
+  commodityUuidMap = m;
+  commodityUuidFor = n;
+  return m;
+}
 {
   const c = haulingData.counts();
   console.log(`[hauling] ships: ${c.ships}, contracts: ${c.contracts}, locations: ${c.locations}` +
@@ -1601,7 +1633,7 @@ function seedFromRotatedLog(): void {
       tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
       if (ev) { tracker.apply(ev); hauling.apply(ev); applied++; }
-      tradeLogLine(line, tradeDeps);
+      priceFeedLine(line, tradeDeps);
     }
     const oldest = recent[0], newest = recent[recent.length - 1];
     const span = Math.round((Date.now() - oldest.at) / 60000);
@@ -1633,7 +1665,7 @@ function seedTrackerFromLog(): number | null {
       tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
       if (ev) { tracker.apply(ev); party.apply(ev); hauling.apply(ev); applyChatSignals(ev); }
-      tradeLogLine(line, tradeDeps);
+      priceFeedLine(line, tradeDeps);
       const chan = shipChannelEvent(line);
       if (chan) {
         if (chan.action === "enter" && chan.manufacturer) { seedMfr = chan.manufacturer; seedShip = chan.ship; }
@@ -1692,7 +1724,7 @@ function startWatcher(): void {
     // by system, and a stale answer there sends someone to another star.
     if (sysWatch.push(e.raw)) { tracker.setSystem(sysWatch.current()); broadcastMissions(); }
     // Commodity purchases and sales, for the trade journal. Cheap: one regex test per line.
-    tradeLogLine(e.raw, tradeDeps);
+    priceFeedLine(e.raw, tradeDeps);
     const me = parseMissionEvent(e);
     if (me) { tracker.apply(me); party.apply(me); hauling.apply(me); applyChatSignals(me); }
 
@@ -2099,6 +2131,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // the same commodity in the same second. Read at request time for the same reason the location
     // signals are: the table is swapped by a background refresh.
     commodities: () => tradeTable(tradeDeps),
+    // What the player actually paid, borrowed read-only from the price feed. Read at request time
+    // for the same reason the table above is: it changes as they shop.
+    observed: () => observedPrices(),
+    // A commodity row carries no UUID (it is built from UEX's name-keyed table) while a purchase
+    // states only `resourceGUID`, so the two halves meet through our own dataset. Memoised: the
+    // map is 738 entries and the dataset only changes on a patch flip.
+    commodityUuid: (name: string) => commodityUuidByName().get(name.toLowerCase()) ?? null,
     // Read at request time, never cached: these watchers are updated by the log tail and a
     // snapshot taken at startup would pin the player wherever they were when the app launched.
     locationSignals: () => {
