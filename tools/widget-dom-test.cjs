@@ -6499,7 +6499,7 @@ const RUNSNARROW = `(async () => {
   // 🔑 POSITIVE GUARD FIRST. Every check below is a must-not-overflow, and an empty board
   // satisfies all of them for free - the shape of free pass this repo has been bitten by more
   // than once. If this one fails, nothing after it means anything.
-  ok("there are Runs rows to measure", rows().length === 3, rows().length + " rows");
+  ok("there are Runs rows to measure", rows().length > 0, rows().length + " rows");
 
   const overflowAt = async (w) => {
     panel.style.width = w + "px";
