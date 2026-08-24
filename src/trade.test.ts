@@ -154,6 +154,80 @@ console.log("\n-- the sell line, which is NOT the buy line mirrored --");
   check("the shop is named", p?.shopName === "SCShop_Admin_lt_base_g", String(p?.shopName));
 }
 
+// ── 🔴 A SELL WITH NO CARGO-BOX MANIFEST STATES NO VOLUME ──────────────────────────────────────
+//
+// Both lines below are VERBATIM out of the shared-log corpus, 2026-08-24. They are the two shapes
+// the empty-manifest population actually takes at a TDD commodity exchange: a hand-mined gem sold
+// out of personal inventory, where there is no box because there is no cargo.
+//
+// ⚠️ NOTE WHAT MAKES THEM UNTELLABLE FROM A REAL 1 SCU SALE BY EVERY FIELD BUT ONE: `quantity[1]`,
+// `transactionMode[Entities]`, a real `amount`. The ONLY difference from `SELL_REAL` above is that
+// `Cargo Box Data:` is followed by nothing. That is the whole signal, which is why the parser reads
+// it off the raw line rather than inferring it from `boxScu`.
+
+/** Beradom at the New Babbage TDD. 120,000 aUEC, no manifest. */
+const SELL_GEM_BERADOM =
+  "<2026-08-24T07:12:57.560Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+  "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[776427652871] " +
+  "shopName[SCShop_CommEx_TDD_NewBabbage] kioskId[776427652874] amount[120000.000000] " +
+  "resourceGUID[c339897c-d682-48ad-a16f-daf145bc0f4d] autoLoading[0] quantity[1] " +
+  "transactionMode[Entities] Cargo Box Data:  [Team_CoreGameplayFeatures][Shops][UI]";
+
+/** Glacosite at the same terminal, a different day and a different contributor. */
+const SELL_GEM_GLACOSITE =
+  "<2026-07-28T21:02:49.045Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+  "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[729983404698] " +
+  "shopName[SCShop_CommEx_TDD_NewBabbage] kioskId[729983404701] amount[80000.000000] " +
+  "resourceGUID[960eda23-d77c-425e-8cbd-89d94ca6e2aa] autoLoading[0] quantity[1] " +
+  "transactionMode[Entities] Cargo Box Data:  [Team_CoreGameplayFeatures][Shops][UI]";
+
+const GEM_LINES: [string, string][] = [
+  ["Beradom", SELL_GEM_BERADOM],
+  ["Glacosite", SELL_GEM_GLACOSITE],
+];
+
+console.log("\n-- 🔴 an empty Cargo Box Data means the game stated no volume --");
+{
+  // 🔴 POSITIVE FIRST, AND NON-EMPTY. Every assertion in this block is about a value NOT being a
+  // number, and a fixture that stopped parsing satisfies all of them for free — the exact shape
+  // that has certified bugs in this repo before.
+  check("the empty-manifest fixtures parse at all, and there are some",
+    GEM_LINES.length === 2 && GEM_LINES.every(([, l]) => !!parseTradeLine(l)?.purchase),
+    `${GEM_LINES.length} lines`);
+
+  for (const [name, line] of GEM_LINES) {
+    const p = parseTradeLine(line)?.purchase;
+    check(`${name}: the volume is UNKNOWN, not a number`, p?.volume.known === false,
+      JSON.stringify(p?.volume));
+    check(`${name}: ...and it says why, rather than being a bare false`,
+      p?.volume.known === false && p.volume.why === "sell-states-no-cargo-boxes",
+      JSON.stringify(p?.volume));
+    check(`${name}: 🔴 no per-SCU price is offered`, p?.unitPrice.known === false,
+      JSON.stringify(p?.unitPrice));
+    // 🔑 THE MONEY AND THE PLACE ARE STILL TRUE, and that is Sub's ruling in one assertion: record
+    // the observation, mark the unit unknown. Dropping the row would lose a real sale.
+    check(`${name}: ...but the total and the terminal survive`,
+      p?.total === (name === "Beradom" ? 120000 : 80000)
+      && p?.shopName === "SCShop_CommEx_TDD_NewBabbage",
+      `${p?.total} at ${p?.shopName}`);
+  }
+
+  // 🔑 THE PAIRED NEGATIVE. A rule that made EVERY sell unknown would satisfy every check above,
+  // so the boxed sell from the same file has to stay known in the same breath.
+  const boxed = parseTradeLine(SELL_REAL)?.purchase;
+  check("...while a sell that DOES state a manifest keeps its volume",
+    boxed?.volume.known === true && scuOf(boxed) === 1, JSON.stringify(boxed?.volume));
+  check("...and its derived per-SCU price", ppsOf(boxed) === 1506, String(ppsOf(boxed)));
+
+  // 🔑 AND THE BUY SIDE IS UNTOUCHED — 45 of 45 real buys carry a manifest, and a buy states its
+  // volume in cSCU regardless, so this rule must not reach across.
+  const bought = parseTradeLine(BUY_AUTOLOAD)?.purchase;
+  check("...and a BUY is unaffected: stated volume, stated price",
+    bought?.volume.known === true && bought?.unitPrice.known === true
+    && bought.unitPrice.source === "stated",
+    JSON.stringify(bought?.unitPrice));
+}
+
 console.log("\n-- the round trip joins on resourceGUID alone --");
 {
   const bought = parseTradeLine(BUY_AUTOLOAD)?.purchase;
@@ -986,6 +1060,111 @@ console.log("\n-- the window: sized off the corpus, at both ends --");
   check("a refusal 3,655 ms late claims nothing", c.refused().length === 0, String(c.refused().length));
   check("...and the request it did not claim is booked", k.view().unmatched.length === 1,
     String(k.view().unmatched.length));
+}
+
+console.log("\n-- 🔴 the Ledger keeps the money and refuses the unit --");
+{
+  const GEM_NAMES: Record<string, string> = {
+    "c339897c-d682-48ad-a16f-daf145bc0f4d": "Beradom",
+    "960eda23-d77c-425e-8cbd-89d94ca6e2aa": "Glacosite",
+  };
+  const j = new TradeJournal(freshDir(), (g) => GEM_NAMES[g.toLowerCase()] ?? null);
+  const c = replay([
+    SELL_GEM_BERADOM,
+    clockLine("2026-08-24T07:13:20.000Z"),
+    SELL_GEM_GLACOSITE.replace("2026-07-28T21:02:49.045Z", "2026-08-24T07:13:30.000Z"),
+    clockLine("2026-08-24T07:14:00.000Z"),
+  ], j);
+  const v = j.view(new Date("2026-08-24T09:00:00Z"));
+
+  // 🔑 POSITIVE FIRST, AND NON-EMPTY. A journal that booked nothing satisfies every "is null"
+  // assertion below for free, and dropping these sales outright is the plausible wrong fix — so
+  // "the money is still here" has to be checked before "the unit is gone".
+  check("both gem sales reach the Ledger", v.unmatched.length === 2, String(v.unmatched.length));
+  check("...and nothing was left held", c.pending().length === 0, String(c.pending().length));
+  check("🔑 the revenue is exactly what the log said, 200,000 aUEC",
+    Math.round(v.allTime.unpricedRevenue) === 200000, String(v.allTime.unpricedRevenue));
+  check("...and the terminal is on every row",
+    v.unmatched.every((u) => u.sellShop === "SCShop_CommEx_TDD_NewBabbage"),
+    JSON.stringify(v.unmatched.map((u) => u.sellShop)));
+  check("...and the commodity is named", v.unmatched.some((u) => u.commodity === "Beradom")
+    && v.unmatched.some((u) => u.commodity === "Glacosite"),
+    JSON.stringify(v.unmatched.map((u) => u.commodity)));
+
+  // 🔴 THE FIX. `null`, never 0 — a missing figure printed as zero is not missing, it is wrong.
+  check("🔴 no SCU is claimed for either sale", v.unmatched.every((u) => u.scu === null),
+    JSON.stringify(v.unmatched.map((u) => u.scu)));
+  check("🔴 ...and no per-SCU price", v.unmatched.every((u) => u.sellPricePerScu === null),
+    JSON.stringify(v.unmatched.map((u) => u.sellPricePerScu)));
+  check("...they are not zero, which would read as a real figure",
+    v.unmatched.every((u) => u.scu !== 0 && u.sellPricePerScu !== 0));
+  check("...and no closed run was invented", v.runs.length === 0 && v.allTime.profit === 0,
+    `${v.runs.length} runs, profit ${v.allTime.profit}`);
+}
+
+console.log("\n-- 🔴 an unknown unit never reaches the price pool --");
+{
+  // The pool's whole schema is "what one of these costs". A 120,000 aUEC gem sold out of a
+  // backpack would publish a 120,000 aUEC/SCU quote for Beradom at the New Babbage TDD.
+  const gem = parseTradeLine(SELL_GEM_BERADOM)?.purchase;
+  const boxed = parseTradeLine(SELL_REAL)?.purchase;
+  check("a boxed sell still has a publishable unit price", boxed?.unitPrice.known === true);
+  check("🔴 ...and the gem sale does not, so `recordCommodity` has nothing to publish",
+    gem?.unitPrice.known === false, JSON.stringify(gem?.unitPrice));
+}
+
+console.log("\n-- 🔴 an EXISTING journal is not rewritten by this change --");
+{
+  // ⚠️ THE UPGRADE QUESTION, ASSERTED RATHER THAN ASSUMED. Rows already on disk carry the old
+  // fabricated `scu: 1` / `sellPricePerScu: 120000`. Changing how the figure is COMPUTED must not
+  // change what is RECORDED — a player's history is theirs, and rewriting it silently on upgrade is
+  // a thing this project has nearly done before.
+  //
+  // 🔑 Two mechanisms keep it true and both are checked: `read()` returns stored rows verbatim
+  // (STATE_VERSION does not move, so nothing is discarded either), and `seen` dedupes on
+  // `at|kind|shop|guid|total` — none of which this change touches — so the startup replay of the
+  // newest rotated log cannot re-book the sale under the new rule.
+  const dir = freshDir();
+  const path = pjoin(dir, "trade-journal.json");
+  writeFileSync(path, JSON.stringify({
+    v: 1, open: [], runs: [], writtenOff: [], nextLotId: 3,
+    unmatched: [{
+      commodity: "Beradom", resourceGuid: "c339897c-d682-48ad-a16f-daf145bc0f4d",
+      scu: 1, sellPricePerScu: 120000, revenue: 120000,
+      sellShop: "SCShop_CommEx_TDD_NewBabbage", soldAt: "2026-08-24T07:12:57.560Z",
+    }],
+    seen: ["2026-08-24T07:12:57.560Z|sell|SCShop_CommEx_TDD_NewBabbage|c339897c-d682-48ad-a16f-daf145bc0f4d|120000"],
+  }), "utf8");
+
+  const j = new TradeJournal(dir, () => "Beradom");
+  const before = j.view(new Date("2026-08-24T09:00:00Z"));
+  check("the historical row is still there", before.unmatched.length === 1, String(before.unmatched.length));
+  check("...with its old figures untouched",
+    before.unmatched[0].scu === 1 && before.unmatched[0].sellPricePerScu === 120000,
+    JSON.stringify(before.unmatched[0]));
+
+  // 🔴 The replay that happens on every launch. Same line, same journal.
+  replay([SELL_GEM_BERADOM, clockLine("2026-08-24T07:13:20.000Z")], j);
+  const after = j.view(new Date("2026-08-24T09:00:00Z"));
+  check("🔴 replaying the same sale adds nothing", after.unmatched.length === 1,
+    String(after.unmatched.length));
+  check("🔴 ...and does not rewrite the old figures under the new rule",
+    after.unmatched[0].scu === 1 && after.unmatched[0].sellPricePerScu === 120000,
+    JSON.stringify(after.unmatched[0]));
+  check("...and the revenue total is unchanged", Math.round(after.allTime.unpricedRevenue) === 120000,
+    String(after.allTime.unpricedRevenue));
+
+  // 🔑 PAIRED POSITIVE. Every assertion above is satisfied by a journal that refuses everything,
+  // which is precisely what a bad STATE_VERSION bump would produce. A DIFFERENT sale must still
+  // land in the very same file.
+  replay([SELL_GEM_GLACOSITE.replace("2026-07-28T21:02:49.045Z", "2026-08-24T07:13:30.000Z"),
+    clockLine("2026-08-24T07:14:00.000Z")], j);
+  const third = j.view(new Date("2026-08-24T09:00:00Z"));
+  check("...while a NEW sale still books, so nothing was wiped", third.unmatched.length === 2,
+    String(third.unmatched.length));
+  check("...the new one under the new rule, beside the old one under the old",
+    third.unmatched.some((u) => u.scu === null) && third.unmatched.some((u) => u.scu === 1),
+    JSON.stringify(third.unmatched.map((u) => u.scu)));
 }
 
 console.log("\n-- the clock is the LOG's, not the wall's --");
