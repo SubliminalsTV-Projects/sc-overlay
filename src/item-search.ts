@@ -34,6 +34,7 @@
  * rule here, same reason.
  */
 import type { ItemShopTable, ShopItem, ShopTerminal, ItemQuote } from "./item-shops.js";
+import type { PlacePrecision } from "./shop-placement.js";
 
 /** Split a name into the words a person would say. Digits and letters part company on purpose:
  *  "P4-AR" becomes ["p4","ar"] so typing `P4` or `AR` both reach it, and "FR-76" becomes
@@ -156,6 +157,70 @@ export interface ResolvedQuote {
    *  `item-shops.ts`), so this is the one axis where the commodity data is genuinely richer and it
    *  would be a real loss to hide it for the sake of making the two row types look the same. */
   stockScu?: number | null;
+  /**
+   * 🔴 SOMEBODY HAS ACTUALLY STOOD AT THIS SHOP AND SEEN THIS PRICE. Present on a row that a
+   * community confirmation was folded onto — see `verse-routes.ts`'s `applyConfirmations`.
+   *
+   * This is what turned the Verse Finder from two lists into one. It used to be a separate
+   * `observed[]` array drawn in a block of its own, which printed the same price twice for the same
+   * shop and was exactly what Sub rejected: *"it tells me 25 days ago 7 aUEC and also 7 aUEC four
+   * hours ago. It's just too much."* A confirmation is not a second row about the same shop; it is
+   * a fresher answer to the question that row already asks.
+   */
+  confirmed?: QuoteConfirmation;
+  /**
+   * 🔴 THERE IS NO UEX SURVEY BEHIND THIS ROW — it is a confirmation we could PLACE but not attach
+   * to a terminal UEX prices. It is in the list, positioned by its own location and sorted with
+   * everything else, because Sub's objection to the old block was that the shops in it *"could be
+   * anywhere"*: **placed and sorted, the same row is useful** — a 7 aUEC confirmation two jumps
+   * away is worth knowing even where UEX has no row for that shop.
+   *
+   * ⚠️ It does NOT count toward `shopCount`, and the widget must not count it as a drawn shop
+   * either — `shopCount` is how many shops UEX says sell this, and a row we added is not one.
+   */
+  observedOnly?: true;
+  /**
+   * The starmap place id, when this row's location came from a placement rather than from the
+   * terminal index. Read by `orderByProximity` in preference to looking the terminal up, which is
+   * the whole reason a placed confirmation can sort beside the surveyed shops at the same station.
+   */
+  placeId?: string;
+}
+
+/**
+ * What a community confirmation states about the row it was folded onto.
+ *
+ * 🔴 `precision` IS NOT DECORATION. `exact` means the game's shop token is known to BE this
+ * terminal, so the price came with it — Sub's ruling that ours beats UEX's. `place-level` means the
+ * token is known to be at this STATION and is probably this kiosk, so it may only refresh the age:
+ * measured over the shipped table, 480 of 2,149 item × place groups (22.3%) hold two kiosks that
+ * charge DIFFERENT amounts, worst 36 vs 396 aUEC. See `foldsOnto` in `shop-placement.ts`.
+ */
+export interface QuoteConfirmation {
+  /** Epoch seconds of the freshest confirmation behind this row — ours or the pool's. */
+  asOf: number;
+  /** 🔴 DISTINCT PLAYERS, never receipts. One person buying twenty times is one witness, and a row
+   *  that counted receipts would present that as consensus. */
+  contributors: number;
+  /** Observations behind it. Shown only where it adds to the contributor count. */
+  samples: number;
+  /** One of those players was this one. A footnote on a price, never the headline. */
+  mine: boolean;
+  /** How firmly the game's token is tied to this terminal.
+   *
+   *  ⚠️ PRESENT ONLY ON A FOLD. An `observedOnly` row has no UEX terminal to be tied to — that is
+   *  why it is a row of its own — so stamping a precision on it would be answering a question
+   *  nobody asked, in a field the widget reads to decide how much to trust a merge. */
+  precision?: PlacePrecision;
+  /** The game's own shop token, kept so a player can report or search for it. */
+  token: string;
+  /** True when the confirmation also supplied this row's PRICE. False for a place-level fold,
+   *  which may only say the number already there is still current. */
+  setPrice: boolean;
+  /** 🔴 WHAT THIS TERMINAL PAID FOR IT, not what it charges. Commodities only, and only ever on an
+   *  `observedOnly` row — every surveyed row in the widget is a buy price, so a sell can never fold
+   *  onto one without saying a shop sells the thing for what it pays you. */
+  side?: "sell";
 }
 
 /**
@@ -270,8 +335,26 @@ export interface SearchOptions {
    *
    * Receives every resolvable shop; returns the ones to send, in order. Absent, the cheapest-first
    * order stands and the cap is a plain slice.
+   *
+   * 🔑 `ctx` NAMES THE ITEM, AND THAT IS WHAT LETS COMMUNITY CONFIRMATIONS JOIN THIS LIST RATHER
+   * THAN FORM A SECOND ONE. A confirmation is keyed by the game's UUID, so the hook cannot find the
+   * right ones without being told which row it is ordering — and folding them in AFTER the cap
+   * would mean the far-system rescue and the confirmations were ranked by two different rules.
+   * There is one ordering in this feature; this argument is what keeps that true.
    */
-  orderQuotes?: (quotes: ResolvedQuote[], cap: number) => ResolvedQuote[];
+  orderQuotes?: (quotes: ResolvedQuote[], cap: number, ctx: QuoteContext) => ResolvedQuote[];
+}
+
+/** Which catalogue row a set of quotes belongs to, for the `orderQuotes` hook.
+ *
+ *  ⚠️ `uuid` IS NULL FOR EVERY COMMODITY, and that is not an oversight — `verse-commodities.ts`
+ *  builds its rows from UEX's trade table, which is keyed by NAME and has never carried the game's
+ *  UUID. The name is the only bridge, and resolving it is the route file's job (`commodityUuid`),
+ *  not this module's. */
+export interface QuoteContext {
+  name: string;
+  uuid: string | null;
+  kind: "item" | "commodity";
 }
 
 /**
@@ -324,7 +407,9 @@ export function searchItems(table: ItemShopTable, query: string, opts: SearchOpt
       // 🔴 The hook orders AND caps — do not re-slice its answer. See `orderQuotes`: the rows it
       // deliberately keeps past the cap are the far-system ones, and they are last by construction,
       // so a slice here is exactly the exclusion Sub reported.
-      quotes: opts.orderQuotes ? opts.orderQuotes(quotes, perItem) : quotes.slice(0, perItem),
+      quotes: opts.orderQuotes
+        ? opts.orderQuotes(quotes, perItem, { name: item.n, uuid: item.u, kind: "item" })
+        : quotes.slice(0, perItem),
       low,
       high,
       rentLow,

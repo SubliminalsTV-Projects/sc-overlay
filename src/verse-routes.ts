@@ -46,7 +46,14 @@ import type { ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ItemShopStore, type ItemShopTable } from "./item-shops.js";
-import { searchItems, searchUnpriced, provenance, type SearchHit, type ResolvedQuote, type ObservedQuote } from "./item-search.js";
+import {
+  searchItems, searchUnpriced, provenance,
+  type SearchHit, type ResolvedQuote, type QuoteContext, type QuoteConfirmation,
+} from "./item-search.js";
+import {
+  buildPlacer, foldsOnto, fromShopPlacesFile, placerCoverage,
+  type ShopPlacement, type ShopPlacer,
+} from "./shop-placement.js";
 import type { ObservedPriceStore } from "./observed-prices.js";
 import type { PoolQuote } from "./price-pool.js";
 import { searchCommodities, sellOnlyMatches } from "./verse-commodities.js";
@@ -242,6 +249,31 @@ function proxCache(dataDir: string): ProxCache | null {
   }
 }
 
+/* ── The shop-token → place lookup ───────────────────────────────────────────────────────────── */
+
+/**
+ * Built once from `data/shop-places.json`, which `shop-placement.ts`'s adapters produce from the
+ * hand-curated join map and from flight `shoploc`'s log replay.
+ *
+ * 🔴 A MISSING FILE IS A SUPPORTED STATE, not an error. Without it nothing folds and nothing is
+ * placed, every confirmation counts as unplaced, and the widget draws the survey exactly as it did
+ * before the pool existed. That is the same rule every other optional piece of this feature
+ * follows: somebody typing an item name must always get their answer.
+ */
+let placerCache: { placer: ShopPlacer; parts: ShopPlacement[] } | null = null;
+
+function shopPlacer(dataDir: string): { placer: ShopPlacer; parts: ShopPlacement[] } {
+  if (placerCache) return placerCache;
+  let parts: ShopPlacement[] = [];
+  try {
+    parts = fromShopPlacesFile(JSON.parse(readFileSync(join(dataDir, "shop-places.json"), "utf8")));
+  } catch {
+    parts = [];
+  }
+  placerCache = { placer: buildPlacer(parts), parts };
+  return placerCache;
+}
+
 function terminalIndex(table: ItemShopTable, locations: Record<string, LocationRecord>): TerminalIndex {
   if (termIndex && termIndex.forTerminals === table.terminals) return termIndex.index;
   const index = buildTerminalIndex(table.terminals, locations);
@@ -249,10 +281,13 @@ function terminalIndex(table: ItemShopTable, locations: Record<string, LocationR
   return index;
 }
 
-/** The verdict plus a ready-made orderer, or null when we cannot say anything useful. */
+/** The verdict, a ready-made orderer, and the two tables a confirmation needs to place itself.
+ *  Null when we cannot say anything useful about where the player is. */
 function proximity(deps: VerseDeps, table: ItemShopTable): {
   origin: OriginVerdict;
   order: (q: ResolvedQuote[]) => ProximityOrder;
+  locations: Record<string, LocationRecord>;
+  index: TerminalIndex;
 } | null {
   const c = proxCache(deps.dataDir);
   if (!c) return null;
@@ -274,6 +309,8 @@ function proximity(deps: VerseDeps, table: ItemShopTable): {
       travel: { gateways: c.gateways, posOf: c.posOf, systemOf: c.systemOf },
       origin,
     }),
+    locations: c.locations,
+    index,
   };
 }
 
@@ -323,122 +360,279 @@ function originPayload(origin: OriginVerdict) {
  * ⚠️ A SELL is only ever offered for a commodity, and only alongside its buy rows. An item cannot
  * be sold back at all (no sell verb exists in 533 logs), so an item row can never carry one.
  */
+/* ── Community confirmations: ONE list, not two ──────────────────────────────────────────────── */
+
 /**
- * 🔴 AND SINCE FLIGHT `poolfill` IT IS NOT ONLY THIS PLAYER'S RECEIPTS — THE COMMUNITY POOL IS
- * MERGED IN, PER TERMINAL, AND THAT CHANGES WHAT THE ROW IS.
+ * 🔴 THE REWORK, 2026-08-24 (flight `onerow`). THE OLD DESIGN WAS A SECOND LIST AND IT HAD TO STOP
+ * BEING ONE.
  *
- * Sub's complaint was not that the number was missing. It was that it was a receipt:
+ * `poolfill` shipped community prices as a `SEEN IN GAME` block drawn above the shop list. The DATA
+ * was right and the presentation was not. Sub, looking at it:
  *
- *   "I bought Cruise Lux at Levski Cargo Office 20 hours ago, but under Levski it doesn't show
- *    that updated price. It just says 'you paid'... I don't really need it to tell me what I
- *    bought. I just wanted to update the price for everybody."
+ *   "The only thing that I wanted to change with the UI is simply instead of Cargo Services at
+ *    Levski saying 25 days old, it would simply say four hours ago... Instead, it tells me 25 days
+ *    ago 7 aUEC and also 7 aUEC four hours ago. It's just too much."
  *
- * So a row is now a PRICE at a shop, carrying who has confirmed it and how recently, and whether
- * one of those people was you. `mine` is a footnote on a price, not the headline it used to be.
+ *   "The other locations that I'm showing, I don't know where those would be. It's useless
+ *    information to the viewer."
  *
- * 🔑 MERGED BY TERMINAL, NEVER CONCATENATED. The player's own purchase is very often also IN the
- * pool — they were one of the 57 shared-log contributors — so appending the two lists would print
- * the same shop twice with the same number and read as two independent confirmations of a price
- * one person checked once. One row per shop, and `contributors` says how many people are behind
- * it.
+ *   "The ones that we can't merge with UEX because they use different names, just put those in
+ *    line with everything else, but still have it sorted by distance."
  *
- * 🔑 THE AGE IS THE NEWER OF THE TWO. It is a LATEST-CONFIRMATION field, and a local receipt from
- * five minutes ago genuinely is a fresher confirmation than a pooled median whose newest sample
- * is three days old. Taking the pool's age regardless would throw away the freshest evidence in
- * the app — which is the one thing this feature exists to surface.
+ * So there is ONE list now, ordered by proximity, and a confirmation reaches it one of three ways:
+ *
+ *   FOLD    the token is known to BE a terminal UEX prices. The confirmation lands ON that row —
+ *           it is a fresher answer to the question that row already asks, not a second row.
+ *   PLACE   the token cannot be tied to a terminal but CAN be tied to a station. It becomes a row
+ *           of its own, positioned by that station and sorted with everything else. Sub's objection
+ *           was that those shops "could be anywhere"; placed and sorted they are not.
+ *   NEITHER counted and never named. See `unplacedConfirmations`.
+ *
+ * 🔑 THIS ALL HAPPENS INSIDE THE ORDERING HOOK, BEFORE THE CAP. Folding afterwards would order the
+ * survey rows by distance and then staple confirmations on by some other rule, which is the two-
+ * lists design wearing one list's clothes. `reserveTierRows` also has to see the placed rows or a
+ * far-system confirmation is exactly the row the cap deletes.
  */
-function observedFor(hit: SearchHit, deps: VerseDeps): ObservedQuote[] | undefined {
+interface Confirmation {
+  /** The game's own shop token. */
+  token: string;
+  price: number;
+  /** Epoch seconds — the freshest confirmation behind this figure, ours or the pool's. */
+  asOf: number;
+  contributors: number;
+  samples: number;
+  mine: boolean;
+  /** 🔴 A commodity has a buy price AND a sell price at one terminal and they are not
+   *  interchangeable, so a sell may never fold onto a buy row. Items never carry this. */
+  side: "buy" | "sell";
+}
+
+/**
+ * Every confirmation for one catalogue entry, this player's and the community's, merged per shop.
+ *
+ * 🔑 MERGED BY TOKEN, NEVER CONCATENATED. The player's own purchase is very often also IN the pool
+ * — they were one of the 57 shared-log contributors — so appending the two lists would print the
+ * same shop twice with the same number and read as two independent confirmations of a price one
+ * person checked once.
+ *
+ * 🔑 THE AGE IS THE NEWER OF THE TWO. A local receipt from five minutes ago genuinely is a fresher
+ * confirmation than a pooled median whose newest sample is three days old, and taking the pool's
+ * regardless would throw away the freshest evidence in the app — the one thing this feature exists
+ * to surface.
+ */
+function confirmationsFor(ctx: QuoteContext, deps: VerseDeps): Confirmation[] {
   const store = deps.observed?.();
   const pool = deps.pool?.();
-  if (!store && !pool) return undefined;
-  const kind = hit.kind === "commodity" ? "commodity" : "item";
+  if (!store && !pool) return [];
+  const kind = ctx.kind;
   // An ITEM row carries the game's UUID outright. A COMMODITY row never does — see
   // `commodityUuid` — so it is resolved from the name through our own dataset.
-  const id = kind === "commodity" ? hit.uuid ?? deps.commodityUuid?.(hit.name) ?? null : hit.uuid;
-  if (!id) return undefined;
+  const id = kind === "commodity" ? ctx.uuid ?? deps.commodityUuid?.(ctx.name) ?? null : ctx.uuid;
+  if (!id) return [];
 
-  const byTerminal = new Map<string, ObservedQuote>();
-  // 🔑 The pool goes in FIRST so that a local receipt merges INTO a community row rather than
-  // creating a second one. Key includes the side: a commodity's buy and sell prices at one
-  // terminal are different numbers and must never collapse together.
-  const key = (terminal: string, side: "buy" | "sell") => JSON.stringify([terminal, side]);
+  const byShop = new Map<string, Confirmation>();
+  const key = (token: string, side: "buy" | "sell") => JSON.stringify([token, side]);
 
   for (const q of pool?.forId(kind, id) ?? []) {
     // 🔴 A DERIVED COMMODITY SELL IS NOT A PRICE. The site marks it `publishable: false` because
-    // the log states the container's CAPACITY rather than its contents, so total/volume is a
-    // floor running a median 21% under the truth. Sub's ruling for this slice is that only what
-    // was observed may be shown, so it is dropped here rather than rendered with a caveat.
+    // the log states the container's CAPACITY rather than its contents, so total/volume is a floor
+    // running a median 21% under the truth. Only what was observed may be shown.
     if (!q.publishable) continue;
     if (kind !== "commodity" && q.side === "sell") continue;
-    byTerminal.set(key(q.terminal, q.side), {
-      terminal: q.terminal,
+    byShop.set(key(q.terminal, q.side), {
+      token: q.terminal,
       price: q.unitPrice,
       // 🔴 THE QUOTE'S OWN ABSOLUTE MOMENT, never `now - ageSeconds`. That figure was measured on
-      // the site's clock when it answered, and the store keeps a payload for a quarter of an hour
-      // and a disk cache indefinitely — so subtracting it from `now` would make every quote read
-      // exactly as fresh as it was when fetched, forever. Seconds, to match `ResolvedQuote.asOf`:
-      // the widget's age helpers are shared and a milliseconds value renders as a date in 1970
-      // without failing anything.
+      // the site's clock when it answered and this store keeps a payload for a quarter of an hour,
+      // so subtracting it from `now` would make every quote read exactly as fresh as it was when
+      // fetched, forever.
       asOf: q.atSeconds,
-      quantity: 1,
       contributors: q.contributors,
       samples: q.samples,
-      confidence: q.confidence,
       mine: false,
-      ...(q.side === "sell" ? { side: "sell" as const } : {}),
+      side: q.side,
     });
   }
 
   const localRows = store
     ? [
         ...store.latestPerTerminal(kind, id, "buy"),
-        // Commodities only. Shown so a player who sold Laranite here can see what they got,
-        // which the survey half of the widget cannot tell them at all.
         ...(kind === "commodity" ? store.latestPerTerminal(kind, id, "sell") : []),
       ]
     : [];
   for (const r of localRows) {
     const k = key(r.terminal, r.side);
     const seconds = Math.round(r.at / 1000);
-    const existing = byTerminal.get(k);
+    const existing = byShop.get(k);
     if (existing) {
-      // Already in the pool. Keep the pool's median and its contributor count; take the newer
-      // timestamp, and record that one of those contributors was this player.
       existing.mine = true;
       if (seconds > existing.asOf) {
-        existing.asOf = seconds;
         // The local receipt is the freshest evidence, so it is also the price to show — a median
         // that predates it would be quoting an older reading than the app has in hand.
+        existing.asOf = seconds;
         existing.price = r.unitPrice;
       }
       continue;
     }
-    byTerminal.set(k, {
-      terminal: r.terminal,
+    byShop.set(k, {
+      token: r.terminal,
       price: r.unitPrice,
       asOf: seconds,
-      quantity: r.quantity,
       contributors: 1,
       samples: 1,
-      confidence: "seen-once",
       mine: true,
-      ...(r.side === "sell" ? { side: "sell" as const } : {}),
+      side: r.side,
+    });
+  }
+  // Freshest first, so that when two confirmations compete for one row the newer one is applied.
+  return [...byShop.values()].sort((a, b) => b.asOf - a.asOf);
+}
+
+/** Where the surveyed shops for one item live, so a confirmation can find its row in one lookup
+ *  instead of a scan per confirmation. */
+function indexByTerminal(quotes: ResolvedQuote[]): Map<string, ResolvedQuote> {
+  const m = new Map<string, ResolvedQuote>();
+  for (const q of quotes) if (!m.has(q.terminal)) m.set(q.terminal, q);
+  return m;
+}
+
+/**
+ * 🔴 A PLACED ROW MUST DESCRIBE ITS LOCATION IN UEX'S WORDS, NOT THE STARMAP'S — the widget groups
+ * by `place` + `system` and the two tables spell one of those differently.
+ *
+ * `locations.json` says **"Stanton System"** where every UEX terminal says **"Stanton"**. Take the
+ * starmap's spelling and a community row at Orison forms a group of its OWN, sitting beside the
+ * surveyed Orison group with an identical heading — the duplicate-shop reading this whole rework
+ * exists to remove, produced by a trailing word. So whenever any surveyed terminal shares the
+ * place, its vocabulary is copied verbatim and the starmap is only the fallback.
+ *
+ * ⚠️ Built from the terminal index rather than by matching names, because that index is the one
+ * thing that already resolved terminal → place and refused the ambiguous ones.
+ */
+let vocabCache: { forIndex: TerminalIndex; map: Map<string, { place: string | null; body: string | null; sys: string | null }> } | null = null;
+
+function placeVocab(
+  index: TerminalIndex,
+  terminals: readonly { n: string; sys: string | null; body: string | null; place: string | null }[],
+): Map<string, { place: string | null; body: string | null; sys: string | null }> {
+  if (vocabCache && vocabCache.forIndex === index) return vocabCache.map;
+  const byName = new Map(terminals.map((t) => [t.n, t]));
+  const map = new Map<string, { place: string | null; body: string | null; sys: string | null }>();
+  for (const [name, placeId] of index.byTerminal) {
+    if (map.has(placeId)) continue;
+    const t = byName.get(name);
+    if (t) map.set(placeId, { place: t.place, body: t.body, sys: t.sys });
+  }
+  vocabCache = { forIndex: index, map };
+  return map;
+}
+
+/**
+ * Fold what we can onto the survey rows, turn what we can place into rows of its own, and count
+ * the rest.
+ *
+ * 🔴 A CONFIRMATION OLDER THAN THE ROW IT LANDS ON IS DROPPED IN SILENCE, and that is the rule that
+ * keeps this one list. `asOf` on a row means LAST CONFIRMED; if UEX's own survey reading is newer
+ * than our observation, then UEX's reading IS the latest confirmation and there is nothing to add.
+ * Rendering the older one beside it would be the "7 aUEC twice" Sub rejected, argued from the other
+ * direction. It is rare — the pool's median observation is 26 days against UEX's 83 — and it is
+ * counted as HANDLED rather than unplaced, because it is genuinely about that row.
+ */
+function applyConfirmations(
+  quotes: ResolvedQuote[],
+  ctx: QuoteContext,
+  deps: VerseDeps,
+  placer: ShopPlacer,
+  terminals: readonly { n: string; sys: string | null; body: string | null; place: string | null }[],
+  /** ⚠️ BOTH OPTIONAL, because a build with no `locations-xyz` must still FOLD. Folding a
+   *  confirmation onto a terminal row needs no geography at all — only placing does — so a missing
+   *  starmap costs the placed rows and leaves the freshness win intact. */
+  locations?: Record<string, LocationRecord>,
+  index?: TerminalIndex,
+): { quotes: ResolvedQuote[]; unplaced: number } {
+  const confirmations = confirmationsFor(ctx, deps);
+  if (!confirmations.length) return { quotes, unplaced: 0 };
+
+  const rows = quotes.slice();
+  const byTerminal = indexByTerminal(rows);
+  const termInfo = new Map(terminals.map((t) => [t.n, t]));
+  const vocab = index ? placeVocab(index, terminals) : undefined;
+  let unplaced = 0;
+
+  for (const c of confirmations) {
+    const placement = placer(c.token);
+    const named = placement?.terminal && placement.kind === ctx.kind ? placement.terminal : null;
+
+    // ── FOLD ────────────────────────────────────────────────────────────────────────────────
+    // 🔴 A SELL NEVER FOLDS. Every surveyed row in this widget is a BUY price, so folding a sell
+    // onto one would say a shop sells the commodity for what it pays you for it.
+    const target = named && c.side === "buy" ? byTerminal.get(named) : undefined;
+    if (target && placement) {
+      if (c.asOf <= target.asOf) continue;
+      const mode = foldsOnto(placement.precision ?? "place-level", c.price, target.price);
+      if (mode) {
+        const confirmed: QuoteConfirmation = {
+          asOf: c.asOf,
+          contributors: c.contributors,
+          samples: c.samples,
+          mine: c.mine,
+          precision: placement.precision ?? "place-level",
+          token: c.token,
+          setPrice: mode === "price",
+        };
+        // 🔴 OURS WINS — Sub was explicit ("No, I do not want the UEX number to stay"). But ONLY
+        // for an `exact` placement: `foldsOnto` returns "age" for a place-level one, where moving
+        // the number would be attributing a purchase to a kiosk we cannot identify. `asOf` itself
+        // is left alone so the row keeps UEX's own reading date; the widget renders
+        // `confirmed.asOf` and the tooltip can then state both.
+        if (mode === "price") target.price = c.price;
+        target.confirmed = confirmed;
+        continue;
+      }
+      // A place-level confirmation whose price disagrees with the row falls through to PLACE
+      // below — which is the honest home for "somebody paid a different number at this station
+      // and we cannot say at which kiosk".
+    }
+
+    // ── PLACE ───────────────────────────────────────────────────────────────────────────────
+    // A named terminal places itself through the terminal index; otherwise the placement's own
+    // starmap id is used. Either way the row carries `placeId`, which is what lets
+    // `orderByProximity` sort it beside the surveyed shops rather than after them.
+    const t = named ? termInfo.get(named) : undefined;
+    const placeId = (named ? index?.byTerminal.get(named) : null) ?? placement?.placeId ?? null;
+    if (!placeId) { unplaced++; continue; }
+    const loc = locations?.[placeId];
+    // UEX's words first, the starmap's only as a fallback — see `placeVocab`.
+    const v = index ? vocab?.get(placeId) : undefined;
+    rows.push({
+      // The best name anyone has for this shop. When nothing named it, the game's own token
+      // travels and the widget tidies it for reading — under a heading that says where it is,
+      // which is the half that was missing.
+      terminal: named || c.token,
+      system: t?.sys ?? v?.sys ?? loc?.system ?? null,
+      body: t?.body ?? v?.body ?? loc?.parentName ?? null,
+      place: t?.place ?? v?.place ?? loc?.name ?? null,
+      price: c.price,
+      asOf: c.asOf,
+      placeId,
+      observedOnly: true,
+      confirmed: {
+        asOf: c.asOf,
+        contributors: c.contributors,
+        samples: c.samples,
+        mine: c.mine,
+        // ⚠️ NO `precision`. There is no UEX terminal under this row for a precision to be about —
+        // see `QuoteConfirmation.precision`. `setPrice` is true because the row simply IS the
+        // observation: its price is the observed one and nothing was overridden.
+        token: c.token,
+        setPrice: true,
+        ...(c.side === "sell" ? { side: "sell" as const } : {}),
+      },
     });
   }
 
-  if (!byTerminal.size) return undefined;
-  return [...byTerminal.values()]
-    // Freshest confirmation first. Which shop is CHEAPEST is a decision only the player can make,
-    // and sorting by it here would quietly make it for them.
-    .sort((a, b) => b.asOf - a.asOf)
-    .slice(0, OBSERVED_SHOWN);
+  return { quotes: rows, unplaced };
 }
-
-/** Shops shown per item. A popular item has been bought at dozens; the most recently confirmed
- *  few are the answer to "what does this cost now", and the rest are history the widget does not
- *  have room to be honest about. Raised from 3 when the pool landed — with 57 contributors behind
- *  it a single player's three receipts stopped being the whole list. */
-const OBSERVED_SHOWN = 5;
 
 function craftInfo(hit: SearchHit, tracker: TrackerLike | undefined): { craftable: true; owned: boolean } | null {
   if (!tracker || !hit.uuid) return null;
@@ -491,6 +685,12 @@ export function verseRoutes(
       // first is "nobody has bought this yet", the second is "we cannot tell you". `status()`
       // carries `source` and `lastError` so a diagnostics report can say which.
       pool: deps.pool?.()?.status?.() ?? null,
+      // 🔑 How many shop tokens we can name and how many we can merely place. Reported because
+      // "no confirmation showed up" has three completely different causes — nobody has bought it,
+      // the pool is unreachable, or the placement file is missing — and on screen all three look
+      // like an ordinary survey row. `named` vs `exact` is the half worth reading: only `exact`
+      // may move a price onto a row.
+      places: placerCoverage(shopPlacer(deps.dataDir).parts),
     });
     return true;
   }
@@ -504,18 +704,35 @@ export function verseRoutes(
     // the player is, which is a property of the session — letting it vary row by row would invite
     // the UI to print a different confidence beside each shop for the same single reading.
     let order: ProximityOrder | null = null;
+    const { placer } = shopPlacer(deps.dataDir);
+    // How many confirmations for each hit we could neither fold nor place. Keyed by the same
+    // name+kind the hook is handed, because a commodity and an item can share a name.
+    const unplacedBy = new Map<string, number>();
+    const ctxKey = (c: QuoteContext) => JSON.stringify([c.kind, c.name]);
+
     // 🔴 THE CAP IS APPLIED HERE, INSIDE THE ORDERER, AND `reserveTierRows` IS WHY. Ordering puts
     // the out-of-system shops last by design; a plain `slice` then deletes every one of them the
     // moment an item has enough nearby shops to fill the cap, which is the exclusion Sub reported
     // ("it can only show me what is available in this system"). `reserveTierRows` keeps each tier's
     // best row past the cap, and nothing downstream may re-slice — see `searchItems`' hook doc.
-    const orderQuotes = px
-      ? (quotes: ResolvedQuote[], cap: number) => {
-          const r = px.order(quotes);
-          order = r;
-          return reserveTierRows(r.quotes, cap);
-        }
-      : undefined;
+    //
+    // 🔴 AND CONFIRMATIONS ARE FOLDED IN *BEFORE* THE ORDERING, which is what makes this one list.
+    // A placed confirmation is an ordinary row by the time `orderByProximity` sees it, so it is
+    // ranked by the same rule as every surveyed shop and rescued by the same tier reservation.
+    const orderQuotes = (quotes: ResolvedQuote[], cap: number, ctx: QuoteContext) => {
+      const applied = applyConfirmations(
+        quotes, ctx, deps, placer, table.terminals, px?.locations, px?.index,
+      );
+      if (applied.unplaced) unplacedBy.set(ctxKey(ctx), applied.unplaced);
+      if (!px) {
+        // No starmap: cheapest first, which is the order the rows already arrive in. A placed row
+        // still belongs in the list, so it is sorted in by price rather than dropped.
+        return applied.quotes.slice().sort((a, b) => a.price - b.price).slice(0, cap);
+      }
+      const r = px.order(applied.quotes);
+      order = r;
+      return reserveTierRows(r.quotes, cap);
+    };
 
     // 🔑 Commodities are scored by the SAME scorer and merged into ONE list, not appended as a
     // second section. A player typing a name does not know or care which of our two tables the
@@ -536,7 +753,18 @@ export function verseRoutes(
     const nothing = q && !hits.length;
     json(res, 200, {
       query: q,
-      results: hits.map((h) => ({ ...h, craft: craftInfo(h, deps.tracker), observed: observedFor(h, deps) })),
+      results: hits.map((h) => ({
+        ...h,
+        craft: craftInfo(h, deps.tracker),
+        // 🔴 A COUNT, NEVER A NAME. Sub on the old block's rows: *"The other locations that I'm
+        // showing, I don't know where those would be. It's useless information to the viewer."*
+        // What he rejected was a NAME the reader cannot place — `SCShop_Drlct_Stmnt_SM` sitting in
+        // a block of its own. A count is not a location, and dropping the evidence in silence
+        // would break this codebase's standing rule that a discarded thing is said rather than
+        // swallowed. It rides the notes line the card already draws, so in most cards it costs no
+        // new line at all.
+        unplacedConfirmations: unplacedBy.get(JSON.stringify([h.kind === "commodity" ? "commodity" : "item", h.name])) ?? 0,
+      })),
       unpriced: nothing ? searchUnpriced(table, q) : [],
       sellOnly: nothing ? sellOnlyMatches(commodityTable, q) : [],
       origin: px ? originPayload(px.origin) : null,

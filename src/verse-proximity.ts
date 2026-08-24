@@ -325,6 +325,42 @@ export function reserveTierRows(
 }
 
 /**
+ * 🔴 KEEP ONE PLACE'S ROWS TOGETHER — the widget groups by CONSECUTIVE RUN, so a place split in
+ * two draws its heading twice.
+ *
+ * The renderer's own comment says "results are already ordered by proximity, so shops at the same
+ * place are already adjacent". That held while every row's rank came from a distance, because two
+ * shops at one station share one distance. It stops holding on a TIE: three `elsewhere` rows all
+ * priced 128,145 sort by nothing at all, so Orison · New Babbage · Orison is a legal order — and
+ * flight `onerow` made ties routine by appending community rows to the end of the list.
+ *
+ * 🔑 A STABLE PARTITION, NOT A SECOND SORT KEY. Each place keeps the rank its BEST row earned and
+ * its rows keep the order they were already in, so nothing outranks anything it did not outrank
+ * before: this can only move a row FORWARD to join its own place, never past a place that beat it.
+ * Adding `place` as a tie-break inside the comparator would instead reorder rows that were
+ * correctly separated on price.
+ */
+function keepPlacesTogether<T extends { place: string | null; system: string | null }>(rows: T[]): T[] {
+  const order: string[] = [];
+  const byPlace = new Map<string, T[]>();
+  for (const r of rows) {
+    // System included: two systems really do hold a "Nyx Gateway", and merging them would be the
+    // name-alone join this file's header warns about, arriving through the back door.
+    // ⚠️ Through `systemKey`, because the starmap writes "Stanton System" and UEX writes "Stanton".
+    // A row whose location fell back to the starmap would otherwise form a place of its own that
+    // reads identically to the real one — the duplicate this function exists to prevent.
+    const k = JSON.stringify([lower(r.place), systemKey(r.system)]);
+    let a = byPlace.get(k);
+    if (!a) { byPlace.set(k, a = []); order.push(k); }
+    a.push(r);
+  }
+  if (order.length === rows.length) return rows;
+  const out: T[] = [];
+  for (const k of order) out.push(...byPlace.get(k)!);
+  return out;
+}
+
+/**
  * Order a set of shops, and say what the order means.
  *
  * 🔴 CALL THIS BEFORE TRUNCATING TO N SHOPS, NOT AFTER. `searchItems` returns the CHEAPEST
@@ -348,7 +384,13 @@ export function orderByProximity(
     };
   }
 
-  const placeOf = (q: ResolvedQuote): string | null => index.byTerminal.get(q.terminal) ?? null;
+  // 🔑 `placeId` FIRST, AND THAT IS WHAT PUTS A COMMUNITY CONFIRMATION IN THE SAME LIST. A row
+  // synthesized from an observation has no UEX terminal to look up — that is the whole reason it
+  // could not be folded onto one — but it does know its starmap place, so it can be ordered by
+  // exactly the same rule as every surveyed shop. Without this the only way to show such a row
+  // would be a second list ordered by something else, which is the design Sub rejected.
+  const placeOf = (q: ResolvedQuote): string | null =>
+    q.placeId ?? index.byTerminal.get(q.terminal) ?? null;
   const contain = (q: ResolvedQuote): Containment =>
     containmentOf(origin.id!, origin.tier, placeOf(q), locations);
 
@@ -392,7 +434,7 @@ export function orderByProximity(
       return {
         basis: "travel-time",
         note: `Nearest first, from ${origin.label}${origin.ageMin != null && origin.ageMin >= 1 ? ` (seen ${agoPhrase(origin.ageMin)})` : ""}.`,
-        quotes: rows,
+        quotes: keepPlacesTogether(rows),
       };
     }
   }
@@ -408,9 +450,9 @@ export function orderByProximity(
     CONTAINMENT_RANK[a.containment!] - CONTAINMENT_RANK[b.containment!] || a.price - b.price);
   return {
     basis: "containment",
+    quotes: keepPlacesTogether(rows),
     note: coarse
       ? `Closest first, roughly — ${origin.label} is the last place we saw you${origin.ageMin != null && origin.ageMin >= 1 ? `, ${agoPhrase(origin.ageMin)}` : ""}.`
       : `Closest first, roughly — we know you are near ${origin.label} but not where exactly.`,
-    quotes: rows,
   };
 }
