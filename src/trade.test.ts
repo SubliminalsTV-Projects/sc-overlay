@@ -17,6 +17,19 @@ const check = (name: string, ok: boolean, extra = "") => {
   console.log(`${ok ? "  ok  " : "FAIL  "}${name}${ok || !extra ? "" : "  -- " + extra}`);
 };
 
+/**
+ * 🔑 READING A VOLUME OR A UNIT PRICE OUT OF A PARSE, FOR ASSERTIONS ONLY.
+ *
+ * `volume` and `unitPrice` are discriminated unions precisely so production code CANNOT default an
+ * unknown to a number. These two helpers do the narrowing once so the assertions below stay
+ * readable — and they return `null`, never 0, so an assertion comparing against a number still
+ * fails on an unknown rather than passing on a coerced zero.
+ */
+const scuOf = (p: CommodityPurchase | undefined | null): number | null =>
+  p && p.volume.known ? p.volume.scu : null;
+const ppsOf = (p: CommodityPurchase | undefined | null): number | null =>
+  p && p.unitPrice.known ? p.unitPrice.perScu : null;
+
 // ── Real log lines ──────────────────────────────────────────────────────────
 
 const BUY_AUTOLOAD =
@@ -52,9 +65,9 @@ console.log("\n-- parsing a real purchase --");
   check("shop is the TDD", p?.shopName === "TDD_SCShop-001", String(p?.shopName));
   check("resourceGUID survives whole", p?.resourceGuid === "accacd33-3a1a-4ec7-8b4a-14b9f028047c", String(p?.resourceGuid));
   // 100 cSCU = 1 SCU. Getting this wrong is a 100x error in every downstream figure.
-  check("quantity converts cSCU -> SCU", p?.scu === 1, String(p?.scu));
+  check("quantity converts cSCU -> SCU", scuOf(p) === 1, String(scuOf(p)));
   // 12.0195 per centiSCU x 100 = 1201.95 aUEC/SCU.
-  check("price per SCU is centi x 100", Math.abs((p?.pricePerScu ?? 0) - 1201.95) < 0.01, String(p?.pricePerScu));
+  check("price per SCU is centi x 100", Math.abs((ppsOf(p) ?? 0) - 1201.95) < 0.01, String(ppsOf(p)));
   check("total is carried as stated", p?.total === 1202, String(p?.total));
   check("box size", p?.boxScu === 1, String(p?.boxScu));
   check("timestamp is kept", p?.at === "2026-08-19T17:43:31.000Z", String(p?.at));
@@ -70,7 +83,7 @@ console.log("\n-- autoLoading tells the two purchases apart --");
   check("auto-loaded buy reads true", onShip?.autoLoaded === true, String(onShip?.autoLoaded));
   check("freight-elevator buy reads false", onElevator?.autoLoaded === false, String(onElevator?.autoLoaded));
   check("they are otherwise the same purchase",
-    onShip?.resourceGuid === onElevator?.resourceGuid && onShip?.scu === onElevator?.scu);
+    onShip?.resourceGuid === onElevator?.resourceGuid && scuOf(onShip) === scuOf(onElevator));
   check("false is not confused with absent", onElevator?.autoLoaded !== null);
 }
 
@@ -78,14 +91,14 @@ console.log("\n-- a second real buy, different shop and box size --");
 {
   const p = parseTradeLine(BUY_SHUBIN)?.purchase;
   check("Shubin buy parses", !!p);
-  check("4 SCU", p?.scu === 4, String(p?.scu));
-  check("8265 aUEC/SCU", Math.abs((p?.pricePerScu ?? 0) - 8265) < 0.5, String(p?.pricePerScu));
+  check("4 SCU", scuOf(p) === 4, String(scuOf(p)));
+  check("8265 aUEC/SCU", Math.abs((ppsOf(p) ?? 0) - 8265) < 0.5, String(ppsOf(p)));
   check("4 SCU box", p?.boxScu === 4, String(p?.boxScu));
   // 8265 x 4 = 33060, and the log says 33061 - the game rounds. Assert the RELATIONSHIP holds
   // rather than an exact identity, or this fails on every rounding boundary.
   check("total is consistent with per-SCU x quantity",
-    Math.abs((p?.total ?? 0) - (p?.pricePerScu ?? 0) * (p?.scu ?? 0)) <= 2,
-    `${p?.total} vs ${(p?.pricePerScu ?? 0) * (p?.scu ?? 0)}`);
+    Math.abs((p?.total ?? 0) - (ppsOf(p) ?? 0) * (scuOf(p) ?? 0)) <= 2,
+    `${p?.total} vs ${(ppsOf(p) ?? 0) * (scuOf(p) ?? 0)}`);
 }
 
 console.log("\n-- shop inventory lines --");
@@ -132,13 +145,87 @@ console.log("\n-- the sell line, which is NOT the buy line mirrored --");
   check("kind is sell", p?.kind === "sell", String(p?.kind));
   // 🔴 The 100x trap. `quantity[1]` here is ONE CONTAINER, not 1 cSCU. Dividing by 100 the way the
   // buy line requires would report this 1 SCU sale as 0.01 SCU.
-  check("quantity[1] with no unit is containers, not centiSCU", p?.scu === 1, String(p?.scu));
+  check("quantity[1] with no unit is containers, not centiSCU", scuOf(p) === 1, String(scuOf(p)));
   check("the total comes from amount[], not price[]", p?.total === 1506, String(p?.total));
   // No shopPricePerCentiSCU on a sell, so this one is derived.
-  check("per-SCU is derived when the line does not state it", p?.pricePerScu === 1506, String(p?.pricePerScu));
+  check("per-SCU is derived when the line does not state it", ppsOf(p) === 1506, String(ppsOf(p)));
   check("transactionMode is kept", p?.transactionMode === "ResourceContainer", String(p?.transactionMode));
   check("box size survives the nested Cargo Box Data brackets", p?.boxScu === 1, String(p?.boxScu));
   check("the shop is named", p?.shopName === "SCShop_Admin_lt_base_g", String(p?.shopName));
+}
+
+// ── 🔴 A SELL WITH NO CARGO-BOX MANIFEST STATES NO VOLUME ──────────────────────────────────────
+//
+// Both lines below are VERBATIM out of the shared-log corpus, 2026-08-24. They are the two shapes
+// the empty-manifest population actually takes at a TDD commodity exchange: a hand-mined gem sold
+// out of personal inventory, where there is no box because there is no cargo.
+//
+// ⚠️ NOTE WHAT MAKES THEM UNTELLABLE FROM A REAL 1 SCU SALE BY EVERY FIELD BUT ONE: `quantity[1]`,
+// `transactionMode[Entities]`, a real `amount`. The ONLY difference from `SELL_REAL` above is that
+// `Cargo Box Data:` is followed by nothing. That is the whole signal, which is why the parser reads
+// it off the raw line rather than inferring it from `boxScu`.
+
+/** Beradom at the New Babbage TDD. 120,000 aUEC, no manifest. */
+const SELL_GEM_BERADOM =
+  "<2026-08-24T07:12:57.560Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+  "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[776427652871] " +
+  "shopName[SCShop_CommEx_TDD_NewBabbage] kioskId[776427652874] amount[120000.000000] " +
+  "resourceGUID[c339897c-d682-48ad-a16f-daf145bc0f4d] autoLoading[0] quantity[1] " +
+  "transactionMode[Entities] Cargo Box Data:  [Team_CoreGameplayFeatures][Shops][UI]";
+
+/** Glacosite at the same terminal, a different day and a different contributor. */
+const SELL_GEM_GLACOSITE =
+  "<2026-07-28T21:02:49.045Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommoditySellRequest> " +
+  "Sending SShopCommoditySellRequest - playerId[204772220757] shopId[729983404698] " +
+  "shopName[SCShop_CommEx_TDD_NewBabbage] kioskId[729983404701] amount[80000.000000] " +
+  "resourceGUID[960eda23-d77c-425e-8cbd-89d94ca6e2aa] autoLoading[0] quantity[1] " +
+  "transactionMode[Entities] Cargo Box Data:  [Team_CoreGameplayFeatures][Shops][UI]";
+
+const GEM_LINES: [string, string][] = [
+  ["Beradom", SELL_GEM_BERADOM],
+  ["Glacosite", SELL_GEM_GLACOSITE],
+];
+
+console.log("\n-- 🔴 an empty Cargo Box Data means the game stated no volume --");
+{
+  // 🔴 POSITIVE FIRST, AND NON-EMPTY. Every assertion in this block is about a value NOT being a
+  // number, and a fixture that stopped parsing satisfies all of them for free — the exact shape
+  // that has certified bugs in this repo before.
+  check("the empty-manifest fixtures parse at all, and there are some",
+    GEM_LINES.length === 2 && GEM_LINES.every(([, l]) => !!parseTradeLine(l)?.purchase),
+    `${GEM_LINES.length} lines`);
+
+  for (const [name, line] of GEM_LINES) {
+    const p = parseTradeLine(line)?.purchase;
+    check(`${name}: the volume is UNKNOWN, not a number`, p?.volume.known === false,
+      JSON.stringify(p?.volume));
+    check(`${name}: ...and it says why, rather than being a bare false`,
+      p?.volume.known === false && p.volume.why === "sell-states-no-cargo-boxes",
+      JSON.stringify(p?.volume));
+    check(`${name}: 🔴 no per-SCU price is offered`, p?.unitPrice.known === false,
+      JSON.stringify(p?.unitPrice));
+    // 🔑 THE MONEY AND THE PLACE ARE STILL TRUE, and that is Sub's ruling in one assertion: record
+    // the observation, mark the unit unknown. Dropping the row would lose a real sale.
+    check(`${name}: ...but the total and the terminal survive`,
+      p?.total === (name === "Beradom" ? 120000 : 80000)
+      && p?.shopName === "SCShop_CommEx_TDD_NewBabbage",
+      `${p?.total} at ${p?.shopName}`);
+  }
+
+  // 🔑 THE PAIRED NEGATIVE. A rule that made EVERY sell unknown would satisfy every check above,
+  // so the boxed sell from the same file has to stay known in the same breath.
+  const boxed = parseTradeLine(SELL_REAL)?.purchase;
+  check("...while a sell that DOES state a manifest keeps its volume",
+    boxed?.volume.known === true && scuOf(boxed) === 1, JSON.stringify(boxed?.volume));
+  check("...and its derived per-SCU price", ppsOf(boxed) === 1506, String(ppsOf(boxed)));
+
+  // 🔑 AND THE BUY SIDE IS UNTOUCHED — 45 of 45 real buys carry a manifest, and a buy states its
+  // volume in cSCU regardless, so this rule must not reach across.
+  const bought = parseTradeLine(BUY_AUTOLOAD)?.purchase;
+  check("...and a BUY is unaffected: stated volume, stated price",
+    bought?.volume.known === true && bought?.unitPrice.known === true
+    && bought.unitPrice.source === "stated",
+    JSON.stringify(bought?.unitPrice));
 }
 
 console.log("\n-- the round trip joins on resourceGUID alone --");
@@ -148,10 +235,10 @@ console.log("\n-- the round trip joins on resourceGUID alone --");
   check("both ends name the same commodity", bought?.resourceGuid === sold?.resourceGuid, String(sold?.resourceGuid));
   check("...and it is the Processed Food uuid",
     sold?.resourceGuid === "accacd33-3a1a-4ec7-8b4a-14b9f028047c", String(sold?.resourceGuid));
-  check("bought at 1202/SCU", Math.round(bought?.pricePerScu ?? 0) === 1202, String(bought?.pricePerScu));
-  check("sold at 1506/SCU", Math.round(sold?.pricePerScu ?? 0) === 1506, String(sold?.pricePerScu));
+  check("bought at 1202/SCU", Math.round(ppsOf(bought) ?? 0) === 1202, String(ppsOf(bought)));
+  check("sold at 1506/SCU", Math.round(ppsOf(sold) ?? 0) === 1506, String(ppsOf(sold)));
   // The whole point of the subsystem, computable from two log lines and nothing else.
-  const profit = ((sold?.pricePerScu ?? 0) - (bought?.pricePerScu ?? 0)) * (sold?.scu ?? 0);
+  const profit = ((ppsOf(sold) ?? 0) - (ppsOf(bought) ?? 0)) * (scuOf(sold) ?? 0);
   check("a real profit falls out of the two lines", Math.round(profit) === 304, String(profit));
   check("...and it is positive, not merely defined", profit > 0);
   // 🔑 The buy line and the sell line must not be parsed by one set of assumptions - assert they
@@ -172,8 +259,8 @@ console.log("\n-- containers x box size, corroborated on the buy lines --");
   for (const [label, line] of [["TDD, 1 SCU box", BUY_AUTOLOAD], ["Shubin, 4 SCU box", BUY_SHUBIN]] as const) {
     const p = parseTradeLine(line)?.purchase;
     const viaBoxes = (p?.unitAmount ?? 0) * (p?.boxScu ?? 0);
-    check(`${label}: boxes x box size equals the centiSCU volume`, viaBoxes === p?.scu, `${viaBoxes} vs ${p?.scu}`);
-    check(`${label}: ...and that volume is not zero`, (p?.scu ?? 0) > 0, String(p?.scu));
+    check(`${label}: boxes x box size equals the centiSCU volume`, viaBoxes === scuOf(p), `${viaBoxes} vs ${scuOf(p)}`);
+    check(`${label}: ...and that volume is not zero`, (scuOf(p) ?? 0) > 0, String(scuOf(p)));
   }
 
   // 🔴 REPLACED A CONSTRUCTED FIXTURE WITH A REAL ONE. This block used to fabricate a sell by
@@ -182,8 +269,8 @@ console.log("\n-- containers x box size, corroborated on the buy lines --");
   // a container count. Sub's real Degnous Root sale settles it on captured data.
   const dSell = parseTradeLine(SELL_DEGNOUS)?.purchase;
   const dBuy = parseTradeLine(BUY_DEGNOUS)?.purchase;
-  check("the real sell of 10 SCU reads as 10 SCU, not 20", dSell?.scu === 10, String(dSell?.scu));
-  check("...and the buy of the SAME goods agrees", dBuy?.scu === 10, String(dBuy?.scu));
+  check("the real sell of 10 SCU reads as 10 SCU, not 20", scuOf(dSell) === 10, String(scuOf(dSell)));
+  check("...and the buy of the SAME goods agrees", scuOf(dBuy) === 10, String(scuOf(dBuy)));
   // The two lines state the volume differently - cSCU on the buy, bare SCU on the sell - so their
   // agreement is the check that matters. Boxes corroborate: 5 units x 2 SCU = 10 on both.
   check("...and the box breakdown corroborates both",
@@ -191,7 +278,7 @@ console.log("\n-- containers x box size, corroborated on the buy lines --");
     (dBuy?.unitAmount ?? 0) * (dBuy?.boxScu ?? 0) === 10,
     `${dSell?.unitAmount}x${dSell?.boxScu} / ${dBuy?.unitAmount}x${dBuy?.boxScu}`);
   check("the derived per-SCU is the full 59,020, not half of it",
-    Math.round(dSell?.pricePerScu ?? 0) === 59020, String(dSell?.pricePerScu));
+    Math.round(ppsOf(dSell) ?? 0) === 59020, String(ppsOf(dSell)));
 }
 
 console.log("\n-- what the parser must NOT do --");
@@ -894,14 +981,31 @@ console.log("\n-- ...and the CONTROL: with the refusals out of the stream, the f
   // CONTROL A: the prefilter that only lets requests through — the back door into this bug.
   replay(stream.filter((l) => !l.includes("RmToken_")), j);
   const v = j.view(new Date("2026-08-23T21:00:00Z"));
-  check("CONTROL: without the refusals, both failed sales book as runs", v.runs.length === 2,
-    String(v.runs.length));
-  check("CONTROL: ...inventing the exact profit Sub was shown",
-    Math.round(v.allTime.profit) === 428872, String(Math.round(v.allTime.profit)));
-  // 🔑 The margin smell, printed rather than gated on: 762% against a real one of 23%. It is a
-  // coincidence of this case and the response line is the evidence — see `trade-log.ts`.
-  check("CONTROL: ...at an implausible margin nobody should have to notice",
-    Math.round(v.runs[0]?.marginPct ?? 0) === 763, String(v.runs[0]?.marginPct));
+
+  // 🔑 RE-POINTED 2026-08-24 (flight `sellvolume`), AND THE REASON IS WORTH MORE THAN THE NUMBERS.
+  // This control used to read "both failed sales book as RUNS, inventing the exact +428,872 aUEC of
+  // profit Sub was shown". That is no longer what the damage looks like, and NOT because the bug
+  // got safer: `SELL_REFUSED_1` carries an EMPTY `Cargo Box Data:`, so its volume is now unknown
+  // and it can no longer close the Compboard lot. The fiction that comes back is 485,100 aUEC of
+  // REVENUE instead of 428,872 of profit.
+  //
+  // 🔴 The control is still doing its job, which is the whole point of re-pointing rather than
+  // deleting: without the refusals, money the player never earned is still in the Ledger. Two
+  // independent defects had one shared symptom, and fixing one moved the other's fingerprint.
+  check("CONTROL: without the refusals, both failed sales still enter the Ledger",
+    v.unmatched.length === 2, String(v.unmatched.length));
+  check("CONTROL: ...as 485,100 aUEC of revenue the player never earned",
+    Math.round(v.allTime.unpricedRevenue) === 485100, String(Math.round(v.allTime.unpricedRevenue)));
+  // 🔑 And the OTHER half of the re-pointing, asserted rather than assumed: the reason they are no
+  // longer runs is the volume rule, not the gate. A stream with no refusals in it has nothing to
+  // withhold, so a run count of zero here is entirely `sellvolume`'s doing.
+  check("CONTROL: ...and no longer as closed runs, because the sale states no volume",
+    v.runs.length === 0 && Math.round(v.allTime.profit) === 0,
+    `runs ${v.runs.length}, profit ${Math.round(v.allTime.profit)}`);
+  // 🔴 THE POSITIVE THAT STOPS THIS BLOCK BEING FREE. "Nothing became a run" is satisfied by a
+  // journal that booked nothing at all, which is exactly what a broken fixture produces.
+  check("CONTROL: ...while the BUY still booked, so the pipeline really ran",
+    v.open.length === 1 && v.open[0].scu === 10, JSON.stringify(v.open.map((o) => o.scu)));
 }
 
 console.log("\n-- ...and CONTROL B: the journal's own lock, independent of the gate --");
@@ -956,6 +1060,111 @@ console.log("\n-- the window: sized off the corpus, at both ends --");
   check("a refusal 3,655 ms late claims nothing", c.refused().length === 0, String(c.refused().length));
   check("...and the request it did not claim is booked", k.view().unmatched.length === 1,
     String(k.view().unmatched.length));
+}
+
+console.log("\n-- 🔴 the Ledger keeps the money and refuses the unit --");
+{
+  const GEM_NAMES: Record<string, string> = {
+    "c339897c-d682-48ad-a16f-daf145bc0f4d": "Beradom",
+    "960eda23-d77c-425e-8cbd-89d94ca6e2aa": "Glacosite",
+  };
+  const j = new TradeJournal(freshDir(), (g) => GEM_NAMES[g.toLowerCase()] ?? null);
+  const c = replay([
+    SELL_GEM_BERADOM,
+    clockLine("2026-08-24T07:13:20.000Z"),
+    SELL_GEM_GLACOSITE.replace("2026-07-28T21:02:49.045Z", "2026-08-24T07:13:30.000Z"),
+    clockLine("2026-08-24T07:14:00.000Z"),
+  ], j);
+  const v = j.view(new Date("2026-08-24T09:00:00Z"));
+
+  // 🔑 POSITIVE FIRST, AND NON-EMPTY. A journal that booked nothing satisfies every "is null"
+  // assertion below for free, and dropping these sales outright is the plausible wrong fix — so
+  // "the money is still here" has to be checked before "the unit is gone".
+  check("both gem sales reach the Ledger", v.unmatched.length === 2, String(v.unmatched.length));
+  check("...and nothing was left held", c.pending().length === 0, String(c.pending().length));
+  check("🔑 the revenue is exactly what the log said, 200,000 aUEC",
+    Math.round(v.allTime.unpricedRevenue) === 200000, String(v.allTime.unpricedRevenue));
+  check("...and the terminal is on every row",
+    v.unmatched.every((u) => u.sellShop === "SCShop_CommEx_TDD_NewBabbage"),
+    JSON.stringify(v.unmatched.map((u) => u.sellShop)));
+  check("...and the commodity is named", v.unmatched.some((u) => u.commodity === "Beradom")
+    && v.unmatched.some((u) => u.commodity === "Glacosite"),
+    JSON.stringify(v.unmatched.map((u) => u.commodity)));
+
+  // 🔴 THE FIX. `null`, never 0 — a missing figure printed as zero is not missing, it is wrong.
+  check("🔴 no SCU is claimed for either sale", v.unmatched.every((u) => u.scu === null),
+    JSON.stringify(v.unmatched.map((u) => u.scu)));
+  check("🔴 ...and no per-SCU price", v.unmatched.every((u) => u.sellPricePerScu === null),
+    JSON.stringify(v.unmatched.map((u) => u.sellPricePerScu)));
+  check("...they are not zero, which would read as a real figure",
+    v.unmatched.every((u) => u.scu !== 0 && u.sellPricePerScu !== 0));
+  check("...and no closed run was invented", v.runs.length === 0 && v.allTime.profit === 0,
+    `${v.runs.length} runs, profit ${v.allTime.profit}`);
+}
+
+console.log("\n-- 🔴 an unknown unit never reaches the price pool --");
+{
+  // The pool's whole schema is "what one of these costs". A 120,000 aUEC gem sold out of a
+  // backpack would publish a 120,000 aUEC/SCU quote for Beradom at the New Babbage TDD.
+  const gem = parseTradeLine(SELL_GEM_BERADOM)?.purchase;
+  const boxed = parseTradeLine(SELL_REAL)?.purchase;
+  check("a boxed sell still has a publishable unit price", boxed?.unitPrice.known === true);
+  check("🔴 ...and the gem sale does not, so `recordCommodity` has nothing to publish",
+    gem?.unitPrice.known === false, JSON.stringify(gem?.unitPrice));
+}
+
+console.log("\n-- 🔴 an EXISTING journal is not rewritten by this change --");
+{
+  // ⚠️ THE UPGRADE QUESTION, ASSERTED RATHER THAN ASSUMED. Rows already on disk carry the old
+  // fabricated `scu: 1` / `sellPricePerScu: 120000`. Changing how the figure is COMPUTED must not
+  // change what is RECORDED — a player's history is theirs, and rewriting it silently on upgrade is
+  // a thing this project has nearly done before.
+  //
+  // 🔑 Two mechanisms keep it true and both are checked: `read()` returns stored rows verbatim
+  // (STATE_VERSION does not move, so nothing is discarded either), and `seen` dedupes on
+  // `at|kind|shop|guid|total` — none of which this change touches — so the startup replay of the
+  // newest rotated log cannot re-book the sale under the new rule.
+  const dir = freshDir();
+  const path = pjoin(dir, "trade-journal.json");
+  writeFileSync(path, JSON.stringify({
+    v: 1, open: [], runs: [], writtenOff: [], nextLotId: 3,
+    unmatched: [{
+      commodity: "Beradom", resourceGuid: "c339897c-d682-48ad-a16f-daf145bc0f4d",
+      scu: 1, sellPricePerScu: 120000, revenue: 120000,
+      sellShop: "SCShop_CommEx_TDD_NewBabbage", soldAt: "2026-08-24T07:12:57.560Z",
+    }],
+    seen: ["2026-08-24T07:12:57.560Z|sell|SCShop_CommEx_TDD_NewBabbage|c339897c-d682-48ad-a16f-daf145bc0f4d|120000"],
+  }), "utf8");
+
+  const j = new TradeJournal(dir, () => "Beradom");
+  const before = j.view(new Date("2026-08-24T09:00:00Z"));
+  check("the historical row is still there", before.unmatched.length === 1, String(before.unmatched.length));
+  check("...with its old figures untouched",
+    before.unmatched[0].scu === 1 && before.unmatched[0].sellPricePerScu === 120000,
+    JSON.stringify(before.unmatched[0]));
+
+  // 🔴 The replay that happens on every launch. Same line, same journal.
+  replay([SELL_GEM_BERADOM, clockLine("2026-08-24T07:13:20.000Z")], j);
+  const after = j.view(new Date("2026-08-24T09:00:00Z"));
+  check("🔴 replaying the same sale adds nothing", after.unmatched.length === 1,
+    String(after.unmatched.length));
+  check("🔴 ...and does not rewrite the old figures under the new rule",
+    after.unmatched[0].scu === 1 && after.unmatched[0].sellPricePerScu === 120000,
+    JSON.stringify(after.unmatched[0]));
+  check("...and the revenue total is unchanged", Math.round(after.allTime.unpricedRevenue) === 120000,
+    String(after.allTime.unpricedRevenue));
+
+  // 🔑 PAIRED POSITIVE. Every assertion above is satisfied by a journal that refuses everything,
+  // which is precisely what a bad STATE_VERSION bump would produce. A DIFFERENT sale must still
+  // land in the very same file.
+  replay([SELL_GEM_GLACOSITE.replace("2026-07-28T21:02:49.045Z", "2026-08-24T07:13:30.000Z"),
+    clockLine("2026-08-24T07:14:00.000Z")], j);
+  const third = j.view(new Date("2026-08-24T09:00:00Z"));
+  check("...while a NEW sale still books, so nothing was wiped", third.unmatched.length === 2,
+    String(third.unmatched.length));
+  check("...the new one under the new rule, beside the old one under the old",
+    third.unmatched.some((u) => u.scu === null) && third.unmatched.some((u) => u.scu === 1),
+    JSON.stringify(third.unmatched.map((u) => u.scu)));
 }
 
 console.log("\n-- the clock is the LOG's, not the wall's --");
@@ -1084,8 +1293,8 @@ console.log("\n-- the prefilter a bulk replay uses must not narrow to the reques
   const booked = [...b, ...d];
   check("both unrefused sells are confirmed", booked.length === 2 && booked.every((p) => p.confirmed === true),
     JSON.stringify(booked.map((p) => [p.at, p.confirmed])));
-  check("...at 21 SCU and 11 SCU", JSON.stringify(booked.map((p) => p.scu)) === "[21,11]",
-    JSON.stringify(booked.map((p) => p.scu)));
+  check("...at 21 SCU and 11 SCU", JSON.stringify(booked.map((p) => scuOf(p))) === "[21,11]",
+    JSON.stringify(booked.map((p) => scuOf(p))));
 
   console.log("\n-- ...and when they ARE all resident, the refusal still convicts the right one --");
   // Widen the window past the request spacing and three really are resident together. This is the
