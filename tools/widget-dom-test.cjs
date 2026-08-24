@@ -7202,6 +7202,88 @@ const TRADEHOLD = `(async () => {
   return out;
 })()`;
 
+/* 🔴 A SALE THE GAME STATED NO VOLUME FOR MUST SHOW NOTHING WHERE THE TONNAGE WOULD GO.
+   54% of real commodity SELLS carry an empty Cargo Box Data: hand-mined gems sold out of personal
+   inventory, where SCU is the wrong unit rather than an unknown one. The Ledger keeps the money and
+   the terminal, and says nothing about how much. Sub's ruling: "just display nothing in the widget
+   itself."
+
+   ⚠️ THE FAILURE THIS GUARDS IS A ZERO, NOT A CRASH. The page formats with num(), which is
+   Number(n || 0), so an unguarded null renders "0 SCU" — a missing figure printed as zero is not
+   missing, it is wrong, and it looks like a real reading.
+
+   🔑 THE FIXTURE CARRIES BOTH SHAPES ON PURPOSE. A rule that stripped the tonnage from EVERY
+   unmatched row would satisfy every "does not say SCU" assertion below, so a row that legitimately
+   HAS a volume has to keep it in the same render. */
+const TRADEUNIT = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const tab = document.getElementById("tabJournal");
+  ok("the journal tab exists to be driven", !!tab, tab ? "found" : "(no #tabJournal)");
+  if (!tab) return out;
+  tab.click();
+  await sleep(500);
+
+  const zeroTotals = { runs: 0, scu: 0, cost: 0, revenue: 0, profit: 0, minutes: 0,
+                       profitPerHour: null, unpricedRevenue: 536000, unpricedSales: 2 };
+  tradeJournal = {
+    runs: [], open: [], writtenOff: [],
+    unmatched: [
+      /* Verbatim shape of a real Hadanite sale at the New Babbage TDD: no cargo boxes, so no
+         volume and no per-SCU price, and 416,000 aUEC that genuinely changed hands. */
+      { commodity: "Hadanite", resourceGuid: "g-hadanite", scu: null, sellPricePerScu: null,
+        revenue: 416000, sellShop: "SCShop_CommEx_TDD_NewBabbage",
+        soldAt: new Date(Date.now() - 3600000).toISOString() },
+      /* The other shape: a boxed sale whose volume the game DID state. */
+      { commodity: "Processed Food", resourceGuid: "g-food", scu: 8, sellPricePerScu: 15000,
+        revenue: 120000, sellShop: "SCShop_Admin_lt_base_g",
+        soldAt: new Date(Date.now() - 7200000).toISOString() },
+    ],
+    today: zeroTotals, allTime: zeroTotals,
+  };
+  render();
+  await sleep(120);
+
+  const rows = Array.prototype.slice.call(document.querySelectorAll(".trow"));
+  const rowText = (r) => (r && r.textContent) ? r.textContent : "(empty row)";
+
+  /* 🔑 POSITIVE FIRST, AND NON-EMPTY. Every assertion after this is "the row does not say X", and
+     a page that rendered no rows at all — the plausible wrong fix, dropping the sale — passes all
+     of them for free. */
+  ok("both unmatched sales render", rows.length === 2, rows.length + " rows");
+  const gem = rows.filter((r) => rowText(r).indexOf("Hadanite") >= 0)[0] || null;
+  const boxed = rows.filter((r) => rowText(r).indexOf("Processed Food") >= 0)[0] || null;
+  ok("...the unpriced gem sale among them", !!gem, gem ? rowText(gem) : "(no Hadanite row)");
+  ok("...and the boxed one", !!boxed, boxed ? rowText(boxed) : "(no Processed Food row)");
+
+  const gemText = rowText(gem);
+  /* 🔑 THE MONEY AND THE PLACE ARE STILL THERE. Recording the observation is half of the ruling. */
+  ok("the gem sale keeps its revenue", gemText.indexOf("416,000") >= 0, gemText);
+  ok("...and the terminal it was sold at", gemText.indexOf("New Babbage") >= 0
+     || gemText.indexOf("NewBabbage") >= 0 || gemText.indexOf("CommEx") >= 0, gemText);
+
+  /* 🔴 AND NOTHING WHERE THE TONNAGE WOULD GO. Not a zero, not a dash, not a placeholder. */
+  const nameCell = gem ? gem.querySelector(".tnm") : null;
+  const nameText = nameCell && nameCell.textContent ? nameCell.textContent : "(no .tnm)";
+  ok("🔴 the gem sale claims no SCU at all", nameText.indexOf("SCU") < 0, nameText);
+  ok("🔴 ...and does not print a zero in its place", nameText.indexOf("0") < 0, nameText);
+  ok("...nor a dash or any other placeholder standing in for a number",
+     nameText.indexOf("-") < 0 && nameText.indexOf("?") < 0, nameText);
+  ok("...it is just the commodity", nameText === "Hadanite", nameText);
+
+  /* 🔑 THE PAIRED NEGATIVE, in the same render: a stated volume still prints. Without this the
+     assertions above are satisfied by a page that stopped showing tonnages entirely. */
+  const boxedName = boxed ? boxed.querySelector(".tnm") : null;
+  const boxedText = boxedName && boxedName.textContent ? boxedName.textContent : "(no .tnm)";
+  ok("...while a sale that DOES state a volume still shows it",
+     boxedText.indexOf("8 SCU") >= 0, boxedText);
+
+  return out;
+})()`;
+
 
 app.whenReady().then(async () => {
   let fails = 0;
@@ -7280,6 +7362,7 @@ app.whenReady().then(async () => {
     fails += await run("hauling: a commodity in the route, before and after the buy", BUYROUTE, null, null, "hauling.html");
     fails += await run("hauling: the Runs row survives 320px", RUNSNARROW, null, null, "hauling.html");
     fails += await run("hauling: the trade journal's held cargo", TRADEHOLD, null, null, "hauling.html");
+    fails += await run("hauling: a sale with no stated volume shows no tonnage", TRADEUNIT, null, null, "hauling.html");
     fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");
     fails += await run("hauling: stowage order + signature", STOW, null, null, "hauling.html");
     fails += await run("completion card holds while you use it", REPORTHOLD, null);
