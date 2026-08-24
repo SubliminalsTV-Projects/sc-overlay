@@ -79,6 +79,8 @@
     "sync:events": "node tools/sync-events.mjs",
     "test:eventrewards": "tsx src/event-rewards.test.ts",
     "measure:tradeconfirm": "tsx tools/measure-trade-confirm.mts",
+    "probe:sellunit": "tsx tools/probe-sellunit.ts",
+    "control:sellvolume": "node tools/control-sellvolume.mjs",
     "test:itemshoplog": "tsx src/item-shop-log.test.ts",
     "measure:itemshops": "tsx tools/measure-item-shops.mts"
   },

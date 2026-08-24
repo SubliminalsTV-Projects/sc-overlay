@@ -105,6 +105,12 @@
  * Hadanite is not an uncertain number; it is a meaningless one, and the app's assumption that
  * everything sold is cargo is what was actually wrong.
  *
+ * 🔑 **CORROBORATED ON A SECOND, INDEPENDENT CORPUS** - Sub's own 533 `logbackups/` on this
+ * machine, which shares no rows with the shared-log table: **35 of 60 sells (58.3%) empty**,
+ * **16 of 16 buys boxed**. The empty ones are Feynmaline, Compboard, Hadanite, Dolivine,
+ * Glacosite, Aphorite, Janalite - and here the split is perfectly clean, with NO commodity
+ * appearing on both sides. `npm run probe:sellunit` re-runs both.
+ *
  * ⚠️ **BUT IT IS NOT ONLY GEMS, so do not gate on a commodity list.** 10 commodities appear on
  * BOTH sides - Tungsten, Iron, Aluminum, Gold, Laranite, Copper, Torite, Borase, Hephaestanite and
  * Recycled Material Composite all have empty-manifest sells too (17 of them). Ordinary cargo can
