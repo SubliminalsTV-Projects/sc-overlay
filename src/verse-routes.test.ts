@@ -185,9 +185,23 @@ const get = (path: string, deps: Partial<VerseDeps> = {}) => {
      "...on the containment basis Sub was actually on", full.body.order?.basis);
 
   const fullTiers = tiersOf(hitFull.quotes);
-  // POSITIVE FIRST. Every claim below is free if there are no far shops to lose.
+  // 🔴 POSITIVE FIRST, AND COUNTED STRAIGHT OFF THE TABLE RATHER THAN OFF A RESPONSE.
+  // Asserting "the far tier exists" from a `shops=50` response is CIRCULAR: 157 > 50, so the one
+  // out-of-system row only appears there because `reserveTierRows` put it there. A negative control
+  // caught exactly that — gutting the rule turned this line red, which means it was measuring the
+  // fix rather than the data it is supposed to vouch for. So the far shops are counted from
+  // `item-shops.json` itself, which no part of the fix can reach.
+  const rawTable = JSON.parse(readFileSync(join(DATA, "item-shops.json"), "utf8")) as
+    { items: { n: string; q: { t: number }[] }[]; terminals: { sys: string | null }[] };
+  const rawItem = rawTable.items.find((it) => it.n === hitFull.name);
+  ok(!!rawItem, "the item is findable in the raw shipped table", hitFull.name);
+  const offSystem = (rawItem?.q ?? [])
+    .filter((q) => systemKey(rawTable.terminals[q.t]?.sys) !== "stanton").length;
+  ok(offSystem > 0,
+     "🔑 the SHIPPED TABLE really does sell it outside the player's system",
+     `${offSystem} of ${rawItem?.q.length} price rows are not in Stanton`);
   ok((fullTiers["elsewhere"] ?? 0) > 0,
-     "🔑 it really is sold outside the player's system", show(fullTiers));
+     "...and the route agrees there is an out-of-system tier to lose", show(fullTiers));
   ok(hitFull.shopCount > CAP, "...at far more shops than the cap shows",
      `${hitFull.shopCount} shops, cap ${CAP}`);
 
