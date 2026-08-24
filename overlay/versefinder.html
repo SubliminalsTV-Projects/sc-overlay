@@ -825,8 +825,10 @@
 
     // Consecutive-run grouping, NOT a map keyed by place: the incoming order is the proximity
     // order and must be preserved exactly. Bucketing by name would silently re-sort the results.
+    // 🔑 NO SLICE HERE — the server already capped this list, and the rows it kept past the cap are
+    // the far-system ones a slice on this side would delete. See the fetch in `run()`.
     const groups = [];
-    for (const q of r.quotes.slice(0, SHOPS_SHOWN)) {
+    for (const q of r.quotes) {
       const last = groups[groups.length - 1];
       if (last && last.place === q.place && last.system === q.system) last.quotes.push(q);
       else groups.push({ place: q.place, body: q.body, system: q.system, first: q, quotes: [q] });
@@ -932,7 +934,12 @@
     // 🔴 The spread, and the rest of the shops. Both exist because "the price of X" does not:
     // 68% of items sold in more than one place cost different amounts at different shops.
     const notes = [];
-    if (r.shopCount > SHOPS_SHOWN) notes.push("+" + (r.shopCount - SHOPS_SHOWN) + " more shop" + (r.shopCount - SHOPS_SHOWN === 1 ? "" : "s"));
+    // 🔴 COUNT WHAT WAS DRAWN, NOT THE CAP. `SHOPS_SHOWN` is no longer the number of rows on screen:
+    // the server keeps an extra row for any containment tier the cap would have deleted, so a card
+    // can legitimately draw 6 or 7. Subtracting the cap instead of the real count overstates the
+    // hidden shops by exactly the rows sitting right above the note — the reader can count them.
+    const drawn = r.quotes.length;
+    if (r.shopCount > drawn) notes.push("+" + (r.shopCount - drawn) + " more shop" + (r.shopCount - drawn === 1 ? "" : "s"));
     // 🔴 TWO SPREADS, NEVER ONE. `low`/`high` are the PURCHASE range and `rentLow`/`rentHigh` the
     // rental one; a single min/max across both would run from a 28,665 aUEC hire to a 1,089,270
     // aUEC sale and describe no transaction anybody can make. Either may be null — nothing here
@@ -1091,7 +1098,13 @@
   async function run(q) {
     const mine = ++seq;
     try {
-      const r = await fetch("/api/verse/search?q=" + encodeURIComponent(q) + "&limit=20&shops=" + (SHOPS_SHOWN + 3));
+      // 🔴 ASK FOR EXACTLY WHAT WE DRAW. It used to ask for SHOPS_SHOWN + 3 and then slice back to
+      // SHOPS_SHOWN — three rows fetched and thrown away, and worse, a SECOND truncation the server
+      // could not see. The server now caps this list itself and deliberately keeps one row past the
+      // cap for any containment tier that would otherwise vanish (see `reserveTierRows`); a slice
+      // on this side would delete exactly those rows again. So: one cap, one owner, and the widget
+      // draws every quote it is given.
+      const r = await fetch("/api/verse/search?q=" + encodeURIComponent(q) + "&limit=20&shops=" + SHOPS_SHOWN);
       if (!r.ok) throw new Error("HTTP " + r.status);
       const data = await r.json();
       // An earlier request landing late must not replace a newer answer.
