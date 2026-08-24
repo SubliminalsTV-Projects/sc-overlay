@@ -9,9 +9,10 @@
  },
  "usage": {
   "terminal": "Attribute to this UEX terminal.",
-  "place": "The station is known; which counter inside it is not. `candidates` lists every UEX terminal filed at that place. Attribute to the place, or narrow it with something else.",
+  "place": "The station is known; which counter inside it is not. `candidates` lists every UEX terminal filed at that place. Attribute to the place, or narrow it with something else. If `provisionalTerminal` is set, one candidate did answer to this shop's name but the place behind it is thin — believable, not corroborated, and not safe to attribute a price with.",
   "place-dependent": "This asset exists at several stations, so the token alone cannot say which. It is still resolvable AT RUNTIME — the app already knows where the player is; ask src/player-location.ts rather than this file.",
-  "unresolved": "No same-place verdict was ever reached. Nothing may be attributed.",
+  "unresolved": "No same-place verdict was ever reached. Nothing may be attributed. `evidence.why` says which of two very different things happened: `system`/`body`/`unknown` means the log never placed the player at all while they were here (only more play fixes it), while `place-too-old` or `place-is-a-body` means it did and this refused the answer.",
+  "notInjective": "The map is many-to-one and must not be inverted. SCShop_Levski_Refinery_Store and SCShop_Levski_Refinery_OreSales both resolve to 'Refinery Shop - Levski' — the game splits the item counter from the ore desk and UEX does not.",
   "confidence": "`provisional` means one place on thin evidence (<8 same-place observations, or a single contributor). Believable, not corroborated."
  },
  "corpus": {
@@ -19,21 +20,22 @@
   "logs": 900,
   "contributors": 57,
   "spanDaysUploaded": 35,
-  "shopObservations": 4122,
-  "samePlaceObservations": 2998,
+  "shopObservations": 4258,
+  "samePlaceObservations": 3077,
   "caveat": "Sessions stored before 2026-08-24 were gathered under a share filter with no price term, so shopping sessions are under-represented. That biases coverage, not correctness."
  },
  "totals": {
-  "tokens": 63,
-  "terminal": 20,
-  "place": 21,
-  "place-dependent": 8,
-  "unresolved": 14
+  "tokens": 83,
+  "terminal": 14,
+  "place": 39,
+  "place-dependent": 9,
+  "unresolved": 21
  },
  "tokens": {
   "SCShop_Orison_KelTo": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
@@ -71,6 +73,11 @@
      "system": 2
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 598,
+     "system": 2,
+     "place-too-old": 46
+    },
     "disagreement": 0,
     "contributors": 4
    }
@@ -78,6 +85,7 @@
   "SCShop_Levski_CargoOffice_Commodities": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -110,20 +118,27 @@
     "commodity"
    ],
    "evidence": {
-    "observations": 547,
+    "observations": 572,
     "samePlace": 385,
     "byTier": {
      "system": 162,
-     "place": 385
+     "place": 385,
+     "unknown": 25
     },
     "placeCount": 1,
+    "why": {
+     "system": 162,
+     "same-place": 385,
+     "unknown": 25
+    },
     "disagreement": 0,
-    "contributors": 12
+    "contributors": 13
    }
   },
   "SCShop_Levski_Refinery_Store": {
    "verdict": "terminal",
    "terminal": "Refinery Shop - Levski",
+   "provisionalTerminal": null,
    "matchedOn": "refinery",
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -143,6 +158,10 @@
      "place": 188
     },
     "placeCount": 1,
+    "why": {
+     "system": 258,
+     "same-place": 188
+    },
     "disagreement": 0,
     "contributors": 13
    }
@@ -150,6 +169,7 @@
   "SCShop_Admin_lt_base_g": {
    "verdict": "place-dependent",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -245,6 +265,11 @@
      "system": 93
     },
     "placeCount": 13,
+    "why": {
+     "same-place": 188,
+     "system": 93,
+     "place-is-a-body": 28
+    },
     "disagreement": 0.6117,
     "contributors": 10
    }
@@ -252,6 +277,7 @@
   "SCShop_ht_delta_shubin_m_store": {
    "verdict": "place-dependent",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -311,6 +337,11 @@
      "body": 16
     },
     "placeCount": 7,
+    "why": {
+     "place-is-a-body": 62,
+     "same-place": 117,
+     "body": 16
+    },
     "disagreement": 0.5214,
     "contributors": 5
    }
@@ -318,6 +349,7 @@
   "SCShop_CommEx_TDD_Orison": {
    "verdict": "terminal",
    "terminal": "TDD - Trade and Development Division - Cloudview Center - Orison",
+   "provisionalTerminal": null,
    "matchedOn": "tdd",
    "place": {
     "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
@@ -336,6 +368,9 @@
      "place": 142
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 142
+    },
     "disagreement": 0,
     "contributors": 2
    }
@@ -343,6 +378,7 @@
   "SCShop_CommEx_TDD_NewBabbage": {
    "verdict": "terminal",
    "terminal": "TDD - Trade and Development Division - Commons - New Babbage",
+   "provisionalTerminal": null,
    "matchedOn": "tdd",
    "place": {
     "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
@@ -361,6 +397,9 @@
      "place": 140
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 140
+    },
     "disagreement": 0,
     "contributors": 4
    }
@@ -368,6 +407,7 @@
   "SCShop_Entity_CubbyBlast_Area18": {
    "verdict": "terminal",
    "terminal": "Cubby Blast - Area 18",
+   "provisionalTerminal": null,
    "matchedOn": "cubbyblast",
    "place": {
     "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
@@ -380,12 +420,15 @@
     "item"
    ],
    "evidence": {
-    "observations": 134,
-    "samePlace": 134,
+    "observations": 136,
+    "samePlace": 136,
     "byTier": {
-     "place": 134
+     "place": 136
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 136
+    },
     "disagreement": 0,
     "contributors": 3
    }
@@ -393,6 +436,7 @@
   "SCShop_ConscientiousObjects_Levski-001": {
    "verdict": "terminal",
    "terminal": "Conscientious Objects - Levski",
+   "provisionalTerminal": null,
    "matchedOn": "conscientiousobjects",
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -405,13 +449,17 @@
     "item"
    ],
    "evidence": {
-    "observations": 132,
+    "observations": 133,
     "samePlace": 100,
     "byTier": {
-     "system": 32,
+     "system": 33,
      "place": 100
     },
     "placeCount": 1,
+    "why": {
+     "system": 33,
+     "same-place": 100
+    },
     "disagreement": 0,
     "contributors": 16
    }
@@ -419,6 +467,7 @@
   "SCShop_Levski_CargoOffice_ITEM": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -457,6 +506,9 @@
      "place": 118
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 118
+    },
     "disagreement": 0,
     "contributors": 6
    }
@@ -464,6 +516,7 @@
   "SCShop_LiveFire_Truckstop02-001": {
    "verdict": "place-dependent",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -519,76 +572,36 @@
      "unknown": 8
     },
     "placeCount": 6,
+    "why": {
+     "same-place": 84,
+     "body": 2,
+     "system": 2,
+     "unknown": 8,
+     "place-is-a-body": 10
+    },
     "disagreement": 0.5238,
-    "contributors": 7
-   }
-  },
-  "SCShop_Pyro_RestStop_Rund_Admin": {
-   "verdict": "unresolved",
-   "terminal": null,
-   "matchedOn": null,
-   "place": null,
-   "candidates": [],
-   "places": [],
-   "confidence": "none",
-   "soldBy": [
-    "commodity"
-   ],
-   "evidence": {
-    "observations": 102,
-    "samePlace": 0,
-    "byTier": {
-     "system": 59,
-     "unknown": 43
-    },
-    "placeCount": 0,
-    "disagreement": 0,
-    "contributors": 4
-   }
-  },
-  "SCShop_Centermass_NewBabbage": {
-   "verdict": "terminal",
-   "terminal": "CenterMass - New Babbage",
-   "matchedOn": "centermass",
-   "place": {
-    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
-    "name": "New Babbage"
-   },
-   "candidates": [],
-   "places": [],
-   "confidence": "confident",
-   "soldBy": [
-    "item"
-   ],
-   "evidence": {
-    "observations": 98,
-    "samePlace": 98,
-    "byTier": {
-     "place": 98
-    },
-    "placeCount": 1,
-    "disagreement": 0,
     "contributors": 7
    }
   },
   "SCShop_Cargo_Office": {
    "verdict": "place-dependent",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
    "places": [
     {
+     "id": "45d2d370-9fab-4e6b-b84b-e9c913bc316a",
+     "name": "Seraphim Station",
+     "observations": 45,
+     "contributors": 5
+    },
+    {
      "id": "233238ee-adeb-4405-8045-49fa07370f37",
      "name": "Port Tressler",
      "observations": 44,
      "contributors": 3
-    },
-    {
-     "id": "45d2d370-9fab-4e6b-b84b-e9c913bc316a",
-     "name": "Seraphim Station",
-     "observations": 40,
-     "contributors": 5
     },
     {
      "id": "ab29f65e-c792-4b1f-b23d-5810cb0ef416",
@@ -608,19 +621,80 @@
     "item"
    ],
    "evidence": {
+    "observations": 103,
+    "samePlace": 103,
+    "byTier": {
+     "place": 103
+    },
+    "placeCount": 4,
+    "why": {
+     "same-place": 103
+    },
+    "disagreement": 0.5631,
+    "contributors": 10
+   }
+  },
+  "SCShop_Pyro_RestStop_Rund_Admin": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "commodity"
+   ],
+   "evidence": {
+    "observations": 102,
+    "samePlace": 0,
+    "byTier": {
+     "system": 59,
+     "unknown": 43
+    },
+    "placeCount": 0,
+    "why": {
+     "system": 59,
+     "unknown": 43
+    },
+    "disagreement": 0,
+    "contributors": 4
+   }
+  },
+  "SCShop_Centermass_NewBabbage": {
+   "verdict": "terminal",
+   "terminal": "CenterMass - New Babbage",
+   "provisionalTerminal": null,
+   "matchedOn": "centermass",
+   "place": {
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage"
+   },
+   "candidates": [],
+   "places": [],
+   "confidence": "confident",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
     "observations": 98,
     "samePlace": 98,
     "byTier": {
      "place": 98
     },
-    "placeCount": 4,
-    "disagreement": 0.551,
-    "contributors": 10
+    "placeCount": 1,
+    "why": {
+     "same-place": 98
+    },
+    "disagreement": 0,
+    "contributors": 7
    }
   },
   "SCShop_lt_a_casaba_small_base_a-001": {
    "verdict": "place-dependent",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -628,7 +702,7 @@
     {
      "id": "45d2d370-9fab-4e6b-b84b-e9c913bc316a",
      "name": "Seraphim Station",
-     "observations": 54,
+     "observations": 58,
      "contributors": 4
     },
     {
@@ -661,20 +735,25 @@
     "item"
    ],
    "evidence": {
-    "observations": 85,
-    "samePlace": 76,
+    "observations": 89,
+    "samePlace": 80,
     "byTier": {
-     "place": 76,
+     "place": 80,
      "system": 9
     },
     "placeCount": 5,
-    "disagreement": 0.2895,
+    "why": {
+     "same-place": 80,
+     "system": 9
+    },
+    "disagreement": 0.275,
     "contributors": 9
    }
   },
   "SCShop_OmegaPro_NewBabbage": {
    "verdict": "terminal",
    "terminal": "Omega Pro - New Babbage",
+   "provisionalTerminal": null,
    "matchedOn": "omegapro",
    "place": {
     "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
@@ -693,6 +772,9 @@
      "place": 74
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 74
+    },
     "disagreement": 0,
     "contributors": 7
    }
@@ -700,6 +782,7 @@
   "SCShop_lt_a_casaba_small_base_a-002": {
    "verdict": "terminal",
    "terminal": "Casaba Outlet - Port Tressler",
+   "provisionalTerminal": null,
    "matchedOn": "casaba",
    "place": {
     "id": "233238ee-adeb-4405-8045-49fa07370f37",
@@ -718,13 +801,85 @@
      "place": 74
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 68,
+     "place-is-a-body": 6
+    },
     "disagreement": 0,
+    "contributors": 6
+   }
+  },
+  "SCShop_RefineryAdmin_ITEM": {
+   "verdict": "place-dependent",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [
+    {
+     "id": "4644d97d-9eb6-4cb5-9f44-ca52872e8aec",
+     "name": "HUR L1",
+     "observations": 10,
+     "contributors": 3
+    },
+    {
+     "id": "ba1492c3-5e0a-4e7e-83e8-f55aed92a756",
+     "name": "ARC L4",
+     "observations": 6,
+     "contributors": 1
+    },
+    {
+     "id": "142cf72a-da60-4348-bc37-44046a6ed458",
+     "name": "MIC L2",
+     "observations": 4,
+     "contributors": 1
+    },
+    {
+     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+     "name": "Levski",
+     "observations": 4,
+     "contributors": 1
+    },
+    {
+     "id": "3a42031e-71a7-4bd4-ac71-8dcdad4b52ed",
+     "name": "MIC L5",
+     "observations": 2,
+     "contributors": 1
+    },
+    {
+     "id": "6c9dd307-7b70-451f-bb38-9e70c0177f46",
+     "name": "ARC L2",
+     "observations": 2,
+     "contributors": 1
+    }
+   ],
+   "confidence": "none",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 46,
+    "samePlace": 28,
+    "byTier": {
+     "unknown": 4,
+     "system": 14,
+     "place": 28
+    },
+    "placeCount": 6,
+    "why": {
+     "unknown": 4,
+     "system": 14,
+     "same-place": 28
+    },
+    "disagreement": 0.6429,
     "contributors": 6
    }
   },
   "SCShop_RestStop_Pharmacy-001": {
    "verdict": "place-dependent",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -778,74 +933,18 @@
      "system": 2
     },
     "placeCount": 6,
+    "why": {
+     "same-place": 44,
+     "system": 2
+    },
     "disagreement": 0.5455,
-    "contributors": 6
-   }
-  },
-  "SCShop_RefineryAdmin_ITEM": {
-   "verdict": "place-dependent",
-   "terminal": null,
-   "matchedOn": null,
-   "place": null,
-   "candidates": [],
-   "places": [
-    {
-     "id": "4644d97d-9eb6-4cb5-9f44-ca52872e8aec",
-     "name": "HUR L1",
-     "observations": 6,
-     "contributors": 2
-    },
-    {
-     "id": "ba1492c3-5e0a-4e7e-83e8-f55aed92a756",
-     "name": "ARC L4",
-     "observations": 6,
-     "contributors": 1
-    },
-    {
-     "id": "142cf72a-da60-4348-bc37-44046a6ed458",
-     "name": "MIC L2",
-     "observations": 4,
-     "contributors": 1
-    },
-    {
-     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
-     "name": "Levski",
-     "observations": 4,
-     "contributors": 1
-    },
-    {
-     "id": "3a42031e-71a7-4bd4-ac71-8dcdad4b52ed",
-     "name": "MIC L5",
-     "observations": 2,
-     "contributors": 1
-    },
-    {
-     "id": "6c9dd307-7b70-451f-bb38-9e70c0177f46",
-     "name": "ARC L2",
-     "observations": 2,
-     "contributors": 1
-    }
-   ],
-   "confidence": "none",
-   "soldBy": [
-    "item"
-   ],
-   "evidence": {
-    "observations": 42,
-    "samePlace": 24,
-    "byTier": {
-     "unknown": 4,
-     "system": 14,
-     "place": 24
-    },
-    "placeCount": 6,
-    "disagreement": 0.75,
     "contributors": 6
    }
   },
   "SCShop_ht_delta_rayari_m_store": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -863,6 +962,11 @@
      "body": 25
     },
     "placeCount": 0,
+    "why": {
+     "unknown": 1,
+     "place-is-a-body": 15,
+     "body": 25
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -870,6 +974,7 @@
   "SCShop_Levski_ShipItems_Teachs": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -908,19 +1013,69 @@
      "place": 36
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 36
+    },
+    "disagreement": 0,
+    "contributors": 4
+   }
+  },
+  "SCShop_Pyro_RestStop_BlackMarket_FPSItems": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 32,
+    "samePlace": 0,
+    "byTier": {
+     "system": 32
+    },
+    "placeCount": 0,
+    "why": {
+     "system": 32
+    },
     "disagreement": 0,
     "contributors": 4
    }
   },
   "SCShop_H_Pharmacy_Levski": {
-   "verdict": "terminal",
-   "terminal": "Pharmacy - Levski",
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Pharmacy - Levski",
    "matchedOn": "pharmacy",
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
     "name": "Levski"
    },
-   "candidates": [],
+   "candidates": [
+    "Levski",
+    "Teach's Item Shop - Levski",
+    "Nyx Nax - Levski",
+    "Tools & Supplies - Levski",
+    "Cordry's - Levski",
+    "Conscientious Objects - Levski",
+    "Refinery Shop - Levski",
+    "Cargo Services - Levski",
+    "Tech Shop - Levski",
+    "Laying Roots - Levski",
+    "Feed The People - Levski",
+    "Wear & Tear - Levski",
+    "Wake Up - Levski",
+    "Near Beer - Levski",
+    "Shelf Stable - Levski",
+    "Pharmacy - Levski",
+    "Hats & More - Levski",
+    "Teach's Ship Shop - Levski",
+    "Teach's Rentals - Levski"
+   ],
    "places": [],
    "confidence": "provisional",
    "soldBy": [
@@ -935,6 +1090,11 @@
      "system": 10
     },
     "placeCount": 1,
+    "why": {
+     "unknown": 2,
+     "same-place": 20,
+     "system": 10
+    },
     "disagreement": 0,
     "contributors": 4
    }
@@ -942,6 +1102,7 @@
   "SCShop_Pyro_RStopRund_Refinery_ItemShop": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -958,6 +1119,10 @@
      "body": 2
     },
     "placeCount": 0,
+    "why": {
+     "system": 28,
+     "body": 2
+    },
     "disagreement": 0,
     "contributors": 3
    }
@@ -965,6 +1130,7 @@
   "SCShop_Trdpst_Warehouse_OTLW_Int_A": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -981,6 +1147,10 @@
      "body": 11
     },
     "placeCount": 0,
+    "why": {
+     "system": 19,
+     "body": 11
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -988,6 +1158,7 @@
   "SCShop_ShubinInterstellar_NewBabbage": {
    "verdict": "terminal",
    "terminal": "Shubin Interstellar - Commons - New Babbage",
+   "provisionalTerminal": null,
    "matchedOn": "shubininterstellar",
    "place": {
     "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
@@ -1006,6 +1177,9 @@
      "place": 28
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 28
+    },
     "disagreement": 0,
     "contributors": 2
    }
@@ -1013,6 +1187,7 @@
   "SCShop_Cordrys_Levski-001": {
    "verdict": "terminal",
    "terminal": "Cordry's - Levski",
+   "provisionalTerminal": null,
    "matchedOn": "cordrys",
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -1025,20 +1200,56 @@
     "item"
    ],
    "evidence": {
-    "observations": 26,
-    "samePlace": 22,
+    "observations": 27,
+    "samePlace": 23,
     "byTier": {
      "system": 4,
-     "place": 22
+     "place": 23
     },
     "placeCount": 1,
+    "why": {
+     "system": 4,
+     "same-place": 23
+    },
     "disagreement": 0,
     "contributors": 4
    }
   },
-  "SCShop_Pyro_RestStop_BlackMarket_FPSItems": {
+  "SCShop_Levski_Refinery_OreSales": {
+   "verdict": "terminal",
+   "terminal": "Refinery Shop - Levski",
+   "provisionalTerminal": null,
+   "matchedOn": "refinery",
+   "place": {
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski"
+   },
+   "candidates": [],
+   "places": [],
+   "confidence": "confident",
+   "soldBy": [
+    "refinery"
+   ],
+   "evidence": {
+    "observations": 26,
+    "samePlace": 24,
+    "byTier": {
+     "place": 24,
+     "system": 2
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 24,
+     "system": 2
+    },
+    "disagreement": 0,
+    "contributors": 8
+   }
+  },
+  "SCShop_WeaponsArmor_NyxSocial": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -1054,35 +1265,17 @@
      "system": 26
     },
     "placeCount": 0,
-    "disagreement": 0,
-    "contributors": 4
-   }
-  },
-  "SCShop_WeaponsArmor_NyxSocial": {
-   "verdict": "unresolved",
-   "terminal": null,
-   "matchedOn": null,
-   "place": null,
-   "candidates": [],
-   "places": [],
-   "confidence": "none",
-   "soldBy": [
-    "item"
-   ],
-   "evidence": {
-    "observations": 24,
-    "samePlace": 0,
-    "byTier": {
-     "system": 24
+    "why": {
+     "system": 26
     },
-    "placeCount": 0,
     "disagreement": 0,
-    "contributors": 2
+    "contributors": 3
    }
   },
   "SCShop_CrusaderShowroomWeaponry_Orison": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
@@ -1119,19 +1312,37 @@
      "place": 24
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 24
+    },
     "disagreement": 0,
     "contributors": 3
    }
   },
   "SCShop_ShipWeapons_UtilStation": {
-   "verdict": "terminal",
-   "terminal": "Ship Weapons - Seraphim",
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Ship Weapons - Seraphim",
    "matchedOn": "shipweapons",
    "place": {
     "id": "45d2d370-9fab-4e6b-b84b-e9c913bc316a",
     "name": "Seraphim Station"
    },
-   "candidates": [],
+   "candidates": [
+    "Admin - Seraphim",
+    "Casaba Outlet - Seraphim",
+    "Pharmacy - Seraphim",
+    "Cargo Center Supplies - Seraphim",
+    "Live Fire Weapons - Seraphim",
+    "Ship Weapons - Seraphim",
+    "Armor - Seraphim",
+    "Noodle Bar - Seraphim",
+    "Juice Bar - Seraphim Station",
+    "Hot Dogs - Seraphim Station",
+    "Burrito Bar - Seraphim Station",
+    "Ellroy's - Seraphim",
+    "Traveler Rentals - Cargo Center - Seraphim"
+   ],
    "places": [],
    "confidence": "provisional",
    "soldBy": [
@@ -1145,6 +1356,11 @@
      "system": 4
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 4,
+     "place-is-a-body": 14,
+     "system": 4
+    },
     "disagreement": 0,
     "contributors": 4
    }
@@ -1152,6 +1368,7 @@
   "SCShop_Pyro_RStop_stall_med_001_rund_weaponsmith": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -1167,6 +1384,9 @@
      "system": 18
     },
     "placeCount": 0,
+    "why": {
+     "system": 18
+    },
     "disagreement": 0,
     "contributors": 2
    }
@@ -1174,6 +1394,7 @@
   "SCShop_AdminOffice_GrimHex": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
@@ -1199,6 +1420,9 @@
      "place": 17
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 17
+    },
     "disagreement": 0,
     "contributors": 2
    }
@@ -1206,6 +1430,7 @@
   "SCShop_AdminOffice_NewBabbage": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
@@ -1240,6 +1465,9 @@
      "place": 16
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 16
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1247,6 +1475,7 @@
   "SCShop_Platinumbay_small": {
    "verdict": "place-dependent",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -1276,6 +1505,10 @@
      "system": 2
     },
     "placeCount": 2,
+    "why": {
+     "same-place": 14,
+     "system": 2
+    },
     "disagreement": 0.2857,
     "contributors": 4
    }
@@ -1283,6 +1516,7 @@
   "SCShop_XS_MiningStall": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -1322,6 +1556,10 @@
      "place": 10
     },
     "placeCount": 1,
+    "why": {
+     "system": 4,
+     "same-place": 10
+    },
     "disagreement": 0,
     "contributors": 3
    }
@@ -1329,6 +1567,7 @@
   "SCShop_NewBabbage_KelTo": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
@@ -1363,6 +1602,9 @@
      "place": 14
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 14
+    },
     "disagreement": 0,
     "contributors": 4
    }
@@ -1370,6 +1612,7 @@
   "SCShop_Drlct_Stmnt_SM": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "1b236025-3b0d-489b-a3c1-52bec07693c6",
@@ -1390,6 +1633,9 @@
      "place": 14
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 14
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1397,6 +1643,7 @@
   "SCShop_CargoOfficePyroStation": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -1406,13 +1653,17 @@
     "item"
    ],
    "evidence": {
-    "observations": 12,
+    "observations": 13,
     "samePlace": 0,
     "byTier": {
      "system": 4,
-     "unknown": 8
+     "unknown": 9
     },
     "placeCount": 0,
+    "why": {
+     "system": 4,
+     "unknown": 9
+    },
     "disagreement": 0,
     "contributors": 3
    }
@@ -1420,6 +1671,7 @@
   "SCShop_CousinCrows_Orison": {
    "verdict": "terminal",
    "terminal": "Ship Weapons - Cousin Crow's - Providence Platform - Orison",
+   "provisionalTerminal": null,
    "matchedOn": "cousincrows",
    "place": {
     "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
@@ -1438,6 +1690,10 @@
      "place": 12
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 8,
+     "place-too-old": 4
+    },
     "disagreement": 0,
     "contributors": 4
    }
@@ -1445,6 +1701,7 @@
   "SCShop_Trdpst_Warehouse_CFP_Int_A": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "be8ed35b-74da-49ac-816c-028c4c833669",
@@ -1463,6 +1720,9 @@
      "place": 12
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 12
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1470,6 +1730,7 @@
   "SCShop_Novelty_Kiosk_NewBabbage": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
@@ -1504,6 +1765,9 @@
      "place": 12
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 12
+    },
     "disagreement": 0,
     "contributors": 2
    }
@@ -1511,6 +1775,7 @@
   "SCShop_ProvidenceSurplus_Orison": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -1526,6 +1791,9 @@
      "place": 12
     },
     "placeCount": 0,
+    "why": {
+     "place-too-old": 12
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1533,6 +1801,7 @@
   "SCShop_ShipComponents_GrimHex": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
@@ -1558,6 +1827,9 @@
      "place": 12
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 12
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1565,6 +1837,7 @@
   "SCShop_RestStop_Pharmacy-004": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -1580,19 +1853,35 @@
      "system": 10
     },
     "placeCount": 0,
+    "why": {
+     "system": 10
+    },
     "disagreement": 0,
     "contributors": 2
    }
   },
   "SCShop_H_Pharmacy_A18": {
-   "verdict": "terminal",
-   "terminal": "Empire Hospital Pharmacy - Area 18",
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Empire Hospital Pharmacy - Area 18",
    "matchedOn": "pharmacy",
    "place": {
     "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
     "name": "Area18"
    },
-   "candidates": [],
+   "candidates": [
+    "TDD - Trade and Development Division - Area 18",
+    "Dumper's Depot - Area 18",
+    "IO North Tower - Area 18",
+    "CenterMass - IO North Tower - Area 18",
+    "Cubby Blast - Area 18",
+    "Casaba Outlet - Area 18",
+    "Empire Hospital Pharmacy - Area 18",
+    "Coffee To Go - Riker Memorial Spaceport - Area 18",
+    "Kel-To - Riker Memorial Spaceport - Area 18",
+    "Astro Armada - Area 18",
+    "Traveler Rentals - Riker Memorial Spaceport - Area 18"
+   ],
    "places": [],
    "confidence": "provisional",
    "soldBy": [
@@ -1605,6 +1894,9 @@
      "place": 10
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 10
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1612,6 +1904,7 @@
   "SCShop_S_Levski_NyxNax": {
    "verdict": "terminal",
    "terminal": "Nyx Nax - Levski",
+   "provisionalTerminal": null,
    "matchedOn": "nyxnax",
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -1630,13 +1923,46 @@
      "place": 10
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 10
+    },
     "disagreement": 0,
     "contributors": 2
+   }
+  },
+  "SCShop_AstroArmada_Area18": {
+   "verdict": "terminal",
+   "terminal": "Astro Armada - Area 18",
+   "provisionalTerminal": null,
+   "matchedOn": "astroarmada",
+   "place": {
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18"
+   },
+   "candidates": [],
+   "places": [],
+   "confidence": "confident",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 8,
+    "samePlace": 8,
+    "byTier": {
+     "place": 8
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 8
+    },
+    "disagreement": 0,
+    "contributors": 3
    }
   },
   "SCShop_SA_Trdpst_M_INDY_Int_B": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -1652,6 +1978,9 @@
      "body": 8
     },
     "placeCount": 0,
+    "why": {
+     "body": 8
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1659,6 +1988,7 @@
   "SCShop_AdminOffice_Nyx_SocialStation": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -1675,126 +2005,36 @@
      "system": 1
     },
     "placeCount": 0,
+    "why": {
+     "unknown": 6,
+     "system": 1
+    },
     "disagreement": 0,
     "contributors": 2
    }
   },
-  "SCShop_Hospital_Pharmacy_Orison_01": {
-   "verdict": "terminal",
-   "terminal": "Pharmacy - Orison General Hospital",
-   "matchedOn": "pharmacy",
-   "place": {
-    "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
-    "name": "Orison"
-   },
+  "SCShop_Pyro_RStop_base_stall_sml_001_friedgrub": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
    "candidates": [],
    "places": [],
-   "confidence": "provisional",
+   "confidence": "none",
    "soldBy": [
     "item"
    ],
    "evidence": {
     "observations": 6,
-    "samePlace": 6,
+    "samePlace": 0,
     "byTier": {
-     "place": 6
+     "system": 6
     },
-    "placeCount": 1,
-    "disagreement": 0,
-    "contributors": 1
-   }
-  },
-  "TDD_SCShop-001": {
-   "verdict": "terminal",
-   "terminal": "TDD - Trade and Development Division - Area 18",
-   "matchedOn": "tdd",
-   "place": {
-    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-    "name": "Area18"
-   },
-   "candidates": [],
-   "places": [],
-   "confidence": "provisional",
-   "soldBy": [
-    "commodity"
-   ],
-   "evidence": {
-    "observations": 5,
-    "samePlace": 5,
-    "byTier": {
-     "place": 5
+    "placeCount": 0,
+    "why": {
+     "system": 6
     },
-    "placeCount": 1,
-    "disagreement": 0,
-    "contributors": 1
-   }
-  },
-  "SCShop_Centermass_Area18": {
-   "verdict": "terminal",
-   "terminal": "CenterMass - IO North Tower - Area 18",
-   "matchedOn": "centermass",
-   "place": {
-    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-    "name": "Area18"
-   },
-   "candidates": [],
-   "places": [],
-   "confidence": "provisional",
-   "soldBy": [
-    "item"
-   ],
-   "evidence": {
-    "observations": 4,
-    "samePlace": 4,
-    "byTier": {
-     "place": 4
-    },
-    "placeCount": 1,
-    "disagreement": 0,
-    "contributors": 2
-   }
-  },
-  "SCShop_XS_MiningCart": {
-   "verdict": "place",
-   "terminal": null,
-   "matchedOn": null,
-   "place": {
-    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
-    "name": "Levski"
-   },
-   "candidates": [
-    "Levski",
-    "Teach's Item Shop - Levski",
-    "Nyx Nax - Levski",
-    "Tools & Supplies - Levski",
-    "Cordry's - Levski",
-    "Conscientious Objects - Levski",
-    "Refinery Shop - Levski",
-    "Cargo Services - Levski",
-    "Tech Shop - Levski",
-    "Laying Roots - Levski",
-    "Feed The People - Levski",
-    "Wear & Tear - Levski",
-    "Wake Up - Levski",
-    "Near Beer - Levski",
-    "Shelf Stable - Levski",
-    "Pharmacy - Levski",
-    "Hats & More - Levski",
-    "Teach's Ship Shop - Levski",
-    "Teach's Rentals - Levski"
-   ],
-   "places": [],
-   "confidence": "provisional",
-   "soldBy": [
-    "item"
-   ],
-   "evidence": {
-    "observations": 4,
-    "samePlace": 4,
-    "byTier": {
-     "place": 4
-    },
-    "placeCount": 1,
     "disagreement": 0,
     "contributors": 1
    }
@@ -1802,6 +2042,7 @@
   "SCShop_SPGiftshop_Orison": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
@@ -1832,12 +2073,381 @@
     "item"
    ],
    "evidence": {
+    "observations": 6,
+    "samePlace": 6,
+    "byTier": {
+     "place": 6
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 6
+    },
+    "disagreement": 0,
+    "contributors": 2
+   }
+  },
+  "SCShop_Hospital_Pharmacy_Orison_01": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Pharmacy - Orison General Hospital",
+   "matchedOn": "pharmacy",
+   "place": {
+    "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+    "name": "Orison"
+   },
+   "candidates": [
+    "TDD - Trade and Development Division - Cloudview Center - Orison",
+    "Orison Municipal Services - Providence Platform - Orison",
+    "Ship Weapons - Crusader Showroom - Orison",
+    "Ship Weapons - Cousin Crow's - Providence Platform - Orison",
+    "Pharmacy - Orison General Hospital",
+    "Kel-To - Cloudview Center - Orison",
+    "Makau - Clothing Shop -  Cloudview Center - Orison",
+    "Covalex Shipping - Providence Platform - Orison",
+    "Providence Surplus - Providence Platform - Orison",
+    "Kel-To - August Dunlow Spaceport - Orison",
+    "Whammer's - Orison",
+    "Ellroy's - Orison",
+    "Crusader Discovery Center Refreshments",
+    "Ellroy's - Orison - Green Circle",
+    "Whammer's - Orison - Stratus",
+    "New Deal - Crusader Showroom - Orison",
+    "Traveler Rentals - August Dunlow Spaceport - Orison"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 6,
+    "samePlace": 6,
+    "byTier": {
+     "place": 6
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 6
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_PizzaBar_Food_RestStop": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": {
+    "id": "ebe4b6d6-9013-4ad9-bd25-7a8390262c4b",
+    "name": "HUR L2"
+   },
+   "candidates": [],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 6,
+    "samePlace": 6,
+    "byTier": {
+     "place": 6
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 6
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_NoodleBar_A_Food_RestStop": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Noodle Bar - Port Tressler",
+   "matchedOn": "noodlebar",
+   "place": {
+    "id": "233238ee-adeb-4405-8045-49fa07370f37",
+    "name": "Port Tressler"
+   },
+   "candidates": [
+    "Admin - Port Tressler",
+    "Platinum Bay - Port Tressler",
+    "Casaba Outlet - Port Tressler",
+    "Armor - Port Tressler",
+    "Cargo Center Supplies - Port Tressler",
+    "Pharmacy - Port Tressler",
+    "Hot Dogs - Port Tressler",
+    "Noodle Bar - Port Tressler",
+    "Burrito Bar - Port Tressler",
+    "Ellroy's - Port Tressler",
+    "Pizza - Port Tressler",
+    "Juice Bar - Port Tressler",
+    "Traveler Rentals - Cargo Center - Port Tressler"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 5,
+    "samePlace": 5,
+    "byTier": {
+     "place": 5
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 5
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "TDD_SCShop-001": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "TDD - Trade and Development Division - Area 18",
+   "matchedOn": "tdd",
+   "place": {
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18"
+   },
+   "candidates": [
+    "TDD - Trade and Development Division - Area 18",
+    "Dumper's Depot - Area 18",
+    "IO North Tower - Area 18",
+    "CenterMass - IO North Tower - Area 18",
+    "Cubby Blast - Area 18",
+    "Casaba Outlet - Area 18",
+    "Empire Hospital Pharmacy - Area 18",
+    "Coffee To Go - Riker Memorial Spaceport - Area 18",
+    "Kel-To - Riker Memorial Spaceport - Area 18",
+    "Astro Armada - Area 18",
+    "Traveler Rentals - Riker Memorial Spaceport - Area 18"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "commodity"
+   ],
+   "evidence": {
+    "observations": 5,
+    "samePlace": 5,
+    "byTier": {
+     "place": 5
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 5
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_NewDeal_Interior_Lorville": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "New Deal - Teasa Spaceport - Lorville",
+   "matchedOn": "newdeal",
+   "place": {
+    "id": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
+    "name": "Lorville"
+   },
+   "candidates": [
+    "CBD - Central Business District - Lorville",
+    "Admin - L19 Residences - Metro Center - Lorville",
+    "Pharmacy - Maria Pure of Heart - Lorville",
+    "Tammany and Sons - Metro Center - Lorville",
+    "Hurston Dynamics Showcase - Lorville",
+    "Kel-To - Teasa Spaceport - Lorville",
+    "Noodle Bar - Lorville",
+    "New Deal - Teasa Spaceport - Lorville",
+    "Vantage Rentals - Lorville"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
     "observations": 4,
     "samePlace": 4,
     "byTier": {
      "place": 4
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 4
+    },
+    "disagreement": 0,
+    "contributors": 4
+   }
+  },
+  "SCShop_Levski_ShipRentals_Teachs": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": {
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski"
+   },
+   "candidates": [
+    "Levski",
+    "Teach's Item Shop - Levski",
+    "Nyx Nax - Levski",
+    "Tools & Supplies - Levski",
+    "Cordry's - Levski",
+    "Conscientious Objects - Levski",
+    "Refinery Shop - Levski",
+    "Cargo Services - Levski",
+    "Tech Shop - Levski",
+    "Laying Roots - Levski",
+    "Feed The People - Levski",
+    "Wear & Tear - Levski",
+    "Wake Up - Levski",
+    "Near Beer - Levski",
+    "Shelf Stable - Levski",
+    "Pharmacy - Levski",
+    "Hats & More - Levski",
+    "Teach's Ship Shop - Levski",
+    "Teach's Rentals - Levski"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 4,
+    "samePlace": 2,
+    "byTier": {
+     "place": 2,
+     "system": 2
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 2,
+     "system": 2
+    },
+    "disagreement": 0,
+    "contributors": 2
+   }
+  },
+  "SCShop_Pyro_RStopRund_Refinery_MiningKiosks": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "refinery"
+   ],
+   "evidence": {
+    "observations": 4,
+    "samePlace": 0,
+    "byTier": {
+     "system": 4
+    },
+    "placeCount": 0,
+    "why": {
+     "system": 4
+    },
+    "disagreement": 0,
+    "contributors": 2
+   }
+  },
+  "SCShop_Centermass_Area18": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "CenterMass - IO North Tower - Area 18",
+   "matchedOn": "centermass",
+   "place": {
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18"
+   },
+   "candidates": [
+    "TDD - Trade and Development Division - Area 18",
+    "Dumper's Depot - Area 18",
+    "IO North Tower - Area 18",
+    "CenterMass - IO North Tower - Area 18",
+    "Cubby Blast - Area 18",
+    "Casaba Outlet - Area 18",
+    "Empire Hospital Pharmacy - Area 18",
+    "Coffee To Go - Riker Memorial Spaceport - Area 18",
+    "Kel-To - Riker Memorial Spaceport - Area 18",
+    "Astro Armada - Area 18",
+    "Traveler Rentals - Riker Memorial Spaceport - Area 18"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 4,
+    "samePlace": 4,
+    "byTier": {
+     "place": 4
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 4
+    },
+    "disagreement": 0,
+    "contributors": 2
+   }
+  },
+  "SCShop_XS_MiningCart": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": {
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski"
+   },
+   "candidates": [
+    "Levski",
+    "Teach's Item Shop - Levski",
+    "Nyx Nax - Levski",
+    "Tools & Supplies - Levski",
+    "Cordry's - Levski",
+    "Conscientious Objects - Levski",
+    "Refinery Shop - Levski",
+    "Cargo Services - Levski",
+    "Tech Shop - Levski",
+    "Laying Roots - Levski",
+    "Feed The People - Levski",
+    "Wear & Tear - Levski",
+    "Wake Up - Levski",
+    "Near Beer - Levski",
+    "Shelf Stable - Levski",
+    "Pharmacy - Levski",
+    "Hats & More - Levski",
+    "Teach's Ship Shop - Levski",
+    "Teach's Rentals - Levski"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 4,
+    "samePlace": 4,
+    "byTier": {
+     "place": 4
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 4
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1845,6 +2455,7 @@
   "SCShop_fence_kiosk_small": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "c67d1b8f-32ee-4fe1-8a66-bd1bfa04c5c0",
@@ -1863,6 +2474,180 @@
      "place": 4
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 4
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_RefineryAdmin_ORE": {
+   "verdict": "place-dependent",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [
+    {
+     "id": "4644d97d-9eb6-4cb5-9f44-ca52872e8aec",
+     "name": "HUR L1",
+     "observations": 1,
+     "contributors": 1
+    },
+    {
+     "id": "cf2fd473-25c6-4ae5-83c7-9d3d479bc8cf",
+     "name": "CRU L1",
+     "observations": 1,
+     "contributors": 1
+    },
+    {
+     "id": "6c9dd307-7b70-451f-bb38-9e70c0177f46",
+     "name": "ARC L2",
+     "observations": 1,
+     "contributors": 1
+    }
+   ],
+   "confidence": "none",
+   "soldBy": [
+    "refinery"
+   ],
+   "evidence": {
+    "observations": 3,
+    "samePlace": 3,
+    "byTier": {
+     "place": 3
+    },
+    "placeCount": 3,
+    "why": {
+     "same-place": 3
+    },
+    "disagreement": 0.6667,
+    "contributors": 2
+   }
+  },
+  "SCShop_Levski_Dealership_Teachs": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": {
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski"
+   },
+   "candidates": [
+    "Levski",
+    "Teach's Item Shop - Levski",
+    "Nyx Nax - Levski",
+    "Tools & Supplies - Levski",
+    "Cordry's - Levski",
+    "Conscientious Objects - Levski",
+    "Refinery Shop - Levski",
+    "Cargo Services - Levski",
+    "Tech Shop - Levski",
+    "Laying Roots - Levski",
+    "Feed The People - Levski",
+    "Wear & Tear - Levski",
+    "Wake Up - Levski",
+    "Near Beer - Levski",
+    "Shelf Stable - Levski",
+    "Pharmacy - Levski",
+    "Hats & More - Levski",
+    "Teach's Ship Shop - Levski",
+    "Teach's Rentals - Levski"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 3,
+    "samePlace": 3,
+    "byTier": {
+     "place": 3
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 3
+    },
+    "disagreement": 0,
+    "contributors": 3
+   }
+  },
+  "SCShop_Skutters_GrimHex": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Skutters - GrimHEX",
+   "matchedOn": "skutters",
+   "place": {
+    "id": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
+    "name": "Grim HEX"
+   },
+   "candidates": [
+    "Admin - GrimHEX",
+    "Dumper's Depot - GrimHEX",
+    "Skutters - GrimHEX",
+    "Pharmacy - GrimHEX",
+    "Technotic - Bounty Office - GrimHEX",
+    "KC Trending - GrimHEX"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 3,
+    "samePlace": 3,
+    "byTier": {
+     "place": 3
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 3
+    },
+    "disagreement": 0,
+    "contributors": 2
+   }
+  },
+  "SCShop_VantageRentals_Lorville": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Vantage Rentals - Lorville",
+   "matchedOn": "vantagerentals",
+   "place": {
+    "id": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
+    "name": "Lorville"
+   },
+   "candidates": [
+    "CBD - Central Business District - Lorville",
+    "Admin - L19 Residences - Metro Center - Lorville",
+    "Pharmacy - Maria Pure of Heart - Lorville",
+    "Tammany and Sons - Metro Center - Lorville",
+    "Hurston Dynamics Showcase - Lorville",
+    "Kel-To - Teasa Spaceport - Lorville",
+    "Noodle Bar - Lorville",
+    "New Deal - Teasa Spaceport - Lorville",
+    "Vantage Rentals - Lorville"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 2,
+    "samePlace": 1,
+    "byTier": {
+     "system": 1,
+     "place": 1
+    },
+    "placeCount": 1,
+    "why": {
+     "system": 1,
+     "same-place": 1
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -1870,6 +2655,7 @@
   "SCShop_Lorville_Spaceport_KeltoShipServices": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
@@ -1898,31 +2684,9 @@
      "place": 2
     },
     "placeCount": 1,
-    "disagreement": 0,
-    "contributors": 1
-   }
-  },
-  "SCShop_Skutters_GrimHex": {
-   "verdict": "terminal",
-   "terminal": "Skutters - GrimHEX",
-   "matchedOn": "skutters",
-   "place": {
-    "id": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
-    "name": "Grim HEX"
-   },
-   "candidates": [],
-   "places": [],
-   "confidence": "provisional",
-   "soldBy": [
-    "item"
-   ],
-   "evidence": {
-    "observations": 2,
-    "samePlace": 2,
-    "byTier": {
-     "place": 2
+    "why": {
+     "same-place": 2
     },
-    "placeCount": 1,
     "disagreement": 0,
     "contributors": 1
    }
@@ -1930,6 +2694,7 @@
   "SCShop_Trdpst_XS_INDY_a": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "468d4102-a210-47b5-8bc3-084f791a173c",
@@ -1968,63 +2733,34 @@
      "place": 2
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 2
+    },
     "disagreement": 0,
     "contributors": 1
    }
   },
   "SCShop_Entity_Dumpers_Depot_Area18": {
-   "verdict": "terminal",
-   "terminal": "Dumper's Depot - Area 18",
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Dumper's Depot - Area 18",
    "matchedOn": "depot",
    "place": {
     "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
     "name": "Area18"
    },
-   "candidates": [],
-   "places": [],
-   "confidence": "provisional",
-   "soldBy": [
-    "item"
-   ],
-   "evidence": {
-    "observations": 2,
-    "samePlace": 2,
-    "byTier": {
-     "place": 2
-    },
-    "placeCount": 1,
-    "disagreement": 0,
-    "contributors": 1
-   }
-  },
-  "SCShop_S_HarvestableStall": {
-   "verdict": "place",
-   "terminal": null,
-   "matchedOn": null,
-   "place": {
-    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
-    "name": "Levski"
-   },
    "candidates": [
-    "Levski",
-    "Teach's Item Shop - Levski",
-    "Nyx Nax - Levski",
-    "Tools & Supplies - Levski",
-    "Cordry's - Levski",
-    "Conscientious Objects - Levski",
-    "Refinery Shop - Levski",
-    "Cargo Services - Levski",
-    "Tech Shop - Levski",
-    "Laying Roots - Levski",
-    "Feed The People - Levski",
-    "Wear & Tear - Levski",
-    "Wake Up - Levski",
-    "Near Beer - Levski",
-    "Shelf Stable - Levski",
-    "Pharmacy - Levski",
-    "Hats & More - Levski",
-    "Teach's Ship Shop - Levski",
-    "Teach's Rentals - Levski"
+    "TDD - Trade and Development Division - Area 18",
+    "Dumper's Depot - Area 18",
+    "IO North Tower - Area 18",
+    "CenterMass - IO North Tower - Area 18",
+    "Cubby Blast - Area 18",
+    "Casaba Outlet - Area 18",
+    "Empire Hospital Pharmacy - Area 18",
+    "Coffee To Go - Riker Memorial Spaceport - Area 18",
+    "Kel-To - Riker Memorial Spaceport - Area 18",
+    "Astro Armada - Area 18",
+    "Traveler Rentals - Riker Memorial Spaceport - Area 18"
    ],
    "places": [],
    "confidence": "provisional",
@@ -2038,35 +2774,17 @@
      "place": 2
     },
     "placeCount": 1,
-    "disagreement": 0,
-    "contributors": 1
-   }
-  },
-  "SCShop_Orison_Covalex": {
-   "verdict": "unresolved",
-   "terminal": null,
-   "matchedOn": null,
-   "place": null,
-   "candidates": [],
-   "places": [],
-   "confidence": "none",
-   "soldBy": [
-    "item"
-   ],
-   "evidence": {
-    "observations": 2,
-    "samePlace": 0,
-    "byTier": {
-     "place": 2
+    "why": {
+     "same-place": 2
     },
-    "placeCount": 0,
     "disagreement": 0,
     "contributors": 1
    }
   },
-  "SCShop_Pyro_RStop_ShipWeapons_001_Rund": {
+  "SCShop_XS_Food_MREStall": {
    "verdict": "unresolved",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": null,
    "candidates": [],
@@ -2082,6 +2800,162 @@
      "system": 2
     },
     "placeCount": 0,
+    "why": {
+     "system": 2
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_S_HarvestableStall": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": {
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski"
+   },
+   "candidates": [
+    "Levski",
+    "Teach's Item Shop - Levski",
+    "Nyx Nax - Levski",
+    "Tools & Supplies - Levski",
+    "Cordry's - Levski",
+    "Conscientious Objects - Levski",
+    "Refinery Shop - Levski",
+    "Cargo Services - Levski",
+    "Tech Shop - Levski",
+    "Laying Roots - Levski",
+    "Feed The People - Levski",
+    "Wear & Tear - Levski",
+    "Wake Up - Levski",
+    "Near Beer - Levski",
+    "Shelf Stable - Levski",
+    "Pharmacy - Levski",
+    "Hats & More - Levski",
+    "Teach's Ship Shop - Levski",
+    "Teach's Rentals - Levski"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 2,
+    "samePlace": 2,
+    "byTier": {
+     "place": 2
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 2
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_Orison_Covalex": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 2,
+    "samePlace": 0,
+    "byTier": {
+     "place": 2
+    },
+    "placeCount": 0,
+    "why": {
+     "place-too-old": 2
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_Pyro_RestStop_ArmorStall": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 2,
+    "samePlace": 0,
+    "byTier": {
+     "system": 2
+    },
+    "placeCount": 0,
+    "why": {
+     "system": 2
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_Pyro_RStop_ShipWeapons_001_Rund": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 2,
+    "samePlace": 0,
+    "byTier": {
+     "system": 2
+    },
+    "placeCount": 0,
+    "why": {
+     "system": 2
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_Levski_GrandBarter_ElectronicsStand": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 1,
+    "samePlace": 0,
+    "byTier": {
+     "system": 1
+    },
+    "placeCount": 0,
+    "why": {
+     "system": 1
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -2089,6 +2963,7 @@
   "SCShop_Derelict_Settlement_Scrapyard": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "dc44d171-0090-4d5b-87ed-637b4a43fce1",
@@ -2110,6 +2985,164 @@
      "place": 1
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 1
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_PyroRestStop_Dealership_Rundown": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 1,
+    "samePlace": 0,
+    "byTier": {
+     "system": 1
+    },
+    "placeCount": 0,
+    "why": {
+     "system": 1
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_RegalLuxuryRentals_NewBabbage": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Regal Luxury Rentals - New Babbage Interstellar Spaceport - New Babbage",
+   "matchedOn": "regalluxuryrentals",
+   "place": {
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage"
+   },
+   "candidates": [
+    "TDD - Trade and Development Division - Commons - New Babbage",
+    "MicroTech Planetary Services - Commons - New Babbage",
+    "Kel-To - Aspire Grand - New Babbage",
+    "CenterMass - New Babbage",
+    "Omega Pro - New Babbage",
+    "Brentworth Pharmacy - New Babbage",
+    "Shubin Interstellar - Commons - New Babbage",
+    "Factory Line - New Babbage",
+    "Kel-To - NBIS - New Babbage",
+    "Aparelli - New Babbage",
+    "Ellroy's - New Babbage",
+    "Garcia's Greens - New Babbage",
+    "Twyn's Sandwiches - New Babbage",
+    "Whammer's - New Babbage",
+    "Regal Luxury Rentals - New Babbage Interstellar Spaceport - New Babbage"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 1,
+    "samePlace": 1,
+    "byTier": {
+     "place": 1
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 1
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_Coffee_to_Go_ht_b": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Coffee To Go - Riker Memorial Spaceport - Area 18",
+   "matchedOn": "coffee",
+   "place": {
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18"
+   },
+   "candidates": [
+    "TDD - Trade and Development Division - Area 18",
+    "Dumper's Depot - Area 18",
+    "IO North Tower - Area 18",
+    "CenterMass - IO North Tower - Area 18",
+    "Cubby Blast - Area 18",
+    "Casaba Outlet - Area 18",
+    "Empire Hospital Pharmacy - Area 18",
+    "Coffee To Go - Riker Memorial Spaceport - Area 18",
+    "Kel-To - Riker Memorial Spaceport - Area 18",
+    "Astro Armada - Area 18",
+    "Traveler Rentals - Riker Memorial Spaceport - Area 18"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 1,
+    "samePlace": 1,
+    "byTier": {
+     "place": 1
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 1
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_BurritoBar_Food_RestStop": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": "Burrito Bar - Everus Harbor",
+   "matchedOn": "burritobar",
+   "place": {
+    "id": "ab29f65e-c792-4b1f-b23d-5810cb0ef416",
+    "name": "Everus Harbor"
+   },
+   "candidates": [
+    "Admin - Everus Harbor",
+    "Platinum Bay - Everus Harbor",
+    "Pharmacy - Everus Harbor",
+    "Cargo Center Supplies - Everus Harbor",
+    "Armor - Everus Harbor",
+    "Casaba Outlet - Everus Harbor",
+    "Ellroy's - Everus Harbor",
+    "Hot Dogs - Everus Harbor",
+    "Noodle Bar - Everus Harbor",
+    "Juice Bar - Everus Harbor",
+    "Pizza - Everus Harbor",
+    "Burrito Bar - Everus Harbor",
+    "Traveler Rentals - Cargo Center - Everus Harbor"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 1,
+    "samePlace": 1,
+    "byTier": {
+     "place": 1
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 1
+    },
     "disagreement": 0,
     "contributors": 1
    }
@@ -2117,6 +3150,7 @@
   "SCShop_CommEx_Transfers_Lorville": {
    "verdict": "place",
    "terminal": null,
+   "provisionalTerminal": null,
    "matchedOn": null,
    "place": {
     "id": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
@@ -2145,6 +3179,84 @@
      "place": 1
     },
     "placeCount": 1,
+    "why": {
+     "same-place": 1
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_XS_NoodleStand": {
+   "verdict": "place",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": {
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski"
+   },
+   "candidates": [
+    "Levski",
+    "Teach's Item Shop - Levski",
+    "Nyx Nax - Levski",
+    "Tools & Supplies - Levski",
+    "Cordry's - Levski",
+    "Conscientious Objects - Levski",
+    "Refinery Shop - Levski",
+    "Cargo Services - Levski",
+    "Tech Shop - Levski",
+    "Laying Roots - Levski",
+    "Feed The People - Levski",
+    "Wear & Tear - Levski",
+    "Wake Up - Levski",
+    "Near Beer - Levski",
+    "Shelf Stable - Levski",
+    "Pharmacy - Levski",
+    "Hats & More - Levski",
+    "Teach's Ship Shop - Levski",
+    "Teach's Rentals - Levski"
+   ],
+   "places": [],
+   "confidence": "provisional",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 1,
+    "samePlace": 1,
+    "byTier": {
+     "place": 1
+    },
+    "placeCount": 1,
+    "why": {
+     "same-place": 1
+    },
+    "disagreement": 0,
+    "contributors": 1
+   }
+  },
+  "SCShop_Pyro_base_stall_sml_007_Clothing": {
+   "verdict": "unresolved",
+   "terminal": null,
+   "provisionalTerminal": null,
+   "matchedOn": null,
+   "place": null,
+   "candidates": [],
+   "places": [],
+   "confidence": "none",
+   "soldBy": [
+    "item"
+   ],
+   "evidence": {
+    "observations": 1,
+    "samePlace": 0,
+    "byTier": {
+     "system": 1
+    },
+    "placeCount": 0,
+    "why": {
+     "system": 1
+    },
     "disagreement": 0,
     "contributors": 1
    }

@@ -69,7 +69,7 @@ import { createGunzip } from "node:zlib";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
-import { PlayerLocation, parseShopLine } from "../src/player-location.js";
+import { PlayerLocation } from "../src/player-location.js";
 import { collectOriginSignals, originDepsFor } from "../src/origin-signals.js";
 import { resolveOrigin, TRUST_MIN, type OriginVerdict } from "../src/player-origin.js";
 import { parseLine } from "../src/parser.js";
@@ -189,10 +189,50 @@ const KEEP = [
   "at location [",                        // missions-parser RE.numericLocation A  (place tier)
   ":Location:",                           // missions-parser RE.numericLocation B  (place tier)
   "Platform state changed to",            // missions-parser RE.platformState      (place tier)
-  "CEntityComponentCommodityUIProvider::", // player-location parseShopLine        (the subject)
-  "CEntityComponentShop",                 // player-location parseShopLine        (the subject)
+  /* 🔴 THE SUBJECT IS ANY LINE THAT NAMES A SHOP, not the two components `parseShopLine` accepts.
+   * Anchoring on the components loses `CEntityComponentShoppingProvider` and
+   * `CEntityComponentMiningShopUIProvider` — 186 lines, but **14 shop tokens that appear nowhere
+   * else**, including every ship dealership and the refinery ore desks. See `shopLineOf`.
+   * The two component terms are kept beside it so this list stays character-for-character the
+   * SQL's, which is what the count cross-check in `--control` is testing. */
+  "CEntityComponentCommodityUIProvider::",
+  "CEntityComponentShop",
+  "shopName[",
 ];
 const keep = (line: string): boolean => KEEP.some((k) => line.indexOf(k) >= 0);
+
+/**
+ * 🔴 THE SUBJECT OF THE MEASUREMENT IS WIDER THAN `parseShopLine`, DELIBERATELY — AND THE GAP IS
+ * A REAL FINDING ABOUT `src/`, NOT A SHORTCUT TAKEN HERE.
+ *
+ * `parseShopLine` in `player-location.ts` requires the text between `CEntityComponent` and
+ * `UIProvider::` to be exactly "Commodity" or "Shop". Measured over the corpus, it accepts
+ * **12,247 shop lines and this accepts 12,375 — a strict superset, 128 extra, 0 the other way.**
+ * The 128 are `CEntityComponentShoppingProvider` (91), which has no `UIProvider::` in its name at
+ * all, and `CEntityComponentMiningShopUIProvider` (36), whose "MiningShop" is not "Shop".
+ *
+ * 🔴 THE LINE COUNT MASSIVELY UNDERSTATES IT: 128 lines is 1%, but they carry **20 shop tokens
+ * that appear NOWHERE ELSE — 63 tokens become 83.** Every ship dealership and rental desk (Astro
+ * Armada, New Deal, Vantage Rentals, Regal Luxury, Teach's), every food stall, and all three
+ * refinery ore-sale desks. **Seven of the 20 are tokens the tower had already matched by name**,
+ * so without this the two methods could not have been compared on them at all.
+ *
+ * `references/item-shops.md` names the same shape from the other side: THREE purchase verbs
+ * across TWO components, of which `ShoppingProvider::SendStandardItemBuyRequest` (143) and
+ * `::SendRentalRequest` (20) are 37% of all purchases. The location service parses neither.
+ *
+ * 🔑 WIDENING HERE IS NOT FORKING THE LOCATION SERVICE. This decides WHICH LINES ARE ASKED ABOUT;
+ * every ANSWER still comes from `PlayerLocation` + `collectOriginSignals` + `resolveOrigin`,
+ * untouched. And the `lastShop` state `parseShopLine` feeds is the terminal signal, which this
+ * probe deletes anyway. The `src/` repair is Cargo.
+ */
+function shopLineOf(line: string): { shopId: string; shopName: string; kioskId: string | null } | null {
+  if (line.indexOf("<CEntityComponent") < 0) return null;
+  const id = /shopId\[([^\]]*)\]/.exec(line);
+  const nm = /shopName\[([^\]]*)\]/.exec(line);
+  if (!id?.[1] || !nm?.[1]) return null;
+  return { shopId: id[1], shopName: nm[1], kioskId: /kioskId\[([^\]]*)\]/.exec(line)?.[1] || null };
+}
 
 const TS_RE = /^<([^>]+)>/;
 const tsOf = (line: string): number | null => {
@@ -215,9 +255,15 @@ interface Obs {
    *  is a property of the row rather than a second map that can fall out of step with it. */
   usr?: string;
   /** Which shop component wrote the line — the commodity kiosk or the item shop. */
-  kind: "commodity" | "item";
+  kind: "commodity" | "item" | "refinery";
   /** The verdict's own staleness flag, carried so an expired reading can be counted. */
   stale: boolean;
+  /** 🔴 WHY THIS OBSERVATION DID OR DID NOT RESOLVE ANYTHING. The brief's requirement is that an
+   *  unresolvable token is marked unresolvable WITH THE REASON, and the two reasons want opposite
+   *  responses: `body`/`system`/`unknown` means the log never placed the player there and only
+   *  more play can fix it, while `place-is-a-body` / `place-too-old` means it DID and this probe
+   *  refused the answer. Collapsing them would hide which. */
+  why: "same-place" | "place-too-old" | "place-is-a-body" | "body" | "system" | "unknown";
   tier: OriginVerdict["tier"];
   /** The starmap place id the verdict names, or null. */
   placeId: string | null;
@@ -255,10 +301,14 @@ interface Obs {
  * ⚠️ The merely-`stale` ones are KEPT — 303 (9.9%) sit past HALF the window. Half a window is
  * "believe it less", not "it is probably wrong", and `resolveOrigin`'s own comment says so.
  */
-function samePlace(v: OriginVerdict, locations: Record<string, LocationRecord>): string | null {
-  if (v.tier !== "place" || !v.id) return null;
-  if (v.ageMin !== null && v.ageMin > TRUST_MIN.place) return null;
-  return tierOfRecord(locations[v.id]) === "place" ? v.id : null;
+function samePlace(
+  v: OriginVerdict,
+  locations: Record<string, LocationRecord>,
+): { id: string | null; why: Obs["why"] } {
+  if (v.tier !== "place" || !v.id) return { id: null, why: v.tier };
+  if (v.ageMin !== null && v.ageMin > TRUST_MIN.place) return { id: null, why: "place-too-old" };
+  if (tierOfRecord(locations[v.id]) !== "place") return { id: null, why: "place-is-a-body" };
+  return { id: v.id, why: "same-place" };
 }
 
 interface ReplayOpts {
@@ -325,11 +375,15 @@ function replay(lines: Kept[], o: ReplayOpts): Obs[] {
       else if (ev.kind === "cargoPlatform") cargoMove = { direction: ev.direction, platform: ev.platform, at };
     }
 
-    const shop = parseShopLine(k.line);
+    const shop = shopLineOf(k.line);
     if (!shop) continue;
-    /* Which of the two shop components wrote it. Free here, and it tells a consumer which price
-     * table a receipt from this token belongs in — `commodities.json` or `item-shops.json`. */
-    const kind: Obs["kind"] = k.line.indexOf("CEntityComponentCommodityUIProvider") >= 0 ? "commodity" : "item";
+    /* Which component wrote it. Free here, and it tells a consumer which price table a receipt
+     * from this token belongs in — `commodities.json`, `item-shops.json`, or neither, since the
+     * refinery ore desk is a third thing that UEX does not carry as a shop at all. */
+    const kind: Obs["kind"] =
+      k.line.indexOf("CEntityComponentCommodityUIProvider") >= 0 ? "commodity"
+      : k.line.indexOf("MiningShopUIProvider") >= 0 ? "refinery"
+      : "item";
 
     const inputs = pl.inputs({ atLocation, atLocationId, cargoMove });
     /* 🔴 THE CIRCULARITY GUARD. `collectOriginSignals` reads a place out of the shop's own asset
@@ -340,9 +394,10 @@ function replay(lines: Kept[], o: ReplayOpts): Obs[] {
       collectOriginSignals(inputs, { locations: loaded.locations, resolveToken, now: () => at }),
       { ...depsForOrigin, now: () => at },
     );
+    const sp = samePlace(verdict, loaded.locations);
     out.push({
       token: shop.shopName, shopId: shop.shopId, kioskId: shop.kioskId, at, kind,
-      tier: verdict.tier, placeId: samePlace(verdict, loaded.locations), stale: verdict.stale,
+      tier: verdict.tier, placeId: sp.id, why: sp.why, stale: verdict.stale,
       ageMin: verdict.ageMin, from: verdict.from,
     });
   }
@@ -560,6 +615,9 @@ interface TokenReport {
   /** The UEX terminal name, ONLY on the `terminal` verdict. Null everywhere else, deliberately —
    *  a consumer must not be able to read a guess out of this field. */
   terminal: string | null;
+  /** The same pick when the place behind it is thin (<8 same-place observations, or one
+   *  contributor). Kept so nothing is lost, held separate so nothing is claimed. */
+  provisionalTerminal: string | null;
   /** Which word of the asset name picked that terminal out, so the claim is auditable. */
   matchedOn: string | null;
   /**
@@ -574,6 +632,8 @@ interface TokenReport {
    * `provisional`: believable, not yet corroborated, and NOT safe to attribute a price with.
    */
   confidence: "confident" | "provisional" | "none";
+  /** Every observation's `why`, tallied. On an `unresolved` token this IS the reason. */
+  why: Record<string, number>;
   /** Every UEX terminal filed at the resolved place. Present on `place` too, where it is the
    *  honest statement of what is still open. */
   candidates: string[];
@@ -700,13 +760,26 @@ function aggregate(
 
     let verdict: TokenReport["verdict"];
     let terminal: string | null = null;
+    let provisionalTerminal: string | null = null;
     let matchedOn: string | null = null;
     let candidates: string[] = [];
     if (places.length === 1) {
       candidates = placeToTerminals.get(places[0].id) ?? [];
       const pick = pickTerminal(token, candidates, category);
-      terminal = pick?.terminal ?? null;
       matchedOn = pick?.matchedOn ?? null;
+      /* 🔴 THIN EVIDENCE MAY NOT POPULATE `terminal`, AND THE THIN CASES ARE EXACTLY THE
+       * DANGEROUS ONES. `SCShop_NoodleBar_A_Food_RestStop` lands on one place across 5
+       * observations and pins to "Noodle Bar - Port Tressler" — but a noodle bar is a REST-STOP
+       * FITTING, and its structural twin `SCShop_RestStop_Pharmacy` resolves to six places on 44.
+       * The difference is who happened to shop where, not the shop. `SCShop_BurritoBar_Food_
+       * RestStop` would have been pinned on ONE observation.
+       *
+       * So the pick still rides, under `provisionalTerminal`, and the verdict stays `place`. A
+       * consumer reading `terminal` can never receive a claim resting on one player's afternoon.
+       * The rule this flight lives by, applied to itself. */
+      const thin = !(places[0].n >= 8 && places[0].contributors >= 2);
+      terminal = pick && !thin ? pick.terminal : null;
+      provisionalTerminal = pick && thin ? pick.terminal : null;
       verdict = terminal ? "terminal" : "place";
     } else if (places.length > 1) {
       /* 🔴 SEVERAL PLACES IS A FINDING, NOT A FAILURE, and taking the majority would be the exact
@@ -724,7 +797,12 @@ function aggregate(
       byTier,
       places,
       disagreement: placed ? (placed - lead) / placed : 0,
-      verdict, terminal, matchedOn, candidates,
+      verdict, terminal, provisionalTerminal, matchedOn, candidates,
+      why: (() => {
+        const w: Record<string, number> = {};
+        for (const r of rows) w[r.why] = (w[r.why] ?? 0) + 1;
+        return w;
+      })(),
       confidence: places.length !== 1 ? "none"
         : places[0].n >= 8 && places[0].contributors >= 2 ? "confident" : "provisional",
       contributors: new Set(rows.map((r) => r.usr ?? "?")).size,
@@ -851,7 +929,7 @@ async function main(): Promise<void> {
       (100 * r.disagreement).toFixed(0).padStart(9) + "%" +
       "  " + (r.confidence === "provisional" ? "~" : " ") + r.verdict.padEnd(16) +
       (r.verdict === "terminal" ? r.terminal
-        : r.verdict === "place" ? `${r.places[0].name} — ${r.candidates.length} UEX terminals there`
+        : r.verdict === "place" ? (r.provisionalTerminal ? `${r.places[0].name} — provisionally ${r.provisionalTerminal}` : `${r.places[0].name} — ${r.candidates.length} UEX terminals there`)
         : r.verdict === "place-dependent" ? r.places.map((p) => `${p.name}(${p.n})`).join(", ")
         : "no same-place verdict, ever"),
     );
@@ -895,6 +973,7 @@ function emit(reports: TokenReport[], obs: Obs[], loaded: Loaded, meta: Map<stri
     tokens[r.token] = {
       verdict: r.verdict,
       terminal: r.terminal,
+      provisionalTerminal: r.provisionalTerminal,
       matchedOn: r.matchedOn,
       place: r.places.length === 1 ? { id: r.places[0].id, name: r.places[0].name } : null,
       candidates: r.verdict === "place" ? r.candidates : [],
@@ -908,6 +987,7 @@ function emit(reports: TokenReport[], obs: Obs[], loaded: Loaded, meta: Map<stri
         samePlace: r.placed,
         byTier: r.byTier,
         placeCount: r.places.length,
+        why: r.why,
         disagreement: Number(r.disagreement.toFixed(4)),
         contributors: r.contributors,
       },
@@ -929,9 +1009,10 @@ function emit(reports: TokenReport[], obs: Obs[], loaded: Loaded, meta: Map<stri
      *  silently treat every one of them as "no data" rather than as "ask the log". */
     usage: {
       terminal: "Attribute to this UEX terminal.",
-      place: "The station is known; which counter inside it is not. `candidates` lists every UEX terminal filed at that place. Attribute to the place, or narrow it with something else.",
+      place: "The station is known; which counter inside it is not. `candidates` lists every UEX terminal filed at that place. Attribute to the place, or narrow it with something else. If `provisionalTerminal` is set, one candidate did answer to this shop's name but the place behind it is thin — believable, not corroborated, and not safe to attribute a price with.",
       "place-dependent": "This asset exists at several stations, so the token alone cannot say which. It is still resolvable AT RUNTIME — the app already knows where the player is; ask src/player-location.ts rather than this file.",
-      unresolved: "No same-place verdict was ever reached. Nothing may be attributed.",
+      unresolved: "No same-place verdict was ever reached. Nothing may be attributed. `evidence.why` says which of two very different things happened: `system`/`body`/`unknown` means the log never placed the player at all while they were here (only more play fixes it), while `place-too-old` or `place-is-a-body` means it did and this refused the answer.",
+      notInjective: "The map is many-to-one and must not be inverted. SCShop_Levski_Refinery_Store and SCShop_Levski_Refinery_OreSales both resolve to 'Refinery Shop - Levski' — the game splits the item counter from the ore desk and UEX does not.",
       confidence: "`provisional` means one place on thin evidence (<8 same-place observations, or a single contributor). Believable, not corroborated.",
     },
     corpus: {
