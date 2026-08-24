@@ -994,7 +994,15 @@
         row.className = "trow";
         const nm = document.createElement("div");
         nm.className = "tnm";
-        nm.textContent = (u.commodity || "Unknown") + " · " + num(u.scu) + " SCU";
+        // 🔴 NOTHING WHERE THE TONNAGE WOULD GO WHEN THE GAME STATED NO VOLUME. `u.scu` is null for
+        // a sale out of personal inventory - hand-mined gems, sold at a commodity exchange with no
+        // cargo-box manifest, which is 54% of real sells. `num()` is Number(n || 0), so printing it
+        // unguarded reads "0 SCU": a missing figure rendered as zero is not missing, it is wrong.
+        // No placeholder and no dash either - Sub's ruling is to show nothing, and the revenue and
+        // the terminal on the other half of the row already say everything that is true.
+        nm.textContent = u.scu === null || u.scu === undefined
+          ? (u.commodity || "Unknown")
+          : (u.commodity || "Unknown") + " · " + num(u.scu) + " SCU";
         const val = document.createElement("div"); val.className = "tval";
         val.textContent = num(Math.round(u.revenue)) + " revenue · " + tdShop(u.sellShop);
         row.append(nm, val);

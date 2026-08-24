@@ -108,12 +108,23 @@ export interface ClosedRun {
   profitPerHour: number | null;
 }
 
-/** A sale we cannot price, because the purchase was never seen. Revenue only - see the file head. */
+/**
+ * A sale we cannot price, because the purchase was never seen. Revenue only - see the file head.
+ *
+ * 🔴 `scu` AND `sellPricePerScu` ARE NULLABLE, AND NULL IS NOT "ZERO SCU". It means the game
+ * stated no volume - a sale out of personal inventory, where SCU is the wrong unit rather than an
+ * unknown one (see `trade-log.ts`'s "A SELL DOES NOT STATE A VOLUME"). `revenue` is exact in both
+ * cases, because it comes from the log's own `amount`.
+ *
+ * ⚠️ **NULLABLE IS A WIDENING, SO `STATE_VERSION` DOES NOT MOVE.** A row written by an older build
+ * carries numbers, which are still valid here and are read forward untouched. Bumping the version
+ * would delete the player's entire journal - see `read()`.
+ */
 export interface UnmatchedSale {
   commodity: string | null;
   resourceGuid: string;
-  scu: number;
-  sellPricePerScu: number;
+  scu: number | null;
+  sellPricePerScu: number | null;
   revenue: number;
   sellShop: string | null;
   soldAt: string;
@@ -343,7 +354,14 @@ export class TradeJournal {
    */
   apply(p: CommodityPurchase): boolean {
     if (p.confirmed !== true) return false;
-    if (!p.resourceGuid || !p.scu || p.scu <= 0) return false;
+    if (!p.resourceGuid) return false;
+    // 🔴 A BUY WITH NO VOLUME IS STILL REFUSED, AND A SELL WITH NO VOLUME IS NOT. A buy states its
+    // quantity in cSCU outright, so an unreadable one is a malformed line and opening a lot for it
+    // would put cargo in the hold that the player cannot be shown; a sell with no cargo-box
+    // manifest is the ORDINARY case (54% of real sells) and dropping those would delete real money
+    // from the Ledger. The two branches diverge here rather than at one guard for exactly that
+    // reason - the old single `!p.scu` test could only ever do one of them.
+    if (p.kind === "buy" && !p.volume.known) return false;
     const key = seenKey(p);
     if (this.state.seen.includes(key)) return false;
     this.state.seen.push(key);
@@ -354,12 +372,14 @@ export class TradeJournal {
     const atMs = Date.parse(p.at) || 0;
 
     if (p.kind === "buy") {
+      // Narrowed by the guard above; restated so the compiler can see it rather than asserted.
+      if (!p.volume.known) return false;
       this.state.open.push({
         id: `lot${this.state.nextLotId++}`,
         resourceGuid: p.resourceGuid,
         commodity: name,
-        scu: p.scu,
-        pricePerScu: p.pricePerScu ?? 0,
+        scu: p.volume.scu,
+        pricePerScu: p.unitPrice.known ? p.unitPrice.perScu : 0,
         shopName: p.shopName,
         at: p.at,
         atMs,
@@ -368,9 +388,37 @@ export class TradeJournal {
       return true;
     }
 
+    // 🔴 A SALE WITH NO STATED VOLUME CANNOT CLOSE A LOT, AND MUST NOT BE THROWN AWAY EITHER.
+    //
+    // FIFO needs to know how much came off a lot. When the game states no cargo-box manifest there
+    // is no such figure - `quantity[1]` against a real 0.008 SCU was measured, a 125x error - so
+    // consuming a lot by it would destroy a real holding and book a fictional cost basis against
+    // real revenue. The money, though, is exact: `total` is what the player was paid.
+    //
+    // So it books as an UNMATCHED sale, which is the structure this file already has for "revenue
+    // we cannot turn into profit", with the volume and the per-SCU price left NULL rather than
+    // defaulted. Sub's ruling: record the observation, mark the unit unknown, show nothing.
+    //
+    // ⚠️ The cost of this, stated so nobody discovers it as a bug: a player who BOUGHT cargo and
+    // then sells it back without a manifest keeps an open lot that nothing will close. That is the
+    // same shape as destroyed cargo, and it has the same cure - the "forget" button. Closing it on
+    // a guessed tonnage is what this change exists to stop.
+    if (!p.volume.known) {
+      this.state.unmatched.push({
+        commodity: name,
+        resourceGuid: p.resourceGuid,
+        scu: null,
+        sellPricePerScu: null,
+        revenue: p.total ?? 0,
+        sellShop: p.shopName,
+        soldAt: p.at,
+      });
+      return true;
+    }
+
     // A sale: consume the oldest matching lots first, splitting the last one if it over-covers.
-    let remaining = p.scu;
-    const sellPrice = p.pricePerScu ?? 0;
+    let remaining = p.volume.scu;
+    const sellPrice = p.unitPrice.known ? p.unitPrice.perScu : 0;
     while (remaining > 0) {
       const idx = this.state.open.findIndex((l) => l.resourceGuid === p.resourceGuid && l.scu > 0);
       if (idx < 0) break;

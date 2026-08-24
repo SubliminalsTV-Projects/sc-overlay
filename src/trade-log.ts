@@ -88,6 +88,59 @@
  * with an empty `commodityName[]`, which describes a box the PLAYER brought. They surface through
  * `unknownMethod`/`offer` rather than being dropped.
  *
+ * -- 🔴 A SELL DOES NOT STATE A VOLUME, AND THE APP PUBLISHED ONE ANYWAY ----------------------
+ *
+ * Measured 2026-08-24 (flight `sellvolume`) over the shared-log corpus, re-derived from the raw
+ * rows rather than from the earlier flight's intermediate file, and deduplicated on contributor +
+ * the game's own millisecond timestamp because the corpus re-uploads a growing live log:
+ *
+ *   204 confirmed commodity SELLS   |   45 BUYS
+ *   110 of the 204 sells (53.9%) carry an EMPTY `Cargo Box Data:` - the phrase with nothing after
+ *   it but the `[Team_...]` tags. 45 of 45 BUYS carry a manifest. The defect is sell-only.
+ *
+ * 🔑 **WHAT THE EMPTY-MANIFEST SELLS ARE.** Ranked by count: Dolivine, Hadanite, Beradom,
+ * Glacosite, Sadaryx, Feynmaline, Aphorite, Beryl, Aslarite, Corundum - hand-mined gems, carried
+ * in PERSONAL INVENTORY and sold at a TDD commodity exchange. There is no box data because there
+ * are no boxes. **SCU is not an unknown unit for these, it is the wrong one.** A price-per-SCU for
+ * Hadanite is not an uncertain number; it is a meaningless one, and the app's assumption that
+ * everything sold is cargo is what was actually wrong.
+ *
+ * ⚠️ **BUT IT IS NOT ONLY GEMS, so do not gate on a commodity list.** 10 commodities appear on
+ * BOTH sides - Tungsten, Iron, Aluminum, Gold, Laranite, Copper, Torite, Borase, Hephaestanite and
+ * Recycled Material Composite all have empty-manifest sells too (17 of them). Ordinary cargo can
+ * reach a terminal without a manifest. The MANIFEST is the test, never the commodity.
+ *
+ * 🔑 **THE DISCRIMINATOR THAT PROVES THEY ARE PARTIAL, NOT NOISE.** Against the boxed reading for
+ * the same commodity at the same terminal, an empty-manifest sell prices at min 0.008x, median
+ * 0.264x, **max 1.000x**. The CEILING is the evidence: if the game merely omitted the field at
+ * random the two sets would overlap in both directions. They never exceed it, because `quantity`
+ * has been rounded UP to a whole container the goods do not fill.
+ *
+ * 🔴 **AND THE RESIDUAL, WHICH IS NOT FIXED HERE AND MUST NOT BE FORGOTTEN: A BOXED SELL'S VOLUME
+ * IS A CEILING TOO.** 16 groups of sells declare BYTE-IDENTICAL volumes at the same terminal for
+ * the same commodity (same `quantity`, `boxSize`, `unitAmount`); **6 of the 16 disagree on the
+ * total, the worst by 11.56x** (`q1 b1 u1` at Levski: 946 aUEC against 10,933). The cleanest
+ * example is Lindinium at TDD Orison, four sells inside 20 seconds:
+ *
+ *     quantity[4] boxSize[4] unitAmount[1]  amount[202927]   -> 50,732/SCU   (UEX says ~51,000)
+ *     quantity[1] boxSize[1] unitAmount[1]  amount[ 47249]   -> 47,249/SCU   (~0.93 SCU)
+ *     quantity[1] boxSize[1] unitAmount[1]  amount[ 31380]   -> 31,380/SCU   (~0.62 SCU)
+ *
+ * Two identical declarations, 7 s apart, 1.5x apart in price. So `quantity` is the CEILING of the
+ * real volume in every case and the manifest only tells you a container exists, not that it is
+ * full. Across boxed sells in multi-sample groups, 24 of 69 sit below their group's best reading.
+ *
+ * ⚠️ **THIS FLIGHT DELIBERATELY DID NOT ACT ON THAT.** Sub's ruling was about a sell with no
+ * volume, and marking EVERY sell unknown would empty his Ledger of closed runs - the feature he
+ * has said he needs to trust before trading again. The bounded-by-one-container error a boxed sell
+ * carries is a precision problem; the empty-manifest one is a 125x category error. If this is ever
+ * revisited, the honest framing is already available: `total / quantity` is a LOWER BOUND on the
+ * price, which this app already knows how to render (the reputation floors).
+ *
+ * 🔑 **`total` IS TRUE IN EVERY CASE.** The player was paid that many aUEC at that terminal at that
+ * moment. That is what lets an unknown-volume sale be recorded rather than dropped - see
+ * `TradeJournal.apply`, which books it as revenue with no SCU and no per-SCU figure.
+ *
  * -- 🔴 A REQUEST IS NOT A TRANSACTION, AND THAT SHIPPED AS INVENTED PROFIT ---------------------
  *
  * Everything above parses a `Send...Request`. The name is the whole warning and nobody read it: a
@@ -170,6 +223,36 @@ function fnum(f: Map<string, string>, key: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * 🔴 HOW MUCH CHANGED HANDS — OR THAT WE DO NOT KNOW, AS A SHAPE RATHER THAN A NULL.
+ *
+ * A caller cannot reach `scu` without first proving `known`, so there is no `?? 0`, no
+ * `Number(x) || 0` and no accidental read of a figure the game never stated. That is the whole
+ * reason this is a union instead of `number | null`: the previous shape compiled fine while every
+ * consumer quietly defaulted an unknown to a number.
+ */
+export type Volume =
+  | { known: true; scu: number }
+  | { known: false; why: VolumeUnknown };
+
+/** Why a volume could not be read. One value today; a union so a second reason cannot be added as
+ *  a bare boolean and lose the distinction. */
+export type VolumeUnknown = "sell-states-no-cargo-boxes";
+
+/**
+ * 🔴 aUEC PER SCU — AND WHETHER THE GAME SAID SO OR WE DIVIDED.
+ *
+ * `source` is not decoration. A buy carries `shopPricePerCentiSCU`, which is the shop's own number;
+ * a sell carries nothing of the kind and the figure is `total / volume`, which is only as good as
+ * the volume. Anything publishing a price needs to be able to tell those apart, and the same
+ * distinction is what stops an override changing the answer AND the provenance.
+ */
+export type UnitPrice =
+  | { known: true; perScu: number; source: "stated" | "derived" }
+  | { known: false; why: UnitPriceUnknown };
+
+export type UnitPriceUnknown = "no-stated-price-and-no-volume";
+
 export interface CommodityPurchase {
   /** ISO timestamp off the log line. */
   at: string;
@@ -180,11 +263,16 @@ export interface CommodityPurchase {
   shopId: string | null;
   /** Joins directly to `data/commodities.json`'s top-level key. */
   resourceGuid: string | null;
-  /** SCU, converted from the log's centiSCU. */
-  scu: number | null;
-  /** aUEC per SCU, from `shopPricePerCentiSCU` x 100. */
-  pricePerScu: number | null;
-  /** Total aUEC for the transaction, as the log states it. */
+  /**
+   * How much, when the log says. 🔴 A SELL WITH NO CARGO-BOX MANIFEST IS `known: false` — see
+   * "A SELL DOES NOT STATE A VOLUME" in the file header. Never default it to a number.
+   */
+  volume: Volume;
+  /** aUEC per SCU, stated on a buy and derived on a sell. Unknown when the volume is. */
+  unitPrice: UnitPrice;
+  /** Total aUEC for the transaction, as the log states it. 🔑 THIS IS ALWAYS TRUE, even when the
+   *  volume is not: the player really was paid this many aUEC at this terminal. It is what lets an
+   *  unknown-volume sale be RECORDED rather than dropped. */
   total: number | null;
   /** SCU per box. */
   boxScu: number | null;
@@ -306,22 +394,42 @@ export function parseTradeLine(line: string): TradeLogEvent | null {
       scu = inCentiScu ? qty / 100 : qty;
     }
 
+    // 🔴 THE CARGO-BOX MANIFEST IS WHAT MAKES A SELL'S VOLUME MEAN ANYTHING. Read from the raw
+    // line rather than from `boxScu`, because the question is whether the game listed ANY
+    // container at all - `fields()` keeps the first of a repeated key and would answer a
+    // different question on a multi-box line.
+    const boxTail = line.split("Cargo Box Data:")[1];
+    const hasManifest = boxTail !== undefined && boxTail.includes("boxSize[");
+    const kind = name === "SendCommodityBuyRequest" ? "buy" : "sell";
+
+    // A BUY states its quantity in cSCU with real precision and states the unit price outright, so
+    // neither depends on the manifest. A SELL with no manifest states neither.
+    const volume: Volume = kind === "sell" && !hasManifest
+      ? { known: false, why: "sell-states-no-cargo-boxes" }
+      : scu !== null && scu > 0
+        ? { known: true, scu }
+        : { known: false, why: "sell-states-no-cargo-boxes" };
+
     // A buy states the per-SCU price outright; a sell does not, so derive it. Never the other way
-    // round - a stated figure always beats one of ours.
+    // round - a stated figure always beats one of ours, and a derived one is only as good as the
+    // volume it was divided by.
     const perCenti = fnum(f, "shopPricePerCentiSCU");
     const total = fnum(f, "price") ?? fnum(f, "amount");
-    let pricePerScu: number | null = perCenti === null ? null : perCenti * 100;
-    if (pricePerScu === null && total !== null && scu !== null && scu > 0) pricePerScu = total / scu;
+    const unitPrice: UnitPrice = perCenti !== null
+      ? { known: true, perScu: perCenti * 100, source: "stated" }
+      : volume.known && total !== null
+        ? { known: true, perScu: total / volume.scu, source: "derived" }
+        : { known: false, why: "no-stated-price-and-no-volume" };
 
     return {
       purchase: {
         at,
-        kind: name === "SendCommodityBuyRequest" ? "buy" : "sell",
+        kind,
         shopName: f.get("shopName") ?? null,
         shopId: f.get("shopId") ?? null,
         resourceGuid: f.get("resourceGUID") ?? null,
-        scu,
-        pricePerScu,
+        volume,
+        unitPrice,
         total,
         boxScu,
         unitAmount,

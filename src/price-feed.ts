@@ -107,14 +107,24 @@ function recordItem(p: ItemPurchase, deps: TradeDeps): void {
 
 function recordCommodity(p: CommodityPurchase, deps: TradeDeps): void {
   if (!store || !p.resourceGuid || !p.shopName) return;
+  // 🔴 NO UNIT, NO ROW. This store's whole schema is "what one of these costs", and 54% of real
+  // commodity SELLS state no volume at all - the goods came out of personal inventory, so the
+  // total is real and the per-SCU figure is meaningless rather than merely uncertain. Publishing
+  // `total / 1` for a 416,000 aUEC Hadanite sale would put a 416,000 aUEC/SCU quote into the pool.
+  //
+  // 🔑 REFUSED HERE, EXPLICITLY, rather than left to `add()`'s non-positive check. A `?? 0` would
+  // reach the same outcome today and would silently start publishing the moment anyone gave the
+  // unknown branch a number. The observation is not lost: `TradeJournal` keeps the money, the
+  // terminal and the time, which is what Sub's ruling asked for.
+  if (!p.unitPrice.known) return;
   const added = store.add({
     kind: "commodity",
     id: p.resourceGuid,
     terminal: p.shopName,
     // Already per-SCU on both sides of a commodity transaction: stated by the shop on a buy,
     // derived from total/SCU on a sell. `trade-log.ts` owns that distinction.
-    unitPrice: p.pricePerScu ?? 0,
-    quantity: p.scu ?? 1,
+    unitPrice: p.unitPrice.perScu,
+    quantity: p.volume.known ? p.volume.scu : 1,
     total: p.total ?? 0,
     at: p.at,
     // 🔑 A commodity SELL is a real price and is kept, tagged as a sell. Unlike items, where the

@@ -277,10 +277,12 @@ export class HaulingBuys {
   applyPurchase(p: CommodityPurchase): CommodityBuy | null {
     if (p.kind !== "buy") return null;
     if (!p.resourceGuid) return null;
-    // 🔴 A non-positive tonnage is refused rather than written. The line has been misread before
-    // (a sell's `quantity` was taken as a container count and doubled), and a zero written here
-    // would read downstream as "bought nothing" — a claim the log never makes.
-    if (p.scu === null || !(p.scu > 0)) return null;
+    // 🔴 An unknown or non-positive tonnage is refused rather than written. The line has been
+    // misread before (a sell's `quantity` was taken as a container count and doubled), and a zero
+    // written here would read downstream as "bought nothing" — a claim the log never makes.
+    // `volume.known` makes that refusal a type narrowing rather than a comparison someone can
+    // "simplify" back into a `?? 0`.
+    if (!p.volume.known) return null;
     const want = p.resourceGuid.toLowerCase();
     const s = this.read();
     // See `purchaseKey`: the seed replays the newest rotated log on every start, so without this
@@ -292,7 +294,7 @@ export class HaulingBuys {
       .sort((a, b) => a.addedAt - b.addedAt)[0];
     if (!hit) return null;
     hit.purchaseKey = key;
-    hit.scu = p.scu;
+    hit.scu = p.volume.scu;
     hit.boughtAt = p.at || null;
     hit.shopName = p.shopName;
     // The manifest the line states outright, so the Stow tab never has to partition a commodity.

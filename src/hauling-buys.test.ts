@@ -16,7 +16,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HaulingBuys } from "./hauling-buys.js";
-import { parseTradeLine } from "./trade-log.js";
+import { parseTradeLine, type CommodityPurchase } from "./trade-log.js";
 
 let failures = 0;
 const check = (name: string, ok: boolean, extra = "") => {
@@ -61,14 +61,17 @@ const buyOf = (line: string) => {
   if (!p) throw new Error("the fixture line did not parse as a purchase: " + line.slice(0, 80));
   return p;
 };
+/** Narrows the volume union for an assertion. Returns null, never 0, so an unknown volume fails a
+ *  numeric comparison instead of passing on a coerced zero. */
+const scuOf = (p: CommodityPurchase): number | null => (p.volume.known ? p.volume.scu : null);
 
 // POSITIVE FIRST. Every "did not fill" assertion below is free if the lines do not parse at all,
 // and a silently unparsed fixture is the way this whole file becomes a tautology.
 check("the captured buy line parses, with a tonnage on it",
-  buyOf(BUY_FOOD).kind === "buy" && buyOf(BUY_FOOD).scu === 1,
-  `scu ${buyOf(BUY_FOOD).scu}`);
+  buyOf(BUY_FOOD).kind === "buy" && scuOf(buyOf(BUY_FOOD)) === 1,
+  `scu ${scuOf(buyOf(BUY_FOOD))}`);
 check("...and the captured sell line parses too, as a SELL",
-  buyOf(SELL_FOOD).kind === "sell" && buyOf(SELL_FOOD).scu === 1);
+  buyOf(SELL_FOOD).kind === "sell" && scuOf(buyOf(SELL_FOOD)) === 1);
 
 // ── a pick starts with no tonnage, and that is not a failure state ─────────
 const pick = (store: HaulingBuys, commodity: string, guid: string | null, at: number) =>
