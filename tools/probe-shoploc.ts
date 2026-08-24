@@ -71,7 +71,7 @@ import { join } from "node:path";
 
 import { PlayerLocation, parseShopLine } from "../src/player-location.js";
 import { collectOriginSignals, originDepsFor } from "../src/origin-signals.js";
-import { resolveOrigin, type OriginVerdict } from "../src/player-origin.js";
+import { resolveOrigin, TRUST_MIN, type OriginVerdict } from "../src/player-origin.js";
 import { parseLine } from "../src/parser.js";
 import { parseMissionEvent } from "../src/missions-parser.js";
 import { matchLocationToken } from "../src/hauling-locations.js";
@@ -170,6 +170,30 @@ async function eachLog(gz: string, onLog: (id: string, lines: Kept[]) => void): 
   if (curId) onLog(curId, buf);
 }
 
+/**
+ * WHICH LINES THE EXTRACT KEEPS — the JS copy of the SQL predicate, and the reason it is here.
+ *
+ * 🔴 A PREFILTER IS A SECOND, INVISIBLE COPY OF THE PARSER'S VOCABULARY. This one lives in a
+ * `.sql` file on the far side of an ssh pipe, where nothing can typecheck it and nothing can test
+ * it. So it is written out once more here, and `--control` asserts that the two agree line for
+ * line on 8 whole logs pulled unfiltered. A drift between them is the failure mode where the
+ * probe reports a confident answer about a corpus it never saw all of.
+ *
+ * Each entry names the parser that consumes it, so widening one is a decision about a parser
+ * rather than about a string:
+ */
+const KEEP = [
+  "planet cells:",                        // location.ts   PlaceWatcher.LINE       (body tier)
+  "[QuantumTravel]",                      // location.ts   SystemWatcher.QT_TAG    (system tier)
+  "requested inventory for Location[",    // missions-parser RE.locationInventory  (place tier)
+  "at location [",                        // missions-parser RE.numericLocation A  (place tier)
+  ":Location:",                           // missions-parser RE.numericLocation B  (place tier)
+  "Platform state changed to",            // missions-parser RE.platformState      (place tier)
+  "CEntityComponentCommodityUIProvider::", // player-location parseShopLine        (the subject)
+  "CEntityComponentShop",                 // player-location parseShopLine        (the subject)
+];
+const keep = (line: string): boolean => KEEP.some((k) => line.indexOf(k) >= 0);
+
 const TS_RE = /^<([^>]+)>/;
 const tsOf = (line: string): number | null => {
   const m = TS_RE.exec(line);
@@ -190,6 +214,10 @@ interface Obs {
   /** Contributor hash, filled by the caller. Carried per observation so "how many people saw this"
    *  is a property of the row rather than a second map that can fall out of step with it. */
   usr?: string;
+  /** Which shop component wrote the line — the commodity kiosk or the item shop. */
+  kind: "commodity" | "item";
+  /** The verdict's own staleness flag, carried so an expired reading can be counted. */
+  stale: boolean;
   tier: OriginVerdict["tier"];
   /** The starmap place id the verdict names, or null. */
   placeId: string | null;
@@ -213,9 +241,23 @@ interface Obs {
  * `tierOfRecord` already encodes the rule (it is what stops a shop name mentioning "Pyro" from
  * putting the player at the centre of a sun); it simply is not applied on this path. Applying it
  * here is a measurement guard, not a fix — see the strip's Cargo for the `src/` half.
+ *
+ * 🔴 AND THE TIER IS NOT ENOUGH ON ITS OWN EITHER — `resolveOrigin` FALLS BACK TO AN EXPIRED
+ * READING AND STILL CALLS IT `place`. That fallback is right for a widget (a last-known beats
+ * "unknown" on screen, and it ships `stale: true` beside it) and wrong here: a fix older than its
+ * own trust window is a claim about where the player was an hour ago, and an hour is enough to fly
+ * to another station. That is the wrong-attribution case this whole probe exists to avoid.
+ *
+ * Measured before adding the guard: **64 of 3,062 same-place observations (2.1%) were past
+ * `TRUST_MIN.place`**, and nothing anywhere in the corpus rested on a reading older than 180
+ * minutes — so closing the branch that could be badly wrong costs almost nothing.
+ *
+ * ⚠️ The merely-`stale` ones are KEPT — 303 (9.9%) sit past HALF the window. Half a window is
+ * "believe it less", not "it is probably wrong", and `resolveOrigin`'s own comment says so.
  */
 function samePlace(v: OriginVerdict, locations: Record<string, LocationRecord>): string | null {
   if (v.tier !== "place" || !v.id) return null;
+  if (v.ageMin !== null && v.ageMin > TRUST_MIN.place) return null;
   return tierOfRecord(locations[v.id]) === "place" ? v.id : null;
 }
 
@@ -230,6 +272,9 @@ interface ReplayOpts {
   /** Put the terminal signal back — the circularity control. Off by default and it must stay off
    *  for any published number. */
   withTerminal: boolean;
+  /** Control only: stop injecting the terrain-block terminator, so the filtered replay really is
+   *  the naive one. `--control` requires this to make the two streams disagree. */
+  noTerminator?: boolean;
 }
 
 function replay(lines: Kept[], o: ReplayOpts): Obs[] {
@@ -266,7 +311,7 @@ function replay(lines: Kept[], o: ReplayOpts): Obs[] {
     /* 🔴 A TERRAIN BLOCK ENDS AT THE FIRST NON-TERRAIN LINE, so a gap in the ordinals means the
      * full log had one there and this stream must supply it. Without this two blocks merge and
      * `PlaceWatcher` reports the first body of the pair at the wrong time. */
-    if (prev && isTerrain(prev.line) && k.ord !== prev.ord + 1) {
+    if (!o.noTerminator && prev && isTerrain(prev.line) && k.ord !== prev.ord + 1) {
       feed("", tsOf(prev.line) ?? clock);
     }
     prev = k;
@@ -282,6 +327,9 @@ function replay(lines: Kept[], o: ReplayOpts): Obs[] {
 
     const shop = parseShopLine(k.line);
     if (!shop) continue;
+    /* Which of the two shop components wrote it. Free here, and it tells a consumer which price
+     * table a receipt from this token belongs in — `commodities.json` or `item-shops.json`. */
+    const kind: Obs["kind"] = k.line.indexOf("CEntityComponentCommodityUIProvider") >= 0 ? "commodity" : "item";
 
     const inputs = pl.inputs({ atLocation, atLocationId, cargoMove });
     /* 🔴 THE CIRCULARITY GUARD. `collectOriginSignals` reads a place out of the shop's own asset
@@ -293,14 +341,117 @@ function replay(lines: Kept[], o: ReplayOpts): Obs[] {
       { ...depsForOrigin, now: () => at },
     );
     out.push({
-      token: shop.shopName, shopId: shop.shopId, kioskId: shop.kioskId, at,
-      tier: verdict.tier, placeId: samePlace(verdict, loaded.locations),
+      token: shop.shopName, shopId: shop.shopId, kioskId: shop.kioskId, at, kind,
+      tier: verdict.tier, placeId: samePlace(verdict, loaded.locations), stale: verdict.stale,
       ageMin: verdict.ageMin, from: verdict.from,
     });
   }
   /* End of file ends any open block, exactly as the real watcher's stream running out does. */
-  if (prev && isTerrain(prev.line)) feed("", tsOf(prev.line) ?? clock);
+  if (!o.noTerminator && prev && isTerrain(prev.line)) feed("", tsOf(prev.line) ?? clock);
   return out;
+}
+
+/* ── 🔴 THE CONTROL ON THE MEASUREMENT ITSELF ─────────────────────────────────────────────────*/
+
+/**
+ * DOES THE FILTERED EXTRACT MEASURE THE SAME THING AS THE WHOLE LOG?
+ *
+ *   npx tsx tools/probe-shoploc.ts --control [--full E:/tmp/shoploc/full.gz]
+ *
+ * The corpus arrives pre-filtered to the lines the location parsers consume. `PlaceWatcher` is
+ * STATEFUL — a terrain block ends at the first NON-terrain line — so that filter is a real change
+ * to a stateful parser's input and cannot be assumed harmless. This pulls 8 WHOLE logs, replays
+ * each one twice, and requires the two verdict sequences to be identical field for field.
+ *
+ * 🔑 IT HAS TO FAIL FOR THE RIGHT REASON TOO, or "the two agree" is free. Three injections, each
+ * of which must make them disagree:
+ *   1. Remove the block terminator. This is the bug the ordinals exist to prevent.
+ *   2. Drop the terrain lines from the filter. The body tier should be doing work.
+ *   3. Drop the numeric-location lines. The place tier's biggest single source.
+ * A green injection is reported as a FINDING — it means that signal buys nothing on this sample,
+ * which is worth knowing, not something to hide.
+ *
+ * It also cross-checks the SQL: the count `keep()` accepts on the raw text must equal what the
+ * hand-written predicate in `tools/sql/shoploc-lines.sql` pulled for the same logs.
+ */
+async function control(fullFile: string, loaded: Loaded): Promise<number> {
+  const rows: { id: string; text: string }[] = [];
+  const rl = createInterface({ input: createReadStream(fullFile).pipe(createGunzip()), crlfDelay: Infinity });
+  for await (const row of rl) {
+    const a = row.indexOf(" ");
+    if (a < 0) continue;
+    rows.push({ id: row.slice(0, a), text: Buffer.from(row.slice(a + 1), "base64").toString("utf8") });
+  }
+  console.log(`[control] ${rows.length} whole logs`);
+
+  const sig = (o: Obs) => `${o.at}|${o.token}|${o.tier}|${o.placeId ?? "-"}|${o.ageMin === null ? "-" : o.ageMin.toFixed(6)}|${o.from}`;
+  const opts = { loaded, placeIds: {}, withTerminal: false };
+
+  interface Variant { name: string; lines: (all: Kept[]) => Kept[]; noTerminator?: boolean; mustDiffer: boolean }
+  const variants: Variant[] = [
+    { name: "the extract as pulled", lines: (a) => a.filter((k) => keep(k.line)), mustDiffer: false },
+    { name: "CONTROL 1: no block terminator", lines: (a) => a.filter((k) => keep(k.line)), noTerminator: true, mustDiffer: true },
+    { name: "CONTROL 2: terrain lines dropped", lines: (a) => a.filter((k) => keep(k.line) && !isTerrain(k.line)), mustDiffer: true },
+    { name: "CONTROL 3: numeric-location lines dropped", lines: (a) => a.filter((k) => keep(k.line) && k.line.indexOf("at location [") < 0 && k.line.indexOf(":Location:") < 0), mustDiffer: true },
+  ];
+
+  let fails = 0, keptTotal = 0, shopTotal = 0;
+  const diffs = new Map<string, number>();
+  for (const { id, text } of rows) {
+    const all: Kept[] = text.split(/\r?\n/).map((line, i) => ({ ord: i + 1, line }));
+    keptTotal += all.filter((k) => keep(k.line)).length;
+    const base = replay(all, opts);
+    shopTotal += base.length;
+    for (const v of variants) {
+      const got = replay(v.lines(all), { ...opts, noTerminator: v.noTerminator });
+      const same = got.length === base.length && got.every((o, i) => sig(o) === sig(base[i]));
+      if (!same) diffs.set(v.name, (diffs.get(v.name) ?? 0) + 1);
+    }
+  }
+  console.log(`[control] ${shopTotal} shop lines across those logs, ${keptTotal} lines kept by keep()`);
+  for (const v of variants) {
+    const n = diffs.get(v.name) ?? 0;
+    const ok = v.mustDiffer ? n > 0 : n === 0;
+    if (!ok) fails++;
+    console.log(` ${ok ? "PASS" : "FAIL"}  ${v.name.padEnd(42)} differs on ${n}/${rows.length} logs` +
+      (v.mustDiffer && n === 0 ? "   <- FINDING: this signal changes no verdict on this sample" : ""));
+  }
+  return fails;
+}
+
+/**
+ * TRACE ONE TOKEN THROUGH WHOLE LOGS, so a row in the report can be read against the log by hand.
+ *
+ *   npx tsx tools/probe-shoploc.ts --trace SCShop_Cargo_Office --full E:/tmp/shoploc/two.gz
+ *
+ * 🔴 THE POINT IS THAT IT PRINTS THE EVIDENCE, NOT THE ANSWER. Every shop line for the token, the
+ * verdict, and the log line the verdict came from — so "Seraphim Station" can be checked against
+ * a `requested inventory for Location[RR_CRU_LEO]` you read yourself. A map like this decides
+ * which shop a price is attributed to; at least one row of it has to be verified by a person.
+ */
+async function trace(fullFile: string, want: string, loaded: Loaded): Promise<void> {
+  const rl = createInterface({ input: createReadStream(fullFile).pipe(createGunzip()), crlfDelay: Infinity });
+  for await (const row of rl) {
+    const a = row.indexOf(" ");
+    if (a < 0) continue;
+    const id = row.slice(0, a);
+    const text = Buffer.from(row.slice(a + 1), "base64").toString("utf8");
+    const all: Kept[] = text.split(/\r?\n/).map((line, i) => ({ ord: i + 1, line }));
+    const rows = replay(all, { loaded, placeIds: {}, withTerminal: false })
+      .filter((o) => o.token === want);
+    if (!rows.length) continue;
+    console.log(`\n=== ${id} — ${rows.length} ${want} lines`);
+    /* Collapse the runs: a purchase writes several shop lines a second apart and printing 40
+     * identical verdicts hides the one that matters. */
+    let last = "";
+    for (const r of rows) {
+      const sig = `${r.tier}|${r.placeId}|${r.from}`;
+      if (sig === last) continue;
+      last = sig;
+      console.log(`  ${new Date(r.at).toISOString()}  ${r.tier.padEnd(7)} ${(r.placeId ? loaded.locations[r.placeId]?.name ?? r.placeId : "-").padEnd(22)} age ${r.ageMin === null ? "-" : r.ageMin.toFixed(1) + " min"}`);
+      console.log(`      from: ${r.from}`);
+    }
+  }
 }
 
 /* ── the UEX side of the join ─────────────────────────────────────────────────────────────────*/
@@ -592,6 +743,14 @@ async function main(): Promise<void> {
   const perSession = flag("--per-session");
 
   const loaded = load();
+  const wantTrace = arg("--trace");
+  if (wantTrace) { await trace(arg("--full") ?? "E:/tmp/shoploc/full.gz", wantTrace, loaded); return; }
+  if (flag("--control")) {
+    const fails = await control(arg("--full") ?? "E:/tmp/shoploc/full.gz", loaded);
+    if (fails) { console.error(`\n[control] ${fails} FAILED`); process.exitCode = 1; }
+    else console.log("\n[control] all passed");
+    return;
+  }
   const meta = readMeta(metaFile);
   console.log(`[shoploc] ${Object.keys(loaded.locations).length} starmap rows, ${meta.size} logs`);
 
@@ -662,6 +821,20 @@ async function main(): Promise<void> {
 
   console.log(`[shoploc] tokens: ${reports.length} — ${tally.terminal} pinned to a UEX terminal, ${tally.place} pinned to a place only, ${tally["place-dependent"]} place-dependent, ${tally.unresolved} unresolved`);
   console.log(`[shoploc] observations: ${placedObs}/${totalObs} (${(100 * placedObs / totalObs).toFixed(1)}%) got a same-place verdict`);
+  {
+    const placed = obs.filter((o) => o.placeId);
+    const buckets = [1, 5, 15, 45, 180, 1440, Infinity];
+    const counts = buckets.map(() => 0);
+    let staleN = 0;
+    for (const o of placed) {
+      if (o.stale) staleN++;
+      const a2 = o.ageMin ?? Infinity;
+      counts[buckets.findIndex((b2) => a2 <= b2)]++;
+    }
+    console.log(`[shoploc] age of the reading behind a same-place verdict: ` +
+      buckets.map((b2, i) => `<=${b2 === Infinity ? "inf" : b2 + "m"}:${counts[i]}`).join("  "));
+    console.log(`[shoploc] ${staleN}/${placed.length} (${(100 * staleN / placed.length).toFixed(1)}%) rest on a reading resolveOrigin itself calls stale`);
+  }
   console.log(`[shoploc] log volume: ${(100 * share((r) => r.verdict === "terminal") / totalObs).toFixed(1)}% terminal, ${(100 * share((r) => r.verdict === "place") / totalObs).toFixed(1)}% place, ${(100 * share((r) => r.verdict === "place-dependent") / totalObs).toFixed(1)}% place-dependent, ${(100 * share((r) => r.verdict === "unresolved") / totalObs).toFixed(1)}% unresolved`);
 
   const conf = reports.filter((r) => r.confidence === "confident").length;
@@ -691,6 +864,89 @@ async function main(): Promise<void> {
     }, null, 1));
     console.log(`\n[shoploc] wrote ${outFile}`);
   }
+
+  const emitFile = arg("--emit");
+  if (emitFile) {
+    if (withTerminal) throw new Error("refusing to emit from a --with-terminal run: that is the circularity control, not a measurement");
+    writeFileSync(emitFile, emit(reports, obs, loaded, meta) + "\n");
+    console.log(`[shoploc] wrote ${emitFile}`);
+  }
+}
+
+/**
+ * THE SHIPPABLE FILE. One entry per shop token, carrying its evidence rather than only its answer.
+ *
+ * 🔴 EVERY ENTRY STATES HOW FAR THE LOG GOT AND STOPS THERE. `terminal` is populated on exactly
+ * one verdict; on every other it is `null` and the caller has to read `verdict` to find out what
+ * is known. That is deliberate — a consumer must not be able to reach a guess by reading one
+ * field, because a wrong terminal silently attributes a price to a shop that never charged it.
+ */
+function emit(reports: TokenReport[], obs: Obs[], loaded: Loaded, meta: Map<string, Meta>): string {
+  /* 🔴 THE SPAN COMES FROM THE UPLOAD TIME, NOT THE GAME CLOCK. Measured: 3,178 of 709,221
+   * extracted lines are stamped 2025-07 / 2025-08 — a contributor whose machine clock is a year
+   * out. It changes no verdict, because every age here is a difference between two timestamps
+   * inside ONE log and a uniform shift cancels; it only made a game-time span read 389 days
+   * instead of 35. `created` is written by the server and cannot drift. */
+  const up = [...meta.values()].map((m) => Date.parse(m.created)).filter(Number.isFinite).sort((a, b) => a - b);
+  const days = up.length ? Math.round((up[up.length - 1] - up[0]) / 86_400_000) : 0;
+  const tokens: Record<string, unknown> = {};
+  for (const r of reports) {
+    const kinds = new Set(obs.filter((o) => o.token === r.token).map((o) => o.kind));
+    tokens[r.token] = {
+      verdict: r.verdict,
+      terminal: r.terminal,
+      matchedOn: r.matchedOn,
+      place: r.places.length === 1 ? { id: r.places[0].id, name: r.places[0].name } : null,
+      candidates: r.verdict === "place" ? r.candidates : [],
+      places: r.verdict === "place-dependent"
+        ? r.places.map((p) => ({ id: p.id, name: p.name, observations: p.n, contributors: p.contributors }))
+        : [],
+      confidence: r.confidence,
+      soldBy: [...kinds].sort(),
+      evidence: {
+        observations: r.observations,
+        samePlace: r.placed,
+        byTier: r.byTier,
+        placeCount: r.places.length,
+        disagreement: Number(r.disagreement.toFixed(4)),
+        contributors: r.contributors,
+      },
+    };
+  }
+  const totals = { terminal: 0, place: 0, "place-dependent": 0, unresolved: 0 };
+  for (const r of reports) totals[r.verdict]++;
+  const doc = {
+    schema: "sc-shop-terminals/1",
+    note: "Game shop asset name -> where the player was standing when they used it. Derived by replaying the opt-in shared-log corpus through src/player-location.ts + src/origin-signals.ts + src/player-origin.ts. Rebuild with `npm run probe:shoploc`.",
+    method: {
+      rule: "Only a same-place verdict resolves anything. A body or system verdict names somewhere the player was NEAR and is never counted.",
+      guard: "The shop terminal is removed from the location service's inputs before grading, because collectOriginSignals reads a place out of the shop's own asset name and the answer would otherwise come from the token being asked about.",
+      samePlace: "tier === 'place' AND the starmap row's own type is a place — not a Star, Planet or Moon. 4.2% of place-tier verdicts are one of those.",
+      multiPlace: "A token seen at more than one place is recorded as place-dependent and is NEVER resolved by majority.",
+    },
+    /** How to read this, for whatever consumes it next. Written down because the interesting
+     *  entries are the ones that decline to answer, and a caller that only reads `terminal` will
+     *  silently treat every one of them as "no data" rather than as "ask the log". */
+    usage: {
+      terminal: "Attribute to this UEX terminal.",
+      place: "The station is known; which counter inside it is not. `candidates` lists every UEX terminal filed at that place. Attribute to the place, or narrow it with something else.",
+      "place-dependent": "This asset exists at several stations, so the token alone cannot say which. It is still resolvable AT RUNTIME — the app already knows where the player is; ask src/player-location.ts rather than this file.",
+      unresolved: "No same-place verdict was ever reached. Nothing may be attributed.",
+      confidence: "`provisional` means one place on thin evidence (<8 same-place observations, or a single contributor). Believable, not corroborated.",
+    },
+    corpus: {
+      source: "site.bp_shared_logs (opt-in, read-only)",
+      logs: meta.size,
+      contributors: new Set([...meta.values()].map((m) => m.usr)).size,
+      spanDaysUploaded: days,
+      shopObservations: obs.length,
+      samePlaceObservations: obs.filter((o) => o.placeId).length,
+      caveat: "Sessions stored before 2026-08-24 were gathered under a share filter with no price term, so shopping sessions are under-represented. That biases coverage, not correctness.",
+    },
+    totals: { tokens: reports.length, ...totals },
+    tokens,
+  };
+  return JSON.stringify(doc, null, 1);
 }
 
 void main();
