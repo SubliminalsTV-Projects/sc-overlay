@@ -61,6 +61,30 @@
  * synthetic terminator is injected wherever the ordinals are not contiguous — which reconstructs
  * the block boundary exactly. The control is what says so.
  *
+ * -- 🔴 A SYSTEM READING CAN BE A JUMP OUT OF DATE, AND IT NEVER SAYS SO --------------------
+ *
+ * `SystemWatcher` reads `[QuantumTravel]` lines and is given an INFINITE trust window on the
+ * reasoning that you cannot leave a system without a jump, and a jump writes more of those lines.
+ * `travel.md` separately records that **the wormhole emits no route event**. Put together: a player
+ * who quantums in Stanton, jumps to Nyx and shops at Levski keeps reporting **Stanton** until they
+ * next touch a drive on the far side.
+ *
+ * Measured here, and the concentration is the proof: **11 of 83 tokens carry an observation whose
+ * system disagrees with the place the same token resolves to, and 8 of them are Levski — 475 of the
+ * 496 contradicting observations, 95.8%.** Levski is the only place in this corpus that requires a
+ * jump to reach.
+ *
+ * 🔑 THE COMPETING EXPLANATION WAS RULED OUT RATHER THAN ARGUED AWAY. `SystemWatcher.push`
+ * iterates its `known` SET and takes the first name that matches anywhere in the line, so a line
+ * naming two systems resolves by Set insertion order rather than by which system the player is in —
+ * which would produce this same signature at exactly this place. It cannot be the cause here: only
+ * **89 of 150,840** QuantumTravel lines in the corpus name two systems (**0.06%**). It remains a
+ * real latent bug; it is simply not this one.
+ *
+ * ⚠️ WHAT IT MEANS FOR THIS FILE: the ladder prefers the finest tier, so a place fix wins and
+ * naming is unaffected. `location.contradictions` carries the count so a consumer can see it, and a
+ * `system`-tier location is the one to read with this in mind.
+ *
  * ⚠️ READ-ONLY. It reads a gzip and two JSON datasets and writes one report. It touches no game
  * install, no `%APPDATA%`, and nothing on the server.
  */
@@ -94,6 +118,12 @@ const flag = (n: string): boolean => argv.includes(n);
 
 interface Loaded {
   locations: Record<string, LocationRecord>;
+  /** The Star id for the system a row sits in. `originDepsFor().systemOf` verbatim, so the ids
+   *  here are the same namespace `resolveOrigin` grades in — the one that must not be re-derived. */
+  starOf: (id: string) => string | null;
+  /** The nearest ancestor that is a Planet or Moon, or null. Walks `parent` exactly as
+   *  `verse-proximity.ts`'s own `ancestry()` does; that one is not exported. */
+  bodyOf: (id: string) => string | null;
   names: Map<string, string>;
   bodyNames: Record<string, string>;
   knownSystems: Set<string>;
@@ -118,7 +148,22 @@ function load(): Loaded {
     const k = systemKey(rec?.system);
     if (k && /^[a-z][a-z0-9 ]*$/.test(k)) knownSystems.add(k);
   }
-  return { locations, names, bodyNames, knownSystems, haulingData: new HaulingDataStore(DATA) };
+  const deps = originDepsFor(locations);
+  const bodyOf = (id: string): string | null => {
+    const seen = new Set<string>();
+    let cur: string | null | undefined = id;
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      if (tierOfRecord(locations[cur]) === "body") return cur;
+      cur = locations[cur]?.parent ?? null;
+    }
+    return null;
+  };
+  return {
+    locations, names, bodyNames, knownSystems,
+    starOf: (id) => deps.systemOf(id), bodyOf,
+    haulingData: new HaulingDataStore(DATA),
+  };
 }
 
 /* ── the corpus ───────────────────────────────────────────────────────────────────────────────*/
@@ -264,6 +309,9 @@ interface Obs {
    *  more play can fix it, while `place-is-a-body` / `place-too-old` means it DID and this probe
    *  refused the answer. Collapsing them would hide which. */
   why: "same-place" | "place-too-old" | "place-is-a-body" | "body" | "system" | "unknown";
+  /** 🔑 THE FINEST TIER THIS OBSERVATION CAN DEFEND, which is NOT the same question as whether it
+   *  may name a shop. A body or system reading may place-and-sort and may never name. */
+  loc: { tier: "place" | "body" | "system"; id: string } | null;
   tier: OriginVerdict["tier"];
   /** The starmap place id the verdict names, or null. */
   placeId: string | null;
@@ -300,15 +348,45 @@ interface Obs {
  *
  * ⚠️ The merely-`stale` ones are KEPT — 303 (9.9%) sit past HALF the window. Half a window is
  * "believe it less", not "it is probably wrong", and `resolveOrigin`'s own comment says so.
+ *
+ * 🔑 **A REJECTED PLACE IS NOT A REJECTED LOCATION, and reading it as one was too narrow.** Every
+ * branch below still knows something true and coarser: a fix on the Moon "Ita" is a genuine BODY
+ * reading, a fix on the Star "Stanton" is a genuine SYSTEM one, and a place fix past its window
+ * still pins the SYSTEM — you cannot leave a system without a jump, and `resolveOrigin`'s own
+ * contradiction check means no newer system reading disagrees with the one that won. So this
+ * returns BOTH: the same-place id (which alone may NAME a shop) and `loc`, the finest tier the
+ * observation can defend (which may only PLACE and SORT one). See `TokenReport.outcome`.
  */
-function samePlace(
+function locate(
   v: OriginVerdict,
-  locations: Record<string, LocationRecord>,
-): { id: string | null; why: Obs["why"] } {
-  if (v.tier !== "place" || !v.id) return { id: null, why: v.tier };
-  if (v.ageMin !== null && v.ageMin > TRUST_MIN.place) return { id: null, why: "place-too-old" };
-  if (tierOfRecord(locations[v.id]) !== "place") return { id: null, why: "place-is-a-body" };
-  return { id: v.id, why: "same-place" };
+  loaded: Loaded,
+): { id: string | null; loc: Obs["loc"]; why: Obs["why"] } {
+  const { locations } = loaded;
+  /** The Star id for whatever system a row sits in — `originDepsFor`'s own memoised lookup, so
+   *  this cannot disagree with the namespace `resolveOrigin` grades in. */
+  const sys = (id: string): Obs["loc"] => {
+    const star = loaded.starOf(id);
+    return star ? { tier: "system", id: star } : null;
+  };
+  if (!v.id) return { id: null, loc: null, why: v.tier === "place" ? "unknown" : v.tier };
+
+  if (v.tier === "system") return { id: null, loc: { tier: "system", id: v.id }, why: "system" };
+  if (v.tier === "body") {
+    const fresh = v.ageMin === null || v.ageMin <= TRUST_MIN.body;
+    return { id: null, loc: fresh ? { tier: "body", id: v.id } : sys(v.id), why: "body" };
+  }
+  if (v.tier !== "place") return { id: null, loc: null, why: "unknown" };
+
+  const rowTier = tierOfRecord(locations[v.id]);
+  if (rowTier === "system") return { id: null, loc: { tier: "system", id: v.id }, why: "place-is-a-body" };
+  if (rowTier === "body") {
+    const fresh = v.ageMin === null || v.ageMin <= TRUST_MIN.body;
+    return { id: null, loc: fresh ? { tier: "body", id: v.id } : sys(v.id), why: "place-is-a-body" };
+  }
+  if (v.ageMin !== null && v.ageMin > TRUST_MIN.place) {
+    return { id: null, loc: sys(v.id), why: "place-too-old" };
+  }
+  return { id: v.id, loc: { tier: "place", id: v.id }, why: "same-place" };
 }
 
 interface ReplayOpts {
@@ -394,10 +472,10 @@ function replay(lines: Kept[], o: ReplayOpts): Obs[] {
       collectOriginSignals(inputs, { locations: loaded.locations, resolveToken, now: () => at }),
       { ...depsForOrigin, now: () => at },
     );
-    const sp = samePlace(verdict, loaded.locations);
+    const sp = locate(verdict, loaded);
     out.push({
       token: shop.shopName, shopId: shop.shopId, kioskId: shop.kioskId, at, kind,
-      tier: verdict.tier, placeId: sp.id, why: sp.why, stale: verdict.stale,
+      tier: verdict.tier, placeId: sp.id, loc: sp.loc, why: sp.why, stale: verdict.stale,
       ageMin: verdict.ageMin, from: verdict.from,
     });
   }
@@ -634,6 +712,57 @@ interface TokenReport {
   confidence: "confident" | "provisional" | "none";
   /** Every observation's `why`, tallied. On an `unresolved` token this IS the reason. */
   why: Record<string, number>;
+  /**
+   * 🔴 THREE OUTCOMES, NOT TWO — and the middle one is a RESULT, not a partial failure.
+   *
+   *   `named`     the token maps to a UEX terminal. Folds into that row.
+   *   `placed`    the log says where this shop IS, at some tier, but nothing joins it to a UEX
+   *               terminal name. It can still be SORTED BY DISTANCE and shown inline — "there is a
+   *               7 aUEC confirmation two jumps away" is useful with no UEX row behind it.
+   *   `unplaced`  the log never said where the player was. Genuinely nothing.
+   *
+   * ⚠️ `placed` and the NAMING rule are independent, and conflating them is how this poisons.
+   * A body or system reading may place-and-sort and may NEVER name a kiosk. `SCShop_Cargo_Office`
+   * is `placed` (all four of its stations are in Stanton) and is still `place-dependent` — it names
+   * nothing, and it sorts perfectly well.
+   */
+  outcome: "named" | "placed" | "unplaced";
+  /**
+   * The finest tier every located observation AGREES on, with a starmap id in it.
+   *
+   * 🔑 THE ID IS THE DELIVERABLE, NOT A CONTAINMENT WORD. `onerow` sorts by calling
+   * `containmentOf(playerOrigin.id, playerOrigin.tier, thisId, locations)` at request time —
+   * `same-place | same-body | same-system | elsewhere` is a fact about where the PLAYER is right
+   * now, which nothing precomputed can know. What it needs from here is the shop's own id, plus the
+   * tier so it knows how much precision it is being handed.
+   *
+   * ⚠️ `containmentOf` takes this as its `placeId`. Passing a body or a star id is safe and honest:
+   * the walk still resolves and the best it can return is `same-body` / `same-system`, which is
+   * exactly the precision that was available.
+   */
+  location: {
+    tier: "place" | "body" | "system" | "none";
+    id: string | null;
+    name: string | null;
+    /** The system token (`stanton`), for a cheap first-pass filter that needs no starmap lookup. */
+    system: string | null;
+    /** How many observations agreed at this tier, and out of how many that were located at all. */
+    observations: number;
+    located: number;
+    /**
+     * 🔴 OBSERVATIONS WHOSE SYSTEM DISAGREES WITH THE ONE CHOSEN. Read this before trusting a
+     * `system`-tier location, and see the module note on `SystemWatcher`: it never expires and a
+     * wormhole jump writes no route event, so a reading can survive the jump that invalidated it.
+     * A high count against a `place`-tier location is that staleness, not a shop in two systems.
+     */
+    contradictions: number;
+    /** On `tier: "none"` ONLY — the systems the observations split across, with counts. An empty
+     *  object means nothing was located at all; two or more entries means the shop asset really is
+     *  used in more than one system, or a system reading was a jump stale (see the module note).
+     *  This is what makes a `none` actionable rather than a shrug. */
+    split: Record<string, number>;
+    contributors: number;
+  };
   /** Every UEX terminal filed at the resolved place. Present on `place` too, where it is the
    *  honest statement of what is still open. */
   candidates: string[];
@@ -728,11 +857,82 @@ function pickTerminal(
   return null;
 }
 
+/**
+ * THE FINEST TIER EVERY LOCATED OBSERVATION AGREES ON.
+ *
+ * Walks place -> body -> system and stops at the first level where the observations name exactly
+ * one thing. A place reading is lifted to its body and to its star for the coarser rounds, so a
+ * token seen at four different stations that happen to share a system still resolves cleanly at
+ * `system` — which is the whole point of the middle outcome.
+ *
+ * 🔴 IT NEVER FALLS BACK TO A MAJORITY. Two systems means the shop asset exists in two systems and
+ * the answer is `none`, exactly as two places means `place-dependent`. The rule that a token may
+ * stay ambiguous is the same rule at every tier.
+ */
+function consensusLocation(rows: Obs[], loaded: Loaded): TokenReport["location"] {
+  const { locations } = loaded;
+  const located = rows.filter((r) => r.loc);
+  const none: TokenReport["location"] = {
+    tier: "none", id: null, name: null, system: null, observations: 0,
+    located: located.length, contradictions: 0, split: {}, contributors: 0,
+  };
+  if (!located.length) return none;
+
+  const lift = (r: Obs, want: "place" | "body" | "system"): string | null => {
+    const l = r.loc!;
+    if (want === "place") return l.tier === "place" ? l.id : null;
+    if (want === "body") return l.tier === "system" ? null : loaded.bodyOf(l.id);
+    return l.tier === "system" ? l.id : loaded.starOf(l.id);
+  };
+
+  /* 🔴 THE FINEST TIER THAT AGREES WITH ITSELF — not the finest tier every observation can reach.
+   *
+   * The first cut demanded that EVERY located observation be expressible at the tier under test,
+   * which sounds conservative and is wrong: it made `SCShop_Orison_KelTo` **unplaced** on 598
+   * unanimous same-place verdicts, because 48 of its 646 observations were coarser. A coarser
+   * reading is not a dissenting vote about a finer one — it is the app having less to say at that
+   * moment, which is the normal case.
+   *
+   * What a coarser reading CAN do is contradict, and that is counted separately below rather than
+   * collapsed into the tier. */
+  for (const tier of ["place", "body", "system"] as const) {
+    const hits = located.map((r) => ({ r, id: lift(r, tier) })).filter((x) => x.id);
+    if (!hits.length) continue;
+    const ids = new Set(hits.map((x) => x.id as string));
+    if (ids.size !== 1) continue;
+    const id = [...ids][0];
+    const sys = systemKey(locations[id]?.system) || null;
+    /* Observations whose SYSTEM disagrees with the chosen location's. See `contradictions`. */
+    let contradictions = 0;
+    for (const r of located) {
+      const star = lift(r, "system");
+      if (star && systemKey(locations[star]?.system) !== sys) contradictions++;
+    }
+    return {
+      tier, id,
+      name: locations[id]?.name ?? id,
+      system: sys,
+      observations: hits.length,
+      located: located.length,
+      contradictions,
+      split: {},
+      contributors: new Set(hits.map((x) => x.r.usr ?? "?")).size,
+    };
+  }
+  for (const r of located) {
+    const star = lift(r, "system");
+    const k = star ? (systemKey(locations[star]?.system) || star) : "(unplaceable)";
+    none.split[k] = (none.split[k] ?? 0) + 1;
+  }
+  return none;
+}
+
 function aggregate(
   obs: Obs[],
-  locations: Record<string, LocationRecord>,
+  loaded: Loaded,
   placeToTerminals: Map<string, string[]>,
 ): TokenReport[] {
+  const { locations } = loaded;
   const byToken = new Map<string, Obs[]>();
   for (const o of obs) {
     let a = byToken.get(o.token);
@@ -758,6 +958,7 @@ function aggregate(
     const placed = places.reduce((s, p) => s + p.n, 0);
     const lead = places[0]?.n ?? 0;
 
+    const location = consensusLocation(rows, loaded);
     let verdict: TokenReport["verdict"];
     let terminal: string | null = null;
     let provisionalTerminal: string | null = null;
@@ -803,6 +1004,8 @@ function aggregate(
         for (const r of rows) w[r.why] = (w[r.why] ?? 0) + 1;
         return w;
       })(),
+      outcome: terminal ? "named" : location.tier !== "none" ? "placed" : "unplaced",
+      location,
       confidence: places.length !== 1 ? "none"
         : places[0].n >= 8 && places[0].contributors >= 2 ? "confident" : "provisional",
       contributors: new Set(rows.map((r) => r.usr ?? "?")).size,
@@ -889,7 +1092,7 @@ async function main(): Promise<void> {
     a.push(name);
   }
 
-  const reports = aggregate(obs, loaded.locations, placeToTerminals);
+  const reports = aggregate(obs, loaded, placeToTerminals);
   const tally = { terminal: 0, place: 0, "place-dependent": 0, unresolved: 0 };
   for (const r of reports) tally[r.verdict]++;
   const totalObs = obs.length;
@@ -898,6 +1101,19 @@ async function main(): Promise<void> {
     reports.filter(sel).reduce((s, r) => s + r.observations, 0);
 
   console.log(`[shoploc] tokens: ${reports.length} — ${tally.terminal} pinned to a UEX terminal, ${tally.place} pinned to a place only, ${tally["place-dependent"]} place-dependent, ${tally.unresolved} unresolved`);
+  {
+    const out = { named: 0, placed: 0, unplaced: 0 };
+    const vol = { named: 0, placed: 0, unplaced: 0 };
+    const byTier: Record<string, number> = {};
+    for (const r of reports) {
+      out[r.outcome]++;
+      vol[r.outcome] += r.observations;
+      byTier[r.location.tier] = (byTier[r.location.tier] ?? 0) + 1;
+    }
+    const tot = reports.reduce((n, r) => n + r.observations, 0);
+    console.log(`[shoploc] OUTCOMES — named ${out.named} (${(100 * vol.named / tot).toFixed(1)}% of lines), placed-but-not-named ${out.placed} (${(100 * vol.placed / tot).toFixed(1)}%), unplaced ${out.unplaced} (${(100 * vol.unplaced / tot).toFixed(1)}%)`);
+    console.log(`[shoploc] location tier of every token: ` + Object.entries(byTier).map(([k, v]) => `${k}:${v}`).join("  "));
+  }
   console.log(`[shoploc] observations: ${placedObs}/${totalObs} (${(100 * placedObs / totalObs).toFixed(1)}%) got a same-place verdict`);
   {
     const placed = obs.filter((o) => o.placeId);
@@ -928,6 +1144,7 @@ async function main(): Promise<void> {
       String(r.places.length).padStart(4) +
       (100 * r.disagreement).toFixed(0).padStart(9) + "%" +
       "  " + (r.confidence === "provisional" ? "~" : " ") + r.verdict.padEnd(16) +
+      (r.location.tier === "none" ? "" : `[${r.location.tier[0]}:${r.location.name}] `) +
       (r.verdict === "terminal" ? r.terminal
         : r.verdict === "place" ? (r.provisionalTerminal ? `${r.places[0].name} — provisionally ${r.provisionalTerminal}` : `${r.places[0].name} — ${r.candidates.length} UEX terminals there`)
         : r.verdict === "place-dependent" ? r.places.map((p) => `${p.name}(${p.n})`).join(", ")
@@ -981,6 +1198,8 @@ function emit(reports: TokenReport[], obs: Obs[], loaded: Loaded, meta: Map<stri
         ? r.places.map((p) => ({ id: p.id, name: p.name, observations: p.n, contributors: p.contributors }))
         : [],
       confidence: r.confidence,
+      outcome: r.outcome,
+      location: r.location,
       soldBy: [...kinds].sort(),
       evidence: {
         observations: r.observations,
@@ -1014,6 +1233,10 @@ function emit(reports: TokenReport[], obs: Obs[], loaded: Loaded, meta: Map<stri
       unresolved: "No same-place verdict was ever reached. Nothing may be attributed. `evidence.why` says which of two very different things happened: `system`/`body`/`unknown` means the log never placed the player at all while they were here (only more play fixes it), while `place-too-old` or `place-is-a-body` means it did and this refused the answer.",
       notInjective: "The map is many-to-one and must not be inverted. SCShop_Levski_Refinery_Store and SCShop_Levski_Refinery_OreSales both resolve to 'Refinery Shop - Levski' — the game splits the item counter from the ore desk and UEX does not.",
       confidence: "`provisional` means one place on thin evidence (<8 same-place observations, or a single contributor). Believable, not corroborated.",
+      outcome: "THREE outcomes, and the middle one is a result rather than a partial failure. `named` = it maps to a UEX terminal. `placed` = the log says where this shop is, at some tier, but nothing joins it to a UEX terminal name -- it can still be sorted by distance and shown inline, because 'there is a 7 aUEC confirmation two jumps away' is useful with no UEX row behind it. `unplaced` = the log never said where the player was.",
+      location: "The shop's own starmap id at the finest tier every located observation agrees on. Pass `location.id` to containmentOf() as its placeId; `same-place | same-body | same-system | elsewhere` is a fact about where the PLAYER is at request time and cannot be precomputed here. Passing a body or star id is safe -- the walk resolves and the best it can return is same-body / same-system, which is exactly the precision that was available. `location.tier` says how much precision you are being handed; `location.system` is a cheap first-pass filter.",
+      systemTierCaveat: "A `system`-tier location can be a JUMP out of date. SystemWatcher never expires and the wormhole emits no route event, so a player who jumps from Stanton to Nyx keeps reporting Stanton until they next use a drive. Measured: 11 of 83 tokens carry a contradicting system observation and 8 are Levski (475 of 496, 95.8%) -- the only place here that needs a jump. `location.contradictions` is that count.",
+      placedIsNotNamed: "🔴 `outcome: \"placed\"` NEVER licenses naming a kiosk. A body or system reading places the shop well enough to sort it and not well enough to say which counter it is. SCShop_Cargo_Office is `placed` (all four of its stations are in Stanton) and `place-dependent` at the same time -- it sorts perfectly and names nothing.",
     },
     corpus: {
       source: "site.bp_shared_logs (opt-in, read-only)",

@@ -13,7 +13,11 @@
   "place-dependent": "This asset exists at several stations, so the token alone cannot say which. It is still resolvable AT RUNTIME — the app already knows where the player is; ask src/player-location.ts rather than this file.",
   "unresolved": "No same-place verdict was ever reached. Nothing may be attributed. `evidence.why` says which of two very different things happened: `system`/`body`/`unknown` means the log never placed the player at all while they were here (only more play fixes it), while `place-too-old` or `place-is-a-body` means it did and this refused the answer.",
   "notInjective": "The map is many-to-one and must not be inverted. SCShop_Levski_Refinery_Store and SCShop_Levski_Refinery_OreSales both resolve to 'Refinery Shop - Levski' — the game splits the item counter from the ore desk and UEX does not.",
-  "confidence": "`provisional` means one place on thin evidence (<8 same-place observations, or a single contributor). Believable, not corroborated."
+  "confidence": "`provisional` means one place on thin evidence (<8 same-place observations, or a single contributor). Believable, not corroborated.",
+  "outcome": "THREE outcomes, and the middle one is a result rather than a partial failure. `named` = it maps to a UEX terminal. `placed` = the log says where this shop is, at some tier, but nothing joins it to a UEX terminal name -- it can still be sorted by distance and shown inline, because 'there is a 7 aUEC confirmation two jumps away' is useful with no UEX row behind it. `unplaced` = the log never said where the player was.",
+  "location": "The shop's own starmap id at the finest tier every located observation agrees on. Pass `location.id` to containmentOf() as its placeId; `same-place | same-body | same-system | elsewhere` is a fact about where the PLAYER is at request time and cannot be precomputed here. Passing a body or star id is safe -- the walk resolves and the best it can return is same-body / same-system, which is exactly the precision that was available. `location.tier` says how much precision you are being handed; `location.system` is a cheap first-pass filter.",
+  "systemTierCaveat": "A `system`-tier location can be a JUMP out of date. SystemWatcher never expires and the wormhole emits no route event, so a player who jumps from Stanton to Nyx keeps reporting Stanton until they next use a drive. Measured: 11 of 83 tokens carry a contradicting system observation and 8 are Levski (475 of 496, 95.8%) -- the only place here that needs a jump. `location.contradictions` is that count.",
+  "placedIsNotNamed": "🔴 `outcome: \"placed\"` NEVER licenses naming a kiosk. A body or system reading places the shop well enough to sort it and not well enough to say which counter it is. SCShop_Cargo_Office is `placed` (all four of its stations are in Stanton) and `place-dependent` at the same time -- it sorts perfectly and names nothing."
  },
  "corpus": {
   "source": "site.bp_shared_logs (opt-in, read-only)",
@@ -62,6 +66,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+    "name": "Orison",
+    "system": "stanton",
+    "observations": 598,
+    "located": 646,
+    "contradictions": 2,
+    "split": {},
+    "contributors": 4
+   },
    "soldBy": [
     "item"
    ],
@@ -114,6 +130,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 385,
+    "located": 547,
+    "contradictions": 162,
+    "split": {},
+    "contributors": 10
+   },
    "soldBy": [
     "commodity"
    ],
@@ -147,6 +175,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 188,
+    "located": 446,
+    "contradictions": 258,
+    "split": {},
+    "contributors": 11
+   },
    "soldBy": [
     "item"
    ],
@@ -254,6 +294,22 @@
     }
    ],
    "confidence": "none",
+   "outcome": "unplaced",
+   "location": {
+    "tier": "none",
+    "id": null,
+    "name": null,
+    "system": null,
+    "observations": 0,
+    "located": 309,
+    "contradictions": 0,
+    "split": {
+     "stanton": 272,
+     "nyx": 25,
+     "pyro": 12
+    },
+    "contributors": 0
+   },
    "soldBy": [
     "commodity"
    ],
@@ -326,6 +382,18 @@
     }
    ],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 195,
+    "located": 195,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 5
+   },
    "soldBy": [
     "commodity"
    ],
@@ -358,6 +426,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+    "name": "Orison",
+    "system": "stanton",
+    "observations": 142,
+    "located": 142,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "commodity"
    ],
@@ -387,6 +467,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage",
+    "system": "stanton",
+    "observations": 140,
+    "located": 140,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 4
+   },
    "soldBy": [
     "commodity"
    ],
@@ -416,6 +508,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18",
+    "system": "stanton",
+    "observations": 136,
+    "located": 136,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 3
+   },
    "soldBy": [
     "item"
    ],
@@ -445,6 +549,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 100,
+    "located": 133,
+    "contradictions": 33,
+    "split": {},
+    "contributors": 14
+   },
    "soldBy": [
     "item"
    ],
@@ -496,6 +612,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 118,
+    "located": 118,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 6
+   },
    "soldBy": [
     "item"
    ],
@@ -559,6 +687,18 @@
     }
    ],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 98,
+    "located": 98,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 6
+   },
    "soldBy": [
     "item"
    ],
@@ -617,6 +757,18 @@
     }
    ],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 103,
+    "located": 103,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 10
+   },
    "soldBy": [
     "item"
    ],
@@ -643,6 +795,21 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "unplaced",
+   "location": {
+    "tier": "none",
+    "id": null,
+    "name": null,
+    "system": null,
+    "observations": 0,
+    "located": 59,
+    "contradictions": 0,
+    "split": {
+     "pyro": 52,
+     "stanton": 7
+    },
+    "contributors": 0
+   },
    "soldBy": [
     "commodity"
    ],
@@ -674,6 +841,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage",
+    "system": "stanton",
+    "observations": 98,
+    "located": 98,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 7
+   },
    "soldBy": [
     "item"
    ],
@@ -731,6 +910,18 @@
     }
    ],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 89,
+    "located": 89,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 9
+   },
    "soldBy": [
     "item"
    ],
@@ -762,6 +953,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage",
+    "system": "stanton",
+    "observations": 74,
+    "located": 74,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 7
+   },
    "soldBy": [
     "item"
    ],
@@ -791,6 +994,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "233238ee-adeb-4405-8045-49fa07370f37",
+    "name": "Port Tressler",
+    "system": "stanton",
+    "observations": 68,
+    "located": 74,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 5
+   },
    "soldBy": [
     "item"
    ],
@@ -855,6 +1070,22 @@
     }
    ],
    "confidence": "none",
+   "outcome": "unplaced",
+   "location": {
+    "tier": "none",
+    "id": null,
+    "name": null,
+    "system": null,
+    "observations": 0,
+    "located": 42,
+    "contradictions": 0,
+    "split": {
+     "pyro": 12,
+     "nyx": 6,
+     "stanton": 24
+    },
+    "contributors": 0
+   },
    "soldBy": [
     "item"
    ],
@@ -922,6 +1153,21 @@
     }
    ],
    "confidence": "none",
+   "outcome": "unplaced",
+   "location": {
+    "tier": "none",
+    "id": null,
+    "name": null,
+    "system": null,
+    "observations": 0,
+    "located": 46,
+    "contradictions": 0,
+    "split": {
+     "stanton": 44,
+     "pyro": 2
+    },
+    "contributors": 0
+   },
    "soldBy": [
     "item"
    ],
@@ -950,6 +1196,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 40,
+    "located": 40,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -1003,6 +1261,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 36,
+    "located": 36,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 4
+   },
    "soldBy": [
     "item"
    ],
@@ -1029,6 +1299,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 32,
+    "located": 32,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 4
+   },
    "soldBy": [
     "item"
    ],
@@ -1078,6 +1360,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 20,
+    "located": 30,
+    "contradictions": 10,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -1108,6 +1402,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "body",
+    "id": "8c462714-a82e-4d91-8d13-33b325a8efa5",
+    "name": "Terminus",
+    "system": "pyro",
+    "observations": 2,
+    "located": 30,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -1136,6 +1442,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "body",
+    "id": "ac826dfb-7142-4a15-bcdd-8e15d337ad1f",
+    "name": "Pyro IV",
+    "system": "pyro",
+    "observations": 11,
+    "located": 30,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -1167,6 +1485,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage",
+    "system": "stanton",
+    "observations": 28,
+    "located": 28,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -1196,6 +1526,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 23,
+    "located": 27,
+    "contradictions": 4,
+    "split": {},
+    "contributors": 3
+   },
    "soldBy": [
     "item"
    ],
@@ -1227,6 +1569,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 24,
+    "located": 26,
+    "contradictions": 2,
+    "split": {},
+    "contributors": 8
+   },
    "soldBy": [
     "refinery"
    ],
@@ -1255,6 +1609,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "77ed5653-bd14-4952-b904-afd79faeef60",
+    "name": "Nyx",
+    "system": "nyx",
+    "observations": 26,
+    "located": 26,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 3
+   },
    "soldBy": [
     "item"
    ],
@@ -1302,6 +1668,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+    "name": "Orison",
+    "system": "stanton",
+    "observations": 24,
+    "located": 24,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 3
+   },
    "soldBy": [
     "item"
    ],
@@ -1345,6 +1723,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "45d2d370-9fab-4e6b-b84b-e9c913bc316a",
+    "name": "Seraphim Station",
+    "system": "stanton",
+    "observations": 4,
+    "located": 22,
+    "contradictions": 18,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -1374,6 +1764,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 18,
+    "located": 18,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -1410,6 +1812,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
+    "name": "Grim HEX",
+    "system": "stanton",
+    "observations": 17,
+    "located": 17,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "commodity"
    ],
@@ -1455,6 +1869,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage",
+    "system": "stanton",
+    "observations": 16,
+    "located": 16,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -1494,6 +1920,21 @@
     }
    ],
    "confidence": "none",
+   "outcome": "unplaced",
+   "location": {
+    "tier": "none",
+    "id": null,
+    "name": null,
+    "system": null,
+    "observations": 0,
+    "located": 16,
+    "contradictions": 0,
+    "split": {
+     "stanton": 14,
+     "nyx": 2
+    },
+    "contributors": 0
+   },
    "soldBy": [
     "item"
    ],
@@ -1545,6 +1986,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 10,
+    "located": 14,
+    "contradictions": 4,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -1592,6 +2045,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage",
+    "system": "stanton",
+    "observations": 14,
+    "located": 14,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 4
+   },
    "soldBy": [
     "item"
    ],
@@ -1623,6 +2088,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "1b236025-3b0d-489b-a3c1-52bec07693c6",
+    "name": "Frostbite",
+    "system": "stanton",
+    "observations": 14,
+    "located": 14,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -1649,6 +2126,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 4,
+    "located": 4,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -1680,6 +2169,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+    "name": "Orison",
+    "system": "stanton",
+    "observations": 8,
+    "located": 12,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 3
+   },
    "soldBy": [
     "item"
    ],
@@ -1710,6 +2211,18 @@
    "candidates": [],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "be8ed35b-74da-49ac-816c-028c4c833669",
+    "name": "Pyro3 Outpost Col M Scrp Indy 001",
+    "system": "pyro",
+    "observations": 12,
+    "located": 12,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -1755,6 +2268,18 @@
    ],
    "places": [],
    "confidence": "confident",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage",
+    "system": "stanton",
+    "observations": 12,
+    "located": 12,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -1781,6 +2306,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 12,
+    "located": 12,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -1817,6 +2354,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
+    "name": "Grim HEX",
+    "system": "stanton",
+    "observations": 12,
+    "located": 12,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -1843,6 +2392,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 10,
+    "located": 10,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -1884,6 +2445,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18",
+    "system": "stanton",
+    "observations": 10,
+    "located": 10,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -1913,6 +2486,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 10,
+    "located": 10,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -1942,6 +2527,18 @@
    "candidates": [],
    "places": [],
    "confidence": "confident",
+   "outcome": "named",
+   "location": {
+    "tier": "place",
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18",
+    "system": "stanton",
+    "observations": 8,
+    "located": 8,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 3
+   },
    "soldBy": [
     "item"
    ],
@@ -1968,6 +2565,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "body",
+    "id": "ee842006-2374-4fe9-939d-8f02ac8cd4f3",
+    "name": "Monox",
+    "system": "pyro",
+    "observations": 8,
+    "located": 8,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -1994,6 +2603,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "77ed5653-bd14-4952-b904-afd79faeef60",
+    "name": "Nyx",
+    "system": "nyx",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -2022,6 +2643,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 6,
+    "located": 6,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2069,6 +2702,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+    "name": "Orison",
+    "system": "stanton",
+    "observations": 6,
+    "located": 6,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -2116,6 +2761,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+    "name": "Orison",
+    "system": "stanton",
+    "observations": 6,
+    "located": 6,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2145,6 +2802,18 @@
    "candidates": [],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "ebe4b6d6-9013-4ad9-bd25-7a8390262c4b",
+    "name": "HUR L2",
+    "system": "stanton",
+    "observations": 6,
+    "located": 6,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2188,6 +2857,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "233238ee-adeb-4405-8045-49fa07370f37",
+    "name": "Port Tressler",
+    "system": "stanton",
+    "observations": 5,
+    "located": 5,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2229,6 +2910,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18",
+    "system": "stanton",
+    "observations": 5,
+    "located": 5,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -2268,6 +2961,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
+    "name": "Lorville",
+    "system": "stanton",
+    "observations": 4,
+    "located": 4,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 4
+   },
    "soldBy": [
     "item"
    ],
@@ -2317,6 +3022,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 2,
+    "located": 4,
+    "contradictions": 2,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -2345,6 +3062,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 4,
+    "located": 4,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "refinery"
    ],
@@ -2386,6 +3115,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18",
+    "system": "stanton",
+    "observations": 4,
+    "located": 4,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -2435,6 +3176,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 4,
+    "located": 4,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2464,6 +3217,18 @@
    "candidates": [],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "c67d1b8f-32ee-4fe1-8a66-bd1bfa04c5c0",
+    "name": "CRU L4",
+    "system": "stanton",
+    "observations": 4,
+    "located": 4,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -2509,6 +3274,18 @@
     }
    ],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 3,
+    "located": 3,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "refinery"
    ],
@@ -2558,6 +3335,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 3,
+    "located": 3,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 3
+   },
    "soldBy": [
     "item"
    ],
@@ -2594,6 +3383,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
+    "name": "Grim HEX",
+    "system": "stanton",
+    "observations": 3,
+    "located": 3,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 2
+   },
    "soldBy": [
     "item"
    ],
@@ -2633,6 +3434,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
+    "name": "Lorville",
+    "system": "stanton",
+    "observations": 1,
+    "located": 2,
+    "contradictions": 1,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2674,6 +3487,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
+    "name": "Lorville",
+    "system": "stanton",
+    "observations": 2,
+    "located": 2,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2723,6 +3548,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 2,
+    "located": 2,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2764,6 +3601,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18",
+    "system": "stanton",
+    "observations": 2,
+    "located": 2,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2790,6 +3639,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "77ed5653-bd14-4952-b904-afd79faeef60",
+    "name": "Nyx",
+    "system": "nyx",
+    "observations": 2,
+    "located": 2,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2839,6 +3700,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 2,
+    "located": 2,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2865,6 +3738,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 2,
+    "located": 2,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2891,6 +3776,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 2,
+    "located": 2,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2917,6 +3814,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 2,
+    "located": 2,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2943,6 +3852,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "34ff378f-faee-47bb-b5fe-f505e665c5ca",
+    "name": "Stanton",
+    "system": "stanton",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -2975,6 +3896,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "dc44d171-0090-4d5b-87ed-637b4a43fce1",
+    "name": "Rappel",
+    "system": "stanton",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -3001,6 +3934,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -3046,6 +3991,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "122e8057-831d-4517-a23b-0eb8382b90a2",
+    "name": "New Babbage",
+    "system": "stanton",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -3087,6 +4044,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+    "name": "Area18",
+    "system": "stanton",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -3130,6 +4099,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "ab29f65e-c792-4b1f-b23d-5810cb0ef416",
+    "name": "Everus Harbor",
+    "system": "stanton",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -3169,6 +4150,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
+    "name": "Lorville",
+    "system": "stanton",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "commodity"
    ],
@@ -3218,6 +4211,18 @@
    ],
    "places": [],
    "confidence": "provisional",
+   "outcome": "placed",
+   "location": {
+    "tier": "place",
+    "id": "468d4102-a210-47b5-8bc3-084f791a173c",
+    "name": "Levski",
+    "system": "nyx",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
@@ -3244,6 +4249,18 @@
    "candidates": [],
    "places": [],
    "confidence": "none",
+   "outcome": "placed",
+   "location": {
+    "tier": "system",
+    "id": "a14bec87-5801-4440-8ca8-35597487ac9a",
+    "name": "Pyro",
+    "system": "pyro",
+    "observations": 1,
+    "located": 1,
+    "contradictions": 0,
+    "split": {},
+    "contributors": 1
+   },
    "soldBy": [
     "item"
    ],
