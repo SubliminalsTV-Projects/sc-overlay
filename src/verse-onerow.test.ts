@@ -414,4 +414,34 @@ eq(mergePlacements([{ token: "T", terminal: null, precision: null, kind: null, p
   eq(places[0], "Orison", "and the place that led still leads; cohesion may not reorder places");
 }
 
+/* ── 9. A placed row is ranked by WHERE IT IS, not by having no terminal ─────────────────────── */
+
+/**
+ * 🔴 THIS BLOCK EXISTS BECAUSE A CONTROL CAME BACK GREEN. Section 8 groups on the place STRING, so
+ * gutting `placeOf`'s `q.placeId ?? …` changed nothing there and the assertion looked like coverage
+ * it was not. What `placeId` actually buys is the CONTAINMENT tier: without it a synthesized row
+ * resolves to no place, `containmentOf` returns `elsewhere`, and a confirmation from the very shop
+ * the player is standing in sorts below every survey row in the game. That is Sub's whole ask
+ * ("still have it sorted by distance") failing silently on exactly the rows this flight added.
+ */
+{
+  const rows: ResolvedQuote[] = [
+    { terminal: "Ship Weapons - Crusader Showroom - Orison", system: "Stanton", body: "Crusader", place: "Orison", price: 100, asOf: NOW },
+    { terminal: "SCShop_Levski_Something", system: "Nyx", body: "Nyx", place: "Levski", price: 900, asOf: NOW, placeId: LEVSKI, observedOnly: true },
+  ];
+  const order = orderByProximity(rows, {
+    index: { byTerminal: new Map([["Ship Weapons - Crusader Showroom - Orison", ORISON]]), resolved: 1, total: 2, collisions: 0, ambiguous: 0 },
+    locations: LOCATIONS,
+    travel: { gateways: [], posOf: () => null, systemOf: () => null },
+    // The player is standing AT Levski, where the placed confirmation is.
+    origin: { tier: "place", id: LEVSKI, label: "Levski", ageMin: 400, stale: true, from: "test", detail: null, howToImprove: "" } as never,
+  });
+  const placed = order.quotes.find((q) => q.observedOnly)!;
+  ok(placed, "the placed row survived the ordering");
+  eq(placed.containment, "same-place",
+    "🔴 a placed confirmation is ranked by WHERE IT IS — its own placeId, not the terminal index");
+  eq(order.quotes[0].terminal, "SCShop_Levski_Something",
+    "so it leads, ahead of a cheaper survey row in another system — which is the ordering Sub asked for");
+}
+
 console.log(`verse one-row: all passed ${passed}/${passed}`);
