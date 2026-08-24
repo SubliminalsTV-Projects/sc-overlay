@@ -868,7 +868,13 @@
 
       for (const q of g.quotes) {
         const row = document.createElement("div");
-        row.className = "grow";
+        // 🔴 `obs` MARKS A ROW WE ADDED, AND THE WIDGET SUITE DEPENDS ON IT. Every survey assertion
+        // in VERSEFINDER is about UEX's own rows — "every shop row names its terminal", "this item
+        // has exactly five shops" — and a community row sitting in the same group would be counted
+        // as one of them, changing what those assertions measure without changing what they say.
+        // They used to say `.grp:not(.obgrp)`, which worked while the community rows were a group;
+        // now that they are rows, the marker has to be on the ROW.
+        row.className = "grow" + (q.observedOnly ? " obs" : "");
 
         const cf = q.confirmed || null;
 
