@@ -538,7 +538,7 @@ function placeVocab(
  * direction. It is rare — the pool's median observation is 26 days against UEX's 83 — and it is
  * counted as HANDLED rather than unplaced, because it is genuinely about that row.
  */
-function applyConfirmations(
+export function applyConfirmations(
   quotes: ResolvedQuote[],
   ctx: QuoteContext,
   deps: VerseDeps,

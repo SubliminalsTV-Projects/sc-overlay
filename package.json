@@ -82,7 +82,8 @@
     "probe:sellunit": "tsx tools/probe-sellunit.ts",
     "control:sellvolume": "node tools/control-sellvolume.mjs",
     "test:itemshoplog": "tsx src/item-shop-log.test.ts",
-    "measure:itemshops": "tsx tools/measure-item-shops.mts"
+    "measure:itemshops": "tsx tools/measure-item-shops.mts",
+    "test:onerow": "tsx src/verse-onerow.test.ts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
