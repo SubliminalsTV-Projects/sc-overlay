@@ -22,6 +22,12 @@ interface CommObs extends CommodityPurchase { log: string; usr: string }
 
 const NOW = Date.parse("2026-08-24T00:00:00Z");
 
+/** aUEC per SCU, or null when the game never stated enough to know it. Since flight `sellvolume`
+ *  this lives behind a discriminated union, so there is no `?? 0` to fall into. */
+const perScu = (p: CommodityPurchase): number | null => (p.unitPrice.known ? p.unitPrice.perScu : null);
+/** SCU that changed hands, or null on a sell with no cargo-box manifest. */
+const volScu = (p: CommodityPurchase): number | null => (p.volume.known ? p.volume.scu : null);
+
 function pct(a: number, b: number): string {
   return b ? `${((a / b) * 100).toFixed(1)}%` : "n/a";
 }
@@ -128,8 +134,8 @@ function main(): void {
   }
 
   // ── COMMODITIES ──────────────────────────────────────────────────────────────────────────
-  const commRaw = comms.filter((p) => p.confirmed === true && p.shopName && p.resourceGuid && p.pricePerScu !== null && p.pricePerScu > 0);
-  const commDd = dedupe(commRaw, (p) => `${p.resourceGuid}|${p.kind}|${p.scu}|${p.total}`);
+  const commRaw = comms.filter((p) => p.confirmed === true && p.shopName && p.resourceGuid);
+  const commDd = dedupe(commRaw, (p) => `${p.resourceGuid}|${p.kind}|${volScu(p) ?? "?"}|${p.total}`);
   // 🔴 A SELL WITH NO BOX DATA HAS AN UNKNOWABLE VOLUME, SO ITS PER-SCU PRICE IS NOT A PRICE.
   //
   // A BUY states `shopPricePerCentiSCU` outright (101 of 101 in this corpus). A SELL states no
@@ -141,7 +147,15 @@ function main(): void {
   //
   // Keeping them would have reported Tungsten swinging 256 -> 8,157 aUEC/SCU in thirteen
   // seconds and called it a market.
-  const commUsable = commDd.kept.filter((p) => p.kind === "buy" || (p.boxScu !== null && p.unitAmount !== null));
+  //
+  // ⚠️ SINCE flight `sellvolume` THE PARSER SAYS SO IN THE TYPE: `unitPrice` is a discriminated
+  // union and an unknown-volume sell arrives `known: false`. So the filter is `unitPrice.known`,
+  // not a hand-rolled box-data test. This file read `p.pricePerScu` — a field the rename deleted —
+  // until 2026-08-24, which made every commodity figure below report a confident **0**.
+  const commUsable = commDd.kept.filter((p) => {
+    const per = perScu(p);
+    return per !== null && per > 0;
+  });
   const commUnknownVol = commDd.kept.length - commUsable.length;
   const commOk = commUsable;
   const commPairs = new Map<string, CommObs[]>();
@@ -306,8 +320,8 @@ function main(): void {
       const vals = (c?.prices ?? []).map((x) => (p.kind === "buy" ? x.buy : x.sell)).filter((v): v is number => !!v && v > 0);
       if (!vals.length) { cNo++; continue; }
       const lo = Math.min(...vals), hi = Math.max(...vals);
-      if (p.pricePerScu! >= lo * 0.9 && p.pricePerScu! <= hi * 1.1) cIn++;
-      else { cOut++; if (cOutliers.length < 6) cOutliers.push(`${c.name} ${p.kind} @ ${p.shopName}: we read ${p.pricePerScu!.toFixed(0)}, UEX spans ${lo}-${hi}`); }
+      if (perScu(p)! >= lo * 0.9 && perScu(p)! <= hi * 1.1) cIn++;
+      else { cOut++; if (cOutliers.length < 6) cOutliers.push(`${c.name} ${p.kind} @ ${p.shopName}: we read ${perScu(p)!.toFixed(0)}, UEX spans ${lo}-${hi}`); }
     }
     say("=".repeat(78));
     say("2c. DO OUR COMMODITY READS AGREE WITH THE UEX SNAPSHOT? (commodity axis only)");
@@ -323,7 +337,7 @@ function main(): void {
         const c = cj.commodities[p.resourceGuid!];
         const vals = (c?.prices ?? []).map((x) => (p.kind === "buy" ? x.buy : x.sell)).filter((v): v is number => !!v && v > 0);
         if (!vals.length) continue;
-        if (p.pricePerScu! >= Math.min(...vals) * 0.9 && p.pricePerScu! <= Math.max(...vals) * 1.1) i++; else o++;
+        if (perScu(p)! >= Math.min(...vals) * 0.9 && perScu(p)! <= Math.max(...vals) * 1.1) i++; else o++;
       }
       return `${i} in / ${o} out (${pct(i, i + o)} in)`;
     };
@@ -407,7 +421,7 @@ function main(): void {
   };
   const itemMv = movement(new Map([...itemPairs].map(([k, v]) => [k, v.map((p) => ({ at: p.at, price: p.unitPrice! }))])), "ITEMS (fixed shop prices expected)");
   say("");
-  const commMv = movement(new Map([...commPairs].map(([k, v]) => [k, v.map((p) => ({ at: p.at, price: p.pricePerScu! }))])), "COMMODITIES — all sides together");
+  const commMv = movement(new Map([...commPairs].map(([k, v]) => [k, v.map((p) => ({ at: p.at, price: perScu(p)! }))])), "COMMODITIES — all sides together");
   say("");
   // 🔴 THE SPLIT THAT DECIDES THE COMMODITY VERDICT. A BUY states its unit price; a SELL does
   // not, and the log does not reliably state the VOLUME either — two sells of Tungsten at
@@ -419,7 +433,7 @@ function main(): void {
   // unstated volume is reported as market movement.
   const bySide = (side: "buy" | "sell") =>
     new Map([...commPairs].filter(([k]) => (JSON.parse(k) as string[])[2] === side)
-      .map(([k, v]) => [k, v.map((p) => ({ at: p.at, price: p.pricePerScu! }))]));
+      .map(([k, v]) => [k, v.map((p) => ({ at: p.at, price: perScu(p)! }))]));
   movement(bySide("buy"), "COMMODITIES — BUYS only (unit price STATED by the game)");
   say("");
   movement(bySide("sell"), "COMMODITIES — SELLS only (unit price DERIVED from an unstated volume)");

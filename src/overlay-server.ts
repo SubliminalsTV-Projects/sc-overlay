@@ -27,6 +27,9 @@ import { tradeRoutes, tradeTable } from "./trade-routes.js";
 // records observed ITEM prices, the half of the shop data the app had never read. One wrapper so
 // the three sites cannot drift; see `price-feed.ts`.
 import { initPriceFeed, observedPrices, priceFeedLine } from "./price-feed.js";
+// The COMMUNITY half of the same idea: everybody else's receipts, fetched from the site. The
+// app only ever READS this — nothing uploads from a player's machine in this slice.
+import { PricePoolStore } from "./price-pool.js";
 import { verseRoutes } from "./verse-routes.js";
 import { largestBoxScu } from "./cargo-boxes.js";
 import {
@@ -681,6 +684,12 @@ const tradeDeps = {
 // Observed prices — what the player actually paid, as opposed to what UEX's survey says. Stood up
 // before any seed runs, because the seed is where a purchase from before this launch is found.
 initPriceFeed(userDir);
+// 🔑 STARTED, not merely constructed: the constructor adopts the disk cache (so a widget opened
+// offline still shows the last known pool) and `start()` is what asks the site for a fresher one.
+// Failure is silent by design — a pool that cannot be reached must never take a search down with
+// it, and `status()` carries the reason for /api/diagnostics.
+const pricePool = new PricePoolStore(userDir);
+pricePool.start();
 
 /**
  * Commodity display name -> `resourceGUID`, built once from the economy dataset.
@@ -2171,6 +2180,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // What the player actually paid, borrowed read-only from the price feed. Read at request time
     // for the same reason the table above is: it changes as they shop.
     observed: () => observedPrices(),
+    // Everybody else's receipts. A SEPARATE borrow from `observed` above, because the two answer
+    // different questions: yours is a fact about you at n=1, the pool is a median over strangers
+    // carrying a contributor count. `observedFor` merges them per terminal at render time.
+    pool: () => pricePool,
     // A commodity row carries no UUID (it is built from UEX's name-keyed table) while a purchase
     // states only `resourceGUID`, so the two halves meet through our own dataset. Memoised: the
     // map is 738 entries and the dataset only changes on a patch flip.

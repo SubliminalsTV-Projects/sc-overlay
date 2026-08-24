@@ -185,6 +185,20 @@ export interface ObservedQuote {
   /** 🔴 A commodity has a buy price AND a sell price at one terminal and they are not
    *  interchangeable. Absent on every item (no item sell verb exists in 533 logs). */
   side?: "sell";
+  /** 🔴 HOW MANY PEOPLE HAVE CONFIRMED THIS PRICE — not how many receipts exist. One player
+   *  buying ammunition twenty times at one shop is twenty receipts and ONE witness, and a row
+   *  that counted receipts would present that as consensus. */
+  contributors: number;
+  /** Observations behind the row. The widget shows it only while the evidence is thin, so the
+   *  number appears exactly when it is the thing you need to know. */
+  samples: number;
+  /** The site's own label, computed against ITS threshold rather than one the widget hardcoded.
+   *  n=1 still publishes — a hard corroboration gate publishes nothing at this app's volume. */
+  confidence: "seen-once" | "corroborated" | "confirmed";
+  /** 🔑 True when one of the confirmations was this player's own purchase. A FOOTNOTE on a
+   *  price, never the headline: Sub's whole complaint about the previous design was that it told
+   *  him what he had bought instead of what the thing costs. */
+  mine: boolean;
 }
 
 export interface SearchHit {
