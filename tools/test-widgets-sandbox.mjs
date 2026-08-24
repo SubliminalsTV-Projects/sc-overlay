@@ -129,6 +129,12 @@ const env = {
   // makes the run repeatable: the tables come from the repo, not from what the site serves today.
   SC_TRADE_URL: "",
   SC_VERSE_URL: "",
+  // 🔴 THE COMMUNITY POOL IS OFF BY DEFAULT FOR THE SAME REASON THE OTHER TWO ARE. It is a LIVE
+  // endpoint whose contents change whenever anybody shops, so a suite that fetched it would pass
+  // or fail on what strangers did this afternoon — the worst kind of flake, because it looks like
+  // a regression in the widget. Set SC_POOL_URL yourself (a file server, a site dev server) when
+  // you want to exercise the live path deliberately.
+  SC_POOL_URL: process.env.SC_POOL_URL ?? "",
 };
 
 const tsx = join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");

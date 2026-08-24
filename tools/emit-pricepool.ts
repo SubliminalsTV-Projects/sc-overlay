@@ -62,6 +62,14 @@ interface Row { id: string; usr: string; kind: string; created: string; ord: num
 export interface PoolWireRow {
   /** `site.bp_shared_logs.id`. The site resolves this to a contributor; see the header. */
   logId: string;
+  /** 🔴 THE CONTRIBUTOR, AS A HASH — the FALLBACK when `logId` no longer resolves.
+   *
+   *  A LIVE log row is REPLACED on every upload tick whose content changed, so its primary key
+   *  is not stable: one row disappeared between the corpus pull and the backfill apply twenty
+   *  minutes later, and it took the attribution for Sub's own Cruise Lux with it. `substr(md5(
+   *  owner_email),1,12)` comes out of the extract query, survives the row being replaced, and
+   *  discloses nothing — the site resolves it back with the same expression. */
+  usr: string;
   kind: "item" | "commodity";
   side: "buy" | "sell";
   /** `itemClassGUID` or `resourceGUID`, lowercased. The one clean join in either subsystem. */
@@ -118,7 +126,7 @@ function dedupeKey(r: PoolWireRow, usr: string): string {
   return JSON.stringify([usr, r.at, r.kind, r.id, r.terminal, r.side, r.total]);
 }
 
-function itemRow(p: ItemPurchase, logId: string): PoolWireRow | null {
+function itemRow(p: ItemPurchase, logId: string, usr: string): PoolWireRow | null {
   if (p.confirmed !== true) return null;
   // 🔴 `rent` is not a price. Every rental in the corpus is logged at `client_price[0]`, and a
   // zero published as a price would read as "this is free".
@@ -127,6 +135,7 @@ function itemRow(p: ItemPurchase, logId: string): PoolWireRow | null {
   if (p.unitPrice === null || !(p.unitPrice > 0)) return null;
   return {
     logId,
+    usr,
     kind: "item",
     side: "buy",
     id: p.itemGuid.toLowerCase(),
@@ -144,7 +153,7 @@ function itemRow(p: ItemPurchase, logId: string): PoolWireRow | null {
   };
 }
 
-function commodityRow(p: CommodityPurchase, logId: string): PoolWireRow | null {
+function commodityRow(p: CommodityPurchase, logId: string, usr: string): PoolWireRow | null {
   if (p.confirmed !== true) return null;
   if (!p.shopName || !p.resourceGuid) return null;
   // 🔴 THE UNION IS THE FILTER. A sell with no cargo-box manifest arrives `known: false` and there
@@ -154,6 +163,7 @@ function commodityRow(p: CommodityPurchase, logId: string): PoolWireRow | null {
   if (p.total === null) return null;
   return {
     logId,
+    usr,
     kind: "commodity",
     side: p.kind,
     id: p.resourceGuid.toLowerCase(),
@@ -216,7 +226,7 @@ export function emit(rows: Row[]): { out: PoolWireRow[]; stats: Stats } {
     for (const p of items) {
       stats.itemRequests++;
       if (p.confirmed === true) stats.itemConfirmed++;
-      const row = itemRow(p, logId);
+      const row = itemRow(p, logId, usr);
       if (!row) continue;
       const k = dedupeKey(row, usr);
       if (seen.has(k)) { stats.dupItem++; continue; }
@@ -227,7 +237,7 @@ export function emit(rows: Row[]): { out: PoolWireRow[]; stats: Stats } {
     for (const p of comms) {
       stats.commRequests++;
       if (p.confirmed === true) stats.commConfirmed++;
-      const row = commodityRow(p, logId);
+      const row = commodityRow(p, logId, usr);
       if (!row) {
         if (p.confirmed === true && p.shopName && p.resourceGuid && !p.volume.known) {
           stats.droppedUnknownVolume++;

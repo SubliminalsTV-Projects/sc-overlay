@@ -48,6 +48,7 @@ import { join } from "node:path";
 import { ItemShopStore, type ItemShopTable } from "./item-shops.js";
 import { searchItems, searchUnpriced, provenance, type SearchHit, type ResolvedQuote, type ObservedQuote } from "./item-search.js";
 import type { ObservedPriceStore } from "./observed-prices.js";
+import type { PoolQuote } from "./price-pool.js";
 import { searchCommodities, sellOnlyMatches } from "./verse-commodities.js";
 import type { TradeTable } from "./trade-prices.js";
 import {
@@ -132,6 +133,19 @@ export interface VerseDeps {
    * which is the state every player is in before they buy anything anyway.
    */
   observed?: () => ObservedPriceStore | null;
+  /**
+   * The COMMUNITY price pool — what everybody else has paid, fetched from the site.
+   *
+   * 🔴 A BORROW like the two above, and the reason it is a separate dependency from `observed` is
+   * that the two answer different questions and only one of them can be wrong about you. Your own
+   * receipt is a fact about you at n=1; a pooled quote is a median over strangers and carries a
+   * contributor count. Merging the STORES would lose that distinction; merging the ROWS at render
+   * time, which is what `observedFor` does, keeps it.
+   *
+   * Optional: without it the widget shows only this player's own receipts, which is exactly the
+   * state the feature was in before the pool existed.
+   */
+  pool?: () => { forId(kind: "item" | "commodity", id: string): PoolQuote[]; confirmThreshold(): number } | null;
   /**
    * A commodity's display name -> its `resourceGUID`.
    *
@@ -303,39 +317,122 @@ function originPayload(origin: OriginVerdict) {
  * ⚠️ A SELL is only ever offered for a commodity, and only alongside its buy rows. An item cannot
  * be sold back at all (no sell verb exists in 533 logs), so an item row can never carry one.
  */
+/**
+ * 🔴 AND SINCE FLIGHT `poolfill` IT IS NOT ONLY THIS PLAYER'S RECEIPTS — THE COMMUNITY POOL IS
+ * MERGED IN, PER TERMINAL, AND THAT CHANGES WHAT THE ROW IS.
+ *
+ * Sub's complaint was not that the number was missing. It was that it was a receipt:
+ *
+ *   "I bought Cruise Lux at Levski Cargo Office 20 hours ago, but under Levski it doesn't show
+ *    that updated price. It just says 'you paid'... I don't really need it to tell me what I
+ *    bought. I just wanted to update the price for everybody."
+ *
+ * So a row is now a PRICE at a shop, carrying who has confirmed it and how recently, and whether
+ * one of those people was you. `mine` is a footnote on a price, not the headline it used to be.
+ *
+ * 🔑 MERGED BY TERMINAL, NEVER CONCATENATED. The player's own purchase is very often also IN the
+ * pool — they were one of the 57 shared-log contributors — so appending the two lists would print
+ * the same shop twice with the same number and read as two independent confirmations of a price
+ * one person checked once. One row per shop, and `contributors` says how many people are behind
+ * it.
+ *
+ * 🔑 THE AGE IS THE NEWER OF THE TWO. It is a LATEST-CONFIRMATION field, and a local receipt from
+ * five minutes ago genuinely is a fresher confirmation than a pooled median whose newest sample
+ * is three days old. Taking the pool's age regardless would throw away the freshest evidence in
+ * the app — which is the one thing this feature exists to surface.
+ */
 function observedFor(hit: SearchHit, deps: VerseDeps): ObservedQuote[] | undefined {
   const store = deps.observed?.();
-  if (!store) return undefined;
+  const pool = deps.pool?.();
+  if (!store && !pool) return undefined;
   const kind = hit.kind === "commodity" ? "commodity" : "item";
   // An ITEM row carries the game's UUID outright. A COMMODITY row never does — see
   // `commodityUuid` — so it is resolved from the name through our own dataset.
   const id = kind === "commodity" ? hit.uuid ?? deps.commodityUuid?.(hit.name) ?? null : hit.uuid;
   if (!id) return undefined;
-  const rows = [
-    ...store.latestPerTerminal(kind, id, "buy"),
-    // Commodities only — see above. Shown so a player who sold Laranite here can see what they
-    // got, which the survey half of the widget cannot tell them at all.
-    ...(kind === "commodity" ? store.latestPerTerminal(kind, id, "sell") : []),
-  ];
-  if (!rows.length) return undefined;
-  return rows
-    .sort((a, b) => b.at - a.at)
-    .slice(0, OBSERVED_SHOWN)
-    .map((r) => ({
+
+  const byTerminal = new Map<string, ObservedQuote>();
+  // 🔑 The pool goes in FIRST so that a local receipt merges INTO a community row rather than
+  // creating a second one. Key includes the side: a commodity's buy and sell prices at one
+  // terminal are different numbers and must never collapse together.
+  const key = (terminal: string, side: "buy" | "sell") => JSON.stringify([terminal, side]);
+
+  for (const q of pool?.forId(kind, id) ?? []) {
+    // 🔴 A DERIVED COMMODITY SELL IS NOT A PRICE. The site marks it `publishable: false` because
+    // the log states the container's CAPACITY rather than its contents, so total/volume is a
+    // floor running a median 21% under the truth. Sub's ruling for this slice is that only what
+    // was observed may be shown, so it is dropped here rather than rendered with a caveat.
+    if (!q.publishable) continue;
+    if (kind !== "commodity" && q.side === "sell") continue;
+    byTerminal.set(key(q.terminal, q.side), {
+      terminal: q.terminal,
+      price: q.unitPrice,
+      // 🔴 THE QUOTE'S OWN ABSOLUTE MOMENT, never `now - ageSeconds`. That figure was measured on
+      // the site's clock when it answered, and the store keeps a payload for a quarter of an hour
+      // and a disk cache indefinitely — so subtracting it from `now` would make every quote read
+      // exactly as fresh as it was when fetched, forever. Seconds, to match `ResolvedQuote.asOf`:
+      // the widget's age helpers are shared and a milliseconds value renders as a date in 1970
+      // without failing anything.
+      asOf: q.atSeconds,
+      quantity: 1,
+      contributors: q.contributors,
+      samples: q.samples,
+      confidence: q.confidence,
+      mine: false,
+      ...(q.side === "sell" ? { side: "sell" as const } : {}),
+    });
+  }
+
+  const localRows = store
+    ? [
+        ...store.latestPerTerminal(kind, id, "buy"),
+        // Commodities only. Shown so a player who sold Laranite here can see what they got,
+        // which the survey half of the widget cannot tell them at all.
+        ...(kind === "commodity" ? store.latestPerTerminal(kind, id, "sell") : []),
+      ]
+    : [];
+  for (const r of localRows) {
+    const k = key(r.terminal, r.side);
+    const seconds = Math.round(r.at / 1000);
+    const existing = byTerminal.get(k);
+    if (existing) {
+      // Already in the pool. Keep the pool's median and its contributor count; take the newer
+      // timestamp, and record that one of those contributors was this player.
+      existing.mine = true;
+      if (seconds > existing.asOf) {
+        existing.asOf = seconds;
+        // The local receipt is the freshest evidence, so it is also the price to show — a median
+        // that predates it would be quoting an older reading than the app has in hand.
+        existing.price = r.unitPrice;
+      }
+      continue;
+    }
+    byTerminal.set(k, {
       terminal: r.terminal,
       price: r.unitPrice,
-      // Seconds, to match `ResolvedQuote.asOf` — the widget's age helpers are shared and a
-      // milliseconds value would render as a date in 1970 without failing anything.
-      asOf: Math.round(r.at / 1000),
+      asOf: seconds,
       quantity: r.quantity,
+      contributors: 1,
+      samples: 1,
+      confidence: "seen-once",
+      mine: true,
       ...(r.side === "sell" ? { side: "sell" as const } : {}),
-    }));
+    });
+  }
+
+  if (!byTerminal.size) return undefined;
+  return [...byTerminal.values()]
+    // Freshest confirmation first. Which shop is CHEAPEST is a decision only the player can make,
+    // and sorting by it here would quietly make it for them.
+    .sort((a, b) => b.asOf - a.asOf)
+    .slice(0, OBSERVED_SHOWN);
 }
 
-/** Receipts shown per item. A player who buys ammunition every session has dozens; the newest few
- *  are the answer to "what does this cost now", and the rest are history the widget does not have
- *  room to be honest about. */
-const OBSERVED_SHOWN = 3;
+/** Shops shown per item. A popular item has been bought at dozens; the most recently confirmed
+ *  few are the answer to "what does this cost now", and the rest are history the widget does not
+ *  have room to be honest about. Raised from 3 when the pool landed — with 57 contributors behind
+ *  it a single player's three receipts stopped being the whole list. */
+const OBSERVED_SHOWN = 5;
 
 function craftInfo(hit: SearchHit, tracker: TrackerLike | undefined): { craftable: true; owned: boolean } | null {
   if (!tracker || !hit.uuid) return null;

@@ -2691,6 +2691,129 @@ const EVENTLADDER = `(async () => {
   return out;
 })()`;
 
+// ── 🔴 THE COMMUNITY PRICE POOL, AS THE PLAYER READS IT (flight poolfill, 2026-08-24) ────────
+//
+// The block this guards used to be a green box labelled "you paid", drawn ABOVE the shop list.
+// Sub: "I don't really need it to tell me what I bought. I just wanted to update the price for
+// everybody." It is now the first GROUP in that list, in the same row idiom as every shop, and
+// what it carries is a price plus who confirmed it and when.
+//
+// 🔑 IT DRIVES `render()` DIRECTLY WITH A FIXTURE, and that is not laziness. The pool is a LIVE
+// endpoint whose contents change whenever anybody in the world shops, so a suite that fetched it
+// would pass or fail on what strangers did this afternoon — the worst kind of flake, because it
+// reads as a regression in the widget. `tools/test-widgets-sandbox.mjs` switches the pool off for
+// the same reason it switches the other two price endpoints off.
+// ⚠️ A BARE call, never `window.render` — a script-scoped `let`/`function` shadows an own-property
+// of the same name on `window`, so the qualified form reaches a binding the page never reads and
+// the suite then silently measures the sidecar's real board instead of the fixture.
+const VERSEPOOL = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  const nowSec = Math.round(Date.now() / 1000);
+  const DAY = 86400;
+  const fixture = {
+    query: "poolprobe",
+    results: [{
+      name: "Pool Probe Widget",
+      kind: "item",
+      quotes: [
+        { terminal: "A Survey Shop", system: "Stanton", body: null, place: "Somewhere",
+          price: 111, asOf: nowSec - 90 * DAY, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: null },
+      ],
+      observed: [
+        { terminal: "SCShop_Probe_Live", price: 7, asOf: nowSec - 120, quantity: 1,
+          contributors: 4, samples: 9, confidence: "confirmed", mine: true },
+        { terminal: "SCShop_Probe_Old", price: 7, asOf: nowSec - 200 * DAY, quantity: 1,
+          contributors: 1, samples: 1, confidence: "seen-once", mine: false },
+      ],
+    }],
+    origin: null,
+    order: null,
+  };
+  render(fixture);
+  await sleep(120);
+
+  const obgrp = document.querySelector("#results .grp.obgrp");
+  // POSITIVE FIRST. Every must-not below is free if this group never rendered at all, which is
+  // exactly what a fixture that failed to land produces.
+  ok("the observed prices render as a group in the shop list", !!obgrp,
+     obgrp ? "found" : "(no .grp.obgrp)");
+  const obRows = obgrp ? [...obgrp.querySelectorAll(".grow")] : [];
+  ok("both observations are drawn", obRows.length === 2, obRows.length + " rows");
+
+  // 🔴 SUB'S ACTUAL COMPLAINT. The words "you paid" were the whole problem — it was built as a
+  // receipt. Asserted against the group's own text, so a label put back anywhere in it is caught.
+  const obText = obgrp ? (obgrp.textContent || "").toLowerCase() : "";
+  ok("🔴 it does not call itself a receipt", obText.indexOf("you paid") === -1,
+     obText.slice(0, 80));
+
+  // 🔴 IT IS INSIDE THE SHOP LIST, NOT A BOX ABOVE IT. That relocation IS the fix; a block that
+  // renders the same rows outside .shops is the old design wearing new words.
+  const shops = document.querySelector("#results .shops");
+  ok("🔴 the group sits INSIDE the shop list", !!shops && !!obgrp && shops.contains(obgrp),
+     shops ? "shops contains obgrp: " + shops.contains(obgrp) : "(no .shops)");
+  // ...and FIRST, because these are the freshest numbers in the widget.
+  const groups = [...document.querySelectorAll("#results .grp")];
+  ok("it is the FIRST group", groups.length > 1 && groups[0] === obgrp,
+     groups.length + " groups, first is " + (groups[0] ? groups[0].className : "(none)"));
+
+  // 🔴 THE ROW IDIOM IS THE SURVEY'S. If an observation row is built out of different parts from
+  // a shop row it reads as a different kind of thing again, which is what was wrong before.
+  const parts = (row) => ["gshop", "age", "price"].filter((c) => !!row.querySelector("." + c));
+  ok("an observed row carries a shop, an age and a price like every other row",
+     obRows.length > 0 && obRows.every((r) => parts(r).length === 3),
+     obRows.map((r) => parts(r).join("+")).join(" | "));
+
+  // 🔴 THE BANDS. A two-minute-old confirmation and a 200-day-old one must not paint the same,
+  // which they did for months — none of the band classes had a colour rule anywhere.
+  const ages = obRows.map((r) => r.querySelector(".age"));
+  const bands = ages.map((a) => a.className.replace("age", "").trim());
+  ok("the fresh row is the live band and the old row is not",
+     bands[0] === "live" && bands[1] === "ancient", bands.join(" / "));
+  const colours = ages.map((a) => getComputedStyle(a).color);
+  ok("🔴 the two bands paint DIFFERENT colours", colours[0] !== colours[1], colours.join(" vs "));
+
+  // 🔑 PEOPLE, NOT RECEIPTS — and a lone observation gets no tag at all.
+  const tagText = (row) => [...row.querySelectorAll(".tag")].map((t) => t.textContent).join(",");
+  ok("a corroborated row says how many PEOPLE", tagText(obRows[0]).indexOf("4 people") >= 0,
+     tagText(obRows[0]));
+  ok("it counts people rather than the 9 purchases behind them",
+     tagText(obRows[0]).indexOf("9") === -1, tagText(obRows[0]));
+  ok("a single observation carries no count tag", tagText(obRows[1]).indexOf("people") === -1,
+     tagText(obRows[1]));
+
+  // 🔑 "you" IS A FOOTNOTE, NOT THE HEADLINE.
+  ok("the player's own purchase is marked on the row", tagText(obRows[0]).indexOf("you") >= 0,
+     tagText(obRows[0]));
+  ok("a row that is not yours is not marked", tagText(obRows[1]).indexOf("you") === -1,
+     tagText(obRows[1]));
+
+  // 🔴 IT MUST NEVER CLAIM TO BE A UEX ROW. 0 of 75 game shop tokens match a terminal name, so
+  // the two lists cannot be reconciled and the widget has to say so.
+  const survey = groups.find((g) => !g.classList.contains("obgrp"));
+  ok("the survey rows are still their own group", !!survey && survey !== obgrp,
+     survey ? survey.querySelector(".gplace").textContent : "(none)");
+  ok("no observed row was sorted into a survey group",
+     !!survey && [...survey.querySelectorAll(".grow")].every((r) =>
+       (r.querySelector(".gshop").textContent || "").indexOf("Probe") === -1),
+     survey ? survey.querySelectorAll(".grow").length + " survey rows" : "(none)");
+  ok("the group explains why the two lists are separate",
+     obText.indexOf("separately") >= 0, obText.slice(0, 160));
+
+  // 🔴 AND THE POINT OF THE WHOLE FEATURE: the same price, confirmed far more recently than the
+  // survey says. Asserted as a relation rather than as numbers, which would rot.
+  const surveyAge = survey ? survey.querySelector(".age").className : "";
+  ok("the observation is a fresher band than the survey quote beside it",
+     bands[0] === "live" && surveyAge.indexOf("stale") >= 0,
+     "observed=" + bands[0] + " survey=" + surveyAge);
+
+  return out;
+})()`;
+
 const VERSEFINDER = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
@@ -2814,24 +2937,62 @@ const VERSEFINDER = `(async () => {
   // test that expected specific colours would rot within a week.
   await search("cannon");
   const pills = [...document.querySelectorAll("#results .age")];
-  const BANDS = ["fresh", "recent", "stale", "ancient"];
+  // 🔴 RE-POINTED 2026-08-24, flight poolfill: a FIFTH band, live, sits at the fresh end for a
+  // reading from the last hour — the band the community pool exists to produce. The old list of
+  // four would go red on a perfectly correct pill the first time UEX served a row somebody had
+  // updated that morning.
+  const BANDS = ["live", "fresh", "recent", "stale", "ancient"];
   ok("every age pill carries exactly one band class", pills.length > 0 && pills.every((p) => {
     const hit = BANDS.filter((b) => p.classList.contains(b));
     return hit.length === 1;
   }), pills.length + " pills");
+  // 🔴 AND THE BANDS MUST ACTUALLY BE PAINTED. This is what was missing for months: every one of
+  // these classes was being applied and NONE of them had a colour rule anywhere — not in this
+  // page, not in widget-theme.css, not in any of the 15 skins — so a computed band produced no
+  // visible difference at all, and a comment in the page asserted the opposite. Assert the
+  // rendered colours DIFFER rather than naming values, which would rot with every skin.
+  {
+    const probe = document.createElement("div");
+    document.body.appendChild(probe);
+    const seen = {};
+    for (const band of BANDS) {
+      const el = document.createElement("span");
+      el.className = "age " + band;
+      el.textContent = "1d";
+      probe.appendChild(el);
+      seen[band] = getComputedStyle(el).color;
+    }
+    const vals = BANDS.map((k) => seen[k]);
+    ok("🔴 each recency band paints its own colour", vals.filter((v, i) => vals.indexOf(v) === i).length >= 4,
+       BANDS.map((k) => k + "=" + seen[k]).join("  "));
+    // A colourless token — the --good trap, defined in no theme — resolves to the INHERITED
+    // colour, so every band would read identically while looking deliberate in the source.
+    // Naming that failure separately makes it diagnosable instead of a bare count.
+    const bare = document.createElement("span");
+    bare.className = "age";
+    probe.appendChild(bare);
+    const inherited = getComputedStyle(bare).color;
+    ok("no band falls back to the unstyled pill's inherited colour",
+       BANDS.filter((k) => seen[k] === inherited).length === 0,
+       "inherited=" + inherited + "  " + BANDS.map((k) => k + "=" + seen[k]).join("  "));
+    probe.remove();
+  }
   // Parse the rendered text back and check it agrees with the band it was given.
   const bandOf = (txt) => {
     const m = /^(\\d+)(d|mo)$/.exec(txt.trim());
-    if (txt.trim() === "today") return "fresh";
+    // ⚠️ "today" covers BOTH live and fresh — the printed text cannot separate an hour from six
+    // days, so this accepts either rather than pretending to a precision it does not have.
+    if (txt.trim() === "today") return "today";
     if (!m) return null;
     const d = m[2] === "mo" ? Number(m[1]) * 30 : Number(m[1]);
     return d <= 7 ? "fresh" : d <= 45 ? "recent" : d <= 100 ? "stale" : "ancient";
   };
+  const agrees = (want, got) => (want === "today" ? (got === "live" || got === "fresh") : want === got);
   const checked = pills.map((p) => ({ want: bandOf(p.textContent), got: BANDS.find((b) => p.classList.contains(b)) }))
     .filter((x) => x.want !== null);
-  ok("the band really matches the age it prints", checked.length > 0 && checked.every((x) => x.want === x.got),
+  ok("the band really matches the age it prints", checked.length > 0 && checked.every((x) => agrees(x.want, x.got)),
      checked.length + " checked, first mismatch: "
-     + (checked.find((x) => x.want !== x.got) ? JSON.stringify(checked.find((x) => x.want !== x.got)) : "none"));
+     + (checked.find((x) => !agrees(x.want, x.got)) ? JSON.stringify(checked.find((x) => !agrees(x.want, x.got))) : "none"));
 
   // 🔑 Price and age stay TOGETHER (Sub, 2026-08-21) — they answer the same question, and
   // splitting them to opposite edges made the eye travel to reconcile two halves of one fact.
@@ -7313,6 +7474,7 @@ app.whenReady().then(async () => {
     fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
     fails += await run("verse finder: ships, commodities, and which kind of blank", VERSEDEALERS, null, null, "versefinder.html");
     fails += await run("verse finder: the eye names the terminal that placed you", VERSEEYE, null, null, "versefinder.html");
+    fails += await run("verse finder: observations are PRICES, not receipts", VERSEPOOL, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
