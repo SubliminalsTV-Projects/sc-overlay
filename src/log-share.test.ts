@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { maybeShareLog, clearSkippedBackups } from "./log-share.js";
+import { maybeShareLog, clearSkippedBackups, hasShareSignal, wasUploadedUnderPreviousRules } from "./log-share.js";
 
 const root = mkdtempSync(join(tmpdir(), "logshare-"));
 const backups = join(root, "logbackups");
@@ -53,6 +53,21 @@ writeFileSync(join(backups, "no-signal.log"), header("4.9.188.23497") + "just ch
 writeFileSync(join(backups, "empty.log"), ""); // empty
 writeFileSync(join(backups, "notes.txt"), header("4.9.188.23497") + SIGNAL); // not a .log
 
+// 🔴 THE PRICE SESSION. Verbatim shapes, one per purchase family, so the widened rule is checked
+// against what the game really writes rather than against a paraphrase of it. Every line carries
+// "chat" so the whole file scrubs to nothing — the same offline trick as the fixtures above.
+const ITEM_BUY = `<2026-08-01T00:00:00.000Z> [Notice] <CEntityComponentShopUIProvider::SendShopBuyRequest> Sending SShopBuyRequest - playerId[201964486871] shopId[5061003307165] shopName[SCShop_lt_a_casaba_small_base_a-001] kioskId[5061003307166] client_price[3150.000000] itemClassGUID[b5f37920-ba9a-4a07-85e9-4d09f8e2f5ad] itemName[behr_lmg_ballistic_01_mag] quantity[6] chat\n`;
+const COMMODITY_BUY = `<2026-08-01T00:00:00.000Z> [Notice] <CEntityComponentCommodityUIProvider::SendCommodityBuyRequest> Sending SShopCommodityBuyRequest - playerId[204772220757] shopId[753612056089] shopName[SCShop_Outpost_Junksite] kioskId[753612056056] price[18792.000000] shopPricePerCentiSCU[187.919998] resourceGUID[06cafea0-49fe-4dce-b0f0-dc583316c66d] autoLoading[0] quantity[100.000000 cSCU] chat\n`;
+const RENTAL = `<2026-08-01T00:00:00.000Z> [Notice] <CEntityComponentShoppingProvider::SendRentalRequest> Sending SShopRentalRequest - playerId[201964486871] shopId[5061003307165] client_price[28665.000000] chat\n`;
+// A session that only OPENED a kiosk. These are the lines matching the parsers' own component
+// markers, and they carry no price at all — the reason the term is the request, not the component.
+const BROWSED_ONLY =
+  `<2026-08-01T00:00:00.000Z> [Error] <CShopInventory::LoadInventoryFromJSON> item record [9f047e7d-1324-473c-b944-03e87976f25a] is not in the class registry & could not be added to shop[Unknown Shop] inventory. chat\n` +
+  `<2026-08-01T00:00:00.000Z> [Notice] <CShoppingKioskContextComponent::CreatePurchasableInfo> Shopping Kiosk Context Component CreatePurchasableInfo chat\n` +
+  `<2026-08-01T00:00:00.000Z> [Error] <CEntityComponentShopUIProvider::ClGetSelectedLocationData> Invalid inventory selection chat\n`;
+const shopOnlyLog = chattyHeader("4.9.188.23497") + ITEM_BUY + COMMODITY_BUY;
+const missionLog = chattyHeader("4.9.188.23497") + `Added notification "Contract Accepted:  Ship In Distress: " [4] MissionId: [11111111-2222-3333-4444-555555555555] chat\n`;
+
 const cfg = { shareLogs: true, syncToken: "scbp_fake_token_for_test", logPath };
 
 const state = (p = statePath): { backups: string[]; skippedPatch: string[]; liveHash?: string } => {
@@ -71,6 +86,39 @@ try {
     "live-log fixture must scrub to empty — otherwise this test uploads to production");
   assert.equal(scrubGameLog(oldHaulLog).text.trim(), "",
     "old-patch haul fixture must scrub to empty — it clears the patch filter, so anything left would be POSTed");
+
+  // 🔴 THE PRICE TERM. RE_SIGNAL carried no shop or commodity term for its whole life, so a
+  // session in which the player only shopped was discarded on their own machine — measured at
+  // 28.4% of shopping sessions and 12.0% of transaction lines over 533 real logbackups.
+  //
+  // 🔑 Asserted against the EXPORTED rule rather than through the state file, because the state
+  // file cannot express this: an admitted session and a rejected one are both written to
+  // `backups`, so no end-to-end assertion here can tell them apart. Driving the rule directly is
+  // the only place the claim is falsifiable — narrowing RE_SIGNAL back reddens the four below.
+  //
+  // Positive first: the fixtures must really be sessions, or every "must not" is free.
+  assert(shopOnlyLog.length > 0 && missionLog.length > 0 && BROWSED_ONLY.length > 0, "the rule fixtures must be non-empty");
+  assert(hasShareSignal(shopOnlyLog), "a session whose only signal is a shop purchase must be worth uploading");
+  assert(hasShareSignal(chattyHeader("4.9.188.23497") + RENTAL), "…and a rental, which is a price observation like any other");
+  assert(hasShareSignal(missionLog), "a mission session must still qualify — the widening adds a term, it does not replace one");
+
+  // 🔴 SCOPE. The widening admits PRICE signal, not everything. A session that only opened a
+  // kiosk carries no price: these are the exact lines the parsers' own component markers match,
+  // and matching them recovers no extra transaction while admitting 33 sessions holding nothing.
+  assert(!hasShareSignal(chattyHeader("4.9.188.23497") + BROWSED_ONLY),
+    "browsing a shop is not a price — matching the component instead of the request admits 68.8% noise");
+  assert(!hasShareSignal(header("4.9.188.23497") + "just chatter\n"),
+    "a session with nothing in it must still be refused");
+
+  // The discriminator the rules reset rests on. `backups` holds genuine uploads AND rejections;
+  // this is what tells them apart, so it has to be right in both directions or the reset either
+  // re-sends a session or fails to recover one.
+  assert(!wasUploadedUnderPreviousRules(shopOnlyLog),
+    "the old rules rejected a shop-only session — that is the whole bug, and what makes it releasable");
+  assert(wasUploadedUnderPreviousRules(missionLog),
+    "the old rules UPLOADED a mission session, so it must never be released and sent twice");
+  assert(wasUploadedUnderPreviousRules(oldHaulLog),
+    "…nor may a cargo haul be released: the carve-out uploaded it under the old rules too");
 
   await maybeShareLog(cfg, "0.1.45", statePath);
   const after = done();
@@ -221,6 +269,88 @@ try {
   assert(t3.skippedPatch.length > 0, "a re-offered folder must be re-judged, not quietly forgotten");
   assert.deepEqual(t3.backups, [], "re-judging must still never blacklist an off-patch backup");
   rmSync(patchDir, { recursive: true, force: true });
+
+  // 🔴 A RULES CHANGE THAT ONLY LOOKS FORWARD RECOVERS NOTHING. A widened filter only ever meets
+  // sessions nobody has judged yet, and on a machine that has been running a while that is almost
+  // none of them — all 533 backups on Sub's own disk were already decided, 134 of them recorded in
+  // the final set. So the bump has to reach back into the verdicts the OLD rule wrote.
+  const rulesDir = mkdtempSync(join(tmpdir(), "logshare-rules-"));
+  const rulesBackups = join(rulesDir, "logbackups");
+  mkdirSync(rulesBackups);
+  const rulesLive = join(rulesDir, "game.log");
+  writeFileSync(rulesLive, liveLog); // states the current patch, scrubs to nothing
+  writeFileSync(join(rulesBackups, "shop.log"), shopOnlyLog);   // the old rules REJECTED this
+  writeFileSync(join(rulesBackups, "mission.log"), missionLog); // the old rules UPLOADED this
+  const rulesState = join(rulesDir, "s.json");
+  const rulesCfg = { ...cfg, logPath: rulesLive };
+  // A state file exactly as the previous build left it: both names recorded, a name set aside by
+  // the patch filter, schema v2, and NO `rules` field — which is what marks the rules as stale.
+  writeFileSync(rulesState, JSON.stringify({
+    v: 2, backups: ["shop.log", "mission.log"], skippedPatch: ["gone-off-patch.log"], liveHash: "",
+  }));
+
+  await maybeShareLog(rulesCfg, "0.1.46", rulesState);
+  const r1 = JSON.parse(readFileSync(rulesState, "utf8"));
+  // Positive first: the bump must actually have been noticed. Every claim below is satisfied for
+  // free by a run that did nothing at all, which is the other way this can fail.
+  assert.equal(r1.rules, 2, "the rules bump must be recorded, or it fires again on every tick forever");
+  assert.deepEqual(r1.skippedPatch, [],
+    "a rules change must re-offer what the old rules set aside — a rejection outlives the rule that made it");
+  assert(!r1.recheck?.length || Array.isArray(r1.recheck), "the pending re-judge list must be persisted, not held in memory");
+  // The mission session was uploaded under the old rules and must still be recorded. Releasing it
+  // would re-send it: 134 such names at one upload per 20-minute tick is 45 hours of duplicates.
+  assert(state(rulesState).backups.includes("mission.log"),
+    "a session the OLD rules uploaded must survive the reset — releasing it re-sends it");
+
+  // …and the shop session is reachable again. It scrubs to empty, so it resolves rather than
+  // uploading; what is being pinned is that it was RE-JUDGED at all, which the old build's final
+  // verdict made impossible.
+  for (let i = 0; i < 5; i++) await maybeShareLog(rulesCfg, "0.1.46", rulesState);
+  const r2 = JSON.parse(readFileSync(rulesState, "utf8"));
+  assert.deepEqual(r2.recheck, [], "the pending list must drain to empty, not stall part-way");
+  assert.equal(r2.rules, 2, "…and the rules version must not move again once stamped");
+
+  // Idempotence: a settled file must not be re-offered on every tick. This is the failure the
+  // `touchedShareLogs` incident was — a recovery gesture that fires repeatedly is a folder being
+  // re-read forever, not a recovery.
+  writeFileSync(join(rulesBackups, "late-off-patch.log"), header("4.8.184.64329") + SIGNAL);
+  await maybeShareLog(rulesCfg, "0.1.46", rulesState);
+  assert(state(rulesState).skippedPatch.includes("late-off-patch.log"), "a later off-patch backup is still set aside normally");
+  await maybeShareLog(rulesCfg, "0.1.46", rulesState);
+  assert(state(rulesState).skippedPatch.includes("late-off-patch.log"),
+    "a settled rules version must NOT clear the skipped list again — that is the re-offer-forever bug");
+  rmSync(rulesDir, { recursive: true, force: true });
+
+  // 🔴 THE RESET MUST NOT STAMPEDE. The whole hazard of re-opening old verdicts is that a heavy
+  // user has hundreds of them, so the drain has to be BOUNDED per tick and resumable, exactly like
+  // the rejection path it shares a budget with. Unbounded, this is a full-folder read of whole
+  // files (RE_HAUL does not live in the header) on the first tick after an update.
+  const burstDir = mkdtempSync(join(tmpdir(), "logshare-burst-"));
+  const burstBackups = join(burstDir, "logbackups");
+  mkdirSync(burstBackups);
+  const burstLive = join(burstDir, "game.log");
+  writeFileSync(burstLive, liveLog);
+  const RECORDED = 60;
+  const recordedNames: string[] = [];
+  for (let i = 0; i < RECORDED; i++) {
+    const n = `rec-${String(i).padStart(3, "0")}.log`;
+    recordedNames.push(n);
+    writeFileSync(join(burstBackups, n), missionLog); // all uploaded under the old rules
+  }
+  const burstState = join(burstDir, "s.json");
+  writeFileSync(burstState, JSON.stringify({ v: 2, backups: recordedNames, skippedPatch: [], liveHash: "" }));
+  await maybeShareLog({ ...cfg, logPath: burstLive }, "0.1.46", burstState);
+  const b1 = JSON.parse(readFileSync(burstState, "utf8"));
+  assert(b1.recheck.length > 0, `one tick drained all ${RECORDED} recorded backups — the re-judge is not bounded`);
+  assert(b1.recheck.length < RECORDED, "…and it must still make progress, or the drain never finishes");
+  // Every one of these was uploaded under the old rules, so not one may be released whatever the
+  // drain does — a bound that leaked here would show up as duplicate uploads, not as a slow tick.
+  assert.equal(b1.backups.length, RECORDED, "a bounded drain must not release a single genuine upload");
+  for (let i = 0; i < 10; i++) await maybeShareLog({ ...cfg, logPath: burstLive }, "0.1.46", burstState);
+  const b2 = JSON.parse(readFileSync(burstState, "utf8"));
+  assert.deepEqual(b2.recheck, [], "repeated ticks must finish the re-judge, a bounded slice at a time");
+  assert.equal(b2.backups.length, RECORDED, "…with every genuine upload still recorded at the end of it");
+  rmSync(burstDir, { recursive: true, force: true });
 
   // A missing logbackups/ must be survivable — plenty of installs have never rotated a log.
   const bare = mkdtempSync(join(tmpdir(), "logshare-bare-"));
