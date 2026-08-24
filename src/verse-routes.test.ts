@@ -150,6 +150,99 @@ const get = (path: string, deps: Partial<VerseDeps> = {}) => {
      "...and claims NO ordering basis, because nothing was ordered", JSON.stringify(r.body.order));
 }
 
+// ── 🔴 SUB'S REPORT, 2026-08-23: THE CAP WAS DELETING EVERY OUT-OF-SYSTEM SHOP ────────────────
+//
+// *"The Verse Finder can only show me what is available in this system. Which of course things in
+// the system should be at the top, but it shouldn't be excluded."*
+//
+// No filter was ever involved — `orderByProximity` ranks `elsewhere` last by design and the caller
+// kept the first N, and those two correct behaviours composed into an exclusion. This is the wiring
+// half of the fix: `reserveTierRows` is unit-tested in `test:proximity`, and what is asserted HERE
+// is that its answer survives all the way onto the wire, through the search's own truncation.
+//
+// 🔑 MedPen is the real reported shape: 157 shops spanning all four containment tiers, so a cap of
+// 5 lands entirely inside the two nearest ones. Counts are printed in every detail so the pairing
+// is visible rather than taken on faith.
+{
+  const signals = () => ({
+    atLocation: { token: "Area18", at: Date.now() - 30 * 60_000 },
+    system: "stanton",
+  });
+  const CAP = 5;   // what `versefinder.html` actually asks for
+  const tiersOf = (qs: any[]) => {
+    const m: Record<string, number> = {};
+    for (const q of qs) m[q.containment ?? "null"] = (m[q.containment ?? "null"] ?? 0) + 1;
+    return m;
+  };
+  const show = (m: Record<string, number>) =>
+    Object.entries(m).map(([k, v]) => `${k}:${v}`).join(" · ");
+
+  // The full ordered list, to know what the cap is choosing FROM.
+  const full = get("/api/verse/search?q=medpen&shops=50", { locationSignals: signals });
+  const hitFull = full.body.results[0];
+  ok(!!hitFull, "the reported item is in the bundled table", hitFull?.name ?? "(none)");
+  ok(full.body.order?.basis === "containment",
+     "...on the containment basis Sub was actually on", full.body.order?.basis);
+
+  const fullTiers = tiersOf(hitFull.quotes);
+  // 🔴 POSITIVE FIRST, AND COUNTED STRAIGHT OFF THE TABLE RATHER THAN OFF A RESPONSE.
+  // Asserting "the far tier exists" from a `shops=50` response is CIRCULAR: 157 > 50, so the one
+  // out-of-system row only appears there because `reserveTierRows` put it there. A negative control
+  // caught exactly that — gutting the rule turned this line red, which means it was measuring the
+  // fix rather than the data it is supposed to vouch for. So the far shops are counted from
+  // `item-shops.json` itself, which no part of the fix can reach.
+  const rawTable = JSON.parse(readFileSync(join(DATA, "item-shops.json"), "utf8")) as
+    { items: { n: string; q: { t: number }[] }[]; terminals: { sys: string | null }[] };
+  const rawItem = rawTable.items.find((it) => it.n === hitFull.name);
+  ok(!!rawItem, "the item is findable in the raw shipped table", hitFull.name);
+  const offSystem = (rawItem?.q ?? [])
+    .filter((q) => systemKey(rawTable.terminals[q.t]?.sys) !== "stanton").length;
+  ok(offSystem > 0,
+     "🔑 the SHIPPED TABLE really does sell it outside the player's system",
+     `${offSystem} of ${rawItem?.q.length} price rows are not in Stanton`);
+  ok((fullTiers["elsewhere"] ?? 0) > 0,
+     "...and the route agrees there is an out-of-system tier to lose", show(fullTiers));
+  ok(hitFull.shopCount > CAP, "...at far more shops than the cap shows",
+     `${hitFull.shopCount} shops, cap ${CAP}`);
+
+  // ── THE OLD BEHAVIOUR, driven rather than described: this is literally what `item-search`'s
+  //    `.slice(0, perItem)` used to return. It is the bug, reproduced on real data.
+  const plain = hitFull.quotes.slice(0, CAP);
+  const plainTiers = tiersOf(plain);
+  ok((plainTiers["elsewhere"] ?? 0) === 0,
+     "🔴 a plain cap at 5 deletes EVERY out-of-system shop — the reported bug", show(plainTiers));
+  ok((plainTiers["same-system"] ?? 0) === 0,
+     "...and the whole same-system tier with it, which nothing on screen could have said",
+     show(plainTiers));
+
+  // ── THE FIX, on the wire, through the real handler at the real cap.
+  const capped = get(`/api/verse/search?q=medpen&shops=${CAP}`, { locationSignals: signals });
+  const hit = capped.body.results[0];
+  const tiers = tiersOf(hit.quotes);
+  ok((tiers["elsewhere"] ?? 0) > 0,
+     "🔴 an out-of-system shop reaches the wire at the cap the widget uses", show(tiers));
+  ok((tiers["same-system"] ?? 0) > 0,
+     "...and so does the same-system tier the plain cap also lost", show(tiers));
+  ok(Object.keys(tiers).length === Object.keys(fullTiers).length,
+     "...so every tier that has an answer is represented",
+     `${Object.keys(tiers).length} of ${Object.keys(fullTiers).length} tiers`);
+
+  // ── AND THE NEAR HALF IS UNTOUCHED. "Things in the system should be at the top" is the other
+  //    half of Sub's sentence, and a fix that reordered them would have broken it.
+  ok(hit.quotes.slice(0, CAP).map((q: any) => q.terminal).join("|") ===
+     plain.map((q: any) => q.terminal).join("|"),
+     "...while the first 5 rows are exactly what they were before",
+     hit.quotes.slice(0, CAP).map((q: any) => q.place).join(", "));
+  ok(hit.quotes.length === CAP + 2,
+     "...and the list grew by the two rescued rows, nothing more", `${hit.quotes.length} rows`);
+
+  // 🔑 `shopCount` must STILL be the full figure, because the widget subtracts the drawn rows from
+  // it to say "+N more shops". If the reserve had inflated it, that note would under-report.
+  ok(hit.shopCount === hitFull.shopCount,
+     "...and shopCount is still the whole population, so '+N more' stays honest",
+     `${hit.shopCount} both ways`);
+}
+
 rmSync(userDir, { recursive: true, force: true });
 console.log(`\n${fail ? `FAILED (${fail})` : "all passed"}  ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);

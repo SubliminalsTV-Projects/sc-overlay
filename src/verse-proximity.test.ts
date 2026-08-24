@@ -12,7 +12,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  buildTerminalIndex, orderByProximity, containmentOf, stripSystemSuffix, matchKey, systemKey,
+  buildTerminalIndex, orderByProximity, reserveTierRows, containmentOf, stripSystemSuffix,
+  matchKey, systemKey,
   type LocationRecord, type ProximityDeps,
 } from "./verse-proximity.js";
 import { deriveGateways, loadPlaces, type Vec3 } from "./travel-model.js";
@@ -328,6 +329,100 @@ const deps = (o: OriginVerdict): ProximityDeps => ({ index, locations, travel, o
     }
     ok(breaks === 0, "🔴 minutes never go DOWN as distance goes UP, across every Stanton shop",
        breaks === 0 ? `${rows.length} shops in ascending distance` : `${breaks} inversions, e.g. ${worst}`);
+  }
+}
+
+// ── 5. 🔴 SUB'S SECOND CASE — the cap DELETED a whole tier, and nothing said so ────────────────
+//
+// Reported 2026-08-23: *"The Verse Finder can only show me what is available in this system. Which
+// of course things in the system should be at the top, but it shouldn't be excluded."*
+//
+// There was no filter. Ordering ranks `elsewhere` last exactly as designed, and then the caller
+// keeps the first N — and those two correct behaviours compose into an exclusion. `reserveTierRows`
+// is the fix; these assertions are about the rule, driven on the real table.
+//
+// 🔑 THE FIXTURE HAS TO BE ABLE TO EXPRESS THE FAILURE, so the plain slice is run FIRST and its
+// loss asserted. Without that line, "a far row survives" would also pass on a list that never had
+// one, which is the exact shape of assertion that certified this bug for as long as it existed.
+{
+  const pyroTerms = shops.terminals
+    .filter((t) => systemKey(t.sys) === "pyro" && index.byTerminal.has(t.n))
+    .slice(0, 3);
+  const stantonTerms = shops.terminals
+    .filter((t) => systemKey(t.sys) === "stanton" && index.byTerminal.has(t.n))
+    .slice(0, 4);
+  // POSITIVE FIRST, in both systems: every claim below is free if either side is empty.
+  ok(pyroTerms.length === 3 && stantonTerms.length === 4,
+     "the real table has shops in BOTH systems to build the mixed case from",
+     `${stantonTerms.length} Stanton, ${pyroTerms.length} Pyro`);
+
+  if (pyroTerms.length === 3 && stantonTerms.length === 4) {
+    // 🔑 Priced so the cheapest Pyro shop is LAST in input order. Picking by input position instead
+    // of by the ordering would then choose a different row and this assertion would catch it.
+    const mixed: ResolvedQuote[] = [
+      ...stantonTerms.map((t, i) => quoteFor(t, 500 + i)),
+      quoteFor(pyroTerms[0], 900),
+      quoteFor(pyroTerms[1], 800),
+      quoteFor(pyroTerms[2], 700),   // cheapest of the far tier, deliberately last
+    ];
+    // A stale fix at Area18 → containment ordering, which is the basis Sub was actually on.
+    const ordered = orderByProximity(mixed, deps(verdict({ stale: true, ageMin: 90 })));
+    ok(ordered.basis === "containment", "the mixed case orders by containment", ordered.basis);
+
+    const far = ordered.quotes.filter((q) => q.containment === "elsewhere");
+    const near = ordered.quotes.filter((q) => q.containment !== "elsewhere");
+    ok(far.length === 3, "...with three genuinely out-of-system rows in the FULL list",
+       far.map((q) => `${q.place}:${q.price}`).join(", "));
+    ok(near.length === 4, "...and four in-system ones ahead of them", String(near.length));
+    ok(ordered.quotes.slice(0, 4).every((q) => q.containment !== "elsewhere"),
+       "...in-system first, which is the half that was already right");
+
+    const CAP = 4;
+    // ── The old behaviour, driven rather than described. This IS `item-search`'s former
+    //    `.slice(0, perItem)`, so the loss it shows is the loss that shipped.
+    const plain = mixed.length > CAP ? ordered.quotes.slice(0, CAP) : ordered.quotes;
+    ok(plain.length === CAP, "the cap really does drop rows here", `${plain.length} of ${mixed.length}`);
+    ok(plain.filter((q) => q.containment === "elsewhere").length === 0,
+       "🔴 a plain slice deletes EVERY out-of-system row — the bug, reproduced",
+       plain.map((q) => q.containment).join(" · "));
+
+    // ── The rule.
+    const kept = reserveTierRows(ordered.quotes, CAP);
+    const keptFar = kept.filter((q) => q.containment === "elsewhere");
+    ok(keptFar.length > 0,
+       "🔴 reserveTierRows keeps an out-of-system row past the cap",
+       keptFar.map((q) => `${q.place}:${q.price}`).join(", ") || "(none — the bug is back)");
+    ok(keptFar.length === 1, "...exactly one, so a card cannot run away", String(keptFar.length));
+    ok(keptFar[0].price === 700,
+       "...and it is the CHEAPEST of that tier, not whichever arrived first",
+       `${keptFar[0].place} at ${keptFar[0].price}`);
+
+    // ── And the near half is untouched, which is the other half of Sub's sentence.
+    ok(kept.slice(0, CAP).map((q) => q.terminal).join("|") === plain.map((q) => q.terminal).join("|"),
+       "...while the first CAP rows are byte-identical to the old order",
+       `${CAP} rows`);
+    ok(kept.length === CAP + 1, "...so the list grew by exactly the rescued row", String(kept.length));
+  }
+
+  // -- 🔑 A NO-OP WHEN NOTHING IS HIDDEN. Not a tautology: it is what stops the rule appending a
+  //    duplicate of a row that was already going to be shown.
+  {
+    const three = orderByProximity(quotes, deps(verdict({ stale: true, ageMin: 90 })));
+    const kept = reserveTierRows(three.quotes, 10);
+    ok(kept.length === three.quotes.length, "a cap above the list length changes nothing",
+       `${kept.length} of ${three.quotes.length}`);
+    ok(kept.map((q) => q.terminal).join("|") === three.quotes.map((q) => q.terminal).join("|"),
+       "...and not by coincidence — the same rows in the same order");
+  }
+
+  // -- 🔴 A NO-OP WHEN THE BASIS IS 'none'. Every containment is null there, so there is no tier to
+  //    rescue, and rescuing one anyway would mean showing a row on a claim we never made.
+  {
+    const r = orderByProximity(quotes, deps(verdict({ tier: "unknown", id: null })));
+    ok(r.quotes.every((q) => q.containment === null),
+       "with no origin, no row carries a containment tier at all");
+    const kept = reserveTierRows(r.quotes, 1);
+    ok(kept.length === 1, "...so the cap is a plain cap, with nothing appended", String(kept.length));
   }
 }
 

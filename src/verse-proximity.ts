@@ -274,6 +274,57 @@ export interface ProximityDeps {
 }
 
 /**
+ * 🔴 CAP THE LIST WITHOUT SILENTLY DELETING A WHOLE TIER — Sub's report, 2026-08-23:
+ * *"The Verse Finder can only show me what is available in this system. Which of course things in
+ * the system should be at the top, but it shouldn't be excluded."*
+ *
+ * He was right, and the cause was NOT a filter. Nothing in this feature has ever filtered by
+ * system; `orderByProximity` ranks `elsewhere` last exactly as designed, and then the caller keeps
+ * the first N. Those two correct behaviours compose into an exclusion: once N near shops exist,
+ * every far shop falls off the end and the widget cannot say so, because a count of hidden shops
+ * ("+152 more") does not tell you that one of them is the only one in Pyro.
+ *
+ * Measured on the shipped table with the player at Levski (a stale place fix, so containment
+ * ordering) — `MedPen (Hemozal)`, 157 shops:
+ *
+ *   full list   4 same-place · 14 same-system · 32 elsewhere
+ *   kept (8)    4 same-place ·  4 same-system ·  0 elsewhere     <- all 32 far rows gone
+ *
+ * So the rule: **every containment tier that has an answer gets to state its best one.** After the
+ * cap, any tier present in the full list but absent from the kept rows contributes its FIRST row —
+ * which, because the sort is tier-then-price (or minutes-then-price), is the cheapest/nearest shop
+ * that tier has. Ranked last, never removed.
+ *
+ * 🔑 IT APPENDS RATHER THAN TRADING A SLOT, and that is the whole argument for the shape. Reserving
+ * a slot inside the cap costs a near row: at a cap of 5 the MedPen card would show its 4 same-place
+ * shops plus Pyro and drop all 14 same-system ones, which is Sub's complaint again pointing the
+ * other way. Adding is strictly more information than he has today; trading is a different loss.
+ * The growth is bounded by the number of tiers (3 at most, and only for an item that really does
+ * span all of them), so a card can never run away.
+ *
+ * ⚠️ A no-op whenever nothing is being hidden, and a no-op when `containment` is null — that is the
+ * "we do not know where you are" basis, where every row shares one tier and there is no tier to
+ * rescue. Both fall out of the rule rather than being special-cased.
+ */
+export function reserveTierRows(
+  quotes: readonly ProximityQuote[],
+  cap: number,
+): ProximityQuote[] {
+  const kept = quotes.slice(0, Math.max(1, cap));
+  if (kept.length >= quotes.length) return kept;
+  const seen = new Set<Containment | null>();
+  for (const q of kept) seen.add(q.containment);
+  const extra: ProximityQuote[] = [];
+  // The dropped rows in their existing order, so each tier's first survivor is its best row.
+  for (const q of quotes.slice(kept.length)) {
+    if (seen.has(q.containment)) continue;
+    seen.add(q.containment);
+    extra.push(q);
+  }
+  return extra.length ? kept.concat(extra) : kept;
+}
+
+/**
  * Order a set of shops, and say what the order means.
  *
  * 🔴 CALL THIS BEFORE TRUNCATING TO N SHOPS, NOT AFTER. `searchItems` returns the CHEAPEST

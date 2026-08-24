@@ -240,7 +240,7 @@ export interface SearchOptions {
    *  can never read as "this is everywhere it is sold". */
   quotesPerItem?: number;
   /**
-   * Reorder an item's shops before they are truncated.
+   * Reorder an item's shops AND apply the cap.
    *
    * 🔴 THE HOOK IS HERE, AND NOT AT THE CALL SITE, PRECISELY BECAUSE OF THE TRUNCATION. Quotes
    * arrive cheapest-first and only `quotesPerItem` of them survive onto the wire, so a caller
@@ -248,10 +248,16 @@ export interface SearchOptions {
    * is not "the nearest", and it is wrong exactly when it matters most: the median item has 4
    * shops, but the p90 has 19 and the maximum 159.
    *
-   * Receives every resolvable shop and must return the same quotes in a new order. Absent, the
-   * cheapest-first order stands.
+   * 🔴 AND IT OWNS THE CAP, WHICH IS WHY `cap` IS PASSED IN. It used to return a full ordered list
+   * that this function then sliced — and that slice is what deleted the far-system rows
+   * `reserveTierRows` exists to rescue, because they sit at the end by construction. An orderer
+   * that knows about tiers cannot honour them if something downstream re-slices its answer. So the
+   * hook returns the FINAL list and this function does not touch it.
+   *
+   * Receives every resolvable shop; returns the ones to send, in order. Absent, the cheapest-first
+   * order stands and the cap is a plain slice.
    */
-  orderQuotes?: (quotes: ResolvedQuote[]) => ResolvedQuote[];
+  orderQuotes?: (quotes: ResolvedQuote[], cap: number) => ResolvedQuote[];
 }
 
 /**
@@ -301,8 +307,10 @@ export function searchItems(table: ItemShopTable, query: string, opts: SearchOpt
       size: item.z,
       uuid: item.u,
       shopCount: quotes.length,
-      // Order FIRST, then truncate — see `orderQuotes` on why that order matters.
-      quotes: (opts.orderQuotes ? opts.orderQuotes(quotes) : quotes).slice(0, perItem),
+      // 🔴 The hook orders AND caps — do not re-slice its answer. See `orderQuotes`: the rows it
+      // deliberately keeps past the cap are the far-system ones, and they are last by construction,
+      // so a slice here is exactly the exclusion Sub reported.
+      quotes: opts.orderQuotes ? opts.orderQuotes(quotes, perItem) : quotes.slice(0, perItem),
       low,
       high,
       rentLow,

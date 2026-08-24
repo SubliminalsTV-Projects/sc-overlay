@@ -51,7 +51,7 @@ import type { ObservedPriceStore } from "./observed-prices.js";
 import { searchCommodities, sellOnlyMatches } from "./verse-commodities.js";
 import type { TradeTable } from "./trade-prices.js";
 import {
-  buildTerminalIndex, orderByProximity, systemKey,
+  buildTerminalIndex, orderByProximity, reserveTierRows, systemKey,
   type TerminalIndex, type LocationRecord, type ProximityOrder,
 } from "./verse-proximity.js";
 import { collectOriginSignals, originDepsFor, type SignalInputs } from "./origin-signals.js";
@@ -393,8 +393,17 @@ export function verseRoutes(
     // the player is, which is a property of the session — letting it vary row by row would invite
     // the UI to print a different confidence beside each shop for the same single reading.
     let order: ProximityOrder | null = null;
+    // 🔴 THE CAP IS APPLIED HERE, INSIDE THE ORDERER, AND `reserveTierRows` IS WHY. Ordering puts
+    // the out-of-system shops last by design; a plain `slice` then deletes every one of them the
+    // moment an item has enough nearby shops to fill the cap, which is the exclusion Sub reported
+    // ("it can only show me what is available in this system"). `reserveTierRows` keeps each tier's
+    // best row past the cap, and nothing downstream may re-slice — see `searchItems`' hook doc.
     const orderQuotes = px
-      ? (quotes: ResolvedQuote[]) => { const r = px.order(quotes); order = r; return r.quotes; }
+      ? (quotes: ResolvedQuote[], cap: number) => {
+          const r = px.order(quotes);
+          order = r;
+          return reserveTierRows(r.quotes, cap);
+        }
       : undefined;
 
     // 🔑 Commodities are scored by the SAME scorer and merged into ONE list, not appended as a

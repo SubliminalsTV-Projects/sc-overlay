@@ -116,8 +116,9 @@ export interface CommoditySearchOptions {
   limit?: number;
   quotesPerItem?: number;
   /** Same hook, same reason, as `searchItems`: order BEFORE the truncation, or you are ordering the
-   *  cheapest few rather than all of them. */
-  orderQuotes?: (quotes: ResolvedQuote[]) => ResolvedQuote[];
+   *  cheapest few rather than all of them — and it OWNS the cap, so its answer is never re-sliced.
+   *  See `searchItems`' copy for why that second half matters. */
+  orderQuotes?: (quotes: ResolvedQuote[], cap: number) => ResolvedQuote[];
 }
 
 /**
@@ -171,7 +172,9 @@ export function searchCommodities(
       uuid: null,
       kind: "commodity",
       shopCount: quotes.length,
-      quotes: (opts.orderQuotes ? opts.orderQuotes(quotes) : quotes).slice(0, perItem),
+      // The hook orders AND caps — see `orderQuotes`. Re-slicing here would drop the far-system
+      // rows it keeps on purpose.
+      quotes: opts.orderQuotes ? opts.orderQuotes(quotes, perItem) : quotes.slice(0, perItem),
       low,
       high,
       rentLow: null,
