@@ -2827,7 +2827,15 @@ const VERSEFINDER = `(async () => {
     await sleep(700); // debounce + the sidecar round trip
   };
   const items = () => [...document.querySelectorAll("#results .item")];
-  const shopRows = () => [...document.querySelectorAll("#results .grow")];
+  // 🔴 SURVEY ROWS ONLY. Since flight poolfill the community observations are ALSO .grow
+  // elements inside .shops — deliberately, because they had to stop looking like a different
+  // kind of thing — so an unqualified row selector now returns both lists interleaved and the
+  // first row can be an observation. Every assertion below is about the UEX survey, so the
+  // selector has to say so.
+  // ⚠️ No backticks anywhere in this comment: a suite body IS a template literal, and quoting a
+  // selector the way this codebase normally would ends the string, after which the file still
+  // parses and electron throws at load with no suite name and no line.
+  const shopRows = () => [...document.querySelectorAll("#results .grp:not(.obgrp) .grow")];
 
   // Nothing typed is not the same as nothing found — the empty state must invite, not report.
   ok("with an empty box it prompts rather than listing everything",
@@ -2837,7 +2845,7 @@ const VERSEFINDER = `(async () => {
   await search("cannon");
   ok("a real search returns items", items().length > 0, items().length);
   ok("...and every one of them names at least one shop",
-     items().every((el) => el.querySelectorAll(".grow").length > 0));
+     items().every((el) => el.querySelectorAll(".grp:not(.obgrp) .grow").length > 0));
 
   // 🔴 THE CORE RULE. A price with no place is the thing this widget must never show.
   ok("every shop row names its TERMINAL",
@@ -2873,7 +2881,7 @@ const VERSEFINDER = `(async () => {
     const m = el.querySelector(".more");
     return m && m.textContent.indexOf("depending where you buy") > -1;
   });
-  const multi = items().filter((el) => el.querySelectorAll(".grow").length > 1);
+  const multi = items().filter((el) => el.querySelectorAll(".grp:not(.obgrp) .grow").length > 1);
   ok("the result set contains multi-shop items at all", multi.length > 0, multi.length);
   ok("...and at least one states its spread instead of one number",
      spread.length > 0, spread.length + " of " + multi.length);
@@ -2884,7 +2892,12 @@ const VERSEFINDER = `(async () => {
     return m && m.textContent.indexOf("more shop") > -1;
   });
   ok("a long shop list says how many were left out",
-     truncated.length === 0 || truncated.every((el) => el.querySelectorAll(".grow").length === 5),
+     // RE-POINTED 2026-08-24, flight poolfill, and it went red on working code first: the note
+     // states how many SURVEY shops were left out and is computed from the quote array, but this
+     // counted every row in the card and the community observations are now rows in the same
+     // list. A card with observations counted 6 or 7 while the note was perfectly correct.
+     truncated.length === 0 || truncated.every((el) =>
+       el.querySelectorAll(".grp:not(.obgrp) .grow").length === 5),
      truncated.length + " truncated");
 
   // 🔴 The provenance footer. Sub's requirement is that the user knows when they are on a

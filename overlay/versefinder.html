@@ -155,11 +155,12 @@
     letter-spacing: 0.02em; font-variant-numeric: tabular-nums; padding: 1px 5px;
     border-radius: 5px; line-height: 1.35;
     border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
-    background: color-mix(in srgb, currentColor 12%, transparent); white-space: nowrap;
-    /* Inherited until a band class lands. See the block below — for months there was NO band rule
-       anywhere, so every one of these pills rendered in the row's own text colour while the source
-       looked deliberate. */
-    color: var(--cyan-dim); }
+    background: color-mix(in srgb, currentColor 12%, transparent); white-space: nowrap; }
+  /* 🔴 NO BASE COLOUR ON `.age` DELIBERATELY, and it is not an omission. A band class always
+     lands (`ageBand()` returns one of five), so a default would only ever be reached by a bug —
+     and giving it one makes the failure INVISIBLE: the widget suite detects a colourless band by
+     comparing it against an unstyled pill, so a base colour equal to any band's would make that
+     check pass for free. An unpainted pill has to be visibly wrong. */
 
   /* ══ 🔴 THE RECENCY BANDS — THESE RULES DID NOT EXIST UNTIL FLIGHT `poolfill` ═══════════════
      `ageBand()` has returned `fresh` / `recent` / `stale` / `ancient` for as long as the widget

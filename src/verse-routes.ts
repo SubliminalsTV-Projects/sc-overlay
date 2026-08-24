@@ -145,7 +145,13 @@ export interface VerseDeps {
    * Optional: without it the widget shows only this player's own receipts, which is exactly the
    * state the feature was in before the pool existed.
    */
-  pool?: () => { forId(kind: "item" | "commodity", id: string): PoolQuote[]; confirmThreshold(): number } | null;
+  pool?: () => {
+    forId(kind: "item" | "commodity", id: string): PoolQuote[];
+    confirmThreshold(): number;
+    /** Reported on `/api/verse/status` so a diagnostics report can tell an EMPTY pool apart from
+     *  an unreachable one. On screen those look identical and they want opposite responses. */
+    status(): { quotes: number; entries: number; source: string; fetchedAt: number | null; lastError: string | null; url: string | null; confirmAt: number };
+  } | null;
   /**
    * A commodity's display name -> its `resourceGUID`.
    *
@@ -477,7 +483,15 @@ export function verseRoutes(
 
   if (url === "/api/verse/status") {
     const px = proximity(deps, table);
-    json(res, 200, { ...provenance(table), origin: px ? originPayload(px.origin) : null });
+    json(res, 200, {
+      ...provenance(table),
+      origin: px ? originPayload(px.origin) : null,
+      // 🔑 The pool reports separately from the survey table because it fails separately. An empty
+      // pool and an unreachable one look identical on screen and want opposite responses — the
+      // first is "nobody has bought this yet", the second is "we cannot tell you". `status()`
+      // carries `source` and `lastError` so a diagnostics report can say which.
+      pool: deps.pool?.()?.status?.() ?? null,
+    });
     return true;
   }
 
