@@ -29,10 +29,10 @@ function replay(lines: string[]): { items: string[]; comms: string[] } {
   const comms: string[] = [];
   for (const raw of lines) {
     for (const p of ic.line(raw)) items.push(JSON.stringify([p.at, p.shopName, p.itemGuid, p.quantity, p.totalPrice, p.unitPrice, p.resultCode]));
-    for (const p of tc.line(raw)) comms.push(JSON.stringify([p.at, p.kind, p.shopName, p.resourceGuid, p.scu, p.pricePerScu, p.total]));
+    for (const p of tc.line(raw)) comms.push(JSON.stringify([p.at, p.kind, p.shopName, p.resourceGuid, p.volume.known ? p.volume.scu : null, p.unitPrice.known ? p.unitPrice.perScu : null, p.total]));
   }
   ic.endOfStream();
-  for (const p of tc.flush()) comms.push(JSON.stringify([p.at, p.kind, p.shopName, p.resourceGuid, p.scu, p.pricePerScu, p.total]));
+  for (const p of tc.flush()) comms.push(JSON.stringify([p.at, p.kind, p.shopName, p.resourceGuid, p.volume.known ? p.volume.scu : null, p.unitPrice.known ? p.unitPrice.perScu : null, p.total]));
   return { items, comms };
 }
 
