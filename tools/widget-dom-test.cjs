@@ -124,13 +124,35 @@ const SWEEP_SUITES = new Set([
 const UNTAGGED = [];
 const SKIPPED = [];
 
+/** Every key --only accepts: the registry keys the pages map to, plus the canvas/shell tags. */
+const KNOWN_TAGS = [...new Set([...Object.values(PAGE_KEYS), ...Object.values(SUITE_TAGS).flat()])].sort();
+
+/* 🔴 AN UNRECOGNISED KEY MUST NOT PRODUCE A NEARLY-EMPTY PASS. Without this, --only versefinder
+   (lower-case f, which is what the PAGE is called) matches nothing, the registry sweeps run
+   against an empty SEL, and the run either dies on an obscure positive guard or - worse, if a
+   guard were ever removed - prints a green subset that tested nothing. Fail before loading a
+   single page, and print the list: these are registry keys and are not guessable from the
+   filenames. Matching is case-insensitive and takes a page filename too, so a flight can paste
+   what git printed.  */
+const ONLY_KEYS_RESOLVED = ONLY && ONLY.map((raw) => {
+  const k = raw.trim().toLowerCase().replace(".html", "");
+  return KNOWN_TAGS.find((t) => t.toLowerCase() === k) || PAGE_KEYS[k + ".html"] || null;
+});
+if (ONLY && ONLY_KEYS_RESOLVED.some((k) => !k)) {
+  console.error("");
+  console.error("--only: unknown widget key(s): " + ONLY.filter((_, n) => !ONLY_KEYS_RESOLVED[n]).join(", "));
+  console.error("known keys: " + KNOWN_TAGS.join(", "));
+  console.error("(a page filename works too, e.g. --only versefinder.html)");
+  process.exit(2);
+}
+
 /** Does this suite run under the current selection? */
 function selected(label, page) {
   if (!ONLY) return true;
   if (SWEEP_SUITES.has(label)) return true;
   const tags = page ? [PAGE_KEYS[page] || page] : SUITE_TAGS[label];
   if (!tags) { UNTAGGED.push(label); return true; }
-  return tags.some((t) => ONLY.indexOf(t) >= 0);
+  return tags.some((t) => ONLY_KEYS_RESOLVED.indexOf(t) >= 0);
 }
 
 const PRELUDE = `
@@ -5587,7 +5609,7 @@ async function run(label, script, preload, query, page) {
     let base = page ? `http://localhost:${PORT}/${page}` : URL;
     // Push the selection into the canvas so a registry SWEEP walks the named widgets instead of
     // all fifteen. Only the canvas needs it — a widget's own page has nothing to sweep.
-    if (ONLY && !page) base += (base.includes("?") ? "&" : "?") + "only=" + encodeURIComponent(ONLY.join(","));
+    if (ONLY && !page) base += (base.includes("?") ? "&" : "?") + "only=" + encodeURIComponent(ONLY_KEYS_RESOLVED.join(","));
     await win.loadURL(query ? base + (base.includes("?") ? "&" : "?") + query : base);
     /* 🔴 A SUITE THAT THROWS MUST NOT TAKE THE OTHERS WITH IT. executeJavaScript rejects when the
        page script throws, and that rejection escaped `run()` entirely — it unwound to the caller's
@@ -8457,7 +8479,7 @@ app.whenReady().then(async () => {
   // 🔴 A PARTIAL PASS MUST SAY SO IN AS MANY WORDS. The one way this feature turns into a false
   // green is somebody reading "all widget DOM tests passed" off a subset run and landing on it.
   if (ONLY) {
-    console.log(`\n⚠ PARTIAL RUN — --only ${ONLY.join(",")}. ${SKIPPED.length} suite(s) were NOT run:`);
+    console.log(`\n⚠ PARTIAL RUN — --only ${ONLY_KEYS_RESOLVED.join(",")}. ${SKIPPED.length} suite(s) were NOT run:`);
     console.log("   " + SKIPPED.join(" · "));
     console.log("   This is NOT a landing gate. The gate is `npm run test:widgets` with no --only.");
   }
