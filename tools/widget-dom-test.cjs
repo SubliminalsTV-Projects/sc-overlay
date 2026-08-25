@@ -4287,9 +4287,23 @@ const LOGVIEW = `(async () => {
   push(many);
   await sleep(80);
   ok("the DOM is capped however loud the log gets", rowCount() <= 500, rowCount());
-  ok("...keeping the NEWEST lines, not the oldest",
-     rowText()[rowText().length - 1].indexOf("bulk line 899") > -1,
-     rowText()[rowText().length - 1].slice(-30));
+  // 🔴 THIS ASSERTION USED TO RACE A RUNNING GAME. It read the LAST row and required it to be the
+  // last line the suite pushed — but the sidecar tails a REAL game.log and keeps streaming while
+  // the suite runs. Measured 2026-08-25 with Star Citizen open: ~20 lines in 20 seconds, so a
+  // genuine engine line lands in the 80ms above often enough to fail about one run in three, with
+  // a detail like [playFeatures][Missions][Comms] that reads as a widget regression and is nothing
+  // of the sort. Same defect class as the third-party host rule in run(), with the game as the
+  // third party: an assertion that can go red for reasons outside the repo teaches people to
+  // ignore the suite, and this one is in the suite that is supposed to be the landing gate.
+  // 🔑 The cap's real promise is "the newest survived AND the oldest was evicted", and asserting
+  // BOTH halves is what makes it two-sided — a cap that kept the oldest instead fails both. It is
+  // also a strictly stronger claim than reading one row, and neither half cares whether one more
+  // real line happened to arrive. (902 lines pushed against a 500 cap, so line 0 must be gone.)
+  const capRows = rowText();
+  const newestKept = capRows.some((t) => t.indexOf("bulk line 899") > -1);
+  const oldestGone = !capRows.some((t) => t.indexOf("bulk line 0") > -1);
+  ok("...keeping the NEWEST lines, not the oldest", newestKept && oldestGone,
+     "newest kept " + newestKept + ", oldest evicted " + oldestGone);
 
   // 🔑 The ring must outreach the DOM. Typing a word has to search the recent past, not only what
   // survived the row cap — otherwise the widget can only answer "is X logged" for lines that

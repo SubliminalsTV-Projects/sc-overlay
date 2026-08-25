@@ -88,7 +88,8 @@
     "probe:shoploc": "tsx tools/probe-shoploc.ts",
     "test:onerow": "tsx src/verse-onerow.test.ts",
     "control:onepill": "node tools/control-onepill.mjs",
-    "control:noisegate": "node tools/control-noisegate.cjs"
+    "control:noisegate": "node tools/control-noisegate.cjs",
+    "control:logviewcap": "node tools/control-logviewcap.cjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
