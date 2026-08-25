@@ -50,7 +50,19 @@
    * not a mission reference — the solver has never read it as one.
    */
   function buyLegCtx(s) {
-    const acts = (s && s.actions) || [];
+    return buyLegCtxOf((s && s.actions) || []);
+  }
+
+  /**
+   * The same question asked of ONE ROW's actions rather than a whole stop.
+   *
+   * 🔑 A landing draws one row per SIDE (DROP OFF, then PICK UP), so a stop where a run is
+   * delivered and another is collected is two rows and `buyLegCtx(stop)` correctly refuses it —
+   * there is no single thing to move. But the REMOVE control lives on a row, and that row may well
+   * be unambiguous while the stop around it is not. Asking per row is what lets the ✕ appear on
+   * both halves of a shared landing instead of on neither.
+   */
+  function buyLegCtxOf(acts) {
     if (!acts.length) return null;
     const PREFIX = "buyleg:";
     let commodity = null;
@@ -68,6 +80,29 @@
     }
     if (!buyId || !commodity) return null;
     return { buyId, side, commodity };
+  }
+
+  /**
+   * Forget a commodity pick, from the Route side.
+   *
+   * ⚠️ SAME ENDPOINT THE COMMODITIES TAB USES. The two controls are two doors onto one action, so
+   * there is one write and one re-solve — not a second removal path that could disagree with the
+   * first about what "removed" means.
+   * 🔑 The confirmation is the RESULT: after `load()` both legs are gone from the list you are
+   * looking at, which is more convincing than a dialog and costs no click. A mis-click is cheap to
+   * undo — the run goes back from the Commodities board — and nothing about money moves.
+   */
+  async function dropBuyLeg(ctx) {
+    try {
+      const res = await fetch("/api/hauling/buy/forget?id=" + encodeURIComponent(ctx.buyId),
+        { method: "POST", cache: "no-store" });
+      // 🔴 A refusal is said rather than swallowed: a ✕ that silently does nothing is exactly the
+      // complaint this control exists to answer.
+      routeNote(res.ok ? "" : "That run could not be removed.");
+    } catch {
+      routeNote("The app's background service is not answering, so that run was not removed.");
+    }
+    load();
   }
 
   function renderRoute() {
@@ -289,6 +324,38 @@
               inp.focus();
               inp.select();
             });
+          }
+          /* 🔴 REMOVING A COMMODITY RUN BELONGS HERE, NOT ON THE COMMODITIES TAB (Sub, 2026-08-25).
+             The Commodities board is a ranked top-25 of what is worth carrying RIGHT NOW, and its
+             "In route ✓" button is the only way a pick could be un-picked — so a run drops out of
+             reach the moment it stops ranking. Measured on Sub's own board that day: four picks in
+             the route, and only ONE of them had a row to click. The other three were unremovable
+             from anywhere in the app.
+             🔑 Sub's reasoning is the better one and it is why this is not merely a second control:
+             "on the commodities tab, you're picking a pickup and drop-off location that the user
+             may not wind up following through with" — the Route is where the commitment lives, so
+             the Route is where it is withdrawn.
+             🔑 BOTH ENDS GO, AND THAT IS FREE RATHER THAN BUILT. A pick is ONE record server-side
+             and both legs carry `group: "buyleg:<its id>"`, so forgetting the id removes the pickup
+             and the drop-off in the same re-solve. There is no pairing logic here to drift — the
+             thing being deleted was always one thing. */
+          const legCtx = buyLegCtxOf(g.acts);
+          if (legCtx) {
+            const drop = document.createElement("button");
+            drop.type = "button";
+            drop.className = "dropleg";
+            drop.textContent = "✕";
+            drop.title = "Remove " + legCtx.commodity + " from the route — both the pickup and the"
+              + " drop-off. Nothing you have already bought is forgotten: this is the plan, not the"
+              + " Ledger.";
+            // 🔴 The name editor opens on a click anywhere in `.nm`, so this must not bubble — a ✕
+            // that also opened a rename box would be the worst of both.
+            drop.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+            drop.addEventListener("click", (ev) => {
+              ev.stopPropagation();
+              dropBuyLeg(legCtx);
+            });
+            nm.appendChild(drop);
           }
           const acts = document.createElement("div");
           acts.className = "acts";

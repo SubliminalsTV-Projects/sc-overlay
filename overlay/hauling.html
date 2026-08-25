@@ -642,6 +642,16 @@
   .stop .mid { flex: 1; min-width: 0; }
   .stop .nm.editable > span:first-child, .stop .nm.editable { }
   .stop .nm .pen { flex: none; margin-left: 5px; font-size: 11px; color: var(--cyan-dim); opacity: 0.75; }
+  /* Remove a commodity run from the route. `flex: none` for the same reason the pencil has it —
+     the row's TITLE is what shrinks, and a control that gets cut when the widget narrows is a
+     control that disappears exactly when it is hardest to reach. Quiet at rest and red on hover:
+     it is a delete, so it should not read as a decoration, but it also must not shout on every
+     commodity leg in the list. */
+  .stop .nm .dropleg { flex: none; margin-left: 6px; padding: 0 3px; background: none; border: 0;
+    font-family: var(--sans); font-size: 11px; line-height: 1; cursor: pointer;
+    color: var(--faint); opacity: 0.7; }
+  .stop .nm .dropleg:hover { color: var(--red, #eb7878); opacity: 1; }
+  .stop .nm .dropleg:focus-visible { outline: 1px solid var(--cyan); outline-offset: 1px; }
   .stop .nm.editable:hover .pen { color: var(--cyan-bright); opacity: 1; }
   .stop .nm.editable:hover .nmt { text-decoration: underline dotted rgba(var(--accent-rgb), 0.6); }
   .ratereset { margin-left: 8px; background: transparent; border: none; padding: 0; cursor: pointer;
