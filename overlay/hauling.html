@@ -1409,9 +1409,16 @@
     /* 🔴 THE ASSET NAME IS NOT A PLACE NAME. Sub, at the Nyx gateway on 2026-08-25: "Currently
        right now, the widget says that I'm at RR_JP_NyxCastra. Where are we at with making those
        names more friendly?" The sidecar supplies detectedLabel when it can name the token — for
-       this one, "Stanton Gateway", which is what UEX calls it too. It stays null rather than
-       guessing, and then the raw token is still shown: a string the app plainly could not
-       translate is better than a confident wrong name. See locationTokenLabel. */
+       this one, "Stanton Gateway". It stays null rather than guessing, and then the raw token is
+       still shown: a string the app plainly could not translate is better than a confident wrong
+       name. See locationTokenLabel.
+       🔴 CORRECTION, 2026-08-25: this note used to end "…which is what UEX calls it too". IT DOES
+       NOT. UEX has `Stanton Gateway (Nyx)` (long form `Admin - Stanton Gateway (Nyx)`) and no row
+       called `Stanton Gateway` at all, so `fromTerminal="Stanton Gateway"` returns 0 routes against
+       51 for the real name — measured both ways on the live table. Anything joining this label to
+       the price table by string equality gets an empty answer that reads as "nothing here". That
+       is why `hereTerminal` is resolved in the sidecar rather than by passing this label through;
+       see `hereTerminalName` in trade-routes.ts. */
     const token = sr.detectedLabel || sr.detectedToken;
     const auto = document.createElement("option");
     auto.value = "";
