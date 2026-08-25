@@ -7104,6 +7104,326 @@ const TABROW = `(async () => {
 // live price table, because this is a LAYOUT claim and a layout claim must not pass or fail on
 // whether the sidecar happens to hold a cached UEX table. The fixture is built to stress the
 // line: the longest real terminal names and the widest real numbers on the board.
+// ── The funnel: what -> buy at -> sell at ──────────────────────────────────────
+//
+// Sub picked this design out of three mockups on 2026-08-25. The property that makes it worth
+// having is not the layout, it is that A PLACE THE COMMODITY CANNOT BE BOUGHT AT IS UNREACHABLE —
+// the slot is filled from `buyAt`/`sellAt`, so there is no code path that offers one. That is the
+// same bug the Route tab's picker has, and the reason both are meant to share one source.
+//
+// ⚠️ LIVE DATA, deliberately, and this is the opposite call from RUNSNARROW above. That suite makes
+// a LAYOUT claim and fixtures its rows so the layout cannot pass or fail on the sidecar's cache.
+// This one makes a claim about WHERE THE OPTIONS COME FROM, and a fixture would answer that
+// question with a list the test itself wrote — the circularity trap. So it reads the real
+// /api/trade/commodity for whatever commodity it picked and requires the slot to be a subset.
+//
+// 🔑 It never names a commodity. The sandbox profile's table and Sub's live one hold different
+// things, and a suite that hardcodes "Neon" is a suite that goes red when the price feed moves.
+const FUNNEL = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  const tab = document.getElementById("tabTrade");
+  ok("the Commodities tab is reachable", !!tab, tab ? "found" : "(no #tabTrade)");
+  if (!tab) return out;
+  tab.click();
+  await sleep(1400);
+
+  const slots = () => [].slice.call(document.querySelectorAll("#body .slot"));
+  const slotFor = (which) => slots().filter(function (s) { return s.dataset.slot === which; })[0] || null;
+  // Defensive on BOTH the condition and the detail: an eagerly-evaluated detail that throws kills
+  // the suite and reports the survivors as a small pass.
+  const slotText = (which) => {
+    const s = slotFor(which);
+    if (!s) return "(no slot)";
+    const v = s.querySelector(".v");
+    const i = s.querySelector("input");
+    return i ? "(open)" : (v ? v.textContent : "(no value)");
+  };
+  const opts = () => [].slice.call(document.querySelectorAll("#body .slotlist .o"));
+  const rows = () => [].slice.call(document.querySelectorAll("#body .tdrow"));
+
+  // 🔑 POSITIVE GUARD FIRST. Every claim below is about what the funnel offers, and a funnel that
+  // never rendered offers nothing — which satisfies every must-not-contain check for free.
+  ok("the funnel drew all three slots", slots().length === 3,
+     slots().map(function (s) { return s.dataset.slot; }).join(","));
+  ok("...and the board underneath is not empty", rows().length > 0, rows().length + " rows");
+
+  // AT REST the three slots are unset, which is the claim that nothing was taken away: with no
+  // constraint applied this is the leaderboard the tab has always been.
+  const offAtRest = slots().filter(function (s) {
+    const vEl = s.querySelector(".v");
+    return vEl && vEl.classList.contains("off");
+  }).length;
+  ok("at rest every slot reads as UNSET", offAtRest === 3,
+     offAtRest + " of 3 dim - " + slots().map(function (s) { return s.dataset.slot + "=" + slotText(s.dataset.slot); }).join(" "));
+
+  // 🔴 AN UNSET SLOT MUST NOT LOOK LIKE A VALUE, and a class name cannot tell you whether it is
+  // PAINTED. Read the computed colour and require a real distance from a set one, because two
+  // colours can differ and still be the same colour to an eye - measured on this app's Drake skin,
+  // where two tokens 30 units apart looked identical.
+  const restV = slotFor("what") ? slotFor("what").querySelector(".v") : null;
+  const offColour = restV ? getComputedStyle(restV).color : "";
+  const probe = document.createElement("span");
+  probe.className = "v";
+  if (slotFor("what")) slotFor("what").appendChild(probe);
+  const setColour = probe.isConnected ? getComputedStyle(probe).color : "";
+  probe.remove();
+  // ⚠️ NO REGEX. A pattern inside a suite body is processed by the template literal first, and an
+  // escape that survives compilation but never matches makes every must-not assertion pass for
+  // ever. This one needs none: a computed colour is always "rgb(a, b, c)" or "rgba(a, b, c, d)".
+  const chans = (s) => {
+    const open = s.indexOf("(");
+    const close = s.indexOf(")");
+    if (open < 0 || close < 0) return [0, 0, 0];
+    const parts = s.slice(open + 1, close).split(",");
+    return [Number(parts[0]) || 0, Number(parts[1]) || 0, Number(parts[2]) || 0];
+  };
+  const dist = (a, b) => {
+    const x = chans(a); const y = chans(b);
+    return Math.abs(x[0] - y[0]) + Math.abs(x[1] - y[1]) + Math.abs(x[2] - y[2]);
+  };
+  ok("...and it is really PAINTED differently, not just classed differently",
+     offColour !== "" && setColour !== "" && dist(offColour, setColour) >= 60,
+     offColour + " vs " + setColour + " = " + dist(offColour, setColour));
+
+  // ── open the WHAT slot and take whatever it offers first ──────────────────
+  const whatSlot = slotFor("what");
+  const whatV = whatSlot ? whatSlot.querySelector(".v") : null;
+  if (!whatV) { ok("the what slot can be opened", false, "(no .v)"); return out; }
+  whatV.click();
+  await sleep(700);
+  ok("opening a slot lists options in flow", opts().length > 0, opts().length + " options");
+  // 🔴 IN FLOW, NEVER ABSOLUTE. An absolutely-positioned list would blanket the rows it is meant to
+  // be chosen against - the exact failure the Route tab's .psug has, and the reason the first cut of
+  // this tab's commodity input rendered below the panel.
+  const list = document.querySelector("#body .slotlist");
+  const listPos = list ? getComputedStyle(list).position : "(none)";
+  ok("...in flow, so it cannot blanket the rows it is chosen against", listPos === "static", listPos);
+
+  /* 🔴 PICK A COMMODITY THAT CAN ACTUALLY PRODUCE A ROUTE, and take the name off the BOARD rather
+     than off the top of the list. The first attempt took the first option alphabetically and drew
+     Agricium, which the price table can BUY in four places and SELL in none — so the funnel
+     correctly returned nothing and three assertions below failed on a perfectly working widget.
+     The names endpoint means "can be bought somewhere"; it promises no sell side.
+     A commodity already on the board has a profitable run by construction, so typing its name is
+     the one choice that cannot make the rest of this suite vacuous. It also tests the typing path,
+     which taking option zero never did.
+
+     🔴 AND IT MUST BE A PAIR WITH MORE THAN ONE DESTINATION, or the central claim below is
+     unfalsifiable. Take two: the first commodity on the board had 4 buy terminals and NO sell side
+     (Agricium), and the second had exactly one profitable destination (Osoian Hides) — so "with a
+     buy pinned the board lists destinations" read as a failure on a widget doing exactly the right
+     thing, twice. Before asserting that something appears, check that it COULD appear.
+     The probe below asks the sidecar rather than assuming, and if the table cannot express the case
+     it SAYS SO loudly instead of passing. */
+  const boardNames = [];
+  rows().forEach(function (r) {
+    const t = r.querySelector(".l1 .t");
+    if (t && boardNames.indexOf(t.textContent) < 0) boardNames.push(t.textContent);
+  });
+  let chosen = "";
+  let wantTerminal = "";
+  let wantRows = 0;
+  let probes = 0;
+  for (const cand of boardNames.slice(0, 8)) {
+    if (chosen) break;
+    let look = null;
+    try {
+      const lr = await fetch("/api/trade/commodity?name=" + encodeURIComponent(cand), { cache: "no-store" });
+      if (lr.ok) look = await lr.json();
+    } catch (e) { look = null; }
+    for (const b of ((look && look.buyAt) || [])) {
+      if (chosen || probes > 24) break;
+      probes++;
+      try {
+        const q = "/api/trade/routes?capacity=64&limit=60&commodity=" + encodeURIComponent(cand)
+          + "&fromTerminal=" + encodeURIComponent(b.terminalShort);
+        const rr = await fetch(q, { cache: "no-store" });
+        if (!rr.ok) continue;
+        const body = await rr.json();
+        const k = (body.routes || []).length;
+        if (k >= 2) { chosen = cand; wantTerminal = b.terminalShort; wantRows = k; }
+      } catch (e) { /* try the next one */ }
+    }
+  }
+  ok("the price table can express a buy point with SEVERAL destinations",
+     chosen.length > 0, chosen ? chosen + " at " + wantTerminal + " -> " + wantRows + " destinations"
+       : "none found across " + boardNames.length + " board commodities in " + probes + " probes");
+  if (!chosen) return out;
+  const typeBox = document.querySelector("#body .slot.open input");
+  if (!typeBox) { ok("the open slot has a text box", false, "(no input)"); return out; }
+  typeBox.value = chosen;
+  typeBox.dispatchEvent(new Event("input", { bubbles: true }));
+  await sleep(500);
+  const firstWhat = opts().filter(function (o) {
+    const optName = o.querySelector(".nm");
+    return !o.classList.contains("none") && optName && optName.textContent === chosen;
+  })[0];
+  ok("typing a commodity name finds it in the list", !!firstWhat,
+     firstWhat ? chosen : opts().length + " options, none matching " + chosen);
+  if (!firstWhat) return out;
+  firstWhat.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+  await sleep(1600);
+  ok("picking a commodity fills the slot", slotText("what") === chosen,
+     JSON.stringify(slotText("what")) + " vs " + JSON.stringify(chosen));
+
+  // ── THE SAFETY PROPERTY ───────────────────────────────────────────────────
+  // Everything the buy slot offers is either a SYSTEM or a terminal that really sells this
+  // commodity. Checked against the sidecar's own answer, not against a list this test wrote.
+  let truth = null;
+  try {
+    const r = await fetch("/api/trade/commodity?name=" + encodeURIComponent(chosen), { cache: "no-store" });
+    if (r.ok) truth = await r.json();
+  } catch (e) { truth = null; }
+  ok("the sidecar knows this commodity, so there is something to compare against",
+     !!(truth && truth.buyAt && truth.buyAt.length), truth ? (truth.buyAt || []).length + " buy terminals" : "(no answer)");
+
+  const buySlot = slotFor("buy");
+  const buyV = buySlot ? buySlot.querySelector(".v") : null;
+  if (!buyV) { ok("the buy slot can be opened", false, "(no .v)"); return out; }
+  buyV.click();
+  await sleep(700);
+
+  const termNames = opts()
+    .filter(function (o) { return !!o.querySelector(".pr"); })
+    .map(function (o) {
+      const n = o.querySelector(".nm");
+      return n && n.firstChild ? String(n.firstChild.textContent) : "";
+    });
+  ok("the buy slot offers real terminals, not just systems", termNames.length > 0, termNames.join(" | "));
+
+  const legal = {};
+  ((truth && truth.buyAt) || []).forEach(function (b) { legal[b.terminalShort] = true; });
+  const illegal = termNames.filter(function (n) { return !legal[n]; });
+  // 🔴 THE ASSERTION THE WHOLE DESIGN RESTS ON. Paired with the positive above, because "no illegal
+  // options" is satisfied for free by an empty list - the free-pass shape this repo keeps hitting.
+  ok("🔴 every terminal offered really does sell this commodity",
+     illegal.length === 0, illegal.length ? "NOT in buyAt: " + illegal.join(", ") : termNames.length + " of " + termNames.length + " legal");
+
+  // A system badge on a terminal option, and it must not rely on colour alone: --cyan-bright and
+  // --amber compute 30 units apart on the Drake skin, so a colour-only home/away split disappears
+  // there. Fill vs no fill is what survives a palette.
+  const badges = [].slice.call(document.querySelectorAll("#body .slotlist .sysb"));
+  ok("a terminal option says which system it is in", badges.length > 0, badges.length + " badges");
+  const home = badges.filter(function (b) { return b.classList.contains("home"); })[0];
+  const away = badges.filter(function (b) { return b.classList.contains("away"); })[0];
+  if (home && away) {
+    const hc = getComputedStyle(home);
+    const ac = getComputedStyle(away);
+    ok("🔴 home and away are told apart by more than a hue",
+       dist(hc.color, ac.color) >= 120 || hc.backgroundColor !== ac.backgroundColor,
+       "colour " + dist(hc.color, ac.color) + " apart, bg " + hc.backgroundColor + " vs " + ac.backgroundColor);
+  } else {
+    // Not a failure: the fixture may hold one system only. Say so rather than passing silently.
+    ok("home/away contrast is untested here - only one kind of badge on screen", true,
+       (home ? "home" : "") + (away ? "away" : "") + " only");
+  }
+
+  // ── pin the buy, and the list becomes DESTINATIONS ────────────────────────
+  // Take the terminal the probe chose, not whichever is first — that is the whole point of probing.
+  const firstTerm = opts().filter(function (o) {
+    const optN = o.querySelector(".nm");
+    return !!o.querySelector(".pr") && optN && optN.firstChild
+      && String(optN.firstChild.textContent) === wantTerminal;
+  })[0];
+  ok("the buy slot offers the terminal the probe chose", !!firstTerm,
+     firstTerm ? wantTerminal : "no option named " + wantTerminal);
+  if (!firstTerm) return out;
+  const tn = firstTerm.querySelector(".nm");
+  const pinned = tn && tn.firstChild ? String(tn.firstChild.textContent) : "";
+  const rowsBefore = rows().length;
+  firstTerm.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+  await sleep(1900);
+
+  ok("picking a terminal fills the buy slot", slotText("buy") === pinned,
+     JSON.stringify(slotText("buy")) + " vs " + JSON.stringify(pinned));
+  // 🔴 THE DEDUPE FLIP, OBSERVED THROUGH THE UI. The finder returns one row per BUY terminal, so
+  // with a buy pinned that rule collapses the answer to a single row - and the question at that
+  // moment is "where can I take this". A regression here does not throw; it silently shows one
+  // destination and looks like the commodity has nowhere to go.
+  ok("🔴 with a buy pinned, the board lists DESTINATIONS rather than one row",
+     rows().length > 1, rows().length + " rows (was " + rowsBefore + " before pinning)");
+  // 🔑 AND IT IS THE RIGHT NUMBER OF THEM. This is what catches the widget asking a DIFFERENT
+  // question from the one it means to — sending fromSystem where it meant fromTerminal returns a
+  // plausible list that is simply about something else, and "more than one row" would not notice.
+  ok("...exactly as many as the sidecar has for that pin",
+     rows().length === wantRows, rows().length + " on screen vs " + wantRows + " from the API");
+  /* ⚠️ Array every() on an empty list is TRUE, so this would report a working pin over a board that
+     returned nothing — the free-pass shape this file has been bitten by repeatedly. The row count
+     is folded into the condition rather than left to the guard above it, so the assertion cannot
+     pass vacuously even when read on its own. */
+  const allFromPinned = rows().length > 0 && rows().every(function (r) {
+    const rt = r.querySelector(".l2 .r");
+    return !!rt && rt.textContent.indexOf(pinned) === 0;
+  });
+  ok("...and every one of them starts at the terminal that was pinned", allFromPinned,
+     rows().length + " rows, all from " + pinned);
+
+  const head = document.querySelector("#body .sec");
+  ok("...and the heading says which question is being answered",
+     !!head && head.textContent.indexOf("Take it to") === 0,
+     head ? JSON.stringify(head.textContent) : "(no heading)");
+
+  // ── the trade-off line ────────────────────────────────────────────────────
+  // It may legitimately be absent when the best-paying and the best-per-hour destination are the
+  // same row, so this is a conditional claim - stated as one rather than skipped silently.
+  const to = document.querySelector("#body .tradeoff");
+  if (to) {
+    const bolded = [].slice.call(to.querySelectorAll("b")).map(function (b) { return b.textContent; });
+    ok("the trade-off line names TWO different destinations",
+       bolded.length === 2 && bolded[0] !== bolded[1], bolded.join(" / "));
+    ok("...and it is above the rows it is about",
+       !!head && (to.compareDocumentPosition(head) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+       "tradeoff then heading");
+  } else {
+    ok("no trade-off line, because one destination wins on both counts", true, "absent by design");
+  }
+
+  // ── the + Route button ────────────────────────────────────────────────────
+  // 🔴 Sub: "it's a massive pill right next to the smaller pills... if it was right-justified in its
+  // own kind of column, or the same column as the price, that would look a lot better."
+  const row0 = rows()[0];
+  const chipRow = row0 ? row0.querySelector(".tdchips") : null;
+  const btn = chipRow ? chipRow.querySelector(".hbtn") : null;
+  ok("a run row still carries the + Route control", !!btn,
+     btn ? JSON.stringify(btn.textContent) : "(no button in .tdchips)");
+  if (btn && chipRow) {
+    const br = btn.getBoundingClientRect();
+    const cr = chipRow.getBoundingClientRect();
+    ok("🔴 it is hard right in the row, not sitting among the chips",
+       Math.abs(br.right - cr.right) <= 1.5,
+       "button right " + Math.round(br.right) + " vs chip row right " + Math.round(cr.right));
+    // The other half of Sub's sentence: the same right edge the price already uses. Both end at
+    // the row's own padding, so this holds without either reserving width.
+    const p = row0.querySelector(".l1 .pk") || row0.querySelector(".l1 .p");
+    if (p) {
+      const pr = p.getBoundingClientRect();
+      ok("...on the same right edge as the price", Math.abs(br.right - pr.right) <= 2,
+         "button " + Math.round(br.right) + " vs price " + Math.round(pr.right));
+    }
+  }
+
+  // ── clearing WHAT must clear the terminal under it ────────────────────────
+  // 🔴 A terminal slot only ever holds a place that trades the CHOSEN commodity. Left behind, it
+  // filters the next commodity by a terminal that has nothing to do with it, which returns nothing
+  // and reads exactly like a broken board.
+  const wx = slotFor("what") ? slotFor("what").querySelector(".x") : null;
+  if (wx) {
+    wx.click();
+    await sleep(1600);
+    ok("🔴 clearing the commodity also clears the terminal picked under it",
+       slotText("buy") === "anywhere", JSON.stringify(slotText("buy")));
+    ok("...and the board comes back", rows().length > 0, rows().length + " rows");
+  } else {
+    ok("the what slot offers a clear control once set", false, "(no .x)");
+  }
+
+  return out;
+})()`;
+
 const RUNSNARROW = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
@@ -7651,6 +7971,7 @@ app.whenReady().then(async () => {
     // that throws. Same page, so this costs nothing to place here.
     fails += await run("hauling: one flat tab row, and the credit follows the data", TABROW, null, null, "hauling.html");
     fails += await run("hauling: a commodity in the route, before and after the buy", BUYROUTE, null, null, "hauling.html");
+    fails += await run("hauling: the funnel - what, buy at, sell at", FUNNEL, null, null, "hauling.html");
     fails += await run("hauling: the Runs row survives 320px", RUNSNARROW, null, null, "hauling.html");
     fails += await run("hauling: the trade journal's held cargo", TRADEHOLD, null, null, "hauling.html");
     fails += await run("hauling: a sale with no stated volume shows no tonnage", TRADEUNIT, null, null, "hauling.html");

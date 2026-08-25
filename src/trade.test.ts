@@ -427,6 +427,84 @@ console.log("\n-- routes: budget and ranking --");
   const deduped = findRoutes(many, { capacityScu: 64, now: NOW, limit: 50 });
   check("one row per (commodity, buy terminal)", deduped.length === 1, String(deduped.length));
   check("...and it kept the BEST destination", deduped[0]?.to.terminal === "D0", String(deduped[0]?.to.terminal));
+
+  /* 🔴 …AND THE MIRROR, which is what makes "where can I take this" answerable at all. Pinning the
+     buy terminal means the player has already made the decision the dedupe above protects, so the
+     rule flips to one row per DESTINATION. Without the flip this returns 1 row and the whole
+     sell-at step of the funnel has nothing to list — a failure that looks exactly like "there is
+     nowhere to sell it". */
+  const dests = findRoutes(many, { capacityScu: 64, now: NOW, limit: 50, fromTerminal: "A" });
+  check("with the buy pinned, one row per DESTINATION", dests.length === 12, String(dests.length));
+  check("...still best-first", dests[0]?.to.terminal === "D0", String(dests[0]?.to.terminal));
+  check("...and every row really does start at the pinned terminal",
+    dests.every((r) => r.from.terminal === "A"), dests.map((r) => r.from.terminal).join(","));
+  /* The flip is armed by `fromTerminal` ALONE. A `toTerminal` pin leaves the original rule in
+     place, because then the many-hats risk is back on the buy side. */
+  const oneDest = findRoutes(many, { capacityScu: 64, now: NOW, limit: 50, toTerminal: "D3" });
+  check("a toTerminal pin does NOT flip the dedupe", oneDest.length === 1, String(oneDest.length));
+  check("...and it is the pinned destination", oneDest[0]?.to.terminal === "D3", String(oneDest[0]?.to.terminal));
+}
+
+console.log("\n-- routes: the three funnel filters --");
+{
+  const quotes = [
+    q({ commodity: "Neon", terminal: "Last Landings", terminalShort: "Last Landings", system: "Pyro", body: "Terminus", buy: 14_206, stockScu: 476 }),
+    q({ commodity: "Neon", terminal: "Admin - Ashland", terminalShort: "Ashland", system: "Pyro", body: "Ignis", buy: 15_449, stockScu: 348 }),
+    q({ commodity: "Neon", terminal: "Admin - Patch City", terminalShort: "Patch City", system: "Pyro", body: "Bloom", sell: 19_000, demandScu: 329 }),
+    q({ commodity: "Neon", terminal: "Locker Room - CRU-L4", terminalShort: "CRU-L4 Locker", system: "Stanton", body: "Crusader", sell: 21_000, demandScu: 302 }),
+    q({ commodity: "Neon (Ore)", terminal: "Last Landings", terminalShort: "Last Landings", system: "Pyro", body: "Terminus", buy: 5, stockScu: 900 }),
+    q({ commodity: "Neon (Ore)", terminal: "Admin - Patch City", terminalShort: "Patch City", system: "Pyro", body: "Bloom", sell: 900, demandScu: 900 }),
+  ];
+
+  const everything = findRoutes(quotes, { capacityScu: 120, now: NOW, limit: 50 });
+  check("without a commodity filter both commodities are in play",
+    new Set(everything.map((r) => r.commodity)).size === 2,
+    everything.map((r) => r.commodity).join(","));
+
+  /* 🔴 EXACT, NEVER A PREFIX. "Neon" must not drag in "Neon (Ore)" — a different thing at a
+     different price. Same rule `lookupCommodity` already keeps, and the reason the slot picks the
+     name off /api/trade/names rather than taking what was typed. */
+  const neon = findRoutes(quotes, { capacityScu: 120, now: NOW, limit: 50, commodity: "Neon" });
+  check("commodity is matched exactly", neon.every((r) => r.commodity === "Neon"),
+    neon.map((r) => r.commodity).join(","));
+  check("...and it is not empty", neon.length > 0, String(neon.length));
+  check("case does not matter",
+    findRoutes(quotes, { capacityScu: 120, now: NOW, limit: 50, commodity: "nEoN" }).length === neon.length);
+
+  const fromShort = findRoutes(quotes, { capacityScu: 120, now: NOW, limit: 50, commodity: "Neon", fromTerminal: "Ashland" });
+  check("fromTerminal matches the SHORT name, which is what the board renders",
+    fromShort.length > 0 && fromShort.every((r) => r.from.terminalShort === "Ashland"),
+    String(fromShort.length));
+  /* An API caller holding the long form must not get a silent empty list — that is
+     indistinguishable from "there are no routes", which is the worst failure a filter has. */
+  const fromLong = findRoutes(quotes, { capacityScu: 120, now: NOW, limit: 50, commodity: "Neon", fromTerminal: "Admin - Ashland" });
+  check("...and the LONG name finds the same terminal", fromLong.length === fromShort.length,
+    String(fromLong.length) + " vs " + String(fromShort.length));
+
+  const toStanton = findRoutes(quotes, { capacityScu: 120, now: NOW, limit: 50, commodity: "Neon", toTerminal: "CRU-L4 Locker" });
+  check("toTerminal pins the drop-off",
+    toStanton.length > 0 && toStanton.every((r) => r.to.terminalShort === "CRU-L4 Locker"),
+    toStanton.map((r) => r.to.terminalShort).join(","));
+
+  /* The whole funnel, all three slots: Neon, bought at Last Landings, sold in Stanton. This is the
+     "get me out of Pyro" case, and it is one query. */
+  const steered = findRoutes(quotes, {
+    capacityScu: 120, now: NOW, limit: 50,
+    commodity: "Neon", fromTerminal: "Last Landings", toSystem: "Stanton",
+  });
+  check("all three slots compose", steered.length === 1, String(steered.length));
+  check("...to the one run that leaves Pyro",
+    steered[0]?.to.terminalShort === "CRU-L4 Locker" && steered[0]?.crossSystem === true,
+    JSON.stringify(steered.map((r) => r.to.terminalShort)));
+  /* 🔑 And it really is the WORSE per-hour choice, which is the whole reason the tab has to say so
+     rather than just ranking. Same buy, both destinations, from the unfiltered list. */
+  const bothWays = findRoutes(quotes, { capacityScu: 120, now: NOW, limit: 50, commodity: "Neon", fromTerminal: "Last Landings" });
+  const pyro = bothWays.find((r) => r.to.terminalShort === "Patch City");
+  const stanton = bothWays.find((r) => r.to.terminalShort === "CRU-L4 Locker");
+  check("leaving the system pays MORE per run", (stanton?.profit ?? 0) > (pyro?.profit ?? 0),
+    String(stanton?.profit) + " vs " + String(pyro?.profit));
+  check("...and LESS per hour", (stanton?.profitPerHour ?? 0) < (pyro?.profitPerHour ?? 0),
+    String(Math.round(stanton?.profitPerHour ?? 0)) + " vs " + String(Math.round(pyro?.profitPerHour ?? 0)));
 }
 
 console.log("\n-- lookup: ranges, never one number --");

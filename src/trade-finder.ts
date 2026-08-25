@@ -121,6 +121,19 @@ export interface FindRoutesOptions {
   /** Only routes ENDING here. This is the backhaul filter: you are already going there. */
   toSystem?: string | null;
   toBody?: string | null;
+  /**
+   * One commodity only.
+   *
+   * 🔑 EXACT (case-insensitive), for the same reason `lookupCommodity` is: a prefix match answers a
+   * question about "Aluminum" with rows for "Aluminum (Ore)", which is a different thing at a
+   * different price. The widget picks this off `/api/trade/names`, so it is never a typed guess.
+   */
+  commodity?: string | null;
+  /** Buy at this terminal and nowhere else. Matches the long name OR the short one — every UI
+   *  surface in this app shows the short form, so that is what a pick sends back. */
+  fromTerminal?: string | null;
+  /** Sell at this terminal and nowhere else. Same matching rule. */
+  toTerminal?: string | null;
   /** Drop routes whose stock is unreported. Off by default: on the bundled table that would
    *  discard 87% of everything, which reads as "the feature is broken". */
   requireKnownStock?: boolean;
@@ -281,15 +294,28 @@ export function findRoutes(
   const sameName = (a: string | null, b: string | null | undefined): boolean =>
     !b || (!!a && a.toLowerCase() === b.toLowerCase());
 
+  /** A terminal filter matches EITHER name. The board renders `terminalShort`, so that is what a
+   *  pick sends back — but an API caller holding the long form must not get a silent empty list,
+   *  which is indistinguishable from "there are no routes". */
+  const sameTerminal = (q: TradeQuote, want: string | null | undefined): boolean => {
+    if (!want) return true;
+    const w = want.trim().toLowerCase();
+    return q.terminal.toLowerCase() === w || q.terminalShort.toLowerCase() === w;
+  };
+  const wantCommodity = opts.commodity ? opts.commodity.trim().toLowerCase() : null;
+
   const buys = new Map<string, TradeQuote[]>();
   const sells = new Map<string, TradeQuote[]>();
   for (const q of quotes) {
     if (!fresh(q)) continue;
-    if (q.buy !== null && sameName(q.system, opts.fromSystem) && sameName(q.body, opts.fromBody)) {
+    if (wantCommodity && q.commodity.toLowerCase() !== wantCommodity) continue;
+    if (q.buy !== null && sameName(q.system, opts.fromSystem) && sameName(q.body, opts.fromBody)
+        && sameTerminal(q, opts.fromTerminal)) {
       const arr = buys.get(q.commodity);
       if (arr) arr.push(q); else buys.set(q.commodity, [q]);
     }
-    if (q.sell !== null && sameName(q.system, opts.toSystem) && sameName(q.body, opts.toBody)) {
+    if (q.sell !== null && sameName(q.system, opts.toSystem) && sameName(q.body, opts.toBody)
+        && sameTerminal(q, opts.toTerminal)) {
       const arr = sells.get(q.commodity);
       if (arr) arr.push(q); else sells.set(q.commodity, [q]);
     }
@@ -355,10 +381,17 @@ export function findRoutes(
   // 🔑 ONE ROW PER (commodity, buy terminal). Without this the list is 40 rows of Bexalite from
   // Bueno Ravine to forty different sell points, which is one decision wearing forty hats. The
   // sort above already put the best sell destination for each buy point first.
+  //
+  // 🔴 …UNLESS THE CALLER HAS ALREADY MADE THAT DECISION. With `fromTerminal` pinned there is
+  // exactly one buy point, so the rule above collapses the whole answer to a SINGLE row — and the
+  // question being asked at that moment is precisely "where can I take this", i.e. the forty hats
+  // ARE the answer. So the key mirrors: one row per DESTINATION. The protection is unchanged in
+  // shape, only in which end of the run it applies to.
+  const dedupeOnDestination = !!opts.fromTerminal;
   const seen = new Set<string>();
   const deduped: TradeRoute[] = [];
   for (const r of out) {
-    const k = r.commodity + "\u0000" + r.from.terminal;
+    const k = r.commodity + "\u0000" + (dedupeOnDestination ? r.to.terminal : r.from.terminal);
     if (seen.has(k)) continue;
     seen.add(k);
     deduped.push(r);
