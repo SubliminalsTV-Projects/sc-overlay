@@ -292,6 +292,10 @@ export function fromShopTerminals(doc: unknown): ShopPlacement[] {
   for (const [token, raw] of Object.entries(tokens)) {
     const r = (raw ?? {}) as {
       outcome?: unknown; verdict?: unknown; terminal?: unknown;
+      // Declared but never read — see the header. It is here so the negative control that tries to
+      // use it can COMPILE; a control that dies on a type error is red for the wrong reason and
+      // proves nothing about the rule it aimed at.
+      provisionalTerminal?: unknown;
       location?: unknown; soldBy?: unknown;
     };
     if (!token) continue;
