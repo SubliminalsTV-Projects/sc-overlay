@@ -1,9 +1,14 @@
-// Opt-in log sharing. When enabled (config.shareLogs) and a sync token is set, the
-// current Star Citizen Game.log is scrubbed (src/log-scrub) and uploaded to subliminal.gg
-// so mission + blueprint parsing can be improved against real sessions. Deduped by the
-// scrubbed content's hash so the periodic tick never re-posts an unchanged session.
+// Opt-in log sharing. When enabled (config.shareLogs) and a sync token is set, ROTATED Star
+// Citizen sessions are scrubbed (src/log-scrub) and uploaded to subliminal.gg so mission,
+// blueprint, price and hauling parsing can be improved against real play.
 //
-// ROTATED SESSIONS TOO (since 0.1.39). The game writes a FRESH Game.log per launch and
+// 🔴 THE LIVE Game.log IS NOT UPLOADED (since RULES_VERSION 3). It was, for as long as this file
+// existed, and removing it is Sub's call — the reasoning and the measurements are on maybeShareLog.
+// The short version: the game writes one GROWING file per launch, so re-posting it on every change
+// delivered the same session over and over, and a backup of that same session follows a median
+// 0.1h later anyway.
+//
+// ROTATED SESSIONS (since 0.1.39). The game writes a FRESH Game.log per launch and
 // rotates the old one into logbackups/, so sharing only the live file could never show a
 // session the player had already finished — a user reported Battaglia standing stuck at
 // zero and every log he sent held accepts and no completions, purely because his completed
@@ -11,11 +16,18 @@
 // ever, remembered by FILENAME in the state file (no need to read a file to know it is done).
 //
 // 🔑 THE FILTERS ARE WHAT MAKE THIS AFFORDABLE, and they were measured, not guessed. Re-measured
-// 2026-08-16 on Sub's machine: logbackups/ held 479 files / 687 MB with the 4 MB cap applied.
-// Filtered to the CURRENT patch and to sessions that contain mission signal that is 41 files /
-// 132 MB, plus the hauling carve-out below at 13 files / 49 MB — 54 files / 181 MB, which at the
-// measured 7.5x Postgres compression is ~24 MB stored per user. Unfiltered it would be ~92 MB
-// each, nearly all of it pre-wipe sessions the tracker deliberately ignores anyway.
+// 2026-08-25 on Sub's machine (flight keepayear): logbackups/ holds 535 files / 1.49 GB.
+//
+// 🔴 THE HISTORY CAP IS NOW A ONE-YEAR WINDOW, NOT THE CURRENT SC PATCH (RULES_VERSION 3). The
+// patch rule offered 96 files / 60 uploads / 171 MB — about 39 days, on a folder going back to
+// March 2025. A year offers 469 files / 182 uploads / 504 MB sent, which at the measured 8.4x
+// Postgres compression is ~60 MB stored per user. Uncapped would be 535 / 202 / 570 MB, so a year
+// is very nearly the whole folder anyway: the last 66 files buy 20 more uploads. See RETENTION_MS
+// for why the patch axis was the wrong one to cap on.
+//
+// ⚠️ THIS IS ONLY THE CLIENT HALF. The site keeps a fixed quota per contributor (live 5 / backup
+// 25 when this was written), so widening the window here shows nothing until that quota moves —
+// and the quota moving shows nothing while the app can only ever offer 39 days. Both or neither.
 //
 // ⚠️ AN OFF-PATCH VERDICT IS NOT FINAL. It used to be recorded in the uploaded set, which meant a
 // player who updated the app just after an SC patch had their whole backlog blacklisted on the
@@ -26,17 +38,62 @@
 // to disk by the old build is repaired once, on first run — see migrateLegacyBlacklist.
 import { readFileSync, writeFileSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { createHash } from "node:crypto";
 import { scrubGameLog } from "./log-scrub.js";
 
 const SITE = "https://subliminal.gg";
 // The site rejects a body over 4MB (and an empty one) with a bare 400. A long session's
 // game.log goes well past that, so trim to the most RECENT 4MB rather than posting something
 // that can only be refused — the tail is the part that describes what the player just did.
+//
+// 🔴 THIS CEILING IS THROWING AWAY HALF THE CORPUS BY VOLUME, measured 2026-08-25 over the 182
+// in-window uploads on Sub's disk: 71 of them (39.0%) are at the ceiling, 503.8 MB of scrubbed
+// text is discarded, and the worst session keeps 6.1% of itself (65.5 MB scrubbed -> 4.0 MB).
+// Sweep, as sent / as stored at the measured 8.4x: 4 MB keeps 50.0% (504 MB / 60 MB) · 8 MB 69.1%
+// · 16 MB 85.8% · 32 MB 95.8% (966 MB / 115 MB) · 64 MB 99.9%.
+//
+// 🔴 IT IS THE SITE'S LIMIT, SO THE SITE MOVES FIRST — and the ordering is not a nicety. A body
+// the site refuses `break`s the loop WITHOUT recording the filename, so an oversized upload is
+// retried on every tick forever and every other backup queues behind it. Raising this constant
+// ahead of the site would not merely fail to help, it would wedge the queue of every heavy user.
+// Whoever raises it should also make a 400 (as opposed to a transient failure) record the name,
+// so a body the site will never accept cannot block the ones it would.
 const MAX_BYTES = 4 * 1024 * 1024;
-/** Backups uploaded per tick. One keeps a first-run backlog to a trickle (Sub's 54-file
- *  backlog spreads over ~18h of app uptime) instead of a burst the site has to absorb. */
-const BACKUPS_PER_TICK = 1;
+/** Backups uploaded per tick.
+ *
+ *  🔴 THIS CONSTANT IS THE CATCH-UP DIAL AND NOTHING ELSE — measured, not assumed. Steady state
+ *  never reaches it: Sub plays 1.28 sessions/day and ~34% of sessions carry signal, so an
+ *  established user generates **0.44 uploads/day** against a floor of 72/day at one per 20-minute
+ *  tick. It binds only while a backlog exists, which happens once per user per rules change.
+ *  That is why there is ONE number here and not a catch-up rate beside a steady rate: a second
+ *  rate would be a mode controlling a state that does not exist, and a mode is somewhere to get
+ *  stuck.
+ *
+ *  It was 1, which made the one thing it governs as slow as possible: the year window gives Sub a
+ *  98-session backlog, and at 3/hour that is 33 hours of app uptime — about a week of real days,
+ *  which reads as the feature being broken rather than as pacing. At 5 it is ~20 ticks (6.7h of
+ *  uptime), caps a single client at 15 uploads/hour, and at his measured 2.77 MB mean body that is
+ *  ~42 MB/hour. Reversible by changing this line. */
+const BACKUPS_PER_TICK = 5;
+/** How far back rotated sessions are worth keeping. Sub, 2026-08-25: *"up that cap to being a year
+ *  and keeping it compressed."*
+ *
+ *  🔴 THIS REPLACED THE CURRENT-PATCH FILTER, and the two are not the same kind of rule. The patch
+ *  filter existed so a pre-wipe session did not spend storage on rep/blueprint truth a wipe had
+ *  already invalidated — a good reason that only ever applied to rep and blueprints. Everything
+ *  else the corpus is now read for (prices, hauling calibration, shop placement, locations) is
+ *  untouched by a wipe, so the filter had quietly become a cap on the wrong axis: it held every
+ *  contributor to the current patch, a 39-day window, while the folder on disk went back years.
+ *  Measured on Sub's own 535 backups: the patch rule offers 96 files / 60 uploads, a year offers
+ *  469 / 182. ⚠️ Off-patch sessions therefore now upload, which is the intended change. */
+const RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+/** How much of a tick's rejection budget the rules-reset drain may take.
+ *
+ *  🔑 It gets a SHARE rather than the whole budget, which is a change from how the drain shipped.
+ *  `rejected` is one counter and the upload loop breaks on it, so a drain that spent all 20 left
+ *  the tick with no uploads at all — measured at 7 consecutive dead ticks on Sub's file, and the
+ *  year window makes the drain bigger. The total work is identical either way; splitting it means
+ *  uploads flow from the first tick instead of after two hours of apparent silence. */
+const RECHECK_PER_TICK = 10;
 /** Backups REJECTED per tick. Rejections cost no upload, so they used to be unbounded — and that
  *  is precisely what let a single tick classify (and, back then, blacklist) a whole folder. A
  *  bound makes any mistake in the rules cheap: it can only ever cost a handful of files before
@@ -66,11 +123,24 @@ const REJECTS_PER_TICK = 20;
  *  there is no other `Send…Request` in 533 logs, so a sixth verb is caught without a code change
  *  while a session that only browsed is still refused. The `::` is what keeps it scoped to a
  *  component method call, for the same reason RE_HAUL is scoped to a CreateMarker line. */
-const RE_SIGNAL = /MissionEnded|EndMission|Received Blueprint|Contract Complete|Contract Accepted|::Send\w*(?:Buy|Sell|Rental)Request/;
-/** The signal rule as it stood before RULES_VERSION 2, kept as SOURCE rather than as a comment
- *  because it is load-bearing: it is the only thing that tells a genuine upload apart from a
- *  rejection inside `backups`. See wasUploadedUnderPreviousRules. */
-const PREV_RE_SIGNAL = /MissionEnded|EndMission|Received Blueprint|Contract Complete|Contract Accepted/;
+const RULES_2_SIGNAL = /MissionEnded|EndMission|Received Blueprint|Contract Complete|Contract Accepted|::Send\w*(?:Buy|Sell|Rental)Request/;
+/** The signal rule as it stood at RULES_VERSION 1, kept as SOURCE rather than as a comment because
+ *  it is load-bearing: with its v2 sibling it is the only thing that tells a genuine upload apart
+ *  from a rejection inside `backups`. See wasUploadedUnderRules. */
+const RULES_1_SIGNAL = /MissionEnded|EndMission|Received Blueprint|Contract Complete|Contract Accepted/;
+/** RULES_VERSION 3 changes the retention WINDOW, not the signal rule, so v3's signal rule IS v2's.
+ *  Aliased rather than copied: two literals that must stay identical are two literals that will
+ *  not. Whoever changes the signal rule next declares a new one here and leaves RULES_2_SIGNAL
+ *  frozen, which is what keeps the version→rule table below honest. */
+const RE_SIGNAL = RULES_2_SIGNAL;
+/** The game writes its own UTC session-start stamp as the first thing in the file:
+ *  `<2026-08-23T22:10:48.704Z> BackupNameAttachment=…`. Anchored to the START of the text on
+ *  purpose — every line carries a stamp, so an unanchored match finds whichever one the read
+ *  happened to land on. */
+const RE_HEAD_STAMP = /^<(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)>/;
+/** `Game Build(12344265) 23 Aug 26 (17 10 39).log` — the same moment in LOCAL time, no offset. */
+const RE_NAME_DATE = /\b(\d{1,2}) ([A-Za-z]{3}) (\d{2}) \((\d{2}) (\d{2}) (\d{2})\)/;
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 /** Cargo hauls survive the patch filter — see shareBackups. The literal names are the three
  *  hauling generators in the corpus (GoblinG 322, Covalex 41, RedWind 2); the CreateMarker arm
  *  mirrors what src/hauling.ts actually admits, which is any marker line whose generator or
@@ -86,19 +156,72 @@ export function hasShareSignal(raw: string): boolean {
   return RE_SIGNAL.test(raw) || RE_HAUL.test(raw);
 }
 
-/** Was this session UPLOADED by the rules that came before RULES_VERSION 2, or merely REJECTED by
- *  them? Everything in `backups` is one or the other and the filename cannot say which, so the
- *  file itself has to answer it.
+/** Was this session UPLOADED by the rules recorded in the state file, or merely REJECTED by them?
+ *  Everything in `backups` is one or the other and the filename cannot say which, so the file
+ *  itself has to answer it.
  *
  *  🔑 This is an inference off the OLD code's ordering, not a guess — exactly what makes
- *  migrateLegacyBlacklist exact. The old build only ever uploaded a session these rules accepted,
- *  so a name they reject can only have got into `backups` as a rejection.
+ *  migrateLegacyBlacklist exact. The old build only ever uploaded a session its own rules
+ *  accepted, so a name they reject can only have got into `backups` as a rejection.
+ *
+ *  🔴 IT TAKES THE VERSION, because a single frozen rule is wrong in one direction or the other
+ *  and both are expensive. Judge a v2 file by the v1 rule and every price-only session it really
+ *  uploaded is released and sent again; judge a v1 file by the v2 rule and every price-only
+ *  session it rejected is retained, which silently cancels the recovery the v2 widening exists
+ *  for. Users arrive here from both versions — anyone who skipped 0.1.46 is still on 1.
+ *
+ *  🔑 The PATCH test does not appear here and does not need to: under v1 and v2 an off-patch file
+ *  went to `skippedPatch`, so a name sitting in `backups` WITH signal can only be an upload.
+ *  Measured on Sub's file — 24 of the 122 sessions a year admits are exactly that, and releasing
+ *  them would re-send every one.
  *
  *  Exported because the state file cannot show the difference end-to-end: a released name that the
  *  NEW rules accept is simply re-recorded in the same tick, so start and end state are identical
  *  whether or not the release happened. The decision is the only place the claim is observable. */
-export function wasUploadedUnderPreviousRules(raw: string): boolean {
-  return PREV_RE_SIGNAL.test(raw) || RE_HAUL.test(raw);
+export function wasUploadedUnderRules(rules: number, raw: string): boolean {
+  const signal = rules >= 2 ? RULES_2_SIGNAL : RULES_1_SIGNAL;
+  return signal.test(raw) || RE_HAUL.test(raw);
+}
+
+/** When did this session START? Exported so the suite drives the REAL rule rather than a copy.
+ *
+ *  🔴 THE BRIEF OFFERED TWO CLOCKS AND THE RIGHT ONE WAS A THIRD. Measured over Sub's 535 real
+ *  backups: the header stamp is present on 535/535, the filename date parses on 535/535, and the
+ *  three agree to within nine seconds — **not one file** falls on a different side of a one-year
+ *  line depending on which you pick. So the choice is not load-bearing for correctness *today*,
+ *  and that is exactly the trap: the agreement is a property of a folder that has never been
+ *  copied, restored or carried to another machine.
+ *
+ *  The order is by what survives that:
+ *    1. THE HEADER. The game's own statement, in UTC, so it is immune to a timezone move, to DST,
+ *       and to the file being copied anywhere by anything. It also costs nothing — `headOf` is
+ *       already read to judge the file, so this is a match against bytes we hold.
+ *    2. THE FILENAME. The same instant in LOCAL time with no offset in the string, so it can only
+ *       be read in the reader's zone. Fine at a year's granularity; not a reason to prefer it.
+ *    3. MTIME, last and reluctantly. It is the session END rather than its start (median 0.90h
+ *       later, max 24.69h), and it is filesystem metadata: a copy, a restore or a cloud sync
+ *       rewrites it to NOW, which makes a three-year-old session read as today's. That failure
+ *       admits data rather than excluding it, so it is the cheap direction — but it is also the
+ *       one the header is immune to, which is the whole argument for the order.
+ *
+ *  ⚠️ A machine with a wrong clock states a wrong date here (the shared corpus holds one whose
+ *  clock is a year out). Both directions are cheap: too old is a session refused, too new is one
+ *  byte. Nothing tries to correct for it — there is no second opinion to correct it against. */
+export function sessionStartOf(head: string, name: string, mtimeMs: number): number {
+  const iso = head.match(RE_HEAD_STAMP)?.[1];
+  if (iso) {
+    const t = Date.parse(iso);
+    if (Number.isFinite(t)) return t;
+  }
+  const m = name.match(RE_NAME_DATE);
+  if (m) {
+    const mon = MONTHS.indexOf(m[2].toLowerCase());
+    if (mon >= 0) {
+      const t = new Date(2000 + Number(m[3]), mon, Number(m[1]), Number(m[4]), Number(m[5]), Number(m[6])).getTime();
+      if (Number.isFinite(t)) return t;
+    }
+  }
+  return mtimeMs;
 }
 
 /** Keep the last `max` bytes, cut at a line boundary so the upload never starts mid-record. */
@@ -138,13 +261,16 @@ interface ShareState {
   /** Filenames with a FINAL verdict — uploaded, or permanently ineligible (empty, unreadable,
    *  no signal of any kind). A backup is immutable, so these are never re-examined. */
   backups: Set<string>;
-  /** Filenames rejected ONLY for being from another game patch. Not a property of the file, but
-   *  of the rule we judged it by, so it is kept apart and is recoverable — see clearSkippedBackups. */
+  /** Filenames rejected by a RECOVERABLE rule — one that is a claim about our policy rather than
+   *  about the file. Since RULES_VERSION 3 that means OUT OF THE RETENTION WINDOW; before it, from
+   *  another game patch. Kept apart from `backups` so a later, wider rule can reach them — see
+   *  clearSkippedBackups and the rules bump in shareBackups.
+   *
+   *  ⚠️ THE JSON KEY STAYS `skippedPatch` even though the patch filter is gone. It is persisted on
+   *  every user's disk, and renaming it would make every existing list read as empty — which is
+   *  survivable (everything is simply re-offered) but is a migration paid for nothing. The name is
+   *  historical; the meaning is stated here. */
   skippedPatch: Set<string>;
-  /** sha1 of the last live body accepted by the site. Persisted because it used to live in a
-   *  module-level variable, so every app restart re-posted a byte-identical Game.log: one user
-   *  spent 2 of his 5 live retention slots on the same 165,261-byte body an hour apart. */
-  liveHash: string;
   /** True until the one-time repair in migrateLegacyBlacklist has actually run. Persisted as the
    *  file's `v`, not inferred from the other fields, so a tick that could NOT judge the patch
    *  (no ProductVersion in the live log) leaves the repair pending instead of silently
@@ -170,8 +296,16 @@ const STATE_VERSION = 2;
  *  user — and a version field on a state file in this app is a data-destruction switch, not a
  *  schema label. A rules change is purely additive to the file, so it gets its own field.
  *
- *  1 = the mission/blueprint rules this filter shipped with.  2 = the price term added. */
-const RULES_VERSION = 2;
+ *  1 = the mission/blueprint rules this filter shipped with.  2 = the price term added.
+ *  3 = the current-patch filter replaced by a one-year retention window.
+ *
+ *  🔴 THE BUMP IS THE ENTIRE FEATURE FOR ANYONE WHO HAS ALREADY RUN THE APP, and it is the single
+ *  most likely way this change does nothing while looking correct. A widened rule only ever meets
+ *  sessions nobody has judged yet; every one of Sub's 535 was already decided (131 recorded, 404
+ *  set aside), so without the bump a year-long window recovers exactly zero of the 98 sessions it
+ *  exists to reach. Verified as a transition rather than assumed: an existing file says `rules: 2`
+ *  and 3 !== 2, so it fires once and stamps itself. */
+const RULES_VERSION = 3;
 /** The value a file written before `rules` existed is read as. */
 const PRE_RULES_VERSION = 1;
 
@@ -184,7 +318,6 @@ function loadState(statePath: string): ShareState {
     return {
       backups: new Set(Array.isArray(v?.backups) ? v.backups : []),
       skippedPatch: new Set(Array.isArray(v?.skippedPatch) ? v.skippedPatch : []),
-      liveHash: typeof v?.liveHash === "string" ? v.liveHash : "",
       legacy: v?.v !== STATE_VERSION,
       // A file with no `rules` field was written by a build whose rules predate the price term.
       rules: typeof v?.rules === "number" ? v.rules : PRE_RULES_VERSION,
@@ -193,7 +326,7 @@ function loadState(statePath: string): ShareState {
   } catch {
     // No file at all is a fresh install, not a damaged one — there is nothing to repair, and
     // nothing was ever judged under the old rules, so it starts at the current ones.
-    return { backups: new Set(), skippedPatch: new Set(), liveHash: "", legacy: false, rules: RULES_VERSION, recheck: new Set() };
+    return { backups: new Set(), skippedPatch: new Set(), legacy: false, rules: RULES_VERSION, recheck: new Set() };
   }
 }
 function saveState(statePath: string, s: ShareState): void {
@@ -202,7 +335,9 @@ function saveState(statePath: string, s: ShareState): void {
       v: s.legacy ? 1 : STATE_VERSION,
       backups: [...s.backups],
       skippedPatch: [...s.skippedPatch],
-      liveHash: s.liveHash,
+      // ⚠️ `liveHash` is deliberately no longer written. It deduped the live upload, which no
+      // longer happens; an older build reading this file simply finds none and re-posts one live
+      // body once, which is the cheap direction for a rollback to be wrong in.
       rules: s.rules,
       recheck: [...s.recheck],
     };
@@ -211,10 +346,6 @@ function saveState(statePath: string, s: ShareState): void {
     console.error("[log-share] could not persist the shared-log state:", err);
   }
 }
-
-/** Callers with no state path have nowhere to persist to, so they get a process-lifetime record.
- *  This is what `lastHash` used to be, and it is only ever the fallback. */
-const memState: ShareState = { backups: new Set(), skippedPatch: new Set(), liveHash: "", legacy: false, rules: RULES_VERSION, recheck: new Set() };
 
 /** Undo the damage the old blacklist already did, once, on the first run of the fixed code.
  *
@@ -255,7 +386,7 @@ function migrateLegacyBlacklist(state: ShareState, dir: string, currentPatch: st
  *  🔑 Bounded and resumable for the same reason REJECTS_PER_TICK exists at all: a single pass over
  *  the folder here reads whole files (RE_HAUL does not live in the header), which is precisely the
  *  unbounded-rejection-path failure that was fixed once already, wearing a migration's clothes. */
-function drainRecheck(state: ShareState, dir: string, budget: number): number {
+function drainRecheck(state: ShareState, dir: string, budget: number, priorRules: number): number {
   let spent = 0;
   for (const n of state.recheck) {
     if (spent >= budget) break;
@@ -265,7 +396,7 @@ function drainRecheck(state: ShareState, dir: string, budget: number): number {
       const raw = readFileSync(join(dir, n), "utf8");
       // Accepted by the old rules => it was uploaded, and must stay recorded or it is sent twice.
       // Rejected by them => the verdict was about the rule, so put it back in front of the new one.
-      if (!wasUploadedUnderPreviousRules(raw)) state.backups.delete(n);
+      if (!wasUploadedUnderRules(priorRules, raw)) state.backups.delete(n);
     } catch {
       // Gone from disk, or locked. Leave it recorded — it can never be uploaded anyway, and a
       // transient lock must not be turned into a release that re-sends it.
@@ -274,24 +405,25 @@ function drainRecheck(state: ShareState, dir: string, budget: number): number {
   return spent;
 }
 
-/** Turning "share logs" back ON is the user's recovery gesture, so it must re-offer everything
- *  that was skipped for being off-patch at the time. Deliberately does NOT touch `backups`:
- *  re-offering a session already sent would just spend the site's retention on a duplicate. */
+/** Turning "share logs" back ON is the user's recovery gesture, so it must re-offer everything a
+ *  recoverable rule set aside — since RULES_VERSION 3, everything that fell outside the retention
+ *  window when it was judged. Deliberately does NOT touch `backups`: re-offering a session already
+ *  sent would just spend the site's retention on a duplicate. */
 export function clearSkippedBackups(statePath: string): void {
-  if (!statePath) { memState.skippedPatch.clear(); return; }
+  if (!statePath) return; // nothing is remembered without a state file, so there is nothing to clear
   const state = loadState(statePath);
   if (!state.skippedPatch.size) return;
-  console.log(`[log-share] re-offering ${state.skippedPatch.size} previously off-patch backup(s)`);
+  console.log(`[log-share] re-offering ${state.skippedPatch.size} previously set-aside backup(s)`);
   state.skippedPatch.clear();
   saveState(statePath, state);
 }
 
 /** POST one scrubbed body. Returns true when the site accepted it.
  *
- *  🔑 `kind` is not cosmetic — the site keeps a separate retention quota per kind. Under one
- *  shared quota the live log, which re-uploads on every content change, evicted rotated sessions
- *  within hours of them arriving. Sending "backup" is what keeps a finished session around long
- *  enough to be read. */
+ *  🔑 `kind` is not cosmetic — the site keeps a separate retention quota per kind, and that split
+ *  is why a rotated session survives long enough to be read. ⚠️ Only "backup" is ever sent now;
+ *  "live" stays in the type because the site's API still has the arm and a caller that guessed at
+ *  a third value would be a silent 400. See maybeShareLog for why the live upload was removed. */
 async function upload(text: string, token: string, appVersion: string, label: string, kind: "live" | "backup"): Promise<boolean> {
   const bytes = Buffer.byteLength(text, "utf8");
   const res = await fetch(`${SITE}/api/bp-tracker/logs?v=${encodeURIComponent(appVersion)}&kind=${kind}`, {
@@ -329,23 +461,28 @@ async function shareBackups(cfg: LogShareConfig, appVersion: string, state: Shar
   // the folder over. Reversible by construction — putting RULES_VERSION back disarms it, and an
   // older build reading this file simply drops the two fields, which re-arms it on the next
   // upgrade. Re-offering is the safe direction to be wrong in.
+  // The version the verdicts in this file were decided under, captured BEFORE the bump overwrites
+  // it — it is what the drain judges them by, and one line later it is gone.
+  const priorRules = state.rules;
   if (state.rules !== RULES_VERSION) {
     state.rules = RULES_VERSION;
     for (const n of state.backups) state.recheck.add(n);
-    // ⚠️ MEASURED, and it is not what the standing rule assumes. Clearing this recovers NOTHING
-    // for a RE_SIGNAL widening: `skippedPatch` holds only off-patch names, the patch test runs
-    // BEFORE the signal test, so all 399 of Sub's are set aside again on the way back through.
-    // The 4 sessions this release actually recovers were sitting in `backups` — the half a
-    // skippedPatch-only reset would have missed entirely. Cleared anyway, because a rejection set
-    // outliving the rule that filled it is the exact bug this subsystem was already fixed for
-    // once, and the next widening may well be one the patch test does gate.
+    // 🔴 WHICH SET A RESET RECOVERS DEPENDS ON WHICH RULE MOVED, and for this change it is the
+    // exact inverse of the last one. A SIGNAL widening (v2) recovered nothing here, because the
+    // patch test ran first and set every one of these aside again — its 4 recoverable sessions
+    // sat in `backups`. A WINDOW widening (v3) is the rule that put them here in the first place,
+    // so this is where nearly all of it is: measured on Sub's own file, 98 of the 122 sessions a
+    // year admits are in `skippedPatch` and the other 24 are already uploaded. Clearing both is
+    // what makes the reset indifferent to which rule moved — the alternative is a reset that has
+    // to be reasoned about correctly every time, and it was reasoned about wrongly once already.
     state.skippedPatch.clear();
     console.log(`[log-share] acceptance rules changed — re-judging ${state.recheck.size} recorded backup(s)`);
   }
-  // Shares the tick's rejection budget with the loop below rather than getting its own, so the
-  // total I/O a tick can cost does not change. During a drain that means a tick may upload
-  // nothing at all, which is the correct direction: no burst, and the drain is finite.
-  let rejected = drainRecheck(state, dir, REJECTS_PER_TICK);
+  // Takes a SHARE of the tick's rejection budget rather than all of it. `rejected` is one counter
+  // and the upload loop breaks on it, so a drain allowed the full 20 left the tick with no uploads
+  // at all — 7 dead ticks in a row on Sub's file, and the year window makes the drain longer. The
+  // work is the same either way; this just stops it looking like nothing is happening.
+  let rejected = drainRecheck(state, dir, Math.min(RECHECK_PER_TICK, REJECTS_PER_TICK), priorRules);
 
   const fresh = names.filter((n) => !state.backups.has(n) && !state.skippedPatch.has(n));
   if (!fresh.length) return;
@@ -356,26 +493,31 @@ async function shareBackups(cfg: LogShareConfig, appVersion: string, state: Shar
     .filter((x): x is { n: string; p: string; m: number; size: number } => x !== null)
     .sort((a, b) => b.m - a.m);
 
+  // One clock for the whole tick, so two files judged in the same pass cannot land on opposite
+  // sides of a line that moved between them.
+  const cutoff = Date.now() - RETENTION_MS;
   let sent = 0;
   for (const b of ordered) {
     if (sent >= BACKUPS_PER_TICK || rejected >= REJECTS_PER_TICK) break;
     if (!b.size) { state.backups.add(b.n); rejected++; continue; }
 
-    // The header alone answers the patch question, but hauling does not live in the header, so a
-    // patch MISMATCH is the one case that has to read the body before it can be judged.
-    let raw: string;
-    let onPatch: boolean;
-    try {
-      onPatch = !currentPatch || patchOf(headOf(b.p)) === currentPatch;
-      raw = readFileSync(b.p, "utf8");
-    } catch { state.backups.add(b.n); rejected++; continue; } // locked/deleted — don't retry forever
+    // 🔑 THE WINDOW IS DECIDED FROM THE HEADER ALONE, AND THE ORDERING IS THE POINT. The patch
+    // rule this replaced needed the whole body before it could refuse anything, because the haul
+    // carve-out that exempted it does not live in the header — so refusing a 65 MB session cost
+    // reading all 65 MB of it. A year is stated on line one, so an out-of-window file is now
+    // refused for 4 KB. On Sub's folder that is 55 of the cleared names costing a header read
+    // apiece instead of a body read apiece, on the one tick where the backlog is largest.
+    let head: string;
+    try { head = headOf(b.p); } catch { state.backups.add(b.n); rejected++; continue; }
+    if (sessionStartOf(head, b.n, b.m) < cutoff) { state.skippedPatch.add(b.n); rejected++; continue; }
 
-    // 🔑 The patch filter exists so pre-wipe sessions don't spend storage on rep/blueprint truth
-    // that a wipe already invalidated. A cargo haul is not that: an old-patch haul is still a
-    // valid haul, and phase 5's calibration corpus wants it. Measured at 13 files / 49 MB on a
-    // 479-backup folder, so the exemption is narrow enough to afford.
-    const haul = RE_HAUL.test(raw);
-    if (!onPatch && !haul) { state.skippedPatch.add(b.n); rejected++; continue; }
+    // 🔑 THE HAUL CARVE-OUT IS GONE FROM HERE, and it is not a loss. Its only job was to let an
+    // OFF-PATCH haul past the patch test, so it went out with the test it existed to bypass —
+    // RE_HAUL is still a signal term inside hasShareSignal, which is its other and now only job.
+    // A haul older than the window is refused like anything else: Sub asked for a year, and an
+    // exemption that reaches past it is an uncapped window wearing a carve-out's clothes.
+    let raw: string;
+    try { raw = readFileSync(b.p, "utf8"); } catch { state.backups.add(b.n); rejected++; continue; } // locked/deleted
     if (!hasShareSignal(raw)) { state.backups.add(b.n); rejected++; continue; }
 
     const text = tail(scrubGameLog(raw).text, MAX_BYTES);
@@ -389,37 +531,41 @@ async function shareBackups(cfg: LogShareConfig, appVersion: string, state: Shar
   }
 }
 
-/** Best-effort: never throws. Uploads only when sharing is on, a token is set, and the
- *  scrubbed content changed since the last upload. Also trickles rotated sessions. */
+/** Best-effort: never throws. Trickles ROTATED sessions when sharing is on and a token is set.
+ *
+ *  🔴 THE LIVE Game.log IS NO LONGER UPLOADED — Sub's call, 2026-08-25, made against the measured
+ *  latency it was buying: *"I don't really care about latency with it. We're usually not
+ *  troubleshooting something immediately… if we get rid of the current log, we don't have to worry
+ *  about duplication. I think it's just a complete waste."*
+ *
+ *  What it cost, which is what settled it. The live log re-posted on every tick whose scrubbed
+ *  content changed, and the game writes one GROWING file per launch — so a single session arrived
+ *  as N rows, each a superset of the last. That is not merely wasted storage: it plants duplicate
+ *  observations of one event at one timestamp, which reads downstream as independent corroboration
+ *  (`pricemine` had to dedupe around it). It also spent all five of the site's live slots on
+ *  successive tails of the SAME session, so it did not even preserve the head of a long one.
+ *
+ *  What it bought, measured over 468 real session gaps: a backup appears only when the player
+ *  launches SC again, median **0.1h** later, p75 9.1h, p90 22.2h. So four sessions in five were
+ *  superseded within the hour anyway, and the tail is a day — which matters only if someone is
+ *  being troubleshooted live, and there the answer is to ask them to relaunch, or for the file.
+ *
+ *  ⚠️ THE LIVE LOG IS STILL READ, but only its first 4 KB, and only to learn the current patch for
+ *  the one-time legacy repair. That alone removes a whole-file read plus a scrub of up to 65 MB
+ *  from every 20-minute tick — ~720 ms of blocked event loop, measured, forever, during play. */
 export async function maybeShareLog(cfg: LogShareConfig, appVersion = "", statePath = ""): Promise<void> {
   try {
     if (!cfg.shareLogs || !cfg.syncToken) return;
-    const raw = readFileSync(cfg.logPath, "utf8");
-    if (!raw.trim()) return;
-    const scrubbed = scrubGameLog(raw).text;
-    const text = tail(scrubbed, MAX_BYTES);
-    const bytes = Buffer.byteLength(text, "utf8");
-    // One load and one save per tick, so the live hash and the backup lists can never disagree
-    // about which of them wrote the file last.
-    const state = statePath ? loadState(statePath) : memState;
-    // Nothing survived the scrub: skip rather than spend a request the site must refuse.
-    if (bytes === 0) {
-      console.error(`[log-share] nothing to upload — ${raw.length} chars scrubbed to 0 (${cfg.logPath})`);
-    } else {
-      const hash = createHash("sha1").update(text).digest("hex");
-      if (hash !== state.liveHash) {
-        const trimmed = bytes < Buffer.byteLength(scrubbed, "utf8") ? ", tail only" : "";
-        if (await upload(text, cfg.syncToken, appVersion, `the live Game.log${trimmed}`, "live")) state.liveHash = hash;
-      }
-    }
-    // The live log is where the current patch comes from. ⚠️ It is NOT a gate: when the live log
-    // carries no ProductVersion, `onPatch` is true for everything and the patch filter is simply
-    // off for that tick. What stops a first run walking the folder is BACKUPS_PER_TICK and
-    // REJECTS_PER_TICK, not this value — the comment that used to sit here said otherwise.
-    if (statePath) {
-      await shareBackups(cfg, appVersion, state, patchOf(raw.slice(0, 4096)));
-      saveState(statePath, state);
-    }
+    if (!statePath) return; // nowhere to remember what has been sent; a tick would re-offer forever
+    // 🔑 The HEADER only. migrateLegacyBlacklist is the last thing that needs the current patch,
+    // and it lives at ~byte 770. ⚠️ Not a gate: with no ProductVersion the repair stays pending and
+    // the retention window is unaffected — what bounds a first run is BACKUPS_PER_TICK and
+    // REJECTS_PER_TICK, never this value.
+    let liveHead = "";
+    try { liveHead = headOf(cfg.logPath); } catch { /* no live log yet — backups still trickle */ }
+    const state = loadState(statePath);
+    await shareBackups(cfg, appVersion, state, patchOf(liveHead));
+    saveState(statePath, state);
   } catch (err) {
     console.error("[log-share] failed:", err);
   }
