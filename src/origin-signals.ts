@@ -192,6 +192,72 @@ export function tierOfRecord(rec: LocationRecord | undefined): "place" | "body" 
 }
 
 /**
+ * 🔴 `RR_JP_<A><B>` IS THE R&R RING AT THE A–B JUMP POINT — resolved through the STARMAP'S OWN
+ * PARENT LINK, never through the token's words.
+ *
+ * Sub, standing at the Nyx-side gateway on 2026-08-25: *"Currently right now, the widget says that
+ * I'm at `RR_JP_NyxCastra`."* Two separate things were wrong, and this is the second — the first is
+ * the tier bug in `pushPlace` above.
+ *
+ * 🔴 WHY NO NAMING HEURISTIC CAN WORK HERE, and this is the transferable part. **CIG named the
+ * asset for a game that has not shipped.** `RR_JP_NyxCastra` is the ring at the Nyx–Castra jump
+ * point; Castra does not exist yet, so today that ring IS the route to Stanton and UEX calls it
+ * *Stanton Gateway (Nyx)*. When Castra ships, the station converts and Nyx→Stanton reroutes through
+ * Pyro. The asset name is not a mistake to be corrected — it is accurate about a future game. The
+ * starmap agrees and carries the same future state (`Terra Gateway` and `Magnus Gateway Clinic`
+ * both sit in Stanton for systems that do not exist).
+ *
+ * ✅ SO THE ANSWER COMES FROM A LINK, NOT A STRING. `locations.json` carries the jump point as an
+ * `Anomaly` and PARENTS it to the station that serves it:
+ *
+ *     Nyx System   Nyx - Castra Jump Point   -> parent "Stanton Gateway"  (Manmade)  ✅
+ *     Nyx System   Nyx - Pyro Jump Point     -> parent "Pyro Gateway"     (Manmade)  ✅
+ *     Pyro System  Pyro-Stanton Jump Point   -> parent "Stanton Gateway"  (Manmade)  ✅
+ *     Stanton Sys  Stanton-Pyro Jump Point   -> parent "Pyro Gateway"     (Manmade)  ✅
+ *     Pyro System  Pyro - Nyx Jump Point     -> parent "Pyro"             (Star)     ✗ refused
+ *     Pyro System  Jump Point Pyro Castra    -> parent "Pyro"             (Star)     ✗ refused
+ *
+ * ⚠️ SO IT COVERS 4 OF THE 6 REAL RINGS AND REFUSES THE OTHER TWO, rather than reaching for a
+ * second-best answer. The two it refuses have a gateway station in the data (`Nyx Gateway` really
+ * is in Pyro System) — it is only the PARENT LINK that is missing, and inventing the join from the
+ * names is the exact move the paragraph above rules out. A refusal here costs a friendly label; a
+ * guess would put the player in the wrong system, which for the travel model is the largest error
+ * it can make.
+ *
+ * 🔑 The parent must be a `place` by `tierOfRecord` — a jump point parented to its STAR carries no
+ * more information than the system reading we already have, and returning it would dress a system
+ * up as a station. Same rule as everywhere else in this module: the record decides.
+ *
+ * 🔑 "jumppoint" is stripped from the row's key rather than matched around, because the three
+ * spellings in the shipped data (`Nyx - Castra Jump Point`, `Pyro-Stanton Jump Point`, `Jump Point
+ * Pyro Castra`) put it in three different positions. Stripping it makes all three land on the
+ * ordered pair, which is the only part the token states. It does NOT collide with `Stanton-Pyro
+ * Jump Point Wreck Site`, whose key keeps `wrecksite`.
+ */
+export function jumpRingStation(
+  locations: Record<string, LocationRecord>,
+  token: string | null | undefined,
+): { id: string; name: string } | null {
+  const m = /^RR_JP_(.+)$/i.exec(String(token ?? ""));
+  if (!m) return null;
+  const want = matchKey(m[1]);
+  if (!want) return null;
+  const hits: string[] = [];
+  for (const [, rec] of Object.entries(locations)) {
+    if (String((rec as { type?: string })?.type) !== "Anomaly") continue;
+    if (matchKey(rec?.name).replace("jumppoint", "") !== want) continue;
+    if (rec?.parent) hits.push(rec.parent);
+  }
+  // The standing rule: one answer or none. Two jump points keyed alike is the name failing to
+  // identify a ring, and a ring at the wrong end of a wormhole is a whole system of error.
+  const ids = [...new Set(hits)];
+  if (ids.length !== 1) return null;
+  const parent = locations[ids[0]];
+  if (tierOfRecord(parent) !== "place") return null;
+  return { id: ids[0], name: parent?.name ?? ids[0] };
+}
+
+/**
  * Read a place out of a shop's own asset name.
  *
  * 🔑 THE INDEPENDENT SOURCE. Every other signal in this module comes from the game telling us where
@@ -272,9 +338,34 @@ export function collectOriginSignals(inputs: SignalInputs, deps: SignalDeps): Or
   const out: OriginSignal[] = [];
   const sys = inputs.system ?? null;
 
+  /**
+   * 🔴 THE RECORD DECIDES THE TIER — this used to say `tier: "place"` outright.
+   *
+   * Every one of the four callers below hands in an id that came from a NAME match, and a name is
+   * not a tier. `uniqueFromShopName` five lines down has always known this and applies
+   * `tierOfRecord`; these four did not, so a token that resolved to a `Star` or a `Moon` was
+   * reported as a PLACE fix.
+   *
+   * 🔴 CAUGHT LIVE ON SUB'S OWN APP, 2026-08-25, standing at the Nyx-side gateway. The log named
+   * his location `RR_JP_NyxCastra`; `matchLocationToken` has no entry for it, falls through to its
+   * subsequence arm, and "Nyx" is a subsequence of "JPNyxCastra" — so it returned the row **Nyx**,
+   * whose type is `Star`. The app then reported a SYSTEM as a `place`.
+   *
+   * 🔑 WHY THAT IS WORSE THAN REPORTING NOTHING, and not merely imprecise. `place` is the top tier:
+   * it outranks and therefore SHADOWS the correct coarser reading, it is the only tier
+   * `containmentOf` will call `same-place`, and `same-place` is the one verdict allowed to name a
+   * kiosk — so a false `place` can put a stranger's price at a station nobody was standing in. It
+   * also makes every distance measure from the centre of a sun. An honest `system` costs precision;
+   * a false `place` costs correctness.
+   *
+   * ⚠️ `tierOfRecord` returns null for a `SolarSystem` row (parentless AND coordinate-less), and a
+   * null tier is DROPPED rather than downgraded — nothing can be measured from one.
+   */
   const pushPlace = (id: string | null, at: number, source: string) => {
     if (!id) return;
-    out.push({ tier: "place", id, label: locations[id]?.name ?? id, at, source });
+    const tier = tierOfRecord(locations[id]);
+    if (!tier) return;
+    out.push({ tier, id, label: locations[id]?.name ?? id, at, source });
   };
 
   // -- PLACE, from the three things that name one -------------------------------------------

@@ -10,7 +10,8 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { collectOriginSignals, originDepsFor } from "./origin-signals.js";
+import { collectOriginSignals, originDepsFor, jumpRingStation } from "./origin-signals.js";
+import { matchLocationToken } from "./hauling-locations.js";
 import { resolveOrigin } from "./player-origin.js";
 import { matchKey, systemKey, type LocationRecord } from "./verse-proximity.js";
 
@@ -240,6 +241,98 @@ const deps = { locations, now: () => NOW };
     ok(!s.length, "a word shared by many rows resolves to none of them",
        s.map((x) => x.tier + ":" + x.label).join(",") || "none");
   }
+}
+
+/* ── 🔴 A NAME MATCH IS NOT A TIER — Sub's own gateway, 2026-08-25 ────────────────────────────
+   He stood at the Nyx-side gateway, the log named his location `RR_JP_NyxCastra`, and the app
+   reported him at "Nyx" — the STAR — at `tier: "place"`.
+
+   🔑 THE PREMISE IS PROVED HERE RATHER THAN ASSUMED. The first two assertions drive the REAL
+   `matchLocationToken` on the REAL starmap and show it really does hand back the Nyx Star for this
+   token; only then is it meaningful to assert what the collector does with that. Injecting the
+   Star's id directly would assert my belief about the resolver instead of the resolver itself.
+
+   🔑 POSITIVE FIRST. "no place signal" is satisfied for free by a collector that emits nothing, so
+   the surviving SYSTEM reading is asserted before the must-not, and its label is printed. */
+{
+  const NYX_STAR = idOf("Nyx", "nyx");
+  // Only `byCode` is reached for this token — the alias map has no entry, so it returns [] and the
+  // function falls through to its subsequence arm, which is the arm under test.
+  const noAliases = { byCode: () => [] } as unknown as Parameters<typeof matchLocationToken>[2];
+  const starmapNames = new Map<string, string>(
+    Object.entries(locations).map(([id, r]) => [id, String(r.name ?? "")]));
+  const resolver = (t: string) => matchLocationToken(t, starmapNames, noAliases);
+
+  const resolved = resolver("RR_JP_NyxCastra");
+  ok(resolved === NYX_STAR,
+     "the resolver really does hand back the Nyx STAR for RR_JP_NyxCastra",
+     resolved ? String(locations[resolved]?.name) + "/" + String((locations[resolved] as { type?: string })?.type) : "null");
+  ok(String((locations[NYX_STAR] as { type?: string })?.type) === "Star",
+     "...and that row really is a Star, so a place tier would be a false claim",
+     String((locations[NYX_STAR] as { type?: string })?.type));
+
+  const inputs = { atLocation: { token: "RR_JP_NyxCastra", at: NOW }, system: "nyx" };
+  const sig = collectOriginSignals(inputs, { ...deps, resolveToken: resolver });
+  ok(sig.some((s) => s.tier === "system"),
+     "the gateway still produces a SYSTEM reading, so this is not simply silence",
+     sig.map((s) => s.tier + ":" + s.label).join(",") || "none");
+  ok(!sig.some((s) => s.tier === "place"),
+     "🔴 ...and NEVER a place reading, because the row it resolved to is a Star",
+     sig.filter((s) => s.tier === "place").map((s) => s.label).join(",") || "no place signal");
+
+  // The GRADED verdict is what every consumer reads, and `same-place` is the only tier allowed to
+  // name a kiosk — so the claim has to hold after resolveOrigin, not merely before it.
+  const verdict = resolveOrigin(collectOriginSignals(inputs, { ...deps, resolveToken: resolver }),
+                                { ...originDepsFor(locations), now: () => NOW });
+  ok(verdict.tier !== "place",
+     "🔴 ...and the GRADED verdict is not a place either", `${verdict.tier}/${String(verdict.label)}`);
+}
+
+/* ── 🔴 THE JUMP RING RESOLVES THROUGH THE STARMAP'S PARENT LINK ──────────────────────────────
+   Driven on the shipped `locations.json`, because the whole claim is that the answer is IN the
+   data. A fixture starmap would keep this green while CIG re-parented the rows underneath it. */
+{
+  const ring = (t: string) => jumpRingStation(locations, t);
+
+  const nyx = ring("RR_JP_NyxCastra");
+  ok(nyx?.name === "Stanton Gateway",
+     "RR_JP_NyxCastra resolves to the station UEX calls Stanton Gateway (Nyx)", nyx?.name ?? "null");
+  ok(!!nyx && systemKey(locations[nyx.id]?.system) === "nyx",
+     "...on the NYX side of the wormhole, which is the half that can be got wrong",
+     nyx ? String(locations[nyx.id]?.system) : "null");
+  ok(!!nyx && String((locations[nyx.id] as { type?: string })?.type) === "Manmade",
+     "...and it is a station, not a star or a jump point",
+     nyx ? String((locations[nyx.id] as { type?: string })?.type) : "null");
+
+  // The other three the shipped data really can answer — so "it works" is not one lucky row.
+  ok(ring("RR_JP_NyxPyro")?.name === "Pyro Gateway", "RR_JP_NyxPyro -> Pyro Gateway",
+     ring("RR_JP_NyxPyro")?.name ?? "null");
+  ok(ring("RR_JP_PyroStanton")?.name === "Stanton Gateway", "RR_JP_PyroStanton -> Stanton Gateway",
+     ring("RR_JP_PyroStanton")?.name ?? "null");
+  ok(ring("RR_JP_StantonPyro")?.name === "Pyro Gateway", "RR_JP_StantonPyro -> Pyro Gateway",
+     ring("RR_JP_StantonPyro")?.name ?? "null");
+
+  /* 🔴 THE REFUSALS, and they matter more than the hits. `Pyro - Nyx Jump Point` is parented to
+     the STAR "Pyro" in the shipped data, and a gateway station called "Nyx Gateway" really does
+     exist in Pyro System — so the tempting move is to join them by name. That is the move the
+     module refuses: see jumpRingStation's comment on an asset name describing a future game. */
+  ok(ring("RR_JP_PyroNyx") === null,
+     "🔴 a ring whose jump point is parented to a STAR is refused, not guessed at",
+     String(ring("RR_JP_PyroNyx")?.name ?? "null"));
+  ok(ring("RR_ARC_LEO") === null, "a non-jump RR_ token is left alone",
+     String(ring("RR_ARC_LEO")?.name ?? "null"));
+  ok(ring("Stanton2_Orison") === null, "...and so is an ordinary location token",
+     String(ring("Stanton2_Orison")?.name ?? "null"));
+
+  // End to end: with the ring resolver in front, the gateway grades as a real PLACE — which is the
+  // point of doing this at all rather than settling for the honest system reading.
+  const verdict = resolveOrigin(
+    collectOriginSignals({ atLocation: { token: "RR_JP_NyxCastra", at: NOW }, system: "nyx" },
+                         { ...deps, resolveToken: (t) => jumpRingStation(locations, t)?.id ?? null }),
+    { ...originDepsFor(locations), now: () => NOW });
+  ok(verdict.tier === "place" && verdict.label === "Stanton Gateway",
+     "🔴 ...so the gateway now grades as a PLACE with a name Sub recognises",
+     `${verdict.tier}/${String(verdict.label)}`);
 }
 
 // ── End to end, through the real resolveOrigin ────────────────────────────────────────────────

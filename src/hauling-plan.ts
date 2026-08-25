@@ -119,6 +119,10 @@ export interface PlanOptions {
    *  binds the game's numeric location ids to readable tokens, which this module cannot do because
    *  the binding has to persist. See haulingWhereAmI in overlay-server. */
   atLocation?: { token: string; at: number } | null;
+  /** A name a player recognises for `atLocation.token`, when the caller can supply one — the
+   *  starmap lives outside this module. DISPLAY ONLY: nothing routes off it, and its absence just
+   *  means the widget shows the raw token, which is what it always did. */
+  atLocationLabel?: string | null;
   /**
    * Commodity runs the player picked in the Commodities tab, to be SEQUENCED into the same route
    * as the contracts. See `hauling-buys.ts` for the two rules that govern them.
@@ -357,6 +361,9 @@ export interface HaulingPlan {
      *  "coordinates" tier read off the debug overlay by OCR; it was removed 2026-08-25 because the
      *  log states the place well enough that a screen read bought nothing. */
     detectedBy?: "terminal" | null;
+    /** A friendly name for `detectedToken`, when one could be had. Shown INSTEAD of the raw token,
+     *  so the picker says "the game says Stanton Gateway" rather than "RR_JP_NyxCastra". */
+    detectedLabel?: string | null;
     /** The game's own id, e.g. "Stanton3b_ArcCorp_Area045". Shown when it did NOT resolve, so a
      *  failed join is diagnosable instead of just being silence. */
     detectedToken: string | null;
@@ -1025,6 +1032,10 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
      *  a mis-detection is visible rather than silently steering the route. */
     detected: seen,
     detectedToken: where?.token ?? null,
+    // Only when it describes the token we are actually reporting: `where` may come from the view
+    // rather than from opts, and labelling one token with another token's name is worse than
+    // showing the raw string.
+    detectedLabel: where && where.token === opts.atLocation?.token ? opts.atLocationLabel ?? null : null,
     detectedAt: where?.at ?? null,
     /** How the position was established, so a surprising origin is diagnosable rather than magic. */
     detectedBy: (byToken ? "terminal" : null) as "terminal" | null,

@@ -34,7 +34,7 @@ import { initPriceFeed, observedPrices, priceFeedLine } from "./price-feed.js";
 // The COMMUNITY half of the same idea: everybody else's receipts, fetched from the site. The
 // app only ever READS this — nothing uploads from a player's machine in this slice.
 import { PricePoolStore } from "./price-pool.js";
-import { verseRoutes } from "./verse-routes.js";
+import { verseRoutes, locationTokenLabel } from "./verse-routes.js";
 import { largestBoxScu } from "./cargo-boxes.js";
 import {
   buildContracts, climbToNextRung, rankContracts, regimeFor, rungAt, HAULING_LADDER,
@@ -3274,6 +3274,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // Where the player is, with the game's numeric location ids resolved through the bindings
       // this process has learned. See haulingWhereAmI.
       atLocation: haulingWhereAmI(hauling.view()),
+      // A name for that token that a player recognises. Display only — see locationTokenLabel.
+      atLocationLabel: locationTokenLabel(dataDir, haulingWhereAmI(hauling.view())?.token),
       // The commodity runs the player picked, sequenced into the same route — never ranked against
       // the contracts. Read fresh on every plan so a purchase that landed a second ago is in it.
       buys: haulingBuys.list(),

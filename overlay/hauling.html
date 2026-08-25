@@ -1320,16 +1320,23 @@
        silent one. */
     const sr = (plan && plan.startResolved) || {};
     const found = sr.detected ? (plan.locationNames || {})[sr.detected] : null;
+    /* 🔴 THE ASSET NAME IS NOT A PLACE NAME. Sub, at the Nyx gateway on 2026-08-25: "Currently
+       right now, the widget says that I'm at RR_JP_NyxCastra. Where are we at with making those
+       names more friendly?" The sidecar supplies detectedLabel when it can name the token — for
+       this one, "Stanton Gateway", which is what UEX calls it too. It stays null rather than
+       guessing, and then the raw token is still shown: a string the app plainly could not
+       translate is better than a confident wrong name. See locationTokenLabel. */
+    const token = sr.detectedLabel || sr.detectedToken;
     const auto = document.createElement("option");
     auto.value = "";
     auto.textContent = found ? "Auto — you're at " + found
-      : sr.detectedToken ? "Auto — the game says " + sr.detectedToken + " (not on this board)"
+      : token ? "Auto — the game says " + token + " (not on this board)"
       : "Auto — nowhere detected yet";
     auto.title = found
       ? "Read from the game: it names your location whenever you open an inventory there. Pick"
         + " somewhere below to override it."
-      : sr.detectedToken
-      ? "The game placed you at " + sr.detectedToken + ", which does not match any stop on this"
+      : token
+      ? "The game placed you at " + token + ", which does not match any stop on this"
         + " board — so the route has no origin. Pick where you are below."
       : "The game names your location when you open an inventory somewhere. Until then, pick it here.";
     el.appendChild(auto);

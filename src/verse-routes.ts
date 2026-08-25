@@ -59,10 +59,10 @@ import type { PoolQuote } from "./price-pool.js";
 import { searchCommodities, sellOnlyMatches } from "./verse-commodities.js";
 import type { TradeTable } from "./trade-prices.js";
 import {
-  buildTerminalIndex, orderByProximity, reserveTierRows, systemKey,
+  buildTerminalIndex, matchKey, orderByProximity, reserveTierRows, systemKey,
   type TerminalIndex, type LocationRecord, type ProximityOrder,
 } from "./verse-proximity.js";
-import { collectOriginSignals, originDepsFor, type SignalInputs } from "./origin-signals.js";
+import { collectOriginSignals, originDepsFor, jumpRingStation, type SignalInputs } from "./origin-signals.js";
 import { resolveOrigin, originSummary, type OriginVerdict } from "./player-origin.js";
 import { deriveGateways, loadPlaces, type GatewayInfo, type Vec3 } from "./travel-model.js";
 import { matchLocationToken } from "./hauling-locations.js";
@@ -295,6 +295,34 @@ function terminalIndex(table: ItemShopTable, locations: Record<string, LocationR
   return index;
 }
 
+/**
+ * A name a PLAYER recognises for one of the game's own location tokens, or null.
+ *
+ * 🔑 DISPLAY ONLY, and that is why it is allowed to be looser than the resolver. Nothing routes,
+ * orders or attributes a price off this — it exists so the hauling widget can say "the game says
+ * Stanton Gateway" instead of "the game says RR_JP_NyxCastra" (Sub, 2026-08-25). A label that is
+ * merely unhelpful is a different risk from a position that is wrong.
+ *
+ * ⚠️ It deliberately does NOT fall back to `matchLocationToken`'s subsequence arm. That arm is what
+ * turns `RR_JP_NyxCastra` into "Nyx", and a confidently wrong PLACE NAME on screen is exactly the
+ * complaint being fixed — the raw token at least reads as something the app could not translate.
+ */
+export function locationTokenLabel(dataDir: string, token: string | null | undefined): string | null {
+  if (!token) return null;
+  const c = proxCache(dataDir);
+  if (!c) return null;
+  const ring = jumpRingStation(c.locations, token);
+  if (ring) return ring.name;
+  // An exact name match needs no resolver and cannot be wrong: the token IS the place's name.
+  const want = matchKey(token);
+  if (!want) return null;
+  const hits: string[] = [];
+  for (const [, rec] of Object.entries(c.locations)) {
+    if (matchKey(rec?.name) === want && rec?.name) hits.push(rec.name);
+  }
+  return [...new Set(hits)].length === 1 ? hits[0] : null;
+}
+
 /** The verdict, a ready-made orderer, and the two tables a confirmation needs to place itself.
  *  Null when we cannot say anything useful about where the player is. */
 function proximity(deps: VerseDeps, table: ItemShopTable): {
@@ -308,11 +336,18 @@ function proximity(deps: VerseDeps, table: ItemShopTable): {
   const inputs = deps.locationSignals?.() ?? {};
   const signals = collectOriginSignals(inputs, {
     locations: c.locations,
-    // The game's own tokens, through the resolver that already knows them. Pointed at the STARMAP
-    // names so it returns starmap ids — the namespace everything downstream is keyed by.
+    /* The game's own tokens, through the resolver that already knows them. Pointed at the STARMAP
+       names so it returns starmap ids — the namespace everything downstream is keyed by.
+
+       🔴 THE JUMP RING IS TRIED FIRST, AND THE ORDER IS THE FIX. `matchLocationToken` does not
+       merely miss `RR_JP_NyxCastra` — it answers WRONGLY, falling through to its subsequence arm
+       where "Nyx" is a subsequence of "JPNyxCastra" and returning the Nyx STAR. So a fallback
+       placed after it would never run. `jumpRingStation` reads the starmap's own parent link and
+       returns null for anything that is not an `RR_JP_` ring, so putting it first costs the other
+       tokens nothing. See its comment for why no naming heuristic can do this job. */
     resolveToken: deps.haulingData
-      ? (t) => matchLocationToken(t, c.names, deps.haulingData!)
-      : undefined,
+      ? (t) => jumpRingStation(c.locations, t)?.id ?? matchLocationToken(t, c.names, deps.haulingData!)
+      : (t) => jumpRingStation(c.locations, t)?.id ?? null,
   });
   const origin = resolveOrigin(signals, originDepsFor(c.locations));
   const index = terminalIndex(table, c.locations);
