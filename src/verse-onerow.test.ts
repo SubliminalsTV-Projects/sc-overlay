@@ -14,9 +14,11 @@
  * the set is non-empty FIRST.
  */
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
-  buildPlacer, foldsOnto, fromJoinMap, fromShopLoc, fromShopPlacesFile, mergePlacements,
-  placerCoverage, type ShopPlacement,
+  buildPlacer, foldsOnto, fromJoinMap, fromShopLoc, fromShopPlacesFile, fromShopTerminals,
+  mergePlacements, placerCoverage, type ShopPlacement,
 } from "./shop-placement.js";
 import { applyConfirmations } from "./verse-routes.js";
 import type { ResolvedQuote, QuoteContext } from "./item-search.js";
@@ -71,12 +73,12 @@ const INDEX: TerminalIndex = {
 const PLACEMENTS: ShopPlacement[] = [
   // Sub's own case: the curated map names the kiosk but only at place level, and the log replay
   // can place it and not name it. Merged, that is a place-level name plus a starmap id.
-  { token: "SCShop_Levski_CargoOffice_ITEM", terminal: "Cargo Services - Levski", precision: "place-level", kind: "item", placeId: LEVSKI, place: "Levski" },
-  { token: "SCShop_Levski_Refinery_Store", terminal: "Refinery Shop - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski" },
+  { token: "SCShop_Levski_CargoOffice_ITEM", terminal: "Cargo Services - Levski", precision: "place-level", kind: "item", placeId: LEVSKI, place: "Levski", tier: "place" },
+  { token: "SCShop_Levski_Refinery_Store", terminal: "Refinery Shop - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski", tier: "place" },
   // Placed, never named — the case brief item 3 is about.
-  { token: "SCShop_CrusaderShowroomWeaponry_Orison", terminal: null, precision: null, kind: null, placeId: ORISON, place: "Orison" },
+  { token: "SCShop_CrusaderShowroomWeaponry_Orison", terminal: null, precision: null, kind: null, placeId: ORISON, place: "Orison", tier: "place" },
   // The 11x case: Seraphim really does hold two kiosks 36 vs 396 aUEC apart.
-  { token: "SCShop_Seraphim_SomeKiosk", terminal: "Live Fire Weapons - Seraphim", precision: "place-level", kind: "item", placeId: SERAPHIM, place: "Seraphim Station" },
+  { token: "SCShop_Seraphim_SomeKiosk", terminal: "Live Fire Weapons - Seraphim", precision: "place-level", kind: "item", placeId: SERAPHIM, place: "Seraphim Station", tier: "place" },
 ];
 
 const PLACER = buildPlacer(PLACEMENTS);
@@ -145,16 +147,16 @@ eq(foldsOnto("place-level", 396, 36), null,
 
 {
   const m = mergePlacements([
-    { token: "T", terminal: "Refinery Shop - Levski", precision: "place-level", kind: "item", placeId: null, place: null },
-    { token: "T", terminal: "Refinery Shop - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski" },
+    { token: "T", terminal: "Refinery Shop - Levski", precision: "place-level", kind: "item", placeId: null, place: null, tier: null },
+    { token: "T", terminal: "Refinery Shop - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski", tier: "place" },
   ])!;
   eq(m.precision, "exact", "two sources agreeing on a name take the stronger precision");
   eq(m.placeId, LEVSKI, "and the place from whichever source had one");
 }
 {
   const m = mergePlacements([
-    { token: "T", terminal: "Cargo Services - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski" },
-    { token: "T", terminal: "Refinery Shop - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski" },
+    { token: "T", terminal: "Cargo Services - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski", tier: "place" },
+    { token: "T", terminal: "Refinery Shop - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski", tier: "place" },
   ])!;
   eq(m.terminal, null, "two sources naming DIFFERENT terminals resolves to neither");
   eq(m.placeId, LEVSKI, "but they still agree about the station, so the place survives");
@@ -162,10 +164,10 @@ eq(foldsOnto("place-level", 396, 36), null,
 // Two sources naming different STATIONS and nothing else leaves a statement with nothing in it,
 // which is not a placement at all — so the token is unknown rather than placed at one of them.
 eq(mergePlacements([
-  { token: "T", terminal: null, precision: null, kind: null, placeId: LEVSKI, place: "Levski" },
-  { token: "T", terminal: null, precision: null, kind: null, placeId: ORISON, place: "Orison" },
+  { token: "T", terminal: null, precision: null, kind: null, placeId: LEVSKI, place: "Levski", tier: "place" },
+  { token: "T", terminal: null, precision: null, kind: null, placeId: ORISON, place: "Orison", tier: "place" },
 ]), null, "two sources naming different STATIONS places it nowhere");
-eq(mergePlacements([{ token: "T", terminal: null, precision: null, kind: null, placeId: null, place: null }]), null,
+eq(mergePlacements([{ token: "T", terminal: null, precision: null, kind: null, placeId: null, place: null, tier: null }]), null,
   "a statement that states nothing is not a placement");
 
 /* ── 3. The adapters read the real source shapes ─────────────────────────────────────────────── */
@@ -209,7 +211,7 @@ eq(mergePlacements([{ token: "T", terminal: null, precision: null, kind: null, p
   const rows = fromShopPlacesFile({
     schema: 1,
     shops: {
-      SCShop_J: { terminal: "Cargo Services - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski" },
+      SCShop_J: { terminal: "Cargo Services - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski", tier: "place" },
       SCShop_K: { placeId: ORISON, place: "Orison" },
       SCShop_L: {},
     },
@@ -442,6 +444,135 @@ eq(mergePlacements([{ token: "T", terminal: null, precision: null, kind: null, p
     "🔴 a placed confirmation is ranked by WHERE IT IS — its own placeId, not the terminal index");
   eq(order.quotes[0].terminal, "SCShop_Levski_Something",
     "so it leads, ahead of a cheaper survey row in another system — which is the ordering Sub asked for");
+}
+
+/* ── 10. `shoploc`'s shipped artifact, read in its own schema ────────────────────────────────── */
+
+/**
+ * Driven against the REAL `data/shop-terminals.json` rather than a fixture, because the whole point
+ * of this adapter is that it agrees with a file another flight owns — a fixture would only ever
+ * assert that I copied the schema into my own test correctly. If `shoploc` reshapes the file these
+ * assertions are supposed to notice.
+ */
+{
+  const doc = JSON.parse(readFileSync(join("data", "shop-terminals.json"), "utf8")) as {
+    tokens: Record<string, { verdict: string; outcome: string; terminal: string | null;
+      provisionalTerminal: string | null; location?: { tier?: string; id?: string } | null }>;
+  };
+  const rows = fromShopTerminals(doc);
+  const by = new Map(rows.map((r) => [r.token, r]));
+  const all = Object.entries(doc.tokens);
+
+  ok(all.length > 50, "the shipped artifact has tokens in it at all", all.length);
+  ok(rows.length > 40, "and the adapter accepted a real share of them", rows.length + " of " + all.length);
+
+  // 🔴 `outcome: "placed"` NEVER NAMES A KIOSK — `usage.placedIsNotNamed`, asserted over every row
+  // rather than one example, because one example is a claim about one row.
+  const placedRows = all.filter(([, t]) => t.outcome === "placed").map(([k]) => k);
+  ok(placedRows.length > 20, "the artifact really does hold placed-but-unnamed tokens", placedRows.length);
+  ok(placedRows.every((k) => !by.get(k) || by.get(k)!.terminal === null),
+     "🔴 not one of them names a terminal",
+     placedRows.filter((k) => by.get(k)?.terminal).join(",") || "none named");
+
+  // 🔴 `provisionalTerminal` IS NOT A BACK DOOR. The file says it is "not safe to attribute a price
+  // with", and 14 tokens carry one — so if this ever leaks through, it leaks 14 times at once.
+  const prov = all.filter(([, t]) => t.provisionalTerminal).map(([k]) => k);
+  ok(prov.length > 0, "tokens carrying a provisionalTerminal exist to be ignored", prov.length);
+  ok(prov.every((k) => {
+       const r = by.get(k);
+       return !r || r.terminal === null || doc.tokens[k].outcome === "named";
+     }), "🔴 and a provisional name never becomes a placement's terminal",
+     prov.filter((k) => by.get(k)?.terminal && doc.tokens[k].outcome !== "named").join(","));
+
+  // 🔴 A place-dependent token is REFUSED ENTIRELY — prices vary per station for one prefab token
+  // (Compboard 22.2% across five terminals) and the pool has already blended them into one median.
+  const dep = all.filter(([, t]) => t.verdict === "place-dependent").map(([k]) => k);
+  ok(dep.length > 0, "place-dependent tokens exist in the artifact", dep.length);
+  ok(dep.every((k) => !by.has(k)),
+     "🔴 and not one of them yields a placement, even the ones carrying a usable location.id",
+     dep.filter((k) => by.has(k)).join(",") || "all refused");
+  // Positive control on that refusal: some of them DO carry an id, so the rule is doing work.
+  ok(dep.some((k) => !!doc.tokens[k].location?.id),
+     "...and that is a real refusal — several of them carry a location.id we chose not to use",
+     dep.filter((k) => doc.tokens[k].location?.id).length + " with an id");
+
+  // A named token folds at `exact`, and its namespace comes from `soldBy`.
+  const named = all.filter(([, t]) => t.outcome === "named").map(([k]) => k);
+  ok(named.length > 5, "named tokens exist", named.length);
+  ok(named.every((k) => by.get(k)?.precision === "exact"),
+     "every named token folds at exact precision");
+  const tdd = by.get("SCShop_CommEx_TDD_Orison");
+  ok(tdd && tdd.kind === "commodity",
+     "a commodity counter is tagged commodity, so it is never looked up in the item table",
+     tdd ? tdd.kind : "(absent)");
+
+  // The coarse tiers survive, because a star id still sorts.
+  const coarse = rows.filter((r) => r.tier === "system" || r.tier === "body");
+  ok(coarse.length > 0, "coarse-tier placements are kept, not dropped", coarse.length);
+  ok(coarse.every((r) => r.terminal === null), "...and none of them names anything");
+}
+
+/* ── 11. Many-to-one: two tokens, one UEX row ────────────────────────────────────────────────── */
+
+/**
+ * 🔴 `usage.notInjective`. `SCShop_Levski_Refinery_Store` and `SCShop_Levski_Refinery_OreSales` both
+ * resolve to *Refinery Shop - Levski* — the game splits the item counter from the ore desk and UEX
+ * does not. Confirmations are applied newest-first, and without a guard the SECOND one folded over
+ * the first, leaving the row showing the staler of the two while looking perfectly healthy.
+ */
+{
+  const both: ShopPlacement[] = [
+    { token: "SCShop_Levski_Refinery_Store", terminal: "Refinery Shop - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski", tier: "place" },
+    { token: "SCShop_Levski_Refinery_OreSales", terminal: "Refinery Shop - Levski", precision: "exact", kind: "item", placeId: LEVSKI, place: "Levski", tier: "place" },
+  ];
+  const { quotes: rows } = run([quote("Refinery Shop - Levski", 100, 99)], poolOf([
+    { terminal: "SCShop_Levski_Refinery_Store", unitPrice: 111, agoSeconds: 2 * HOUR, contributors: 3, samples: 3 },
+    { terminal: "SCShop_Levski_Refinery_OreSales", unitPrice: 222, agoSeconds: 20 * 86400, contributors: 1, samples: 1 },
+  ]), buildPlacer(both));
+
+  eq(rows.length, 1, "two tokens naming one terminal produce ONE row, not two");
+  const r = rows[0];
+  ok(r.confirmed, "and it is confirmed");
+  eq(r.price, 111, "🔴 by the FRESHEST of the two, not whichever was applied last");
+  ok(r.confirmed!.asOf > NOW - 3 * HOUR, "its age is the fresh one's", r.confirmed!.token);
+  eq(r.confirmed!.token, "SCShop_Levski_Refinery_Store", "and it names which shop that was");
+  eq(r.confirmed!.contributors, 3,
+     "🔑 the two are NOT merged — they are different shops with one UEX row between them, so adding "
+     + "their witnesses would present two shops' evidence as consensus about one");
+}
+
+/* ── 12. Nothing here can read the player's position ─────────────────────────────────────────── */
+
+/**
+ * 🔴 A POOLED ROW MUST NEVER BE NAMED FROM THE LOCAL PLAYER'S LOCATION. `shoploc`'s
+ * `usage.place-dependent` says such a token is "still resolvable AT RUNTIME — the app already knows
+ * where the player is", and that is true only for THIS player's own new observations. A pooled row
+ * stores the shop token, not the contributor's position, so resolving it here would attribute a
+ * stranger's price to a station they were never at — the poisoning `shoploc` spent a flight
+ * avoiding, reintroduced at render time.
+ *
+ * ⚠️ Asserted as an ABSENCE OF CAPABILITY rather than an absence of behaviour: the placer is the
+ * only thing that turns a token into a place, and it is a pure function of the token. Feeding the
+ * same confirmation through two placers that disagree about nothing except what they were BUILT
+ * from must give the same answer whatever the session thinks.
+ */
+{
+  const dep: ShopPlacement[] = [
+    { token: "SCShop_Roaming", terminal: null, precision: null, kind: null, placeId: null, place: null, tier: null },
+  ];
+  const pool = poolOf([{ terminal: "SCShop_Roaming", unitPrice: 500, agoSeconds: HOUR }]);
+  const a = run([quote("Cargo Services - Levski", 7, 26)], pool, buildPlacer(dep));
+  // Same call, but with a locationSignals dep present and answering — if anything reached for the
+  // player's position this is where it would show.
+  const b = applyConfirmations(
+    [quote("Cargo Services - Levski", 7, 26)], CTX,
+    { dataDir: "", userDir: "", pool, locationSignals: () => ({ places: [{ id: LEVSKI, name: "Levski", at: Date.now() }] }) } as never,
+    buildPlacer(dep), TERMINALS, LOCATIONS, INDEX,
+  );
+  eq(a.unplaced, 1, "a token nothing can place is counted as unplaced");
+  eq(b.unplaced, a.unplaced, "🔴 and knowing where the player is does not change that");
+  eq(b.quotes.length, a.quotes.length, "...nor does it conjure a row");
+  ok(!b.quotes.some((q) => q.observedOnly), "...anywhere");
 }
 
 console.log(`verse one-row: all passed ${passed}/${passed}`);

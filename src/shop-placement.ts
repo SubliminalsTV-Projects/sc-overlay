@@ -67,6 +67,20 @@ export interface ShopPlacement {
   placeId: string | null;
   /** A readable name for that place, for the group heading. */
   place: string | null;
+  /**
+   * How precise `placeId` is — `place` is a station, `body` a planet or moon, `system` a star.
+   *
+   * 🔑 A COARSE ID IS SAFE AND HONEST, which is why it is carried rather than refused.
+   * `containmentOf` walks the ancestry either way and the best it can return for a star id is
+   * `same-system` — exactly the precision that was available. `shoploc`'s `usage.location` says the
+   * same thing.
+   *
+   * ⚠️ `system` CAN BE A JUMP OUT OF DATE. `SystemWatcher` never expires and the wormhole emits no
+   * route event, so a player who jumped Stanton → Nyx keeps reporting Stanton until they next spool
+   * a drive: 11 of 83 tokens carry a contradicting system observation, 8 of them Levski. It costs
+   * ordering, never a price, so it is recorded rather than acted on here.
+   */
+  tier: "place" | "body" | "system" | null;
 }
 
 /** The lookup the rest of the app sees. Deliberately a function rather than a Map, so a future
@@ -129,6 +143,7 @@ export function mergePlacements(parts: readonly ShopPlacement[]): ShopPlacement 
     kind: null,
     placeId: null,
     place: null,
+    tier: null,
   };
 
   const named = rows.filter((r) => r.terminal);
@@ -150,6 +165,13 @@ export function mergePlacements(parts: readonly ShopPlacement[]): ShopPlacement 
   if (distinctPlaces.size === 1 && placed.length) {
     out.placeId = placed[0].placeId;
     out.place = placed.find((r) => r.place)?.place ?? null;
+    // 🔑 THE FINEST TIER ANY SOURCE CLAIMED, because they all agreed on the id. Taking the coarsest
+    // would understate precision we demonstrably have; taking a tier from a DIFFERENT id is what
+    // the equality check above already rules out.
+    out.tier = placed.find((r) => r.tier === "place")?.tier
+      ?? placed.find((r) => r.tier === "body")?.tier
+      ?? placed.find((r) => r.tier)?.tier
+      ?? null;
   }
   // A named terminal with no place is still worth keeping — the terminal index knows where its
   // terminals are, so naming one is itself a placement by another road.
@@ -180,7 +202,7 @@ export function fromJoinMap(doc: unknown): ShopPlacement[] {
     // a later build of the map must degrade to the cautious reading, never to the one that can put
     // a wrong price on a row.
     const precision: PlacePrecision = raw[4] === "exact" ? "exact" : "place-level";
-    out.push({ token, terminal, precision, kind, placeId: null, place: null });
+    out.push({ token, terminal, precision, kind, placeId: null, place: null, tier: null });
   }
   return out;
 }
@@ -224,6 +246,82 @@ export function fromShopLoc(doc: unknown): ShopPlacement[] {
       kind: terminal ? (r.kind === "commodity" ? "commodity" : "item") : null,
       placeId,
       place,
+      // Only a single-place verdict reaches here, so the id is always a station.
+      tier: placeId ? "place" : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * 🔴 `data/shop-terminals.json` — flight `shoploc`'s SHIPPED artifact, and the one this app reads
+ * at runtime. Schema `sc-shop-terminals/1`, 83 tokens. Read its `usage` block before changing any
+ * of the four rules below; each one is written there in as many words.
+ *
+ *   `outcome: "named"`     → a UEX terminal. Folds, at `exact`.
+ *   `outcome: "placed"`    → the log says WHERE at some tier and nothing joins it to a terminal
+ *                            name. Sorts inline, names nothing.
+ *   `outcome: "unplaced"`  → the log never said where the player was. Nothing.
+ *   `verdict: "place-dependent"` → refused outright. See below; this is not the same as `unplaced`.
+ *
+ * 🔴 `outcome: "placed"` NEVER LICENSES NAMING A KIOSK, and `provisionalTerminal` is not a back
+ * door into it. The file marks that field *"believable, not corroborated, and not safe to attribute
+ * a price with"* — 14 tokens carry one — so this adapter ignores it completely. A name we are not
+ * sure of is the poisoning `shoploc` spent a whole flight avoiding.
+ *
+ * 🔴 A `place-dependent` TOKEN IS REFUSED ENTIRELY, EVEN THOUGH IT HAS A USABLE `location.id`, AND
+ * THAT IS THE ONE PLACE THIS ADAPTER IS STRICTER THAN THE FILE. The tower measured what such a
+ * token's price means: the same prefab shop is priced PER STATION, and against UEX across the exact
+ * stations where one token was observed — Dolivine identical, Party Favors 4.1%, Processed Food
+ * 7.1%, Hydrogen 10.0%, Stims 11.5%, **Compboard 22.2% (27,000 → 33,000)**. The community pool has
+ * already collapsed those stations into ONE median before this app ever sees them, so rendering
+ * such a row is showing a figure blended across shops that measurably disagree — which the same
+ * finding forbids. It still SORTS in principle; there is simply no honest number to put on the row,
+ * so it is counted instead of drawn. 9 tokens of 83.
+ * ⚠️ `usage.place-dependent` says such a token is *"still resolvable AT RUNTIME — the app already
+ * knows where the player is"*. **That is true only for this player's OWN new observations.** A
+ * pooled row stores the shop token, not the contributor's position, so using the local player's
+ * location to name it would attribute a stranger's price to a station they were never at. There is
+ * no code path here that reads player position, and there must never be one.
+ */
+export function fromShopTerminals(doc: unknown): ShopPlacement[] {
+  const d = (doc ?? {}) as { tokens?: unknown };
+  const tokens = (d.tokens ?? {}) as Record<string, unknown>;
+  if (!tokens || typeof tokens !== "object") return [];
+  const out: ShopPlacement[] = [];
+  for (const [token, raw] of Object.entries(tokens)) {
+    const r = (raw ?? {}) as {
+      outcome?: unknown; verdict?: unknown; terminal?: unknown;
+      location?: unknown; soldBy?: unknown;
+    };
+    if (!token) continue;
+    // The blend case. Refused before anything else, so no later branch can rescue it.
+    if (r.verdict === "place-dependent") continue;
+
+    const loc = (r.location ?? {}) as { tier?: unknown; id?: unknown; name?: unknown };
+    const tierRaw = loc.tier;
+    const tier = tierRaw === "place" || tierRaw === "body" || tierRaw === "system" ? tierRaw : null;
+    const placeId = tier && typeof loc.id === "string" ? loc.id : null;
+
+    // 🔑 `soldBy` DECIDES THE NAMESPACE, and it has to: item terminals and commodity terminals are
+    // different UEX tables. Measured over the 14 named tokens — the 12 `item` ones all appear in
+    // `data/item-shops.json` and the 2 `commodity` ones (both TDD counters) appear in neither, as
+    // they should. Looking one up in the other's table returns nothing forever, which is
+    // indistinguishable from "nobody has bought this".
+    const soldBy = Array.isArray(r.soldBy) ? r.soldBy : [];
+    const kind: PlaceKind = soldBy.includes("commodity") ? "commodity" : "item";
+    const named = r.outcome === "named" && typeof r.terminal === "string" && r.terminal.trim()
+      ? r.terminal.trim() : null;
+
+    if (!named && !placeId) continue;
+    out.push({
+      token,
+      terminal: named,
+      precision: named ? "exact" : null,
+      kind: named ? kind : null,
+      placeId,
+      place: typeof loc.name === "string" ? loc.name : null,
+      tier,
     });
   }
   return out;
@@ -249,6 +347,11 @@ export function fromShopPlacesFile(doc: unknown): ShopPlacement[] {
       kind: terminal ? (r.kind === "commodity" ? "commodity" : "item") : null,
       placeId: placeId || null,
       place: typeof r.place === "string" ? r.place : null,
+      // Absent means "a station", which is what every row this file has ever carried is — the
+      // curated map only ever names kiosks. A coarser tier has to be stated.
+      tier: placeId
+        ? (r.tier === "system" || r.tier === "body" ? r.tier : "place")
+        : null,
     });
   }
   return out;

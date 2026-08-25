@@ -51,7 +51,7 @@ import {
   type SearchHit, type ResolvedQuote, type QuoteContext, type QuoteConfirmation,
 } from "./item-search.js";
 import {
-  buildPlacer, foldsOnto, fromShopPlacesFile, placerCoverage,
+  buildPlacer, foldsOnto, fromShopPlacesFile, fromShopTerminals, placerCoverage,
   type ShopPlacement, type ShopPlacer,
 } from "./shop-placement.js";
 import type { ObservedPriceStore } from "./observed-prices.js";
@@ -252,24 +252,38 @@ function proxCache(dataDir: string): ProxCache | null {
 /* ── The shop-token → place lookup ───────────────────────────────────────────────────────────── */
 
 /**
- * Built once from `data/shop-places.json`, which `shop-placement.ts`'s adapters produce from the
- * hand-curated join map and from flight `shoploc`'s log replay.
+ * Built once from BOTH shipped placement files, merged per token by `mergePlacements`.
  *
- * 🔴 A MISSING FILE IS A SUPPORTED STATE, not an error. Without it nothing folds and nothing is
- * placed, every confirmation counts as unplaced, and the widget draws the survey exactly as it did
- * before the pool existed. That is the same rule every other optional piece of this feature
- * follows: somebody typing an item name must always get their answer.
+ *   `data/shop-terminals.json`  flight `shoploc`'s log replay — 83 tokens, read in its own schema.
+ *   `data/shop-places.json`     the hand-curated join map, normalised.
+ *
+ * 🔑 BOTH ARE READ AT RUNTIME RATHER THAN PRE-MERGED INTO ONE FILE, which is what makes `shoploc`'s
+ * next pass free: dropping in a newer `shop-terminals.json` improves every fold and every placement
+ * with no regeneration step and no code change. Pre-merging would have made this app's copy a
+ * snapshot that silently goes stale, and the two files come from different efforts on different
+ * clocks.
+ *
+ * 🔴 A MISSING FILE IS A SUPPORTED STATE, not an error — either of them, or both. Without them
+ * nothing folds and nothing is placed, every confirmation counts as unplaced, and the widget draws
+ * the survey exactly as it did before the pool existed. Same rule every other optional piece of
+ * this feature follows: somebody typing an item name must always get their answer.
  */
 let placerCache: { placer: ShopPlacer; parts: ShopPlacement[] } | null = null;
 
+function readPlacements(dataDir: string, file: string, adapt: (doc: unknown) => ShopPlacement[]): ShopPlacement[] {
+  try {
+    return adapt(JSON.parse(readFileSync(join(dataDir, file), "utf8")));
+  } catch {
+    return [];
+  }
+}
+
 function shopPlacer(dataDir: string): { placer: ShopPlacer; parts: ShopPlacement[] } {
   if (placerCache) return placerCache;
-  let parts: ShopPlacement[] = [];
-  try {
-    parts = fromShopPlacesFile(JSON.parse(readFileSync(join(dataDir, "shop-places.json"), "utf8")));
-  } catch {
-    parts = [];
-  }
+  const parts = [
+    ...readPlacements(dataDir, "shop-terminals.json", fromShopTerminals),
+    ...readPlacements(dataDir, "shop-places.json", fromShopPlacesFile),
+  ];
   placerCache = { placer: buildPlacer(parts), parts };
   return placerCache;
 }
@@ -568,6 +582,16 @@ export function applyConfirmations(
     // onto one would say a shop sells the commodity for what it pays you for it.
     const target = named && c.side === "buy" ? byTerminal.get(named) : undefined;
     if (target && placement) {
+      // 🔴 THE MAP IS MANY-TO-ONE, SO TWO TOKENS CAN COMPETE FOR ONE ROW — `shoploc`'s
+      // `usage.notInjective`: `SCShop_Levski_Refinery_Store` and `SCShop_Levski_Refinery_OreSales`
+      // both resolve to *Refinery Shop - Levski*, because the game splits the item counter from the
+      // ore desk and UEX does not. Confirmations arrive newest-first, so without this guard the
+      // SECOND (older) one folded straight over the first: `target.asOf` is UEX's date and never
+      // moves, so both cleared the test below and the row ended up showing the STALER of the two.
+      // 🔑 Freshest wins and the two are NOT merged. They are different shops with one UEX row
+      // between them, so adding their contributor counts would present two shops' witnesses as
+      // consensus about one — the same mistake as counting receipts instead of people.
+      if (target.confirmed && c.asOf <= target.confirmed.asOf) continue;
       if (c.asOf <= target.asOf) continue;
       const mode = foldsOnto(placement.precision ?? "place-level", c.price, target.price);
       if (mode) {

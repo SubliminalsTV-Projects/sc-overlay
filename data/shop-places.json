@@ -1,223 +1,116 @@
 {
  "schema": 1,
+ "note": "Hand-curated shop token -> UEX terminal names. shoploc's log replay ships separately as data/shop-terminals.json and is read in its own schema; the two are merged per token at runtime.",
  "shops": {
   "SCShop_AdminOffice_GrimHex": {
    "terminal": "Admin - GrimHEX",
    "precision": "exact",
-   "kind": "commodity",
-   "placeId": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
-   "place": "Grim HEX"
-  },
-  "SCShop_AdminOffice_NewBabbage": {
-   "placeId": "122e8057-831d-4517-a23b-0eb8382b90a2",
-   "place": "New Babbage"
+   "kind": "commodity"
   },
   "SCShop_AstroArmada_Area18": {
    "terminal": "Astro Armada - Area 18",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-   "place": "Area18"
-  },
-  "SCShop_BurritoBar_Food_RestStop": {
-   "placeId": "ab29f65e-c792-4b1f-b23d-5810cb0ef416",
-   "place": "Everus Harbor"
+   "kind": "item"
   },
   "SCShop_Centermass_Area18": {
    "terminal": "CenterMass - IO North Tower - Area 18",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-   "place": "Area18"
+   "kind": "item"
   },
   "SCShop_Centermass_NewBabbage": {
    "terminal": "CenterMass - New Babbage",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "122e8057-831d-4517-a23b-0eb8382b90a2",
-   "place": "New Babbage"
-  },
-  "SCShop_Coffee_to_Go_ht_b": {
-   "placeId": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-   "place": "Area18"
+   "kind": "item"
   },
   "SCShop_CommEx_TDD_NewBabbage": {
    "terminal": "TDD - Trade and Development Division - Commons - New Babbage",
    "precision": "exact",
-   "kind": "commodity",
-   "placeId": "122e8057-831d-4517-a23b-0eb8382b90a2",
-   "place": "New Babbage"
+   "kind": "commodity"
   },
   "SCShop_CommEx_TDD_Orison": {
    "terminal": "TDD - Trade and Development Division - Cloudview Center - Orison",
    "precision": "exact",
-   "kind": "commodity",
-   "placeId": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
-   "place": "Orison"
-  },
-  "SCShop_CommEx_Transfers_Lorville": {
-   "placeId": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
-   "place": "Lorville"
+   "kind": "commodity"
   },
   "SCShop_ConscientiousObjects_Levski-001": {
    "terminal": "Conscientious Objects - Levski",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "kind": "item"
   },
   "SCShop_Cordrys_Levski-001": {
    "terminal": "Cordry's - Levski",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
-  },
-  "SCShop_CousinCrows_Orison": {
-   "terminal": "Ship Weapons - Cousin Crow's - Providence Platform - Orison",
-   "precision": "exact",
-   "kind": "item",
-   "placeId": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
-   "place": "Orison"
-  },
-  "SCShop_CrusaderShowroomWeaponry_Orison": {
-   "placeId": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
-   "place": "Orison"
-  },
-  "SCShop_Derelict_Settlement_Scrapyard": {
-   "placeId": "dc44d171-0090-4d5b-87ed-637b4a43fce1",
-   "place": "Rappel"
-  },
-  "SCShop_Drlct_Stmnt_SM": {
-   "placeId": "1b236025-3b0d-489b-a3c1-52bec07693c6",
-   "place": "Frostbite"
+   "kind": "item"
   },
   "SCShop_Entity_CubbyBlast_Area18": {
    "terminal": "Cubby Blast - Area 18",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-   "place": "Area18"
+   "kind": "item"
   },
   "SCShop_Entity_Dumpers_Depot_Area18": {
    "terminal": "Dumper's Depot - Area 18",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-   "place": "Area18"
-  },
-  "SCShop_H_Pharmacy_A18": {
-   "placeId": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-   "place": "Area18"
+   "kind": "item"
   },
   "SCShop_H_Pharmacy_Levski": {
    "terminal": "Pharmacy - Levski",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "kind": "item"
   },
   "SCShop_Hospital_Pharmacy_Orison_01": {
    "terminal": "Pharmacy - Orison General Hospital",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
-   "place": "Orison"
+   "kind": "item"
   },
   "SCShop_Levski_CargoOffice_Commodities": {
    "terminal": "Levski",
    "precision": "exact",
-   "kind": "commodity",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "kind": "commodity"
   },
   "SCShop_Levski_CargoOffice_ITEM": {
    "terminal": "Cargo Services - Levski",
    "precision": "place-level",
-   "kind": "item",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "kind": "item"
   },
   "SCShop_Levski_Dealership_Teachs": {
    "terminal": "Levski",
    "precision": "exact",
-   "kind": "commodity",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "kind": "commodity"
   },
   "SCShop_Levski_GrandBarter_ElectronicsStand": {
    "terminal": "Levski",
    "precision": "exact",
    "kind": "commodity"
   },
-  "SCShop_Levski_Refinery_OreSales": {
-   "terminal": "Refinery Shop - Levski",
-   "precision": "exact",
-   "kind": "item",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
-  },
   "SCShop_Levski_Refinery_Store": {
    "terminal": "Refinery Shop - Levski",
-   "precision": "exact",
-   "kind": "item",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "precision": "place-level",
+   "kind": "item"
   },
   "SCShop_Levski_ShipItems_Teachs": {
    "terminal": "Levski",
    "precision": "exact",
-   "kind": "commodity",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "kind": "commodity"
   },
   "SCShop_Levski_ShipRentals_Teachs": {
    "terminal": "Levski",
    "precision": "exact",
-   "kind": "commodity",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "kind": "commodity"
   },
   "SCShop_Lorville_Spaceport_KeltoShipServices": {
    "terminal": "Kel-To - Teasa Spaceport - Lorville",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
-   "place": "Lorville"
-  },
-  "SCShop_NewBabbage_KelTo": {
-   "placeId": "122e8057-831d-4517-a23b-0eb8382b90a2",
-   "place": "New Babbage"
+   "kind": "item"
   },
   "SCShop_NewDeal_Interior_Lorville": {
    "terminal": "New Deal - Teasa Spaceport - Lorville",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
-   "place": "Lorville"
-  },
-  "SCShop_NoodleBar_A_Food_RestStop": {
-   "placeId": "233238ee-adeb-4405-8045-49fa07370f37",
-   "place": "Port Tressler"
-  },
-  "SCShop_Novelty_Kiosk_NewBabbage": {
-   "placeId": "122e8057-831d-4517-a23b-0eb8382b90a2",
-   "place": "New Babbage"
+   "kind": "item"
   },
   "SCShop_OmegaPro_NewBabbage": {
    "terminal": "Omega Pro - New Babbage",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "122e8057-831d-4517-a23b-0eb8382b90a2",
-   "place": "New Babbage"
-  },
-  "SCShop_Orison_KelTo": {
-   "placeId": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
-   "place": "Orison"
-  },
-  "SCShop_PizzaBar_Food_RestStop": {
-   "placeId": "ebe4b6d6-9013-4ad9-bd25-7a8390262c4b",
-   "place": "HUR L2"
+   "kind": "item"
   },
   "SCShop_ProvidenceSurplus_Orison": {
    "terminal": "Providence Surplus - Providence Platform - Orison",
@@ -227,88 +120,22 @@
   "SCShop_RegalLuxuryRentals_NewBabbage": {
    "terminal": "Regal Luxury Rentals - New Babbage Interstellar Spaceport - New Babbage",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "122e8057-831d-4517-a23b-0eb8382b90a2",
-   "place": "New Babbage"
-  },
-  "SCShop_SPGiftshop_Orison": {
-   "placeId": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
-   "place": "Orison"
-  },
-  "SCShop_S_HarvestableStall": {
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
-  },
-  "SCShop_S_Levski_NyxNax": {
-   "terminal": "Nyx Nax - Levski",
-   "precision": "exact",
-   "kind": "item",
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
-  },
-  "SCShop_ShipComponents_GrimHex": {
-   "placeId": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
-   "place": "Grim HEX"
-  },
-  "SCShop_ShipWeapons_UtilStation": {
-   "placeId": "45d2d370-9fab-4e6b-b84b-e9c913bc316a",
-   "place": "Seraphim Station"
+   "kind": "item"
   },
   "SCShop_ShubinInterstellar_NewBabbage": {
    "terminal": "Shubin Interstellar - Commons - New Babbage",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "122e8057-831d-4517-a23b-0eb8382b90a2",
-   "place": "New Babbage"
+   "kind": "item"
   },
   "SCShop_Skutters_GrimHex": {
    "terminal": "Skutters - GrimHEX",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
-   "place": "Grim HEX"
-  },
-  "SCShop_Trdpst_Warehouse_CFP_Int_A": {
-   "placeId": "be8ed35b-74da-49ac-816c-028c4c833669",
-   "place": "Pyro3 Outpost Col M Scrp Indy 001"
-  },
-  "SCShop_Trdpst_XS_INDY_a": {
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
+   "kind": "item"
   },
   "SCShop_VantageRentals_Lorville": {
    "terminal": "Vantage Rentals - Lorville",
    "precision": "exact",
-   "kind": "item",
-   "placeId": "f1759f46-e3c0-4dc1-94bc-c94488b58913",
-   "place": "Lorville"
-  },
-  "SCShop_XS_MiningCart": {
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
-  },
-  "SCShop_XS_MiningStall": {
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
-  },
-  "SCShop_XS_NoodleStand": {
-   "placeId": "468d4102-a210-47b5-8bc3-084f791a173c",
-   "place": "Levski"
-  },
-  "SCShop_fence_kiosk_small": {
-   "placeId": "c67d1b8f-32ee-4fe1-8a66-bd1bfa04c5c0",
-   "place": "CRU L4"
-  },
-  "SCShop_lt_a_casaba_small_base_a-002": {
-   "terminal": "Casaba Outlet - Port Tressler",
-   "precision": "exact",
-   "kind": "item",
-   "placeId": "233238ee-adeb-4405-8045-49fa07370f37",
-   "place": "Port Tressler"
-  },
-  "TDD_SCShop-001": {
-   "placeId": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
-   "place": "Area18"
+   "kind": "item"
   }
  }
 }
