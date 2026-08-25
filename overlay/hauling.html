@@ -441,8 +441,6 @@
   /* The dropdown's own list is drawn by the OS, which does not inherit the control's colours —
      without this the options render dark-on-dark (or white-on-white) once it is open. */
   #shipPick option, #startPick option { background: var(--menu-bg); color: var(--cyan-bright); }
-  .src { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--faint); }
   .caps { display: flex; gap: 3px; margin-top: 7px; height: 13px; }
   .cap { position: relative; border-radius: 4px; background: rgba(0, 0, 0, 0.34);
     border: 1px solid var(--divider); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45); overflow: hidden; }
@@ -944,9 +942,13 @@
     </div>
 
     <div class="summary">
+      <!-- No provenance badge beside the picker. It said "from log" / "your pick" / "no ship" —
+           and renderShipPicker() already puts all three into the Auto option's own text ("Auto —
+           MISC Hull C" / "Auto — nothing detected yet"), so the badge restated the control it sat
+           next to. Sub, 2026-08-25: "I think people will understand that it's coming from the
+           logs." -->
       <div class="shiprow">
         <select id="shipPick" title="The ship you are flying. The log names it when it can; pick it here when it cannot."></select>
-        <span class="src" id="shipSrc"></span>
       </div>
       <!-- 🔴 Where the player is standing — without it the optimiser has no origin: on mirrored
            contracts (A→B and B→A) it opens wherever it likes, which sent Sub to Baijini EMPTY while
@@ -1056,6 +1058,15 @@
   let objective = "auec-per-hour";
   let showDone = false;
   let shipPick = "";          // "" = trust the log
+  /** How many non-pinned origins the picker offers. Sub's number, 2026-08-25. */
+  const START_PICK_MAX = 5;
+  /** The sentinel value of the "Show N older places…" row. Not a location id, and it must never be
+   *  mistaken for one — it is prefixed so a coordinate key ("@x,y,z") or a buy key can never
+   *  collide with it. */
+  const SHOW_ALL_PLACES = "__show-all-places";
+  /** Set once the player asks for the full list. Deliberately NOT persisted: the cap exists because
+   *  the list grows, so it has to come back on the next open or it fixes nothing. */
+  let startAll = false;
   /* ⛔ `mode` IS GONE, along with `MODE_KEY` and the localStorage value behind it. It named which
      of two jobs the widget was doing, and the only thing that made them two jobs was having two
      Route surfaces. `view` was always the thing that decided what got drawn; `mode` merely decided
@@ -1322,11 +1333,40 @@
         + " board — so the route has no origin. Pick where you are below."
       : "The game names your location when you open an inventory somewhere. Until then, pick it here.";
     el.appendChild(auto);
-    for (const [id, name] of Object.entries((plan && plan.locationNames) || {})) {
+    /* 🔴 CAPPED AT THE FIVE MOST RECENT, because the list grows forever. Sub, 2026-08-25: "It gives
+       a list of all the places that I've been. It's kind of growing pretty large... I feel like we
+       should cap it at maybe the most recent five places." Measured on his live board that day: 16
+       rows on a board holding ZERO contracts, three of them reading "August Dunlow Spaceport".
+       Order and the name-dedupe come from the sidecar — see PlanResult.recentPlaces.
+
+       ⚠️ TWO ROWS ARE PINNED AHEAD OF THE CAP, and both are the cap's own failure mode:
+       - WHERE THE GAME SAYS YOU ARE. A cap that can hide the place you are standing at is worse
+         than the growth it fixes — that is the whole control, dropped for being old.
+       - WHATEVER IS CURRENTLY PICKED. load() already resets startPick when it is not in
+         locationNames, so a hidden row would not merely be invisible, it would silently throw the
+         player's saved answer away on the next poll. */
+    const names = (plan && plan.locationNames) || {};
+    const order = (plan && plan.recentPlaces) || Object.keys(names);
+    const pinned = [];
+    if (sr.detected && names[sr.detected]) pinned.push(sr.detected);
+    if (startPick && names[startPick] && !pinned.includes(startPick)) pinned.push(startPick);
+    const rest = order.filter((id) => !pinned.includes(id));
+    const shown = startAll ? pinned.concat(rest) : pinned.concat(rest.slice(0, START_PICK_MAX));
+    for (const id of shown) {
       const o = document.createElement("option");
       o.value = id;
-      o.textContent = "I'm at " + name;
+      o.textContent = "I'm at " + names[id];
       el.appendChild(o);
+    }
+    /* 🔑 THE HIDDEN ROWS ARE SAID, NOT SWALLOWED. A picker that silently drops places reads as the
+       app having forgotten them, and there is no other way back to one. This row is an OPTION
+       rather than a button so it costs the summary no height — the change handler picks it up. */
+    const hidden = pinned.length + rest.length - shown.length;
+    if (hidden > 0) {
+      const more = document.createElement("option");
+      more.value = SHOW_ALL_PLACES;
+      more.textContent = "Show " + hidden + " older place" + (hidden === 1 ? "" : "s") + "…";
+      el.appendChild(more);
     }
     el.value = startPick;
   }
@@ -1334,10 +1374,6 @@
   function renderSummary() {
     const ship = plan && plan.ship;
     $("shipPick").value = shipPick;
-    $("shipSrc").textContent = !ship ? "no ship" : ship.source === "manual" ? "your pick" : "from log";
-    $("shipSrc").title = !ship
-      ? "Nothing in the log named a ship, and nothing is picked."
-      : ship.source === "manual" ? "You chose this hull." : "The game's vehicle-control lines named this hull.";
 
     const caps = $("caps");
     caps.textContent = "";
@@ -1795,6 +1831,14 @@
     render();
   });
   $("startPick").addEventListener("change", () => {
+    /* 🔴 THE DISCLOSURE ROW IS NOT A PLACE. Taking its value as an origin would save
+       "__show-all-places" as the player's start, which no location id can ever match — the route
+       would silently lose its origin. Re-render and put the control back on what it was showing. */
+    if ($("startPick").value === SHOW_ALL_PLACES) {
+      startAll = true;
+      renderStartPicker();
+      return;
+    }
     startPick = $("startPick").value;
     saveStart();
     load();

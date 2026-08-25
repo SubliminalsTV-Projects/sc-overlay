@@ -309,6 +309,11 @@ export interface HaulingPlan {
   /** Every place any leg touches, keyed by location id — the route's own names, plus the places
    *  it deliberately does not visit, so the layout legend and the unrouted list can say where. */
   locationNames: Record<string, string>;
+  /** Ids from `locationNames`, most recently NAMED first and deduped by display name — the order
+   *  the origin picker offers, so a list that grows forever can be capped without the cap silently
+   *  picking arbitrary rows. See the block that builds it for why the recency does not come from
+   *  `config.haulingSeenPlaces`. */
+  recentPlaces: string[];
   /**
    * Places still wearing a "Site N" — the rows the naming box offers.
    *
@@ -1130,6 +1135,50 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   for (const [id, name] of buyPlaces) locationNames[id] ??= name;
   for (const [id, name] of Object.entries(byPlayer)) if (name.trim()) locationNames[id] ??= name.trim();
   for (const [id, name] of fallback) locationNames[id] ??= name;
+  /**
+   * 🔴 THE ORIGIN PICKER'S OWN ORDER, most recently named FIRST — because `locationNames` grows
+   * without bound and the picker was showing every one of it.
+   *
+   * Sub, 2026-08-25: *"It gives a list of all the places that I've been. It's kind of growing
+   * pretty large."* Measured on his live board the same day: **16 rows, and the board held ZERO
+   * contracts** — so all 16 came from `opts.placeNames` (`config.haulingPlaces`), which is keyed by
+   * coordinates and kept forever. Three of them read *"August Dunlow Spaceport"* and two read
+   * *"New Babbage"*, because one station gets several coordinate keys.
+   *
+   * 🔴 RECENCY COMES FROM `placeNames`' INSERTION ORDER, AND DELIBERATELY NOT FROM
+   * `config.haulingSeenPlaces` — which looks like exactly the right list ("names the game stated,
+   * newest last") and is NOT, because `rememberSeenPlaces(Object.values(plan.locationNames))` runs
+   * on every solve and moves every name on the board to the end. Its order is therefore mostly the
+   * board's own iteration order, so ranking the picker by it would be ranking the board by the
+   * board. `config.haulingPlaces` is only ever written when the PLAYER names a place, so its key
+   * order is a real record of when each place was first seen, independent of the current board.
+   *
+   * ⚠️ Object key order is the guarantee this rests on: string keys keep insertion order, and
+   * re-assigning an existing key does NOT move it. That is why this is "first named" rather than
+   * "last visited" — the app keeps no visit history, and inventing one would be a bigger change
+   * than Sub asked for. Say so rather than dressing the order up as something it is not.
+   *
+   * Deduped by DISPLAY NAME, keeping the most recent id: three rows all reading "August Dunlow
+   * Spaceport" are three ways to say one thing, and the player cannot tell them apart anyway.
+   * The CAP is the widget's business — this only decides the order.
+   */
+  const recentPlaces: string[] = [];
+  {
+    const takenName = new Set<string>();
+    const push = (id: string) => {
+      const name = locationNames[id];
+      if (!name) return;
+      const k = name.toLowerCase();
+      if (takenName.has(k)) return;
+      takenName.add(k);
+      recentPlaces.push(id);
+    };
+    // Newest-named first.
+    for (const id of Object.keys(opts.placeNames ?? {}).reverse()) push(id);
+    // Then anything on THIS board the player never named by hand — a live stop is worth offering
+    // even with no recency behind it, and without this a fresh install has an empty picker.
+    for (const id of Object.keys(locationNames)) push(id);
+  }
   // What the naming box offers. Role comes from how the legs actually use the place, so the row
   // can say "picking up from" rather than making the player work out which Site is which.
   const roleOf = new Map<string, "pickup" | "dropoff" | "both">();
@@ -1380,6 +1429,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     trips,
     stranded: run.stranded,
     locationNames,
+    recentPlaces,
     unnamedPlaces,
     completedPickups,
     startResolved,
