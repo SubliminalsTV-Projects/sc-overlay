@@ -106,7 +106,25 @@
   const TD_WHAT_KEY = "sc-trade-what";
   const TD_BUYAT_KEY = "sc-trade-buyat";
   const TD_SELLAT_KEY = "sc-trade-sellat";
+  const TD_HOLD_KEY = "sc-trade-hold";
   const TD_UNIT_KEY = "sc-trade-unit";
+  /**
+   * How much the player intends to buy, when that is not "as much as the ship holds".
+   *
+   * 🔴 THIS IS NOT THE PICK'S TONNAGE AND MUST NEVER BECOME IT. The standing ruling — that a run
+   * sent to the Route carries NO tonnage, because the log will state what was really bought — is
+   * about the QUANTITY OF A PURCHASE. This is the `capacity` the finder ranks against, which has
+   * always been an input (it is what the ship picker feeds) and is a question about the SEARCH, not
+   * a claim about a transaction. `tdPickBuy` still sends no tonnage; nothing here changes that.
+   * 🔑 null = auto, i.e. the whole hold. Stored as a number so `0` and "unset" cannot be confused.
+   */
+  let tdHold = (() => {
+    try {
+      const raw = localStorage.getItem(TD_HOLD_KEY);
+      const n = raw === null ? NaN : Number(raw);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    } catch { return null; }
+  })();
   /** "run" = what the whole trip clears. "scu" = what one unit is worth carrying. Two real
    *  answers to two different questions, and the second is what stays comparable across rows
    *  whose hold fills differ. */
@@ -393,8 +411,27 @@
 
   /* ── loading ────────────────────────────────────────────────────────────── */
 
+  /**
+   * How much hold the board should rank against.
+   *
+   * 🔴 `plan.shipScu` NEVER EXISTED. It appeared exactly once in this repository — on the line that
+   * read it — and nothing has ever written it; the sidecar publishes `plan.ship.totalScu`. So this
+   * function returned null on every call for its whole life and `loadTrade()` fell through to the
+   * hardcoded 64. Sub's C2 Hercules holds **696**, and the board was ranking every run for a 64 SCU
+   * hold: `scuBound: "hold"` on the top rows means that wrong number was the BINDING constraint, so
+   * the ORDER was wrong, not merely the profit figures. Sub, 2026-08-25: "I'm buying a Griseum
+   * right now… and it says 64 SCU. However, in-game, I could buy 256 SCU."
+   * 🔑 The family is the one this codebase has hit repeatedly — a payload is rebuilt or renamed and
+   * a reader keeps naming the old field. `undefined` is falsy, so the fallback swallowed it in
+   * silence and the number on screen was always plausible.
+   *
+   * 🔑 THE OVERRIDE OUTRANKS THE SHIP, because it is the player telling us something we cannot
+   * detect: how much they actually intend to buy. A full hold is the DEFAULT, not the rule.
+   */
   function tdCapacity() {
-    if (plan && plan.shipScu) return plan.shipScu;
+    if (tdHold && tdHold > 0) return tdHold;
+    const totals = plan && plan.ship && plan.ship.totalScu;
+    if (typeof totals === "number" && totals > 0) return totals;
     return null;
   }
 
@@ -819,6 +856,7 @@
    *  terminal that has nothing to do with it, which returns nothing and looks like a broken board.
    *  A system or a body survives, because those are true of any commodity. */
   function tdSetSlot(which, value) {
+    if (which === "hold") { tdSetHold(value); return; }
     if (which === "what") {
       tdWhat = value || "";
       tdLookup = null;
@@ -831,6 +869,19 @@
     } else {
       tdSetSlotState(which, value);
     }
+    tdOpen = null;
+    tdTyped = "";
+    loadTrade();
+    render();
+  }
+
+  /** Set or clear the hold override. Anything that is not a positive whole number clears it. */
+  function tdSetHold(n) {
+    tdHold = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    try {
+      if (tdHold) localStorage.setItem(TD_HOLD_KEY, String(tdHold));
+      else localStorage.removeItem(TD_HOLD_KEY);
+    } catch { /* private mode */ }
     tdOpen = null;
     tdTyped = "";
     loadTrade();
@@ -875,8 +926,24 @@
        the safest question the tab can answer the one thing you cannot ask first. */
     tdSlot(f, "sell", "sell at", tdSellAt ? tdSellAt.name : "", "anywhere",
       tdWhat && nSell !== null ? nSell + (nSell === 1 ? " place" : " places") : "");
+    /* 🔴 THE FOURTH SLOT, AND IT BELONGS IN THE FUNNEL RATHER THAN THE BAR. The bar's own comment
+       says it keeps only what is about DISPLAY; how much you intend to buy changes the QUERY — it
+       is the `capacity` parameter, the same one the ship feeds — so it goes where the other query
+       constraints live. Sub, 2026-08-25: "we needed the ability for a person in the commodities tab
+       to be able to modify how much they want to buy."
+       🔑 THE PLACEHOLDER STATES THE AUTO VALUE RATHER THAN THE WORD "auto". A slot reading "auto"
+       makes the player open it just to find out what auto MEANS, and this is the number every
+       profit figure on the screen is computed from — it has to be legible without a click. That is
+       also what would have made the 64-vs-696 bug visible on sight instead of invisible for
+       months. */
+    const autoScu = plan && plan.ship && plan.ship.totalScu;
+    tdSlot(f, "hold", "buy", tdHold ? num(tdHold) + " SCU" : "",
+      typeof autoScu === "number" && autoScu > 0 ? num(autoScu) + " SCU — a full hold" : "a full hold",
+      tdHold && typeof autoScu === "number" && autoScu > 0 ? "of " + num(autoScu) : "");
     body.appendChild(f);
-    if (tdOpen) tdSlotList(body);
+    // ⚠️ `hold` is a free numeric entry, so it has no option list. Without this guard the list box
+    // opens empty under it and reads as a search that found nothing.
+    if (tdOpen && tdOpen !== "hold") tdSlotList(body);
   }
 
   function tdSlot(f, which, label, value, placeholder, hint) {
@@ -900,15 +967,29 @@
       inp.addEventListener("blur", () => grabOff());
       inp.addEventListener("pointerdown", (e) => { e.stopPropagation(); wantFocus = inp; });
       inp.addEventListener("input", () => { tdTyped = inp.value; tdRedrawSlotList(); });
+      // 🔑 A numeric slot needs a numeric keyboard on any touch surface and, more importantly here,
+      // it must not offer the browser's text autofill over a figure the page already states.
+      if (which === "hold") { inp.type = "number"; inp.min = "1"; inp.step = "1"; }
       inp.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { e.preventDefault(); inp.blur(); tdOpen = null; tdTyped = ""; render(); }
         else if (e.key === "Enter") {
           e.preventDefault();
+          /* 🔴 A BAD NUMBER CLEARS BACK TO AUTO RATHER THAN PINNING A NONSENSE HOLD. Typing "abc"
+             or "0" is a mistake, and the honest response is the ship's real capacity — not a 0 SCU
+             hold, which would empty the board and read as the tab being broken. Same reasoning as
+             `num()` never printing a missing tonnage as "0". */
+          if (which === "hold") { tdSetHold(Math.floor(Number(inp.value))); return; }
           const first = tdSlotOptions(which)[0];
           if (first) tdPickOption(which, first);
         }
         e.stopPropagation();
       });
+      // Committing on blur too: a player who types a number and clicks the board has said what they
+      // meant, and losing it to a missed Enter is the kind of small betrayal that stops people
+      // using a control at all.
+      if (which === "hold") {
+        inp.addEventListener("change", () => tdSetHold(Math.floor(Number(inp.value))));
+      }
       row.appendChild(inp);
       // Focus after the row is in the document, or the caret lands nowhere.
       setTimeout(() => { try { inp.focus(); inp.select(); } catch { /* gone */ } }, 0);
