@@ -4287,9 +4287,23 @@ const LOGVIEW = `(async () => {
   push(many);
   await sleep(80);
   ok("the DOM is capped however loud the log gets", rowCount() <= 500, rowCount());
-  ok("...keeping the NEWEST lines, not the oldest",
-     rowText()[rowText().length - 1].indexOf("bulk line 899") > -1,
-     rowText()[rowText().length - 1].slice(-30));
+  // 🔴 THIS ASSERTION USED TO RACE A RUNNING GAME. It read the LAST row and required it to be the
+  // last line the suite pushed — but the sidecar tails a REAL game.log and keeps streaming while
+  // the suite runs. Measured 2026-08-25 with Star Citizen open: ~20 lines in 20 seconds, so a
+  // genuine engine line lands in the 80ms above often enough to fail about one run in three, with
+  // a detail like [playFeatures][Missions][Comms] that reads as a widget regression and is nothing
+  // of the sort. Same defect class as the third-party host rule in run(), with the game as the
+  // third party: an assertion that can go red for reasons outside the repo teaches people to
+  // ignore the suite, and this one is in the suite that is supposed to be the landing gate.
+  // 🔑 The cap's real promise is "the newest survived AND the oldest was evicted", and asserting
+  // BOTH halves is what makes it two-sided — a cap that kept the oldest instead fails both. It is
+  // also a strictly stronger claim than reading one row, and neither half cares whether one more
+  // real line happened to arrive. (902 lines pushed against a 500 cap, so line 0 must be gone.)
+  const capRows = rowText();
+  const newestKept = capRows.some((t) => t.indexOf("bulk line 899") > -1);
+  const oldestGone = !capRows.some((t) => t.indexOf("bulk line 0") > -1);
+  ok("...keeping the NEWEST lines, not the oldest", newestKept && oldestGone,
+     "newest kept " + newestKept + ", oldest evicted " + oldestGone);
 
   // 🔑 The ring must outreach the DOM. Typing a word has to search the recent past, not only what
   // survived the row cap — otherwise the widget can only answer "is X logged" for lines that
@@ -5342,12 +5356,49 @@ async function run(label, script, preload, query, page) {
   // A widget that logs an error or 404s an asset is broken even when every assertion passes -
   // a missing image just renders as nothing. Capture both and fail the run on them.
   const noise = [];
+  /* 🔴 A THIRD PARTY BEING DOWN MUST NEVER REDDEN THIS REPO'S SUITE. An assertion that can go red
+     for reasons outside the repo teaches people to ignore the suite, and this one had started to.
+     On 2026-08-25 FrankerFaceZ's origin went down behind Cloudflare, and every load of the Twitch
+     Chat widget put two CORS errors on the console. Whether they landed inside a given suite's
+     observation window depended on how long that suite happened to run, so the same unmodified
+     tree measured GREEN once and RED twice (2 and 5 failures) across three runs — which makes the
+     suite useless as a landing gate for every other flight.
+
+     🔑 THE RULE IS BY HOST, NOT BY VENDOR. It used to be three named emote domains, and that is
+     the same trap one release later: the next outage is at some host nobody thought to list, and
+     whoever is unlucky then has to rediscover all of this. A failure whose subject is not served
+     by this repo is out of scope, whoever it belongs to.
+
+     🔑 This is the BELT. The widget side of that outage is fixed properly and separately — every
+     emote provider is proxied through the sidecar now (`/api/emotes`), so these pages make no
+     cross-origin request at all. This filter keeps a host we do not own from grading our work if
+     something ever reaches for one again. Both layers exist on purpose, so a negative control has
+     to inject at the layer on the path to the thing it measures. */
+  const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i;
+  /* Chromium reports a failed load ITSELF — our JS never sees it, so these arrive as console
+     messages rather than as request events, and no try/catch in a widget can suppress them. Only
+     the network-failure vocabulary is filtered, and only when the message (or the source it is
+     attributed to) names a host we do not serve. A widget's own logic error names neither, so it
+     still fails the run. */
+  const NET_FAILURE = /blocked by CORS policy|Failed to load resource|Failed to fetch|net::ERR_|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED/i;
+  const aboutForeignHost = (msg, src) => {
+    /* The CORS message names BOTH the blocked URL and our own origin, so this asks "does it name
+       any host that is not ours", never "is our host mentioned". A resource-load failure carries
+       no URL in its text at all and puts it in sourceId instead, which is why both are read. */
+    const urls = String(msg).match(/https?:\/\/[^\s'"),]+/g) || [];
+    if (typeof src === "string" && /^https?:\/\//i.test(src)) urls.push(src);
+    return urls.length > 0 && urls.some((u) => !LOCAL.test(u));
+  };
   win.webContents.on("console-message", (...a) => {
     const e = a[0], lvl = typeof e === "object" ? e.level : a[1], msg = typeof e === "object" ? e.message : a[2];
-    if ((lvl === "error" || lvl >= 2) && !/Security Warning/.test(String(msg))) noise.push("console: " + String(msg).slice(0, 120));
+    // Legacy signature is (event, level, message, line, sourceId) — sourceId is a[4]; a[3] is the
+    // line NUMBER, and reading that here would silently disable the sourceId half of the check.
+    const src = typeof e === "object" ? e.sourceId : a[4];
+    if (!(lvl === "error" || lvl >= 2)) return;
+    if (/Security Warning/.test(String(msg))) return;
+    if (NET_FAILURE.test(String(msg)) && aboutForeignHost(msg, src)) return;
+    noise.push("console: " + String(msg).slice(0, 120));
   });
-  // The third-party emote providers answer 404 for a channel that simply isn't registered with
-  // them, which is the common case and not a fault - don't fail a run over it.
   // The unlock-pop suite points an <img> at a URL that must 404 — that IS the assertion (no
   // capture for this item yet → fall back to the render). Named so it can't be mistaken for a real
   // missing asset.
@@ -5361,9 +5412,14 @@ async function run(label, script, preload, query, page) {
   // shows up when a live item that happens to lack one is on screen, so this suite went red for
   // 16 suites at once purely because the tracker's state had moved on (it drives the LIVE
   // sidecar). Same class as binding-image below: a shipped state, not a fault.
-  const EXPECTED_404 = /(^|\/\/)(api\.frankerfacez\.com|7tv\.io|api\.betterttv\.net)\/|deliberate-404-for-test\.webp|\/api\/binding-image(\?|$)|\/api\/fab-img\//;
+  // 🔑 The three emote domains used to be named here, allowlisted for 404 only. That is exactly
+  // the hole the 2026-08-25 outage went through: a provider whose ORIGIN is down answers 522/503
+  // or never completes at all, so it never reaches this handler and the named list bought nothing.
+  // Hosts we do not serve are now skipped wholesale by the LOCAL rule below, at any status.
+  const EXPECTED_404 = /deliberate-404-for-test\.webp|\/api\/binding-image(\?|$)|\/api\/fab-img\//;
   win.webContents.session.webRequest.onCompleted({ urls: ["*://*/*"] }, (d) => {
     if (d.statusCode < 400) return;
+    if (!LOCAL.test(d.url)) return;  // not this repo's to answer for
     if (d.statusCode === 404 && EXPECTED_404.test(d.url)) return;
     noise.push("HTTP " + d.statusCode + " " + d.url.replace(/^https?:\/\//, "").slice(0, 70));
   });
