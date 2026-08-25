@@ -184,9 +184,13 @@ try {
   const after = done();
   const skipped = state().skippedPatch;
 
-  // Positive first: a run that classified nothing at all satisfies every "must not" below.
-  assert(skipped.length > 0, "the first tick must actually set something aside");
-  assert(after.length > 0, "…and must actually resolve something");
+  // 🔴 POSITIVE FIRST, AND IT MUST BE SOURCED UPSTREAM OF THE RULE UNDER TEST. The obvious vouch
+  // here is `skipped.length > 0` — and it is not a control, it is a restatement of the fix: delete
+  // the window and nothing is ever set aside, so the guard falsifies itself and the control goes
+  // red on the vouch instead of on the claim. (Caught by C1 doing exactly that.) `backups` is the
+  // set that fills regardless: empty.log and no-signal.log land there whatever the window says, so
+  // a run that classified nothing at all is still distinguishable from one that classified wrongly.
+  assert(after.length > 0, "the first tick must actually classify something, or every 'must not' below is free");
 
   // 🔴 THE WINDOW ITSELF.
   assert(skipped.includes("ancient.log"), "a session older than the retention window belongs in skippedPatch");

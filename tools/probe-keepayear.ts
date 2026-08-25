@@ -27,8 +27,9 @@
  * Usage:  npx tsx tools/probe-keepayear.ts [logbackups dir] [shared-logs.json]
  *         npm run probe:keepayear
  */
-import { readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, openSync, readSync, closeSync, writeFileSync, mkdtempSync, rmSync, copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // 🔑 IMPORTED, NEVER COPIED. A rule re-declared in a probe is a second copy that can drift from
 // the one running — the same reason the log parsers export their markers, and the reason
@@ -280,4 +281,78 @@ function main(): void {
   console.log("\n=== done ===");
 }
 
-main();
+/**
+ * `--simulate` — WHAT ACTUALLY HAPPENS ON THIS MACHINE, TICK BY TICK, USING THE REAL CODE.
+ *
+ * Everything above is arithmetic over a folder. This drives `maybeShareLog` itself against the
+ * real logbackups/ and a COPY of the real shared-logs.json, with `fetch` stubbed so nothing leaves
+ * the machine — so the tick count, the upload count and the bytes are measured rather than
+ * predicted. It answers the only question a user has about this change: how long until it settles.
+ *
+ * 🔑 The state file is COPIED first. Pointing the real state file at a simulation would record
+ * every one of these uploads as done, and the app would then never send them for real.
+ */
+async function simulate(): Promise<void> {
+  const dir = process.argv[3] ?? "C:/Program Files/Roberts Space Industries/StarCitizen/LIVE/logbackups";
+  const realState = join(process.env.APPDATA ?? "", "sc-blueprint-tracker", "shared-logs.json");
+  const liveLog = join(dir, "..", "Game.log");
+  if (!existsSync(dir)) { console.log("needs SC installed"); return; }
+
+  const posts: number[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (_i: RequestInfo | URL, init?: RequestInit) => {
+    posts.push(typeof init?.body === "string" ? Buffer.byteLength(init.body, "utf8") : 0);
+    return new Response("ok", { status: 200 });
+  }) as typeof fetch;
+
+  const tmp = mkdtempSync(join(tmpdir(), "keepayear-sim-"));
+  const statePath = join(tmp, "shared-logs.json");
+  if (existsSync(realState)) copyFileSync(realState, statePath);
+  else writeFileSync(statePath, JSON.stringify({ v: 2, rules: 2, backups: [], skippedPatch: [] }));
+
+  const { maybeShareLog } = await import("../src/log-share.js");
+  const cfg = { shareLogs: true, syncToken: "simulated", logPath: existsSync(liveLog) ? liveLog : join(dir, "..", "Game.log") };
+
+  const before = JSON.parse(readFileSync(statePath, "utf8"));
+  console.log(`simulating from the REAL state file: rules=${before.rules ?? "(absent)"} backups=${(before.backups ?? []).length} skippedPatch=${(before.skippedPatch ?? []).length}`);
+  console.log(`(fetch is stubbed — nothing is uploaded, and the real state file is untouched)\n`);
+  console.log(`tick   uploads  MB this tick   cumulative   recheck   skipped   recorded`);
+
+  const t0 = Date.now();
+  let tick = 0, quiet = 0;
+  const MAX_TICKS = 400;
+  while (tick < MAX_TICKS && quiet < 3) {
+    const wasPosts = posts.length;
+    const before2 = readFileSync(statePath, "utf8");
+    await maybeShareLog(cfg, "0.1.47", statePath);
+    const after = readFileSync(statePath, "utf8");
+    tick++;
+    const s = JSON.parse(after);
+    const n = posts.length - wasPosts;
+    const mbThis = posts.slice(wasPosts).reduce((a, b) => a + b, 0) / 1048576;
+    const total = posts.reduce((a, b) => a + b, 0) / 1048576;
+    // A tick that changed nothing at all means the folder is settled.
+    if (before2 === after && n === 0) quiet++; else quiet = 0;
+    if (tick <= 6 || n > 0 || tick % 10 === 0) {
+      console.log(
+        `${String(tick).padStart(4)}   ${String(n).padStart(7)}  ${mbThis.toFixed(1).padStart(12)}` +
+        `  ${total.toFixed(1).padStart(11)}   ${String((s.recheck ?? []).length).padStart(7)}` +
+        `   ${String((s.skippedPatch ?? []).length).padStart(7)}   ${String((s.backups ?? []).length).padStart(8)}`,
+      );
+    }
+  }
+  const total = posts.reduce((a, b) => a + b, 0);
+  const settledTicks = tick - quiet;
+  console.log(`\nSETTLED after ${settledTicks} ticks`);
+  console.log(`  uploads      : ${posts.length}`);
+  console.log(`  sent         : ${mb(total)}  (~${mb(total / 8.4)} stored at the measured 8.4:1)`);
+  console.log(`  largest body : ${mb(Math.max(...posts, 0))}`);
+  console.log(`  at a 20-minute tick that is ${(settledTicks / 3).toFixed(1)} HOURS of app uptime`);
+  console.log(`  wall clock for this simulation: ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+
+  globalThis.fetch = realFetch;
+  rmSync(tmp, { recursive: true, force: true });
+}
+
+if (process.argv[2] === "--simulate") await simulate();
+else main();
