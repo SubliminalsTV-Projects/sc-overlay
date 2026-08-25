@@ -117,7 +117,7 @@ function seed() {
 seed();
 console.log(`profile : ${PROFILE}`);
 console.log(`port    : ${PORT}`);
-console.log("network : OFF (SC_TRADE_URL and SC_VERSE_URL both empty), sync OFF\n");
+console.log("network : OFF (SC_TRADE_URL, SC_VERSE_URL, SC_POOL_URL empty; SC_EMOTE_PROXY=0), sync OFF\n");
 
 const env = {
   ...process.env,
@@ -135,6 +135,12 @@ const env = {
   // a regression in the widget. Set SC_POOL_URL yourself (a file server, a site dev server) when
   // you want to exercise the live path deliberately.
   SC_POOL_URL: process.env.SC_POOL_URL ?? "",
+  // 🔴 THE EMOTE PROVIDERS ARE OFF FOR THE SAME REASON, and this one is not hypothetical: on
+  // 2026-08-25 FrankerFaceZ's origin went down and the Twitch Chat widget's emote fetch made the
+  // whole suite intermittently red — green once and red twice on the same unmodified tree. The
+  // widget reaches them through the sidecar now, so switching the sidecar off is all it takes for
+  // a run to be genuinely independent of whether 7TV, BTTV, FFZ and ivr.fi are up this afternoon.
+  SC_EMOTE_PROXY: process.env.SC_EMOTE_PROXY ?? "0",
 };
 
 const tsx = join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
