@@ -60,6 +60,9 @@ const TERMINALS = [
 ];
 
 const INDEX: TerminalIndex = {
+  // Empty on purpose: these suites exercise the terminal table and placed confirmations, so the
+  // name-lookup arm of `placeOf` must stay out of their way rather than resolve on their behalf.
+  byPlaceName: new Map(),
   byTerminal: new Map([
     ["Cargo Services - Levski", LEVSKI],
     ["Refinery Shop - Levski", LEVSKI],
@@ -387,6 +390,7 @@ eq(mergePlacements([{ token: "T", terminal: null, precision: null, kind: null, p
     [NB]: { name: "New Babbage", system: "Stanton System", parentName: "microTech", type: "LandingZone" },
   };
   const idx: TerminalIndex = {
+    byPlaceName: new Map(),
     byTerminal: new Map([
       ["Ship Weapons - Crusader Showroom - Orison", ORISON],
       ["CenterMass - New Babbage", NB],
@@ -432,7 +436,7 @@ eq(mergePlacements([{ token: "T", terminal: null, precision: null, kind: null, p
     { terminal: "SCShop_Levski_Something", system: "Nyx", body: "Nyx", place: "Levski", price: 900, asOf: NOW, placeId: LEVSKI, observedOnly: true },
   ];
   const order = orderByProximity(rows, {
-    index: { byTerminal: new Map([["Ship Weapons - Crusader Showroom - Orison", ORISON]]), resolved: 1, total: 2, collisions: 0, ambiguous: 0 },
+    index: { byPlaceName: new Map(), byTerminal: new Map([["Ship Weapons - Crusader Showroom - Orison", ORISON]]), resolved: 1, total: 2, collisions: 0, ambiguous: 0 },
     locations: LOCATIONS,
     travel: { gateways: [], posOf: () => null, systemOf: () => null },
     // The player is standing AT Levski, where the placed confirmation is.
