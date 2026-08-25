@@ -106,7 +106,6 @@
   const TD_WHAT_KEY = "sc-trade-what";
   const TD_BUYAT_KEY = "sc-trade-buyat";
   const TD_SELLAT_KEY = "sc-trade-sellat";
-  const TD_STOCK_KEY = "sc-trade-known-stock";
   const TD_UNIT_KEY = "sc-trade-unit";
   /** "run" = what the whole trip clears. "scu" = what one unit is worth carrying. Two real
    *  answers to two different questions, and the second is what stays comparable across rows
@@ -121,7 +120,6 @@
     try { return localStorage.getItem(TD_PERIOD_KEY) === "all" ? "all" : "today"; }
     catch { return "today"; }
   })();
-  let tradeKnownOnly = (() => { try { return localStorage.getItem(TD_STOCK_KEY) === "1"; } catch { return false; } })();
 
   /* ── helpers ────────────────────────────────────────────────────────────── */
 
@@ -395,7 +393,6 @@
       else if (shipPick) p.set("ship", shipPick);
       else p.set("capacity", "64");
       tdSlotParams(p);
-      if (tradeKnownOnly) p.set("knownStock", "1");
       /* 🔑 A PINNED BUY NEEDS A LONGER LIST. With `fromTerminal` set the finder returns one row per
          DESTINATION rather than one per buy point, and that list IS the answer to "where can I take
          this" — capping it at 25 would silently hide drop-offs, which on a commodity like Neon (19
@@ -613,9 +610,7 @@
         ? "Nobody in the price table buys " + tdWhat + " back, so there is no run for it — only places to buy it."
         : noBuy
           ? "Nowhere in the price table sells " + tdWhat + ", so there is nothing to pick up."
-          : tradeKnownOnly
-        ? "Nothing with confirmed stock here. Turn off “Confirmed stock” to see the rest."
-        : tdSellAt
+          : tdSellAt
           ? "Nothing worth carrying to " + tdSellAt.name + (tdWhat ? " — try another commodity, or clear “sell at”." : " — clear “sell at” to see everywhere.")
           : tdBuyAt && tdWhat
             ? "No profitable run for " + tdWhat + " out of " + tdBuyAt.name + ". Clear “buy at” to see it from everywhere."
@@ -751,18 +746,20 @@
     /* ⛔ THE `buy in` PILL ROW IS GONE — it did not shrink, it MOVED. It was "where a run starts",
        which is the funnel's second slot, and leaving a second control writing the same filter is
        how a control and the thing it controls drift apart. The bar keeps only what is genuinely
-       about DISPLAY (Per run / Per SCU) or about the whole table (Confirmed stock), which is also
-       why this bar is now one row where it used to wrap to two. */
+       about DISPLAY (Per run / Per SCU), which is also why this bar is now one row where it used
+       to wrap to two. */
 
-    const sep3 = document.createElement("span"); sep3.className = "sep"; bar.appendChild(sep3);
-    // 🔴 A FIXED LABEL. The first cut swapped between "Any stock" and "Confirmed stock only",
-    // which made it impossible to tell the state from the action.
-    tdBtn(bar, "Confirmed stock", tradeKnownOnly,
-      "Only show runs where someone has reported how much is actually on the shelf", () => {
-        tradeKnownOnly = !tradeKnownOnly;
-        try { localStorage.setItem(TD_STOCK_KEY, tradeKnownOnly ? "1" : "0"); } catch { /* private mode */ }
-        loadTrade();
-      });
+    /* ⛔ "CONFIRMED STOCK" IS GONE (Sub, 2026-08-25). It hid rows on an axis the player can already
+       read off the row: every row carries its own age pill and a `stock unknown` / `N on the shelf`
+       chip, so the toggle asked people to re-derive from a filter what the row already states.
+       Sub: "It seems like whatever confirms it is like the amount of days since it's last been
+       updated. The player can see that themselves. We don't need to help them sort that out."
+       Second reason, and the one that made it actively bad: as a lit/unlit pill with a fixed label
+       there was no way to tell whether it was currently adding rows or removing them.
+       🔑 The server still accepts `knownStock=1` on /api/trade/routes — the widget simply stops
+       sending it. Nothing else in the app ever did, so the parameter is now unused, like `budget`
+       and `maxAgeDays` beside it. Left alone deliberately: deleting a query parameter is a sidecar
+       change, and this is a display decision. */
 
     const sep4 = document.createElement("span"); sep4.className = "sep"; bar.appendChild(sep4);
     const setUnit = (u) => {
