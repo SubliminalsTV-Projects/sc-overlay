@@ -30,9 +30,148 @@ const PORT = process.env.OVERLAY_PORT || 8778;
 // feedback when this flag is present.
 const URL = `http://localhost:${PORT}/missions.html?canvas=1&harness=1&party&mining&notepad`;
 
+/* ── `--only <widget>[,<widget>]` — run the suites a change can actually have broken ────────────
+ *
+ * 🔴 THE FULL PASS IS THE DEFAULT AND MUST STAY THE DEFAULT. This is a flight's tool for the loop
+ * it runs twenty times an afternoon; the landing gate still runs everything. Passing no `--only`
+ * changes nothing about which suites execute.
+ *
+ * 🔑 WHY IT IS WORTH HAVING, AS A NUMBER RATHER THAN A FEELING (measured 2026-08-25, 52 suites,
+ * 1,364 assertions, 324.9s): assertion count is NOT cost. `chat links + slash menu` runs 220
+ * assertions in 1.1s; `pair merges (brute force)` runs SEVEN in 134.4s — 41% of the whole pass —
+ * because it is O(n²) over a 15-widget registry (105 pairs). So a subset that merely skips other
+ * widgets' PAGES saves ~15%; the win only arrives when the registry SWEEPS narrow too, which is
+ * why `only` is pushed into the page and read by the two expensive ones.
+ *
+ * The selection rule, and it errs toward running things:
+ *   · a suite tagged with a named widget runs;
+ *   · EVERY registry-sweeping suite runs regardless (they are the ones that host the widget in the
+ *     canvas — a page that stops fitting its box shows up there and nowhere else), but PAIRS and
+ *     SWEEPS narrow their loops to the named widgets;
+ *   · a single-purpose SHELL suite (patch notes, setup nudge, the service-down banner) is skipped,
+ *     because no widget page can reach it;
+ *   · a suite carrying no tag at all RUNS, and is named in a failure at the end of the pass. Never
+ *     skip something you could not classify — but do not let it go unnoticed either, or `--only`
+ *     silently rots as suites are added.
+ */
+const ONLY = (() => {
+  const a = process.argv;
+  const i = a.findIndex((x) => x === "--only" || x.startsWith("--only="));
+  if (i < 0) return null;
+  const raw = a[i].startsWith("--only=") ? a[i].slice(7) : (a[i + 1] || "");
+  const keys = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return keys.length ? keys : null;
+})();
+
+/** Registry keys a suite is about. Suites driving a widget's OWN page are tagged from their `page`
+ *  argument and are absent here; this map is only for the ones that run inside the canvas, where
+ *  nothing in the call site says which widget they belong to. */
+const SUITE_TAGS = {
+  "widget grouping": ["canvas"],
+  "pair merges (brute force)": ["canvas"],
+  "title-bar chrome": ["canvas"],
+  "controls visible + reachable": ["canvas"],
+  "sweeps: themes / sizes / text / stacks": ["canvas"],
+  "dragging + reset": ["canvas"],
+  "page headers": ["canvas"],
+  "layout restore": ["canvas"],
+  "chrome anchoring + latches": ["canvas"],
+  "lifecycle: closed = idle": ["canvas"],
+  "typing grab: hiding releases it": ["canvas"],
+  "logView: the filter box releases the canvas grab": ["logView"],
+  "client errors reach the sidecar": ["shell"],
+  "per-widget angle": ["canvas"],
+  "split fade: panel vs text": ["canvas"],
+  "test-environment badge": ["shell"],
+  "nothing animates at rest": ["shell", "blueprint"],
+  "mission info from community data": ["blueprint"],
+  "unrecognized blueprint names": ["blueprint"],
+  "cog auto-hide on game focus": ["shell"],
+  "scan read area": ["mining"],
+  "payout scan session panel": ["blueprint"],
+  "contract board calibration box": ["blueprint"],
+  "idle panel (nothing tracked)": ["blueprint"],
+  "mission + faction drawers": ["blueprint"],
+  "widget settings close when idle": ["shell"],
+  "canvas calibration (mixed-DPI)": ["shell"],
+  "patch notes fit the monitor": ["shell"],
+  "patch notes are grouped and labelled": ["shell"],
+  "setup nudge": ["shell"],
+  "background service down": ["shell"],
+  "chrome over the native view": ["canvas", "webView"],
+  "completion card holds while you use it": ["blueprint"],
+};
+
+/** A widget's own page → the registry key it is. */
+const PAGE_KEYS = {
+  "logview.html": "logView", "battaglia.html": "battaglia", "versefinder.html": "verseFinder",
+  "unlockalert.html": "unlockAlert", "mining.html": "mining", "chat.html": "chat",
+  "hauling.html": "hauling", "twitchchat.html": "twitchChat", "scfeed.html": "scFeed",
+  "notepad.html": "notepad", "party.html": "party", "webview.html": "webView",
+  "bindingwidget.html": "bindingChart",
+};
+
+/** Suites that loop the whole registry. They HOST every widget, so a page that no longer fits its
+ *  box, or that puts an error on the console, fails here and in no page-specific suite. Always
+ *  selected under `--only`, and the two expensive ones narrow their own loops. */
+const SWEEP_SUITES = new Set([
+  "widget grouping", "pair merges (brute force)", "title-bar chrome", "controls visible + reachable",
+  "sweeps: themes / sizes / text / stacks", "dragging + reset", "page headers",
+  "chrome anchoring + latches", "per-widget angle", "split fade: panel vs text",
+  "chrome over the native view",
+]);
+
+const UNTAGGED = [];
+const SKIPPED = [];
+
+/** Every key --only accepts: the registry keys the pages map to, plus the canvas/shell tags. */
+const KNOWN_TAGS = [...new Set([...Object.values(PAGE_KEYS), ...Object.values(SUITE_TAGS).flat()])].sort();
+
+/* 🔴 AN UNRECOGNISED KEY MUST NOT PRODUCE A NEARLY-EMPTY PASS. Without this, --only versefinder
+   (lower-case f, which is what the PAGE is called) matches nothing, the registry sweeps run
+   against an empty SEL, and the run either dies on an obscure positive guard or - worse, if a
+   guard were ever removed - prints a green subset that tested nothing. Fail before loading a
+   single page, and print the list: these are registry keys and are not guessable from the
+   filenames. Matching is case-insensitive and takes a page filename too, so a flight can paste
+   what git printed.  */
+const ONLY_KEYS_RESOLVED = ONLY && ONLY.map((raw) => {
+  const k = raw.trim().toLowerCase().replace(".html", "");
+  return KNOWN_TAGS.find((t) => t.toLowerCase() === k) || PAGE_KEYS[k + ".html"] || null;
+});
+if (ONLY && ONLY_KEYS_RESOLVED.some((k) => !k)) {
+  console.error("");
+  console.error("--only: unknown widget key(s): " + ONLY.filter((_, n) => !ONLY_KEYS_RESOLVED[n]).join(", "));
+  console.error("known keys: " + KNOWN_TAGS.join(", "));
+  console.error("(a page filename works too, e.g. --only versefinder.html)");
+  process.exit(2);
+}
+
+/** Does this suite run under the current selection? */
+function selected(label, page) {
+  if (!ONLY) return true;
+  if (SWEEP_SUITES.has(label)) return true;
+  const tags = page ? [PAGE_KEYS[page] || page] : SUITE_TAGS[label];
+  if (!tags) { UNTAGGED.push(label); return true; }
+  return tags.some((t) => ONLY_KEYS_RESOLVED.indexOf(t) >= 0);
+}
+
 const PRELUDE = `
+  // 🔑 THE SUBSET, INSIDE THE PAGE. SEL is what a registry SWEEP should walk; WIDGETS stays the
+  // whole registry, so the "registry has N widgets" assertion keeps meaning what it says.
+  // With no --only the two are the same list and a full pass behaves exactly as it always did.
+  // ⚠️ No backticks and no backslash escapes anywhere in here: this string is spliced into every
+  // suite body, which is itself a template literal.
+  const ONLY_KEYS = (new URLSearchParams(location.search).get("only") || "").split(",").filter(Boolean);
+  const SEL = typeof WIDGETS === "undefined" ? []
+    : (ONLY_KEYS.length ? WIDGETS.filter((w) => ONLY_KEYS.indexOf(w.key) >= 0) : WIDGETS);
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  // 🔴 A CHECK THAT COULD NOT RUN IS NOT A CHECK THAT PASSED. Three assertions in this file
+  // were written as ok(name, true) in an else branch - honest, documented, and counted as
+  // passes, so a branch that quietly stops being reachable reads as coverage forever. A skip
+  // prints as skip, is counted separately, and never inflates the pass total. Reach for it
+  // when the INPUT could not express the case; ok(name, false) is for when the code is wrong.
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   // The Blueprint panel is a LOCAL registry widget: it lives in this document rather than an
   // iframe, so it has no w-/wf- elements and hides via a body class.
@@ -166,7 +305,11 @@ const GROUPING = `(async () => {
 const PAIRS = `(async () => {
   ${PRELUDE}
   // Show everything so every pair is actually mergeable.
-  for (const w of WIDGETS) { setWidgetVisible(w, true); }
+  // 🔴 THIS SUITE IS O(n²) OVER THE REGISTRY AND IT IS THE MOST EXPENSIVE THING IN THE PASS.
+  // Measured 2026-08-25: 15 widgets = 105 pairs = 134.4s, which is 41% of a 324.9s full run, for
+  // SEVEN assertions. Every widget added to the registry adds ~15 pairs, i.e. ~19s to every
+  // landing. It walks SEL so that a flight running --only pays for the pairs it can have broken.
+  for (const w of SEL) { setWidgetVisible(w, true); }
   await sleep(500);
 
   const frameBox = (w) => (w.local ? el(w).getBoundingClientRect() : document.getElementById("wf-" + w.key).getBoundingClientRect());
@@ -211,12 +354,14 @@ const PAIRS = `(async () => {
   };
   // Snapshot each widget's healthy standalone frame size to compare against after a merge cycle.
   const baseline = {};
-  for (const w of WIDGETS) { const r = frameBox(w); baseline[w.key] = [Math.round(r.width), Math.round(r.height)]; }
+  for (const w of SEL) { const r = frameBox(w); baseline[w.key] = [Math.round(r.width), Math.round(r.height)]; }
 
   const broken = [], groupBad = [], clipped = [];
-  for (let i = 0; i < WIDGETS.length; i++) {
-    for (let j = i + 1; j < WIDGETS.length; j++) {
-      const a = WIDGETS[i], b = WIDGETS[j];
+  let pairsDone = 0;
+  for (let i = 0; i < SEL.length; i++) {
+    for (let j = i + 1; j < SEL.length; j++) {
+      const a = SEL[i], b = SEL[j];
+      pairsDone++;
       groupWidgets(a, b);
       const g = GROUPS[0];
       // While grouped: one box, exactly one member on screen, and it must have real size.
@@ -265,18 +410,35 @@ const PAIRS = `(async () => {
       await sleep(40);
     }
   }
-  ok("all 28 pairs group cleanly", groupBad.length === 0, groupBad.slice(0, 4).join(" | "));
-  ok("no pair leaves a widget's CONTENT clipped inside its box", clipped.length === 0,
-     clipped.length + " clipped: " + clipped.slice(0, 5).join(" | "));
-  ok("no pair leaves a widget degenerate or drifting", broken.length === 0,
-     broken.length + " broken: " + broken.slice(0, 4).join(" | "));
+  /* 🔴 POSITIVE FIRST, AND IT IS NOT DECORATION. Every assertion below is a must-NOT-contain over
+     a list this loop fills, so all three are satisfied for free by a loop that compared NOTHING —
+     which is exactly what happens when --only names one widget, or none of the named keys is in
+     the registry. Without this line the cheapest way to make PAIRS green is to stop it running.
+     ⚠️ The name used to say "all 28 pairs" while the loop did 105; the number is printed now
+     rather than written down, so it cannot go stale again. */
+  if (pairsDone === 0) {
+    // ALL FOUR go together. Each of the three below is a must-not-contain over a list this loop
+    // fills, so with no pairs compared they are true for free - three vacuous passes reading as
+    // coverage. Reporting one skip is the honest version of what happened.
+    skip("pairs need at least two widgets in the selection",
+         SEL.length + " widget(s) selected, so no pair could be merged or checked");
+  } else {
+    ok("there were pairs to compare at all", pairsDone > 0, pairsDone + " pairs over " + SEL.length + " widgets");
+    ok("every pair groups cleanly", groupBad.length === 0, pairsDone + " pairs: " + groupBad.slice(0, 4).join(" | "));
+    ok("no pair leaves a widget's CONTENT clipped inside its box", clipped.length === 0,
+       clipped.length + " clipped: " + clipped.slice(0, 5).join(" | "));
+    ok("no pair leaves a widget degenerate or drifting", broken.length === 0,
+       broken.length + " broken: " + broken.slice(0, 4).join(" | "));
+  }
   await sleep(200);
-  ok("every widget's content fits its box after all that", WIDGETS.every(fits),
-     WIDGETS.filter(w => !fits(w)).map(w => w.key + " " + JSON.stringify(innerFit(w))).join(" | "));
+  ok("every widget's content fits its box after all that", SEL.length > 0 && SEL.every(fits),
+     SEL.filter(w => !fits(w)).map(w => w.key + " " + JSON.stringify(innerFit(w))).join(" | "));
 
   // The two pairs Sub called out by name, end to end. What matters is that the CONTENT fits both
   // while stacked and after separating - frame size alone never revealed the bug.
-  for (const partner of ["twitchChat", "party"]) {
+  // Skipped when --only leaves one of the two out of the registry selection; the alternative is
+  // grouping a widget the flight did not ask for and reporting on it.
+  for (const partner of (SEL.indexOf(WBY.mining) < 0 ? [] : ["twitchChat", "party"].filter((k) => SEL.indexOf(WBY[k]) >= 0))) {
     groupWidgets(WBY.mining, WBY[partner]);
     await sleep(80);
     const gOk = fits(WBY[GROUPS[0].active]);
@@ -529,7 +691,7 @@ const THEMES = ["mobiglas", "drake", "anvil", "greys", "argo", "misc", "aegis", 
                 "mirai", "origin", "esperia", "banu", "gatac", "kruger", "cnou"];
 const SWEEPS = `(async () => {
   ${PRELUDE}
-  for (const w of WIDGETS) setWidgetVisible(w, true);
+  for (const w of SEL) setWidgetVisible(w, true);
   await sleep(500);
 
   const frameBox = (w) => (w.local ? el(w).getBoundingClientRect()
@@ -554,9 +716,9 @@ const SWEEPS = `(async () => {
   const themeBad = [], missingArt = [];
   for (const th of THEMES) {
     root.setAttribute("data-theme", th);
-    for (const w of WIDGETS) { syncWidgetTheme(w); }
+    for (const w of SEL) { syncWidgetTheme(w); }
     await sleep(30);
-    for (const w of WIDGETS) {
+    for (const w of SEL) {
       if (!fits(w)) themeBad.push(th + "/" + w.key + " " + JSON.stringify(innerFit(w)));
       const box = frameBox(w);
       if (box.width < 40 || box.height < 40) themeBad.push(th + "/" + w.key + " collapsed");
@@ -574,6 +736,11 @@ const SWEEPS = `(async () => {
     }
   }
   if (theme0) root.setAttribute("data-theme", theme0); else root.removeAttribute("data-theme");
+  /* 🔴 POSITIVE FIRST. All three sweep assertions below are must-NOT-contain over a list these
+     loops fill, so an empty SEL (--only naming a key the registry does not hold) satisfies every
+     one of them without measuring anything. Say how many widgets and skins were really walked. */
+  ok("the sweep really walked widgets and skins", SEL.length > 0 && THEMES.length > 0,
+     SEL.length + " widgets x " + THEMES.length + " skins");
   ok("every skin renders every widget without breaking layout", themeBad.length === 0, themeBad.slice(0, 5).join(" | "));
   ok("every skin's trinket art resolves", missingArt.length === 0, [...new Set(missingArt)].slice(0, 6).join(" | "));
 
@@ -593,7 +760,7 @@ const SWEEPS = `(async () => {
     return false;
   };
   const sizeBad = [];
-  for (const w of WIDGETS) {
+  for (const w of SEL) {
     for (const [lbl, ww, hh] of [["min", w.size.minW, w.size.minH], ["max", w.size.maxW, w.size.maxH]]) {
       if (ww == null) continue;
       w.s.w = Math.min(ww, 1600); w.s.h = Math.min(hh, 1200); // keep it inside the test viewport
@@ -617,7 +784,7 @@ const SWEEPS = `(async () => {
   // This is the control that replaced scaling, so it has to hold at both extremes: a widget must
   // not spill out of its box at 200%, and must not collapse at 70%.
   const textBad = [];
-  for (const w of WIDGETS) {
+  for (const w of SEL) {
     for (const scale of [0.7, 1, 1.5, 2]) {
       w.s.text = scale; applyTextScale(w); await sleep(25);
       if (!fits(w)) textBad.push(w.key + "@" + Math.round(scale * 100) + "% " + JSON.stringify(innerFit(w)));
@@ -629,7 +796,13 @@ const SWEEPS = `(async () => {
   // ── stacks of three and four ────────────────────────────────────────────────
   // Pairs never exercise tab overflow in the bar, which is where a third and fourth tab land.
   while (GROUPS.length) detachFromGroup(WBY[GROUPS[0].active]);
+  // 🔑 A FIXED QUAD, SHOWN ON PURPOSE. This block is about the BAR — whether a fourth tab pushes
+  // the controls off it — so it is canvas behaviour and not a claim about these four widgets.
+  // Under --only they may not be in SEL and would therefore be hidden, which would turn a real
+  // assertion into a group of nothing. Show them here and reset them below.
   const quad = ["party", "mining", "battaglia", "notepad"].map(k => WBY[k]);
+  for (const w of quad) setWidgetVisible(w, true);
+  await sleep(120);
   groupWidgets(quad[1], quad[0]);
   groupWidgets(quad[2], quad[0]);
   groupWidgets(quad[3], quad[0]);
@@ -649,7 +822,8 @@ const SWEEPS = `(async () => {
      g4.members.filter(k => shown(WBY[k])).length === 1,
      g4.members.filter(k => shown(WBY[k])).join(","));
   while (GROUPS.length) detachFromGroup(WBY[GROUPS[0].active]);
-  for (const w of WIDGETS) resetWidget(w);
+  for (const w of SEL) resetWidget(w);
+  for (const w of quad) resetWidget(w);
   return out;
 })()`;
 
@@ -660,6 +834,7 @@ const SWEEPS = `(async () => {
 const MININGSAY = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   await sleep(400);
   // Stub BOTH speech paths (clips, and the Windows-TTS fallback) plus the sound cue, and record.
@@ -2281,6 +2456,7 @@ const LIFECYCLE = `(async () => {
 const EVENTFEED = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
 
@@ -2368,6 +2544,7 @@ const EVENTFEED = `(async () => {
 const REWARDCARD = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
 
@@ -2530,6 +2707,7 @@ const REWARDCARD = `(async () => {
 const EVENTLADDER = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
 
@@ -2709,6 +2887,7 @@ const EVENTLADDER = `(async () => {
 const VERSEPOOL = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(400);
 
@@ -3117,6 +3296,7 @@ const VERSEPOOL = `(async () => {
 const VERSEFINDER = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(400); // let status() land before driving the box
 
@@ -3191,14 +3371,62 @@ const VERSEFINDER = `(async () => {
     const m = el.querySelector(".more");
     return m && m.textContent.indexOf("more shop") > -1;
   });
-  ok("a long shop list says how many were left out",
-     // RE-POINTED 2026-08-24, flight poolfill, and it went red on working code first: the note
-     // states how many SURVEY shops were left out and is computed from the quote array, but this
-     // counted every row in the card and the community observations are now rows in the same
-     // list. A card with observations counted 6 or 7 while the note was perfectly correct.
-     truncated.length === 0 || truncated.every((el) =>
-       el.querySelectorAll(".grow:not(.obs)").length === 5),
-     truncated.length + " truncated");
+  /* 🔴 RE-POINTED 2026-08-25, flight suiteaudit. It demanded exactly FIVE survey rows on every
+     truncated card, and the shipped design promises no such thing - in TWO directions, both of
+     them deliberate and both documented in the code it was testing:
+
+       FEWER - verse-routes.ts folds community confirmations in BEFORE the ordering, so the cap
+       applies to the MERGED list. A card with one placed confirmation draws 4 survey + 1 obs.
+       Measured the day this was re-pointed: 3 of the 11 truncated cannon cards.
+
+       MORE - reserveTierRows (verse-proximity.ts) keeps each containment tier best row past the
+       cap. versefinder.html says so in as many words: "a card can legitimately draw 6 or 7".
+       MedPen drew 6 the same afternoon.
+
+     It only went red now because the price pool filled: when poolfill re-pointed it, no cannon
+     card carried a placed row, so counting survey rows still gave 5 and the wrong claim looked
+     right. Data drift was the trigger; the assertion was the fault.
+
+     🔑 THE REPAIR IS TO COMPARE THE RENDER TO ITS OWN INPUT, not to a magic number. Ask the
+     sidecar the same question the widget asked and check the card against the answer: it cannot
+     drift with the corpus, and it still catches the exact regression poolfill was guarding - a
+     note computed from the ROWS ON SCREEN rather than from the survey quotes would be too small
+     by precisely the number of community rows in the card. */
+  let vfPayload = null;
+  try {
+    vfPayload = await (await fetch("/api/verse/search?q=cannon&limit=20&shops=5", { cache: "no-store" })).json();
+  } catch (e) { vfPayload = null; }
+  const vfByName = {};
+  for (const r of ((vfPayload && vfPayload.results) || [])) vfByName[r.name] = r;
+  // The category rides inside .iname as a child span, so the name is the leading text node.
+  const cardName = (el) => {
+    const n = el.querySelector(".iname");
+    return n && n.firstChild ? String(n.firstChild.textContent).trim() : "";
+  };
+  /* POSITIVE FIRST, TWICE. Both assertions further down are must-not-contain over lists this loop
+     fills, so an empty payload, or a result set with nothing truncated, satisfies them for free. */
+  ok("the sidecar answered, so there is something to check the render against",
+     Object.keys(vfByName).length > 0, Object.keys(vfByName).length + " items in the payload");
+  ok("there are truncated cards to check at all", truncated.length > 0, truncated.length + " truncated");
+  const rowMismatch = [], noteMismatch = [];
+  for (const el of truncated) {
+    const nm = cardName(el);
+    const r = vfByName[nm];
+    if (!r) { rowMismatch.push(nm + " is not in the payload"); continue; }
+    const survey = (r.quotes || []).filter((q) => !q.observedOnly).length;
+    const drawn = el.querySelectorAll(".grow:not(.obs)").length;
+    if (drawn !== survey) rowMismatch.push(nm + " drew " + drawn + " survey rows of " + survey);
+    const moreEl = el.querySelector(".more");
+    const txt = moreEl ? moreEl.textContent : "";
+    const at = txt.indexOf("+");
+    const said = at < 0 ? -1 : parseInt(txt.slice(at + 1), 10);
+    const want = r.shopCount - survey;
+    if (said !== want) noteMismatch.push(nm + " says +" + said + ", the payload says +" + want);
+  }
+  ok("a truncated card draws exactly the survey rows it was handed",
+     rowMismatch.length === 0, rowMismatch.slice(0, 4).join(" | "));
+  ok("...and its +N counts the SURVEY shops left out, never the rows on screen",
+     noteMismatch.length === 0, noteMismatch.slice(0, 4).join(" | "));
 
   // 🔴 The provenance footer. Sub's requirement is that the user knows when they are on a
   // fallback, and only the screen they are looking at can say so.
@@ -3653,8 +3881,8 @@ const VERSEFINDER = `(async () => {
     // POSITIVE FIRST — everything below is free with no pills on screen. Which state the live
     // sidecar is in depends on Sub's log, so this is reported rather than demanded.
     if (pills.length === 0) {
-      ok("(no containment rows this run - the origin is precise enough for distances)", true,
-         "skipped, " + document.querySelectorAll("#results .cpill").length + " distance cells");
+      skip("containment pills - the origin is precise enough this run for distances instead",
+           "the whole pill block below is UNTESTED whenever the player position is fresh");
     } else {
       ok("containment rows render as pills", pills.length > 0, pills.length + " pills");
       const cs0 = getComputedStyle(pills[0]);
@@ -3981,6 +4209,7 @@ const VERSEFINDER = `(async () => {
 const VERSEEYE = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(400);
 
@@ -4079,6 +4308,7 @@ const VERSEEYE = `(async () => {
 const VERSEDEALERS = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(400);
 
@@ -4253,6 +4483,7 @@ const LOGVIEWGRAB = `(async () => {
 const LOGVIEW = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(400); // let the page's own connect()/render() settle before driving it
 
@@ -5348,9 +5579,15 @@ const CALIBRATE = `(async () => {
   return out;
 })()`;
 
+// Per-suite wall clock, so "the suite is slow" can be answered with a number instead of an
+// impression. Filled by `run()`, printed as a table at the end of the pass.
+const TIMINGS = [];
+
 // `page` targets a widget's OWN page instead of the canvas — a notifier is easiest to drive
 // standalone, without the whole canvas around it.
 async function run(label, script, preload, query, page) {
+  if (!selected(label, page)) { SKIPPED.push(label); return 0; }
+  const t0 = Date.now();
   const web = preload ? { preload, contextIsolation: false } : {};
   const win = new BrowserWindow({ show: false, width: 1920, height: 1080, webPreferences: web });
   // A widget that logs an error or 404s an asset is broken even when every assertion passes -
@@ -5423,8 +5660,12 @@ async function run(label, script, preload, query, page) {
     if (d.statusCode === 404 && EXPECTED_404.test(d.url)) return;
     noise.push("HTTP " + d.statusCode + " " + d.url.replace(/^https?:\/\//, "").slice(0, 70));
   });
+  let asserts = 0, failed = 0;
   try {
-    const base = page ? `http://localhost:${PORT}/${page}` : URL;
+    let base = page ? `http://localhost:${PORT}/${page}` : URL;
+    // Push the selection into the canvas so a registry SWEEP walks the named widgets instead of
+    // all fifteen. Only the canvas needs it — a widget's own page has nothing to sweep.
+    if (ONLY && !page) base += (base.includes("?") ? "&" : "?") + "only=" + encodeURIComponent(ONLY_KEYS_RESOLVED.join(","));
     await win.loadURL(query ? base + (base.includes("?") ? "&" : "?") + query : base);
     /* 🔴 A SUITE THAT THROWS MUST NOT TAKE THE OTHERS WITH IT. executeJavaScript rejects when the
        page script throws, and that rejection escaped `run()` entirely — it unwound to the caller's
@@ -5439,20 +5680,31 @@ async function run(label, script, preload, query, page) {
       console.log(`
 ${label}`);
       console.log("  FAIL suite threw before it could report   [" + String((e && e.message) || e).slice(0, 180) + "]");
+      failed = 1;
       return 1;
     }
-    let fails = 0;
+    let fails = 0, skips = 0;
     console.log(`\n${label}`);
     for (const r of res) {
+      // 🔴 A SKIP IS NEITHER. It prints, it is counted on its own and it is excluded from the
+      // pass total - so a check the input could not express can never read as coverage.
+      if (r.skip) { skips++; console.log("  skip " + r.name + (r.detail ? "   [" + r.detail + "]" : "")); continue; }
       if (!r.pass) fails++;
       console.log((r.pass ? "  ok   " : "  FAIL ") + r.name + (r.detail ? "   [" + r.detail + "]" : ""));
     }
     const uniq = [...new Set(noise)];
     if (uniq.length) { fails++; console.log("  FAIL console/network clean   [" + uniq.slice(0, 4).join(" | ") + "]"); }
     else console.log("  ok   console/network clean");
-    console.log(`  ${res.length + 1 - fails}/${res.length + 1} passed` + (fails ? `  <<< ${fails} FAILED` : ""));
+    const judged = res.length + 1 - skips;
+    asserts = judged;
+    failed = fails;
+    console.log(`  ${judged - fails}/${judged} passed` + (skips ? `  (${skips} skipped)` : "")
+      + (fails ? `  <<< ${fails} FAILED` : "") + `  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     return fails;
-  } finally { win.destroy(); }
+  } finally {
+    win.destroy();
+    TIMINGS.push({ label, ms: Date.now() - t0, asserts, failed, page: page || "missions.html" });
+  }
 }
 
 // The summoned cog / open hub times itself out once the GAME has focus, because that's when it
@@ -5564,6 +5816,7 @@ const REPORTHOLD = `(async () => {
 const CHATLINKS = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(300);
 
@@ -6648,6 +6901,7 @@ const CHATLINKS = `(async () => {
 const UNLOCK = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const GOOD = "tape-tl.webp", GOOD2 = "anvil-bolt-tl.webp", BAD = "deliberate-404-for-test.webp";
   const card = document.getElementById("card"), img = document.getElementById("img");
@@ -6752,6 +7006,7 @@ async function writeScanRegion(region) {
 const HAULING = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500); // let the page's own first load settle before overwriting it
 
@@ -7090,6 +7345,7 @@ const HAULING = `(async () => {
 const BUYROUTE = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
 
@@ -7240,6 +7496,7 @@ const BUYROUTE = `(async () => {
 const TABROW = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(600);
 
@@ -7374,6 +7631,7 @@ const TABROW = `(async () => {
 const FUNNEL = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(400);
 
@@ -7570,8 +7828,8 @@ const FUNNEL = `(async () => {
        "colour " + dist(hc.color, ac.color) + " apart, bg " + hc.backgroundColor + " vs " + ac.backgroundColor);
   } else {
     // Not a failure: the fixture may hold one system only. Say so rather than passing silently.
-    ok("home/away contrast is untested here - only one kind of badge on screen", true,
-       (home ? "home" : "") + (away ? "away" : "") + " only");
+    skip("home/away contrast - only one kind of badge on screen",
+         (home ? "home" : "") + (away ? "away" : "") + " only");
   }
 
   // ── pin the buy, and the list becomes DESTINATIONS ────────────────────────
@@ -7631,7 +7889,8 @@ const FUNNEL = `(async () => {
        !!head && (to.compareDocumentPosition(head) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
        "tradeoff then heading");
   } else {
-    ok("no trade-off line, because one destination wins on both counts", true, "absent by design");
+    skip("the trade-off line - one destination won on both counts, so there is none to check",
+         "absent by design");
   }
 
   // ── the + Route button ────────────────────────────────────────────────────
@@ -7679,6 +7938,7 @@ const FUNNEL = `(async () => {
 const RUNSNARROW = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(400);
 
@@ -7814,6 +8074,7 @@ const RUNSNARROW = `(async () => {
 const STOW = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
 
@@ -7953,6 +8214,7 @@ const STOW = `(async () => {
 const TRADEHOLD = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
 
@@ -8080,6 +8342,7 @@ const TRADEHOLD = `(async () => {
 const TRADEUNIT = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
 
@@ -8251,7 +8514,39 @@ app.whenReady().then(async () => {
       if (!back) { console.log(`  it is now ${JSON.stringify(now)} — re-drag it, or use Reset.`); fails++; }
     }
   }
-  console.log(fails ? `\nFAILED (${fails})` : "\nall widget DOM tests passed");
+  // 🔑 THE COST, AS A NUMBER RATHER THAN AN IMPRESSION. A flight that changed two widgets should be
+  // able to see what the other fifty suites cost it, and the tower should be able to see which
+  // suite to look at when a pass starts feeling slow.
+  if (TIMINGS.length) {
+    const total = TIMINGS.reduce((a, t) => a + t.ms, 0);
+    const asserts = TIMINGS.reduce((a, t) => a + t.asserts, 0);
+    const byPage = new Map();
+    for (const t of TIMINGS) byPage.set(t.page, (byPage.get(t.page) || 0) + t.ms);
+    console.log(`\n── cost ──  ${TIMINGS.length} suites · ${asserts} assertions · ${(total / 1000).toFixed(1)}s`);
+    console.log("   slowest suites:");
+    for (const t of [...TIMINGS].sort((a, b) => b.ms - a.ms).slice(0, 12)) {
+      console.log(`     ${(t.ms / 1000).toFixed(1).padStart(6)}s  ${String(t.asserts).padStart(4)} asserts  ${t.label}`);
+    }
+    console.log("   by page:");
+    for (const [p, ms] of [...byPage].sort((a, b) => b[1] - a[1])) {
+      console.log(`     ${(ms / 1000).toFixed(1).padStart(6)}s  ${(ms / total * 100).toFixed(0).padStart(3)}%  ${p}`);
+    }
+  }
+  // 🔴 A PARTIAL PASS MUST SAY SO IN AS MANY WORDS. The one way this feature turns into a false
+  // green is somebody reading "all widget DOM tests passed" off a subset run and landing on it.
+  if (ONLY) {
+    console.log(`\n⚠ PARTIAL RUN — --only ${ONLY_KEYS_RESOLVED.join(",")}. ${SKIPPED.length} suite(s) were NOT run:`);
+    console.log("   " + SKIPPED.join(" · "));
+    console.log("   This is NOT a landing gate. The gate is `npm run test:widgets` with no --only.");
+  }
+  // A suite nobody classified still RAN (never skip what you could not classify) — but it has to
+  // be visible, or --only quietly stops covering things as suites are added.
+  if (UNTAGGED.length) {
+    fails++;
+    console.log(`\nFAIL ${UNTAGGED.length} suite(s) carry no entry in SUITE_TAGS, so --only cannot`
+      + ` reason about them (they were run anyway):\n   ` + [...new Set(UNTAGGED)].join(" · "));
+  }
+  console.log(fails ? `\nFAILED (${fails})` : ONLY ? "\nall SELECTED widget DOM tests passed" : "\nall widget DOM tests passed");
   process.exitCode = fails ? 1 : 0;
   app.quit();
 });
