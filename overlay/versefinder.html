@@ -564,7 +564,16 @@
   // figure is measured FROM. Never used to compute anything.
   let lastOrigin = null;
 
-  const fmt = (n) => n.toLocaleString("en-US");
+  /* 🔴 ROUNDED, AND THE DECIMALS WERE NOT OURS. `toLocaleString` keeps up to three fraction digits,
+     so a confirmed price arrived on screen as "15,389.999" — which Sub read at a glance as fifteen
+     MILLION. The fraction is float noise out of the game's own field: the buy line states
+     `shopPricePerCentiSCU[153.899994]` beside `price[15390.000000]`, and 153.899994 x 100 is
+     15389.9994. Every number this formats is an aUEC price, an SCU count or an item count — all
+     integers in the game — so there is no case here where a fraction carries information.
+     ⚠️ This rounds the DISPLAY. The value stored and published to the price pool is still
+     15389.9994; rounding at the point the unit price is derived is the real repair and is a
+     sidecar change. */
+  const fmt = (n) => Math.round(n).toLocaleString("en-US");
 
   const daysSince = (sec) => Math.floor((Date.now() / 1000 - sec) / 86400);
 
