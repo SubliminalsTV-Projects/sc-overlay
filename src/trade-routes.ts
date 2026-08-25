@@ -417,6 +417,11 @@ export function tradeRoutes(
       fromBody: strParam(p, "fromBody"),
       toSystem: strParam(p, "toSystem"),
       toBody: strParam(p, "toBody"),
+      // 🔑 The three the Commodities tab's what -> buy at -> sell at slots drive. `commodity` is
+      // matched exactly, so it is never a typed guess — the slot picks it off /api/trade/names.
+      commodity: strParam(p, "commodity"),
+      fromTerminal: strParam(p, "fromTerminal"),
+      toTerminal: strParam(p, "toTerminal"),
       requireKnownStock: p.get("knownStock") === "1",
       maxAgeDays: numParam(p, "maxAgeDays"),
       limit: numParam(p, "limit") ?? 30,

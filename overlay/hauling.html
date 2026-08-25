@@ -143,6 +143,86 @@
     background: rgba(235, 120, 120, 0.12); }
   .tdsrc .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
+  /* ── THE FUNNEL: what -> buy at -> sell at ──────────────────────────────────────────────────
+     Sub picked this out of three mockups on 2026-08-25. The reasoning lives in the header of
+     hauling-tab-trade.js; these are the rules that make it survive 320px.
+
+     🔑 IT REPLACES THE `buy in` PILL ROW rather than adding to it, which is why the tab is not
+     taller than it was: that row wrapped to two lines at 440px on its own. Three 26px slots for a
+     control that can also pin a terminal and a destination is not a worse trade, it is a better
+     one, and it was measured before it was built. */
+  .funnel { flex: none; background: rgba(0, 0, 0, 0.16);
+    border-bottom: 1px solid var(--divider); }
+  .slot { display: flex; align-items: center; gap: 6px; padding: 4px 12px; min-height: 26px; }
+  .slot + .slot { border-top: 1px solid rgba(var(--accent-rgb), 0.08); }
+  /* Fixed, because three labels that each size to their own text put the three VALUES at three
+     different x positions, and the column of values is the thing being read down. */
+  .slot .k { flex: none; width: 52px; font-size: 8.5px; font-weight: 700; letter-spacing: 0.11em;
+    text-transform: uppercase; color: var(--faint); }
+  .slot .v { flex: 1; min-width: 0; font-size: 12.5px; color: var(--cyan-bright);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text; }
+  /* 🔴 AN UNSET SLOT MUST NOT READ LIKE A VALUE. Dim + italic, and the text says what filling it
+     would do. Same rule as the fixed "Confirmed stock" label: a control whose state and whose
+     effect look alike is unreadable, and Sub has reported exactly that once already. */
+  .slot .v.off { color: var(--faint); font-style: italic; }
+  .slot .h { flex: none; font-size: 10px; color: var(--faint); font-family: var(--mono); }
+  .slot .x { flex: none; background: none; border: none; color: var(--faint); cursor: pointer;
+    font-size: 12px; line-height: 1; padding: 0 2px; }
+  .slot .x:hover { color: var(--cyan-bright); }
+  .slot.open { background: rgba(var(--accent-rgb), 0.1); }
+  .slot input { flex: 1; min-width: 0; font-family: var(--sans); font-size: 12.5px;
+    font-weight: 600; color: var(--cyan-bright); background: transparent; border: none;
+    border-bottom: 1px solid var(--cyan); padding: 1px 0; }
+  .slot input:focus { outline: none; }
+  .slot input::placeholder { color: var(--faint); font-weight: 400; font-style: italic; }
+
+  /* 🔴 IN FLOW, NEVER ABSOLUTE. The first cut of this tab's commodity input lived inside `.psug`
+     (`position:absolute; top:100%`) and rendered BELOW the panel, where it had to be scrolled to.
+     That lesson is recorded in this file's header and it applies to the list as much as the input:
+     an absolutely-positioned list here would also blanket the rows it is meant to be chosen
+     against, which is exactly the failure the Route tab's `.psug` has. */
+  .slotlist { flex: none; max-height: 210px; overflow-y: auto; background: rgba(0, 0, 0, 0.3);
+    border-bottom: 1px solid var(--divider); }
+  .slotlist .o { display: flex; align-items: baseline; gap: 6px; padding: 5px 12px; cursor: pointer; }
+  .slotlist .o:hover { background: rgba(var(--accent-rgb), 0.2); }
+  /* Where "anywhere in a system" ends and "this kiosk" begins. Two different kinds of answer, and
+     without the rule the list reads as one ranking in which Stanton outranks Rustville. */
+  .slotlist .o.firstterm { border-top: 1px solid var(--divider); }
+  .slotlist .o.none { cursor: default; color: var(--faint); font-size: 11.5px; font-style: italic; }
+  .slotlist .o.none:hover { background: none; }
+  .slotlist .o .nm { flex: 1; min-width: 0; font-size: 12px; color: var(--cyan-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .slotlist .o .nm .sub { display: block; font-size: 9.5px; color: var(--faint); }
+  /* Auto-width and LAST, so every price in the list shares one right edge for free — the row's own
+     padding pins it and there is no spacer to keep in sync. */
+  .slotlist .o .pr { flex: none; font-family: var(--mono); font-size: 11.5px; }
+  .slotlist .o.buy .pr { color: var(--gold); }
+  .slotlist .o.sell .pr { color: var(--green); }
+
+  /* 🔑 A JUMP, NOT A DANGER. The app knows the jump and does not know the risk; which system is
+     dangerous depends on the player and the ship, so the badge states the jump and the trade-off
+     line states the money.
+     🔴 THE FILL IS LOAD-BEARING, and it was measured rather than assumed. On mobiGlas
+     `--cyan-bright` vs `--amber` is cyan against amber, unmistakable. On DRAKE the same two tokens
+     compute to rgb(251,178,74) and rgb(246,169,58) — 30 units apart summed across all three
+     channels, i.e. one orange twice, on a skin Sub can switch to in one click. Colour alone does
+     not survive the skins; fill-vs-no-fill does, because no palette can collapse it. */
+  .sysb { flex: none; font-size: 9px; font-weight: 700; letter-spacing: 0.09em;
+    text-transform: uppercase; border-radius: 3px; padding: 1px 4px;
+    border: 1px solid var(--divider); color: var(--faint); background: transparent; }
+  .sysb.home { color: var(--cyan-bright); border-color: var(--border); background: transparent; }
+  .sysb.away { color: var(--amber); border-color: rgba(var(--value-rgb), 0.55);
+    background: rgba(var(--value-rgb), 0.18); }
+
+  /* 🔴 WHAT THE SAFER CHOICE COSTS, IN WORDS, ONCE. The one thing grafted from mockup C. A ranked
+     list sorts by ONE number and the decision Sub described has two — more money for more time, or
+     less money and you never leave the system. Both figures come off the server's own rows, so this
+     line cannot disagree with the rows beneath it. */
+  .tradeoff { flex: none; padding: 6px 12px; font-size: 11px; line-height: 1.5;
+    color: var(--cyan-dim); background: rgba(var(--accent-rgb), 0.06);
+    border-bottom: 1px solid var(--divider); }
+  .tradeoff b { color: var(--cyan-bright); font-weight: 600; }
+
   /* ⓘ — drawn from a plain ASCII letter in a CSS circle, never a real ⓘ character and never an
      icon font. It is a real <button> driving a POPOVER, because a native `title` cannot be opened
      from script: Sub clicked the first version of an info affordance and nothing happened.
@@ -266,6 +346,21 @@
      carries one chip, because "typically" is not "always" — an unknown-stock cross-system run
      still draws three. */
   .tdrow .tdchips .badge { letter-spacing: 0.05em; padding: 1px 3px; }
+  /* 🔴 "+ Route" IS RIGHT-JUSTIFIED IN A COLUMN OF ITS OWN (Sub, 2026-08-25): "it's a massive pill
+     right next to the smaller pills for the different commodities. I think if it was right-justified
+     in its own kind of column, or the same column as the price, that would look a lot better."
+     One declaration. The chip row ends at the row's own padding, so the button lands on exactly the
+     right edge `.p` and `.pk` already use — which satisfies the "same column as the price" reading
+     too, without either of them reserving width.
+     ⛔ DELIBERATELY NOT A RIGHT-HAND RAIL beside the price, which is what the mockup drew and what
+     Sub was looking at when he chose this design. A rail holds its width open on every row at every
+     width, and that is precisely what he REMOVED on 2026-08-23 after measuring it: the old
+     `money + tdcap` shape needed 260px in 176 at the 320px minimum and clipped the margin and the
+     quantity off four rows at once. See the note above `.tdrow .l1`. Pushing the button right costs
+     nothing and re-opens nothing.
+     🔑 `margin-left:auto` on a flex item also survives the WRAP: when the chips take a second line
+     at 320px the button is still hard right on whichever line it lands on. */
+  .tdrow .tdchips .hbtn { margin-left: auto; }
 
   /* ── THE LEDGER'S BALANCE BLOCK ────────────────────────────────────────────────────────────
      🔴 A LOG IS A LIST OF THINGS THAT HAPPENED; A LEDGER IS A POSITION. This tab already held
@@ -478,6 +573,28 @@
   /* A name the GAME has used before. It outranks the 1,125 dataset rows for a reason worth
      showing: it is known to be a real hauling stop. */
   .psug .seen { color: var(--green); }
+  /* 🔴 THE CONSTRAINED PICKER (2026-08-25). On a COMMODITY leg this list comes from the price
+     table's buyAt/sellAt rather than from "places you have been", so it can say how many places
+     trade the thing and what each one pays. A contract stop keeps the plain list and draws none of
+     these — see `commodityPlaceSuggestions` in overlay-server.ts for why the scope matters. */
+  .psug .phead { display: block; padding: 4px 8px 3px; font-size: 8.5px; font-weight: 700;
+    letter-spacing: 0.11em; text-transform: uppercase; color: var(--faint);
+    border-bottom: 1px solid var(--divider); cursor: default; }
+  .psug .phead:hover { background: none; }
+  /* Auto-width and LAST in the row, so every price shares one right edge with no spacer to keep in
+     sync — the rule the Verse Finder's `.pricecol` learned the expensive way. */
+  .psug .pr { flex: none; margin-left: auto; font-family: var(--mono); font-size: 10.5px; }
+  /* ⚠️ `.psug .h` ALREADY carries `margin-left:auto`, and two auto margins on one flex line SPLIT
+     the free space between them — the hint would drift to the middle and the price would stop being
+     flush right. When a hint precedes the price, the hint's auto has already done the pushing. */
+  .psug .h + .pr { margin-left: 0; }
+  .psug .buyp { color: var(--gold); }
+  .psug .sellp { color: var(--green); }
+  /* A constrained list with nothing in it still has something to say: "nowhere trades this" is a
+     fact about the commodity, where an empty dataset list is a fact about the typing. */
+  .psug .pfoot { display: block; padding: 5px 8px; font-size: 10px; line-height: 1.45;
+    color: var(--faint); border-top: 1px solid var(--divider); cursor: default; }
+  .psug .pfoot:hover { background: none; }
 
   #body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; z-index: 4; }
   .sec { display: flex; align-items: baseline; gap: 6px; padding: 9px 12px 5px;

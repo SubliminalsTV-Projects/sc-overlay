@@ -64,9 +64,48 @@
      `tradeNames` and `tradeQuery` went with it.
      🔑 Backhaul was never a mode — it is a FILTER on routes, the same question with the
      destination pinned — so it is unaffected. */
-  let tradeToBody = null;
-  /** "" = every system. Defaulted from the log once, then it is the player's choice. */
-  let tradeSystem = null;      // null = not yet defaulted
+  /* ── THE FUNNEL: what -> buy at -> sell at (2026-08-25) ─────────────────────────────────────
+     Sub picked this out of three mockups. His own words for what it is:
+
+       "we'll let them search for the buy-in location. And we'll let them search for the drop-off
+        location once they pick the pickup location."
+
+     🔑 THREE SLOTS, AND AN UNSET SLOT IS A FILTER THAT IS NOT APPLIED. With all three empty this
+     tab is byte-for-byte the leaderboard it has always been, so nobody has had anything taken away
+     — the board has been given a steering wheel. Each filled slot narrows the SAME list; there is
+     never a second view and never a mode.
+
+     🔴 EVERY SLOT VALUE COMES FROM DATA, NEVER FROM TYPING. `what` is picked off
+     /api/trade/names, and the terminals are picked off `buyAt`/`sellAt` — so a place the commodity
+     cannot be bought at is UNREACHABLE rather than merely discouraged. That is the same property
+     the Route tab's picker needs, which is why they share one source.
+
+     🔑 THE BODY IS ALWAYS /api/trade/routes. The slots only add query params. There is exactly one
+     solver and the widget does no arithmetic of its own — the alternative was a second code path
+     producing rows, which is the mistake this file's header already warns about.
+
+     ⛔ `tradeSystem` and `tradeToBody` ARE GONE and must not come back as separate state. They were
+     "where a run starts" and "where it ends" living in two variables with two controls; they are
+     `tdBuyAt` and `tdSellAt` now, and Backhaul writes into the second one rather than owning a
+     third. Two writers on one filter is how a control and the thing it controls drift apart. */
+
+  /** null = unset. Otherwise `{ kind: "system" | "body" | "terminal", name }`. The KIND decides
+   *  which query param it becomes, which is why it travels with the name. */
+  let tdBuyAt = null;
+  let tdSellAt = null;
+  /** "" = any commodity. Exact, because it was picked from the names list. */
+  let tdWhat = "";
+  /** Which slot is open for editing, and what has been typed into it. */
+  let tdOpen = null;           // "what" | "buy" | "sell" | null
+  let tdTyped = "";
+  /** /api/trade/commodity for `tdWhat`, so a slot can offer that commodity's real terminals. */
+  let tdLookup = null;
+  /** /api/trade/names, fetched once. */
+  let tdNames = null;
+  /** Slot state is remembered — which system you trade in is a habit, not a per-visit decision. */
+  const TD_WHAT_KEY = "sc-trade-what";
+  const TD_BUYAT_KEY = "sc-trade-buyat";
+  const TD_SELLAT_KEY = "sc-trade-sellat";
   const TD_STOCK_KEY = "sc-trade-known-stock";
   const TD_UNIT_KEY = "sc-trade-unit";
   /** "run" = what the whole trip clears. "scu" = what one unit is worth carrying. Two real
@@ -333,10 +372,14 @@
       if (cap) p.set("capacity", String(cap));
       else if (shipPick) p.set("ship", shipPick);
       else p.set("capacity", "64");
-      if (tradeSystem) p.set("fromSystem", tradeSystem);
-      if (tradeToBody) p.set("toBody", tradeToBody);
+      tdSlotParams(p);
       if (tradeKnownOnly) p.set("knownStock", "1");
-      p.set("limit", "25");
+      /* 🔑 A PINNED BUY NEEDS A LONGER LIST. With `fromTerminal` set the finder returns one row per
+         DESTINATION rather than one per buy point, and that list IS the answer to "where can I take
+         this" — capping it at 25 would silently hide drop-offs, which on a commodity like Neon (19
+         sell terminals) is most of the safe ones. Everywhere else 25 is still right: those rows are
+         one decision each and nobody reads past the first screen. */
+      p.set("limit", tdBuyAt && tdBuyAt.kind === "terminal" ? "60" : "25");
       const r = await fetch("/api/trade/routes?" + p.toString(), { cache: "no-store" });
       const j = await r.json();
       tradeData = j;
@@ -350,32 +393,88 @@
     if (view === "trade") render();
   }
 
-  /** Provenance + the system list, before any query has been run. Also the one place the system
-   *  filter gets its default, which is why it runs before the first `loadTrade()`. */
+  /**
+   * Turn the three slots into query params.
+   *
+   * 🔑 The KIND decides the param, which is why a slot stores it rather than just a name: a system,
+   * a body and a terminal are three different filters and the finder has a separate option for
+   * each. Getting this wrong is silent — `fromSystem: "Ashland"` matches nothing and reads exactly
+   * like "there are no routes".
+   */
+  function tdSlotParams(p) {
+    if (tdWhat) p.set("commodity", tdWhat);
+    const put = (slot, sys, body, term) => {
+      if (!slot || !slot.name) return;
+      p.set(slot.kind === "system" ? sys : slot.kind === "body" ? body : term, slot.name);
+    };
+    put(tdBuyAt, "fromSystem", "fromBody", "fromTerminal");
+    put(tdSellAt, "toSystem", "toBody", "toTerminal");
+  }
+
+  /** Provenance + the system list, before any query has been run. Also the one place the buy-at
+   *  slot gets its default, which is why it runs before the first `loadTrade()`. */
   async function loadTradeStatus() {
     try {
       const r = await fetch("/api/trade/status", { cache: "no-store" });
       if (!r.ok) return;
       tradeStatus = await r.json();
-      if (tradeSystem === null) {
-        let saved = null;
-        try { saved = localStorage.getItem(TD_SYS_KEY); } catch { /* private mode */ }
-        if (saved !== null) tradeSystem = saved;
-        else {
-          // 🔑 Default to where the log says you are — but only if that system actually has
-          // somewhere to buy, or the first thing the player sees is an empty board.
-          const here = (tradeStatus.here || "").toLowerCase();
-          const match = (tradeStatus.systems || []).find((s) => s.toLowerCase() === here);
-          tradeSystem = match || "";
-        }
-      }
+      if (tdBuyAt === null) tdBuyAt = tdRestoreBuyAt();
+      if (tdWhat === "") { try { tdWhat = localStorage.getItem(TD_WHAT_KEY) || ""; } catch { /* private mode */ } }
+      if (tdSellAt === null) { try { tdSellAt = JSON.parse(localStorage.getItem(TD_SELLAT_KEY) || "null"); } catch { tdSellAt = null; } }
+      if (tdWhat) loadTdLookup();
     } catch { /* the routes call reports its own failure */ }
   }
 
-  /* ⛔ `loadTradeNames` / `loadTradeCommodity` went with the Market tab (2026-08-23). They fed the
-     one-commodity lookup, whose whole surface was that tab. `GET /api/trade/names` and
-     `GET /api/trade/commodity` are untouched on the sidecar and still answer — if a commodity
-     picker on the merged Route wants either, it calls them; it does not need this code back. */
+  /**
+   * What the buy-at slot should say on a cold start.
+   *
+   * 🔑 DEFAULT TO WHERE THE LOG SAYS YOU ARE — but only if that system actually has somewhere to
+   * buy, or the first thing the player sees is an empty board. This is the rule the old `buy in`
+   * pills had and it is worth keeping: Sub's own reason for wanting a system filter at all was
+   * "Fallow Field, where I can buy Bexalite, is in Pyro. But I'm in Stanton."
+   *
+   * ⚠️ It also migrates the OLD `sc-trade-system` preference. Dropping it would silently forget the
+   * filter every existing user has already set, which reads as the app resetting itself.
+   */
+  function tdRestoreBuyAt() {
+    let saved = null;
+    try { saved = localStorage.getItem(TD_BUYAT_KEY); } catch { /* private mode */ }
+    if (saved !== null) { try { return JSON.parse(saved); } catch { /* corrupt — fall through */ } }
+    let legacy = null;
+    try { legacy = localStorage.getItem(TD_SYS_KEY); } catch { /* private mode */ }
+    if (legacy !== null) return legacy ? { kind: "system", name: legacy } : null;
+    const here = ((tradeStatus && tradeStatus.here) || "").toLowerCase();
+    const match = ((tradeStatus && tradeStatus.systems) || []).find((s) => s.toLowerCase() === here);
+    return match ? { kind: "system", name: match } : null;
+  }
+
+  /* ⛔ `loadTradeNames` / `loadTradeCommodity` went with the Market tab (2026-08-23) and are BACK
+     (2026-08-25) for the funnel — but they feed SLOT OPTIONS now, not a second view. The rows on
+     screen still come from /api/trade/routes and nothing else, which is what keeps one solver. */
+
+  /** Every tradable commodity, for the `what` slot. Fetched once; the table does not change while
+   *  the process is up. */
+  async function loadTdNames() {
+    if (tdNames) return;
+    try {
+      const r = await fetch("/api/trade/names", { cache: "no-store" });
+      if (r.ok) tdNames = (await r.json()).names || [];
+    } catch { /* the slot falls back to whatever the board already shows */ }
+    if (view === "trade") render();
+  }
+
+  /** The chosen commodity's real buy and sell terminals, for the two place slots. */
+  async function loadTdLookup() {
+    if (!tdWhat) { tdLookup = null; return; }
+    const want = tdWhat;
+    try {
+      const r = await fetch("/api/trade/commodity?name=" + encodeURIComponent(want), { cache: "no-store" });
+      // ⚠️ Guard against an out-of-order answer: two quick picks can land backwards, and the slot
+      // would then offer the PREVIOUS commodity's terminals under the current commodity's name.
+      if (r.ok && tdWhat === want) tdLookup = await r.json();
+    } catch { tdLookup = null; }
+    if (view === "trade") render();
+  }
 
   /** Kick everything the tab needs, in the order that makes the first paint correct. */
   async function openTrade() {
@@ -476,22 +575,55 @@
     }
     if (!d.routes.length) {
       const e = document.createElement("div"); e.className = "empty";
-      e.textContent = tradeKnownOnly
+      /* 🔴 NAME THE SLOT THAT EMPTIED IT, NEWEST CONSTRAINT FIRST. "No profitable run found" over a
+         filter the player set two clicks ago is indistinguishable from a broken feature, and the
+         funnel makes that far easier to walk into than the single system pill ever did — three
+         constraints can compose down to nothing while each one looks reasonable on its own. */
+      /* 🔴 SAY WHICH SIDE IS MISSING WHEN A COMMODITY HAS ONLY ONE. `/api/trade/names` is every
+         commodity that can be BOUGHT somewhere — it does not promise anyone buys it back, and the
+         table really does hold such commodities (Agricium: 4 buy terminals, 0 sell). Without this
+         the funnel offers a name and then answers with "nothing worth carrying", which reads as the
+         filter being broken rather than as a fact about the commodity. Found by a test that picked
+         one of them at random. */
+      const noSell = !!(tdWhat && tdLookup && (tdLookup.sellAt || []).length === 0);
+      const noBuy = !!(tdWhat && tdLookup && (tdLookup.buyAt || []).length === 0);
+      e.textContent = noSell
+        ? "Nobody in the price table buys " + tdWhat + " back, so there is no run for it — only places to buy it."
+        : noBuy
+          ? "Nowhere in the price table sells " + tdWhat + ", so there is nothing to pick up."
+          : tradeKnownOnly
         ? "Nothing with confirmed stock here. Turn off “Confirmed stock” to see the rest."
-        : tradeSystem
-          ? "No profitable run starting in " + tradeSystem + " for this hold. Try “All systems”."
-          : "No profitable run found for this hold.";
+        : tdSellAt
+          ? "Nothing worth carrying to " + tdSellAt.name + (tdWhat ? " — try another commodity, or clear “sell at”." : " — clear “sell at” to see everywhere.")
+          : tdBuyAt && tdWhat
+            ? "No profitable run for " + tdWhat + " out of " + tdBuyAt.name + ". Clear “buy at” to see it from everywhere."
+            : tdWhat
+              ? "Nothing worth carrying for " + tdWhat + " with this hold."
+              : tdBuyAt
+                ? "No profitable run starting in " + tdBuyAt.name + " for this hold. Clear “buy at” for every system."
+                : "No profitable run found for this hold.";
       body.appendChild(e);
       return;
     }
 
+    tdTradeoff(body);
+
     const sec = document.createElement("div");
     sec.className = "sec";
     const h = document.createElement("span");
-    h.textContent = tradeToBody ? "On your way to " + tradeToBody : "Worth carrying";
+    /* 🔑 THE HEADING SAYS WHICH QUESTION IS BEING ANSWERED, because the funnel changes it. With a
+       buy pinned these rows are DESTINATIONS, not runs to choose between — same row shape, but the
+       decision in front of the player is a different one and the header is where that is said. */
+    h.textContent = tdBuyAt && tdBuyAt.kind === "terminal"
+      ? "Take it to"
+      : tdWhat ? tdWhat + " runs"
+        : tdSellAt ? "On your way to " + tdSellAt.name
+          : "Worth carrying";
     const n = document.createElement("span");
     n.className = "n";
-    n.textContent = (d.ship ? d.ship + " · " : "") + num(d.capacityScu) + " SCU hold";
+    n.textContent = tdBuyAt && tdBuyAt.kind === "terminal"
+      ? d.routes.length + (d.routes.length === 1 ? " place · from " : " places · from ") + tdBuyAt.name
+      : (d.ship ? d.ship + " · " : "") + num(d.capacityScu) + " SCU hold";
     sec.append(h, n);
     body.appendChild(sec);
 
@@ -539,7 +671,7 @@
       // 🔑 The same-system chip survives ONLY when the filter is showing every system, which is the
       // one case where the row cannot be assumed to start where the last one did.
       if (r.crossSystem) tdChip(chips, (r.from.system || "?") + " → " + (r.to.system || "?"), "xsys");
-      else if (!tradeSystem && r.from.system) tdChip(chips, r.from.system, "calm");
+      else if (!tdBuyAt && r.from.system) tdChip(chips, r.from.system, "calm");
 
       /* 🔴 THE ONE CONTROL THAT MAKES THIS TAB A SOURCE RATHER THAN A LIST. Picking a run sends it
          to the merged Route, which sequences it alongside the contracts.
@@ -551,6 +683,17 @@
          🔑 The button is a TOGGLE against the plan's own list, not against local state: the plan is
          where a pick lives (a widget iframe reloads on regroup), so the row reads its state from
          the same place the route does and the two cannot disagree. */
+      /* 🔴 RIGHT-JUSTIFIED, IN A COLUMN OF ITS OWN (Sub, 2026-08-25): "it's a massive pill right
+         next to the smaller pills for the different commodities. I think if it was right-justified
+         in its own kind of column, or the same column as the price, that would look a lot better."
+         `.tdrow .tdchips .hbtn { margin-left: auto }` does it in one declaration — and because the
+         chip row ends at the row's own padding, the button lands on exactly the right edge `.p` and
+         `.pk` already use, which is the "same column as the price" reading too.
+         ⛔ NOT a right-hand RAIL beside the price, which is what the mockup drew. A rail reserves
+         its width on every row at every width, and Sub removed precisely that on 2026-08-23 after
+         measuring it at 320px: the old `money + tdcap` shape needed 260px in 176 and clipped the
+         margin and the quantity off four rows at once. See the note above `.tdrow .l1` in
+         hauling.html. Pushing the button right costs nothing and re-opens nothing. */
       const picked = ((plan && plan.buys) || []).find((b) => tdSameRun(b, r));
       tdBtn(chips, picked ? "In route ✓" : "+ Route", !!picked,
         picked
@@ -577,26 +720,11 @@
     // ⚠️ Runs / Look up used to be buttons in here, then TOP TABS. Look up (Market) is retired
     // and this bar carries only the Runs filters, unconditionally — the `tradeMode` guard that used
     // to wrap all of this went with the second view it was choosing between.
-    const sep2 = document.createElement("span"); sep2.className = "sep"; bar.appendChild(sep2);
-    // 🔑 THE SYSTEM FILTER. Built from the systems that actually have a buy terminal, so it can
-    // never offer a choice that only ever returns nothing.
-    const systems = (tradeStatus && tradeStatus.systems) || [];
-    if (systems.length > 1) {
-      const lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = "buy in";
-      bar.appendChild(lbl);
-      const pick = (s) => {
-        tradeSystem = s;
-        try { localStorage.setItem(TD_SYS_KEY, s); } catch { /* private mode */ }
-        loadTrade();
-      };
-      tdBtn(bar, "All", tradeSystem === "", "Every system", () => pick(""));
-      for (const s of systems) {
-        const isHere = tradeStatus && tradeStatus.here
-          && s.toLowerCase() === String(tradeStatus.here).toLowerCase();
-        tdBtn(bar, s, tradeSystem === s, isHere ? "Where the log says you are" : "Buy in " + s,
-          () => pick(s));
-      }
-    }
+    /* ⛔ THE `buy in` PILL ROW IS GONE — it did not shrink, it MOVED. It was "where a run starts",
+       which is the funnel's second slot, and leaving a second control writing the same filter is
+       how a control and the thing it controls drift apart. The bar keeps only what is genuinely
+       about DISPLAY (Per run / Per SCU) or about the whole table (Confirmed stock), which is also
+       why this bar is now one row where it used to wrap to two. */
 
     const sep3 = document.createElement("span"); sep3.className = "sep"; bar.appendChild(sep3);
     // 🔴 A FIXED LABEL. The first cut swapped between "Any stock" and "Confirmed stock only",
@@ -617,15 +745,21 @@
     tdBtn(bar, "Per run", tradeUnit === "run", "What the whole trip clears", () => setUnit("run"));
     tdBtn(bar, "Per SCU", tradeUnit === "scu", "What one SCU is worth carrying", () => setUnit("scu"));
 
+    /* 🔑 BACKHAUL IS A SHORTCUT INTO THE `sell at` SLOT, not a filter of its own. "I am already
+       flying there" is exactly `toBody`, which is what that slot sets — so it writes into `tdSellAt`
+       and reads its lit state from it. One filter, two ways to reach it, and the slot shows the
+       answer so the player can see what the button did. */
     const dest = tdPlanDestination();
     if (dest) {
-      tdBtn(bar, "Backhaul", !!tradeToBody,
+      const on = !!(tdSellAt && tdSellAt.kind === "body" && tdSellAt.name === dest);
+      tdBtn(bar, "Backhaul", on,
         "You are already flying to " + dest + " — what is worth carrying along?", () => {
-          tradeToBody = tradeToBody ? null : dest;
-          loadTrade();
+          tdSetSlot("sell", on ? null : { kind: "body", name: dest });
         });
     }
     body.appendChild(bar);
+
+    tdFunnel(body);
 
     if (tdBuyNote) {
       const n = document.createElement("div");
@@ -634,6 +768,287 @@
       body.appendChild(n);
     }
     tdRenderRoutes(body);
+  }
+
+  /* ── the funnel ─────────────────────────────────────────────────────────── */
+
+  /** Write a slot, persist it, and refetch. `null` clears.
+   *
+   *  🔴 CLEARING `what` CLEARS THE TERMINALS UNDER IT. A terminal slot only ever holds a place that
+   *  sells or buys the CHOSEN commodity — leave it behind and the next commodity is filtered by a
+   *  terminal that has nothing to do with it, which returns nothing and looks like a broken board.
+   *  A system or a body survives, because those are true of any commodity. */
+  function tdSetSlot(which, value) {
+    if (which === "what") {
+      tdWhat = value || "";
+      tdLookup = null;
+      for (const slot of ["buy", "sell"]) {
+        const cur = slot === "buy" ? tdBuyAt : tdSellAt;
+        if (cur && cur.kind === "terminal") tdSetSlotState(slot, null);
+      }
+      try { localStorage.setItem(TD_WHAT_KEY, tdWhat); } catch { /* private mode */ }
+      if (tdWhat) loadTdLookup();
+    } else {
+      tdSetSlotState(which, value);
+    }
+    tdOpen = null;
+    tdTyped = "";
+    loadTrade();
+    render();
+  }
+
+  function tdSetSlotState(which, value) {
+    if (which === "buy") tdBuyAt = value; else tdSellAt = value;
+    try {
+      localStorage.setItem(which === "buy" ? TD_BUYAT_KEY : TD_SELLAT_KEY, JSON.stringify(value));
+    } catch { /* private mode */ }
+  }
+
+  /** Open a slot for editing, or close it if it is already open. */
+  function tdOpenSlot(which) {
+    tdOpen = tdOpen === which ? null : which;
+    tdTyped = "";
+    if (tdOpen === "what") loadTdNames();
+    render();
+  }
+
+  /**
+   * The three slots.
+   *
+   * 🔑 AN UNSET SLOT MUST NOT READ LIKE A VALUE. It is dim, italic, and says what filling it would
+   * do rather than sitting there looking like a choice somebody made. That is the same reasoning as
+   * the fixed "Confirmed stock" label: a control whose state and whose effect look alike is
+   * unreadable.
+   */
+  function tdFunnel(body) {
+    const f = document.createElement("div");
+    f.className = "funnel";
+    const nBuy = tdLookup && tdLookup.buyAt ? tdLookup.buyAt.length : null;
+    const nSell = tdLookup && tdLookup.sellAt ? tdLookup.sellAt.length : null;
+    tdSlot(f, "what", "what", tdWhat, "any commodity",
+      tdWhat && nBuy !== null ? nBuy + " · " + nSell : "");
+    tdSlot(f, "buy", "buy at", tdBuyAt ? tdBuyAt.name : "", "anywhere",
+      tdWhat && nBuy !== null ? nBuy + (nBuy === 1 ? " place" : " places") : "");
+    /* ⚠️ NOT LOCKED until a buy is picked, which is what the mockup drew and what building it
+       corrected. "Sell it in Stanton" is a perfectly good filter on its own — it is the whole
+       "get me out of Pyro" move — and it maps straight onto `toSystem`. Locking it would have made
+       the safest question the tab can answer the one thing you cannot ask first. */
+    tdSlot(f, "sell", "sell at", tdSellAt ? tdSellAt.name : "", "anywhere",
+      tdWhat && nSell !== null ? nSell + (nSell === 1 ? " place" : " places") : "");
+    body.appendChild(f);
+    if (tdOpen) tdSlotList(body);
+  }
+
+  function tdSlot(f, which, label, value, placeholder, hint) {
+    const row = document.createElement("div");
+    row.className = "slot" + (tdOpen === which ? " open" : "");
+    row.dataset.slot = which;
+    const k = document.createElement("span"); k.className = "k"; k.textContent = label;
+    row.appendChild(k);
+
+    if (tdOpen === which) {
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.value = tdTyped;
+      inp.placeholder = value || placeholder;
+      inp.autocomplete = "off";
+      /* 🔴 THE SHARED CANVAS GRAB, not a local one. Without it every keystroke goes to the game
+         instead of the box — and the release has to be the shared one too, or hiding the widget
+         mid-type strands the interact key with no UI left to lower it. Same contract as the
+         tonnage boxes and the place editor. */
+      inp.addEventListener("focus", () => grabOn(inp));
+      inp.addEventListener("blur", () => grabOff());
+      inp.addEventListener("pointerdown", (e) => { e.stopPropagation(); wantFocus = inp; });
+      inp.addEventListener("input", () => { tdTyped = inp.value; tdRedrawSlotList(); });
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { e.preventDefault(); inp.blur(); tdOpen = null; tdTyped = ""; render(); }
+        else if (e.key === "Enter") {
+          e.preventDefault();
+          const first = tdSlotOptions(which)[0];
+          if (first) tdPickOption(which, first);
+        }
+        e.stopPropagation();
+      });
+      row.appendChild(inp);
+      // Focus after the row is in the document, or the caret lands nowhere.
+      setTimeout(() => { try { inp.focus(); inp.select(); } catch { /* gone */ } }, 0);
+    } else {
+      const v = document.createElement("span");
+      v.className = "v" + (value ? "" : " off");
+      v.textContent = value || placeholder;
+      v.addEventListener("click", () => tdOpenSlot(which));
+      row.appendChild(v);
+    }
+
+    if (hint) { const h = document.createElement("span"); h.className = "h"; h.textContent = hint; row.appendChild(h); }
+    if (value) {
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "x"; x.textContent = "✕";
+      x.title = "Clear this";
+      x.addEventListener("click", (e) => { e.stopPropagation(); tdSetSlot(which, null); });
+      row.appendChild(x);
+    }
+    f.appendChild(row);
+    return row;
+  }
+
+  /**
+   * What a slot may offer.
+   *
+   * 🔴 THIS IS THE WHOLE SAFETY PROPERTY OF THE FUNNEL. Terminals come from `buyAt`/`sellAt`, so a
+   * place the commodity cannot be bought or sold at is not merely discouraged — there is no code
+   * path that offers it. Systems are always offered because a system is true of any commodity.
+   *
+   * 🔑 With a buy terminal pinned, the sell options come from the ROWS the server just returned, so
+   * each one can state what that run actually clears. Those are the finder's own figures; the
+   * widget does no arithmetic and the two can never disagree.
+   */
+  function tdSlotOptions(which) {
+    const typed = tdTyped.trim().toLowerCase();
+    let opts = [];
+    if (which === "what") {
+      opts = (tdNames || []).map((n) => ({ kind: "commodity", name: n }));
+    } else {
+      const systems = ((tradeStatus && tradeStatus.systems) || [])
+        .map((s) => ({ kind: "system", name: s, sub: "anywhere in " + s }));
+      let terminals = [];
+      if (which === "sell" && tdBuyAt && tdBuyAt.kind === "terminal" && tradeData && tradeData.routes) {
+        terminals = tradeData.routes.map((r) => ({
+          kind: "terminal", name: r.to.terminalShort, price: r.to.price, system: r.to.system,
+          sub: r.to.body + " · +" + tdMoney(r.profit) + " · ~" + r.minutes + "m"
+            + (r.crossSystem ? " · a jump" : ""),
+        }));
+      } else if (tdLookup) {
+        const ends = which === "buy" ? (tdLookup.buyAt || []) : (tdLookup.sellAt || []);
+        terminals = ends.map((e) => ({
+          kind: "terminal", name: e.terminalShort, price: e.price, system: e.system,
+          sub: e.body + (e.scu === null || e.scu === undefined ? "" : " · " + num(e.scu) + " SCU")
+            + (e.asOf ? " · " + tdAge((Date.now() - e.asOf * 1000) / 86400000) + " old" : ""),
+        }));
+      }
+      opts = systems.concat(terminals);
+    }
+    if (!typed) return opts;
+    /* Prefix before contains, so typing the start of a name puts it first — the ranking people
+       expect from a box they are typing a known word into. */
+    const starts = opts.filter((o) => o.name.toLowerCase().startsWith(typed));
+    const has = opts.filter((o) => !o.name.toLowerCase().startsWith(typed) && o.name.toLowerCase().includes(typed));
+    return starts.concat(has);
+  }
+
+  function tdPickOption(which, opt) {
+    if (which === "what") tdSetSlot("what", opt.name);
+    else tdSetSlot(which, { kind: opt.kind, name: opt.name });
+  }
+
+  /** Redraw only the option list while typing — re-rendering the whole tab would destroy the input
+   *  under the player's cursor, which is the bug the place editor's row reuse exists to prevent. */
+  function tdRedrawSlotList() {
+    const old = document.querySelector("#body .slotlist");
+    if (!old || !tdOpen) return;
+    const fresh = tdBuildSlotList(tdOpen);
+    old.replaceWith(fresh);
+  }
+
+  function tdSlotList(body) { body.appendChild(tdBuildSlotList(tdOpen)); }
+
+  function tdBuildSlotList(which) {
+    const l = document.createElement("div");
+    l.className = "slotlist";
+    const opts = tdSlotOptions(which);
+    if (!opts.length) {
+      const e = document.createElement("div");
+      e.className = "o none";
+      /* Say WHICH kind of nothing this is. "No matches" over an unloaded names list and over a
+         genuine typo look identical, and only one of them is the player's fault. */
+      e.textContent = which === "what" && !tdNames ? "Loading the commodity list…"
+        : which !== "what" && !tdWhat ? "Pick a commodity first to see individual terminals."
+          : "Nothing matches “" + tdTyped + "”.";
+      l.appendChild(e);
+      return l;
+    }
+    /* A hairline where systems end and terminals begin. The two are genuinely different kinds of
+       answer — "anywhere in Pyro" against "this kiosk" — and without it the list reads as one
+       ranking in which Stanton is somehow above Rustville. Derived from the data rather than from a
+       count, so it stays correct when a filter removes every system or every terminal. */
+    let sawTerminal = false;
+    for (const o of opts.slice(0, 40)) {
+      const d = document.createElement("div");
+      d.className = "o " + (which === "buy" ? "buy" : which === "sell" ? "sell" : "what");
+      if (o.kind === "terminal" && !sawTerminal) { sawTerminal = true; if (l.children.length) d.classList.add("firstterm"); }
+      const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = o.name;
+      if (o.sub) { const s = document.createElement("span"); s.className = "sub"; s.textContent = o.sub; nm.appendChild(s); }
+      d.appendChild(nm);
+      if (o.kind === "terminal" && o.system) {
+        const b = document.createElement("span");
+        /* 🔑 A JUMP, NOT A DANGER. The app knows the jump and does not know the risk. The badge
+           carries a FILL rather than only a colour, because `--cyan-bright` and `--amber` compute
+           30 units apart on the Drake skin and a colour-only distinction disappears there. */
+        b.className = "sysb " + (tdHomeSystem() && o.system === tdHomeSystem() ? "home" : "away");
+        b.textContent = o.system;
+        d.appendChild(b);
+      }
+      if (o.price !== undefined && o.price !== null) {
+        const pr = document.createElement("span"); pr.className = "pr"; pr.textContent = num(Math.round(o.price));
+        d.appendChild(pr);
+      }
+      // pointerdown, not click: the input's blur fires first on a click and would close the list
+      // out from under the pointer. Same reason the place suggestions use it.
+      d.addEventListener("pointerdown", (e) => { e.preventDefault(); tdPickOption(which, o); });
+      l.appendChild(d);
+    }
+    return l;
+  }
+
+  /** Where the log says the player is, or null. Only ever used to tint a badge. */
+  function tdHomeSystem() {
+    const here = (tradeStatus && tradeStatus.here) || null;
+    if (!here) return null;
+    const match = ((tradeStatus && tradeStatus.systems) || []).find((s) => s.toLowerCase() === String(here).toLowerCase());
+    return match || null;
+  }
+
+  /**
+   * 🔴 WHAT THE SAFER CHOICE COSTS, IN WORDS, ONCE.
+   *
+   * This is the one thing grafted from mockup C, and it is the reason the funnel is worth more than
+   * a filter: a ranked list sorts by ONE number, and the decision Sub described has two. On the real
+   * Neon board out of Last Landings the best-paying drop-off and the best-per-hour drop-off are
+   * different terminals in different systems — more money for more time, or less money and you
+   * never leave the system. No leaderboard can show that, because showing it means naming two
+   * winners.
+   *
+   * 🔑 BOTH FIGURES COME OFF THE SERVER'S OWN ROWS. Nothing here is recomputed, so this line cannot
+   * disagree with the rows underneath it.
+   * ⚠️ It only appears when the two really are different rows. A "trade-off" between a row and
+   * itself is noise, and a line that is always there is one nobody reads.
+   */
+  function tdTradeoff(body) {
+    const rows = (tradeData && tradeData.routes) || [];
+    if (!tdBuyAt || tdBuyAt.kind !== "terminal" || rows.length < 2) return;
+    const byHour = rows[0];               // the finder returns them ranked per hour
+    let byMoney = rows[0];
+    for (const r of rows) if (r.profit > byMoney.profit) byMoney = r;
+    if (byMoney === byHour) return;
+
+    const t = document.createElement("div");
+    t.className = "tradeoff";
+    const txt = (s) => document.createTextNode(s);
+    const strong = (s) => { const b = document.createElement("b"); b.textContent = s; return b; };
+    t.append(
+      txt("Two different answers. "),
+      strong(byMoney.to.terminalShort + (byMoney.to.system ? " (" + byMoney.to.system + ")" : "")),
+      txt(" clears " + tdMoney(byMoney.profit) + " in ~" + byMoney.minutes + " min. "),
+      strong(byHour.to.terminalShort + (byHour.to.system ? " (" + byHour.to.system + ")" : "")),
+      txt(" clears " + tdMoney(byHour.profit) + " in ~" + byHour.minutes + " min — "
+        + tdMoney(byMoney.profit - byHour.profit) + " less"
+        /* Only claim the system is the reason when it actually is. Saying "but you never leave the
+           system" about two rows in the same system would be a sentence the data does not support. */
+        + (byMoney.crossSystem && !byHour.crossSystem
+          ? ", and it stays in " + (byHour.to.system || "system") + "."
+          : ", and it is quicker.")),
+    );
+    body.appendChild(t);
   }
 
   /* ── the log: what you actually did ─────────────────────────────────────────

@@ -1,0 +1,768 @@
+  /* Hauling optimiser: what order to fly the accepted contracts, and where the boxes go on the
+     ship. Data comes from /api/hauling/plan (see src/hauling-plan.ts), driven by the /hauling/events
+     SSE channel. Theme tokens come from the shared /widget-theme.css. */
+  * { box-sizing: border-box; }
+  * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb), 0.28) transparent; }
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
+
+  #panel {
+    display: flex; flex-direction: column;
+    width: 420px; height: 560px; margin: 20px auto;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    position: relative;
+  }
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  body.embedded { overflow: visible; background: transparent; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+
+  .head { min-height: 40px; flex-wrap: wrap; row-gap: 4px; }
+
+  /* 🔴 TWO FIXED ROWS: name + badge, then the tabs. NO BREAKPOINTS.
+     Sub, 2026-08-23: "what if we just made it be on the same row as hauling? it'll be right
+     justified and it will expand with the width of the widget as people make it smaller or
+     larger. That'll give us extra space."
+
+     The history is worth keeping, because this head has now been laid out three ways and every
+     one of them was answering the SAME squeeze:
+       1. badge beside the title, tabs pushed right — one row, until the tabs ran off the edge;
+       2. two media queries relocating the badge below 360px, then the tabs below 290px;
+       3. badge STACKED under the title at every width (46de003) — which spent a second line of
+          height on the title and still left the tabs sharing row one.
+     All three had the badge and the tabs competing for one horizontal axis. Giving each its own
+     row settles it by construction: the tabs can no longer run off the edge, so the two width
+     queries are DELETED rather than retuned, and the head is now identical at 1200px and at
+     320px. One shape to reason about instead of three.
+
+     🔑 The badge is `margin-left:auto` — hard right, with the gap between name and badge doing
+     all the flexing. That is what "expand with the width" buys: the two things that matter sit
+     at the two edges the eye already tracks, and every pixel the widget gains goes into the
+     space between them rather than into moving either one. */
+  .hname { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+  .hname .h-title { flex: none; }
+  .hname .expbadge { margin-left: auto; }
+  /* Row two, always. `flex-basis:100%` is what forces the break; without it the tabs rejoin row
+     one as soon as the widget is wide enough, and the layout goes back to being a function of
+     width — which is the thing all three previous versions were. */
+  .tabs { flex-basis: 100%; margin-left: 0; justify-content: flex-start; }
+  .hbtn { font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.14); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 7px; cursor: pointer; white-space: nowrap; }
+  .hbtn:hover { background: rgba(var(--accent-rgb), 0.24); border-color: var(--cyan); }
+  .hbtn.on { background: rgba(var(--accent-rgb), 0.3); border-color: var(--cyan); }
+  /* Ordering and spacing only. PLACEMENT (its own row, left-aligned) is decided in the .head
+     block above; this rule used to carry `margin-left:auto` and would have silently won here,
+     since it loads later. Two declarations disagreeing about one layout is how the head got
+     hard to reason about in the first place. */
+  /* 🔴 WRAPPING IS THE DESIGN, NOT A FALLBACK — and Sub signed it off on the measurement.
+     Five tabs need 328.8px and the row is 296px at the 320px minimum, so it wraps to two lines
+     there (24px -> 51px tall) and sits on one line at 380px and above. `row-gap` is what makes the
+     wrapped state look deliberate rather than collapsed.
+     ⛔ Do NOT "fix" this with a narrow-width media query shrinking `.hbtn`: this head had two of
+     those removed for making the chrome change size as the widget is resized, and Sub chose the
+     wrap over that explicitly.
+     The `.tabs.trading` re-ordering rules that used to live here went with the modes — order is
+     markup order now, decided in one place. */
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; row-gap: 3px; }
+
+  /* ── Trade tab ──────────────────────────────────────────────────────────────
+     Rebuilt 2026-08-19 against Sub's review of the first cut. Four of his notes were real BUGS
+     rather than taste, and each is fixed here:
+
+     1. The control pills were different SIZES. `.goalseg .hbtn` overrides padding to 1px 6px and
+        font-size to 9px, so segment buttons measured 15px tall against a standalone button's 22px.
+        This bar therefore does NOT use `.goalseg` — every control is a plain `.hbtn` sibling and
+        `.tdbar .hbtn` pins one height, so nothing can drift again.
+     2. The commodity input was wrapped in `.psug`, which is `position:absolute; top:100%` — a
+        DROPDOWN container. It was being positioned below the panel, which is exactly why Sub had
+        to scroll to reach a field that should be the first thing on the screen.
+     3. The provenance was two `.note` paragraphs costing 65px before any content appeared. It is
+        one pill plus an ⓘ now.
+     4. Every chip was the same faint colour, so nothing stood out. Age and warnings now carry
+        their meaning in their colour. */
+
+  /* The credit strip. It was the MODE BAR (Hauling / Trading) until the modes were merged away;
+     the switch went, the attribution stayed, and the strip kept the same geometry so the badge
+     sits exactly where it has always sat. Pinned below the scrolling body, so it is always
+     reachable however long the list gets.
+     🔑 ONE OWNER OF ITS VISIBILITY, and it is this element. The badge inside used to carry its own
+     `hidden` as well, which is two mechanisms for one behaviour and the kind of pair that drifts
+     — and worse, makes a negative control on either one come back green. */
+  .creditbar { flex: none; display: flex; align-items: center; gap: 4px; padding: 5px 12px;
+    border-top: 1px solid var(--divider); background: rgba(var(--accent-rgb), 0.05); }
+  /* ⚠️ Pair `hidden` with a `[hidden]` guard: a bare `hidden` attribute loses to any class rule
+     setting `display`, which is how Unlock Alerts once offered to claim a blueprint it had
+     already recorded. `.creditbar` sets `display:flex`, so without this the bar is ALWAYS on. */
+  .creditbar[hidden] { display: none; }
+  /* Attribution, not a button that does work — it only appears on the side of the widget their
+     data actually feeds. Carries UEX's supplied badge, at the same 17px slot the Verse Finder
+     uses, so the credit is one thing in two places rather than two different-looking claims. */
+  .uexbadge { margin-left: auto; background: none; border: 0; padding: 0 2px; cursor: pointer;
+    display: inline-flex; align-items: center; }
+  .uexbadge #uexmark { height: 17px; width: auto; display: block; border-radius: 3px; }
+  /* The typographic fallback, shown only when the image cannot load. */
+  .uexbadge #uexname { font-family: var(--sans); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.04em; color: var(--cyan-text); white-space: nowrap; }
+
+  .tdbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    padding: 6px 12px 4px; border-bottom: 1px solid var(--divider); }
+  /* One height for every control on this tab, whatever its label length. */
+  .tdbar .hbtn { height: 21px; padding: 0 8px; display: inline-flex; align-items: center;
+    font-size: 10.5px; text-transform: none; letter-spacing: 0.02em; }
+  .tdbar .sep { width: 1px; height: 14px; background: var(--divider); margin: 0 2px; }
+  .tdbar .lbl { font-size: 10px; color: var(--faint); letter-spacing: 0.06em;
+    text-transform: uppercase; }
+
+  /* The source pill. Three states, three colours — "we chose offline", "we tried and failed" and
+     "this is fresh" must not look alike. */
+  .tdsrc { height: 21px; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px;
+    border-radius: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; border: 1px solid; }
+  .tdsrc.live { color: var(--green, #7de6a0); border-color: rgba(120, 230, 160, 0.5);
+    background: rgba(120, 230, 160, 0.12); }
+  .tdsrc.cache { color: var(--gold, #e8c56a); border-color: rgba(var(--value-rgb), 0.5);
+    background: rgba(var(--value-rgb), 0.12); }
+  .tdsrc.bundled { color: var(--red, #eb7878); border-color: rgba(235, 120, 120, 0.5);
+    background: rgba(235, 120, 120, 0.12); }
+  .tdsrc .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+  /* ⓘ — drawn from a plain ASCII letter in a CSS circle, never a real ⓘ character and never an
+     icon font. It is a real <button> driving a POPOVER, because a native `title` cannot be opened
+     from script: Sub clicked the first version of an info affordance and nothing happened.
+     `title` stays for hover, which costs nothing and cannot regress. */
+  .tdi { width: 14px; height: 14px; flex: none; border-radius: 50%; padding: 0;
+    border: 1px solid rgba(var(--accent-rgb), 0.55); background: transparent;
+    color: var(--cyan-bright, #7fe7ff); font-family: var(--sans); font-size: 10px;
+    font-weight: 700; line-height: 1; cursor: pointer; display: inline-flex;
+    align-items: center; justify-content: center; }
+  .tdi:hover { background: rgba(var(--accent-rgb), 0.22); border-color: var(--cyan); }
+  /* Top layer, so no ancestor's overflow can clip it and it costs nothing in layout. Pinned in
+     CSS rather than measured: rAF and ResizeObserver do not fire in a hidden window, and two
+     earlier measured popovers in this app died on exactly that. */
+  .tdpop { max-width: 290px; margin: 0; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--cyan); background: var(--menu-bg); color: var(--cyan-text);
+    font-size: 11.5px; line-height: 1.45; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.6); }
+  .tdpop:popover-open { position: fixed; inset: auto; left: 12px; bottom: 40px; }
+
+  /* ⛔ `.tdfind` — the commodity lookup field — went with the Market tab (2026-08-23). It was the
+     only thing that class ever styled. Note 2 in the header block above still describes why that
+     input had to be in flow rather than inside `.psug`; that lesson outlives the input. */
+
+  /* ── A RUN, AND A LEDGER ENTRY: the SPINE row ──────────────────────────────────────────────
+     `.arow` supplies the frame; these are the four lines it has no equivalent for.
+
+     🔴 WHY THIS REPLACED THE money + tdcap SHAPE (Sub, 2026-08-23, after reviewing three mockups
+     at both widths). The old row was: name / route / one `white-space:nowrap` money line / chips,
+     with the profit in a right-hand column. MEASURED at 320px — the widget's minW, and about as
+     narrow as Sub actually runs it — that money line needed 260px and had 176. It kept
+     `buy 44,156 -> sell 53,000` and clipped away `(+20%)` and `x 696 SCU`: the margin, which is
+     the only figure that makes two rows comparable when their prices differ by orders of
+     magnitude, and the quantity, which is how much you are actually moving. Four rows on screen,
+     four rows lying. `#body` is `overflow-x:hidden`, so nothing anywhere said so.
+
+     Five changes, and the first two are the fix:
+       1. The strip WRAPS (`flex-wrap`) where the money line could not. A metrics line that runs
+          out of room now costs a second line instead of its contents. It cannot clip again.
+       2. The profit moved onto line one beside the name. It keeps the same right edge but
+          reserves no width of its own — `.t` is `flex:1` and absorbs every spare pixel — where a
+          right-hand column holds its width open on every row whatever it contains.
+       3. The `buy` / `sell` WORDS are gone. Gold, an arrow and green already say it, and the
+          section header says it once in words for the row that never can.
+       4. Capital and quantity moved out of the chip row into the strip, where the numbers live.
+       5. Chips are EXCEPTIONS ONLY. "Pyro" on a row that never leaves Pyro, or "fills your hold"
+          when nothing is binding, is a chip that costs a line to say nothing. Typically one now,
+          where it was always four.
+
+     🔑 The row keeps its `.tdrow` class and its `.tdchips` chip row on purpose: the widget suite
+     probes both by name, and renaming them would leave those assertions testing a shape the app
+     no longer renders. */
+
+  /* Line one — what it is, and what it makes. */
+  .tdrow .l1 { display: flex; align-items: baseline; gap: 6px; }
+  .tdrow .l1 .t { flex: 1; min-width: 0; }
+  .tdrow .l1 .p { flex: none; font-family: var(--mono); font-size: 15.5px; line-height: 1.2;
+    color: var(--cyan-bright, #7fe7ff); }
+  /* 🔴 THE NOUN STAYS WITH THE NUMBER. Sub, on the first cut of this tab: "Is that profit?
+     Because that's not clear." It was `.tdcaplbl` under the figure; it is beside it now. Losing
+     it in the move would have re-broken a fix that already cost a review round. */
+  .tdrow .l1 .pk { flex: none; font-size: 9px; color: var(--faint); letter-spacing: 0.1em;
+    text-transform: uppercase; }
+  /* A REALISED figure is allowed to be green or red. A FORECAST is not — same rule as `.facts
+     .est` above: a number the app worked out is never dressed like one it was told. Runs leaves
+     `.p` cyan; only the Ledger adds these. */
+  .tdrow .l1 .p.up { color: var(--green, #7de6a0); }
+  .tdrow .l1 .p.down { color: var(--red, #eb7878); }
+
+  /* Line two — where it happens, and the rate. Both ends truncate rather than wrap: a terminal
+     name is recognisable from its start, and a wrapped one would push the strip down a line. */
+  .tdrow .l2 { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; }
+  .tdrow .l2 .r { flex: 1; min-width: 0; font-family: var(--mono); font-size: 10.5px;
+    color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tdrow .l2 .hr { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--cyan-dim); }
+
+  /* Line three — the metrics strip. THE WRAP IS THE WHOLE POINT; see 1. above. */
+  .tdrow .l3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 7px;
+    margin-top: 5px; font-family: var(--mono); font-size: 11.5px; color: var(--cyan-text); }
+  /* Each item is unbreakable for the same reason a pill is: `23,940 -> 36,000` split across two
+     lines is not a price pair, it is two orphaned numbers. */
+  .tdrow .l3 > * { white-space: nowrap; }
+  /* 🔴 THE PAIR SUB COULD NOT FIND. The first cut showed what a run COST and never what it sold
+     for, so the only way to know the sell price was to subtract. Money out reads as cost, money
+     in reads as income — which is also what lets the `buy` / `sell` words go. */
+  .tdrow .l3 .buy { color: var(--gold, #e8c56a); }
+  .tdrow .l3 .sell { color: var(--green, #7de6a0); }
+  .tdrow .l3 .arrow { color: var(--faint); padding: 0 1px; }
+  /* Named `mdot`, NOT `sep`: `.tdbar .sep` is already a 1px vertical divider, and one class
+     meaning two different things in one stylesheet is how a rule gets "fixed" for the wrong
+     element later. */
+  .tdrow .l3 .mdot { color: rgba(var(--accent-rgb), 0.35); }
+  .tdrow .l3 .q { color: var(--cyan-dim); }
+  /* The unit inside a figure, dimmer than the figure: "12.14M in", "8,265/SCU". */
+  .tdrow .l3 .q u { text-decoration: none; color: var(--faint); font-size: 10px; }
+
+  /* 🔴 THE MARGIN IS A SIGNED PERCENTAGE, AND IT IS GREEN (Sub, 2026-08-22). "(53% margin)" spent
+     seven characters restating a word the column beside it already says, on the one line that has
+     to survive a 320px panel — it measured 55px, which is a quarter of the space that line has at
+     minimum width. "(+53%)" carries the sign, which "53% margin" never did: a negative run now
+     reads as one at a glance instead of needing the minus hunted for inside a phrase. Green
+     because it is money made, matching `.sell` — and a loss turns red, so the colour and the sign
+     say the same thing twice rather than the colour meaning nothing.
+     ⚠️ Scoped to `.tdrow`, not `.tdrow .money`, so it survives the strip it now lives in. */
+  .tdrow .pct { color: var(--green, #7de6a0); font-family: var(--sans); font-size: 10.5px;
+    font-weight: 700; }
+  .tdrow .pct.down { color: var(--red, #eb7878); }
+
+  .tdrow .l3 + .m { margin-top: 5px; }
+  .tdrow .mid > .m + .m { margin-top: 4px; }
+
+  /* 🔴 THE CHIP ROW IS A FLEX WRAP, AND EVERY PILL IS UNBREAKABLE. Measured 2026-08-22 at 440px,
+     which is the widget's DEFAULT width: this was a plain block of inline spans, so the only
+     break opportunities the engine had were the spaces INSIDE each pill's own label. "costs 851k"
+     rendered its left half at x=290 on line one and its right half at x=39 on line two — one
+     bordered pill sawn in half — and the row read as having wrapped early because three pills sat
+     butted edge to edge with the fourth apparently thrown away. It overflowed by FOUR PIXELS.
+     Flex + `gap` makes a pill the unit that wraps, and `white-space: nowrap` on `.badge` (shared,
+     because no pill anywhere should ever split) makes it the unit that cannot break. */
+  .tdrow .tdchips { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
+  /* Tighter than the shared pill only on this row, and only by the margin that was missing: at
+     0.08em/4px the four chips wanted 337px of a 333px line. Kept now that the row typically
+     carries one chip, because "typically" is not "always" — an unknown-stock cross-system run
+     still draws three. */
+  .tdrow .tdchips .badge { letter-spacing: 0.05em; padding: 1px 3px; }
+
+  /* ── THE LEDGER'S BALANCE BLOCK ────────────────────────────────────────────────────────────
+     🔴 A LOG IS A LIST OF THINGS THAT HAPPENED; A LEDGER IS A POSITION. This tab already held
+     the data for one and filed it in the wrong order: two stacked totals blocks (Today, then All
+     time) spent 193px — measured — before a single entry appeared, one of them usually all
+     zeroes, and the two facts that belong at the top sat at the BOTTOM under quiet headers.
+     On Sub's own journal the realised total was +304 aUEC from one 1-SCU run while 37,789 aUEC
+     across four lots was sitting in his ship, unshown. The buried number was 124x the headline.
+
+     So: three account figures, side by side, above everything.
+       REALISED    — what closed trades actually made. The only one that is profit.
+       HELD        — capital currently in the hold, at cost. Not a loss and not a gain; it is
+                     money you are standing on, and it is the figure that decides what you can
+                     afford to buy next.
+       NO COST BASIS — sold, but we never saw it bought. Revenue with nothing to subtract.
+     🔑 It is a first-class figure showing an em dash when it is empty, NOT a section that only
+     appears when something is wrong. A number that materialises only on failure is one nobody
+     learns to read, and its absence is then indistinguishable from not being computed.
+
+     The period switch replaces the second totals block outright — same two numbers, one at a
+     time, in a control that also says which one you are looking at. */
+  .bal { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+    background: var(--divider); border-bottom: 1px solid var(--divider);
+    position: relative; z-index: 4; }
+  .bal > div { background: rgba(0, 0, 0, 0.18); padding: 7px 10px 8px; min-width: 0; }
+  .bal .k { font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bal .v { font-family: var(--mono); font-size: 18px; line-height: 1.3; margin-top: 1px;
+    color: var(--cyan-bright, #7fe7ff); white-space: nowrap; }
+  .bal .v.up { color: var(--green, #7de6a0); }
+  .bal .v.down { color: var(--red, #eb7878); }
+  .bal .v.held { color: var(--gold, #e8c56a); }
+  .bal .v.none { color: var(--faint); }
+  .bal .u { font-size: 9.5px; color: var(--faint); margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 🔑 THREE COLUMNS AT EVERY WIDTH, AND IT IS THE TEXT THAT WAS MADE TO FIT, NOT THE GRID.
+     The first cut folded to 2 + 1 below 380px so the figures would not be squeezed. Measured,
+     that fold cost 46px of a 415px body at 320 (block 62px -> 125px) — half a run row — and it
+     bought nothing that a shorter label did not. At 320 each cell has 86px of content box, and
+     every figure fits once the value is abbreviated the way every other big number in this
+     widget already is, and the period moves out of the LABEL and into the sub-line. The exact
+     unabbreviated figure lives in the cell tooltip, which is where this file already puts the
+     part that will not fit. */
+
+  /* 🔑 THE SECTIONS BELOW STAY AS THEY ARE, AND THE DOT IS WHAT TIES THEM TO THE BLOCK ABOVE.
+     The first cut of this rework merged Realised / Bought-not-sold / Sold-cost-unknown into one
+     time-ordered list with a per-row state stripe. It was dropped on reading what those sections
+     actually carry: a per-section explanation the merged row had nowhere to put, the past-tense
+     `autoLoaded` wording that was itself a bug fix (a lot cannot be asserted to be anywhere now),
+     and the write-off control. Merging would have re-homed three things that were corrected the
+     day before to buy a presentational tidy. One dot per section header, coloured to match its
+     figure in `.bal`, says which account you are looking at for the cost of one element. */
+  .sec .acct { flex: none; width: 7px; height: 7px; border-radius: 2px; margin-right: 2px; }
+  .sec .acct.realised { background: var(--green, #7de6a0); }
+  .sec .acct.held { background: var(--gold, #e8c56a); }
+  .sec .acct.nobasis { background: var(--red, #eb7878); }
+
+  /* Chips that mean something. An age you cannot judge at a glance is an age nobody reads. */
+  .badge.age0 { color: var(--green, #7de6a0); border-color: rgba(120, 230, 160, 0.45); }
+  .badge.age1 { color: var(--gold, #e8c56a); border-color: rgba(var(--value-rgb), 0.45); }
+  .badge.age2 { color: var(--red, #eb7878); border-color: rgba(235, 120, 120, 0.5); }
+  .badge.warn { color: var(--gold, #e8c56a); border-color: rgba(var(--value-rgb), 0.55);
+    background: rgba(var(--value-rgb), 0.10); }
+  .badge.xsys { color: var(--red, #eb7878); border-color: rgba(235, 120, 120, 0.45); }
+  .badge.calm { color: var(--cyan-dim); border-color: var(--border); }
+
+  /* ── The ship, and how much of it is used ─────────────────────────────────
+     The capacity bar is per GRID, not one pool: a C2 is 8x15x4 plus 6x9x4, and a box that fits
+     the first may not fit the second. Segments are sized by each grid's share of the hull. */
+  .summary { flex: none; padding: 8px 12px 9px; border-bottom: 1px solid var(--divider);
+    position: relative; z-index: 4; }
+  .shiprow { display: flex; align-items: center; gap: 6px; }
+  /* Both pickers share one rule. #startPick was added without it and rendered as a bare white box
+     with white text in it — unreadable, and Sub could not tell what the control even was. */
+  #shipPick, #startPick { flex: 1; min-width: 0; font-family: var(--sans); font-size: 12px; color: var(--cyan-bright);
+    background: var(--menu-bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; }
+  #startPick { margin-top: 5px; }
+  /* The sync control sits with the location picker, because that is the field it fills in. */
+  #syncLoc { margin-top: 5px; }
+  .syncmsg { margin-top: 4px; font-size: 11px; line-height: 1.45; color: var(--cyan-dim); }
+  .syncmsg.bad { color: var(--amber); }
+  .syncmsg.good { color: var(--green); }
+  /* The dropdown's own list is drawn by the OS, which does not inherit the control's colours —
+     without this the options render dark-on-dark (or white-on-white) once it is open. */
+  #shipPick option, #startPick option { background: var(--menu-bg); color: var(--cyan-bright); }
+  .src { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--faint); }
+  .caps { display: flex; gap: 3px; margin-top: 7px; height: 13px; }
+  .cap { position: relative; border-radius: 4px; background: rgba(0, 0, 0, 0.34);
+    border: 1px solid var(--divider); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45); overflow: hidden; }
+  .cap i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--cyan), var(--gold)); }
+  .cap.over i { background: var(--red); }
+  .cap b { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--mono);
+    font-size: 9.5px; font-weight: 700; color: var(--cyan-text); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9); }
+  .facts { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px;
+    font-family: var(--mono); font-size: 11px; color: var(--cyan-dim); }
+  .facts .v { color: var(--gold); font-weight: 600; }
+  .facts .bad { color: var(--red); }
+  /* A forecast, not a reading. Same rule as everywhere else on this panel: a number the app worked
+     out is never dressed the same as one it was told. */
+  .facts .est, .ratebar .est { color: var(--cyan-dim); font-style: italic; }
+
+  /* ── What the run earns, per hour ─────────────────────────────────────────
+     Its own strip, ruled off from the board facts above it, because it answers a different
+     question. "contracts 3" is a property of what you are holding; "72k aUEC/h" is a property of
+     how long the work is taking you. Sub asked for the separation so the second is not read as the
+     first — the rate is per hour of RUN, not per contract. */
+  .ratebar { display: flex; align-items: baseline; gap: 10px; margin-top: 7px; padding-top: 6px;
+    border-top: 1px solid var(--divider); }
+  .ratebar .k { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--faint); }
+  .ratebar .fig { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--green); }
+  .ratebar .fig.est { color: var(--cyan-dim); font-weight: 600; }
+  .ratebar .rep { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--gold); }
+  .ratebar .rep.est { color: var(--cyan-dim); font-weight: 600; }
+  .ratebar .basis { margin-left: auto; font-size: 10px; color: var(--faint); white-space: nowrap; }
+
+  /* ── 🔴 The load checklist ────────────────────────────────────────────────
+     Deliberately the loudest thing on the panel: 57% of contracts in the shipped data give a SCU
+     RANGE rather than a number, and the only things that pin the real figure are the game's own
+     Deliver line and the player typing it in.
+     ⚠️ It used to be headed "TRACK THESE IN MOBIGLAS" unconditionally, on the belief that the
+     Deliver line was tracking-gated. It is not — it fires on objective ASSIGNMENT and re-tracking
+     never replays it — so for an already-tracked contract that heading was an instruction the
+     game would not honour. The heading and the per-row state are both computed now; see
+     renderTrack(). */
+  .track { flex: none; border-bottom: 1px solid var(--divider); position: relative; z-index: 4;
+    background: rgba(var(--value-rgb), 0.07); }
+  .track .th { display: flex; align-items: baseline; gap: 6px; padding: 8px 12px 3px; }
+  .track .th .k { font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--gold); }
+  .track .th .n { font-family: var(--mono); font-size: 11px; color: var(--cyan-dim); }
+  .track .why { padding: 0 12px 6px; font-size: 11px; line-height: 1.5; color: var(--cyan-dim); }
+  .track .list { max-height: 132px; overflow-y: auto; }
+  /* Collapsed = answered. Quietened rather than removed: the heading still reports what the plan
+     is using, and the whole strip is the click target that brings the type-in boxes back. */
+  .track.done { opacity: 0.72; }
+  .track .th { cursor: pointer; }
+  .track.done .th .k { color: var(--cyan-dim); }
+  .trow { display: flex; align-items: center; gap: 7px; padding: 4px 12px; }
+  /* 🔴 THE VALUE CELL IN A .trow, AND IT IS NOT `.cap`. Three call sites in
+     hauling-tab-trade.js classed this `cap` — which is the capacity BAR segment a few rules up
+     (`.cap { position:relative; background: rgba(0,0,0,.34); border: 1px solid var(--divider) }`,
+     a dark inset well with a fill and a centred label). The collision was invisible at 440 and
+     ugly at 320: the Ledger drew each held lot's cost inside a bordered well while the name
+     broke across three lines beside it, because the well is a flex item that will not shrink.
+     Pre-existing, and fixed here rather than only noted because it is two inches under the new
+     balance block on the same tab.
+     🔑 The general rule this is an instance of: never reuse a class that already means
+     something in this stylesheet. Same reason `.mdot` is not `.sep`. */
+  .trow .tnm { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--cyan-text); }
+  .trow .tval { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px;
+    align-items: center; justify-content: flex-end; text-align: right;
+    font-family: var(--mono); font-size: 11px; color: var(--cyan-dim); }
+  /* The write-off control must never be the thing that shrinks. */
+  .trow .hbtn { flex: none; }
+  .trow .t { flex: 1; min-width: 0; font-size: 12px; color: var(--cyan-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trow .rng { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--gold); }
+  .trow input { width: 52px; font-family: var(--mono); font-size: 11.5px; text-align: right;
+    color: var(--cyan-bright); background: var(--menu-bg); border: 1px solid var(--divider);
+    border-radius: 5px; padding: 2px 4px; }
+  .trow input:focus { outline: none; border-color: var(--cyan); }
+
+  /* ── Before you leave ─────────────────────────────────────────────────────
+     A prompt, not a warning: nothing is wrong, there is just free money in checking the board
+     before you burn the fuel. Gold because it is an opportunity, and quiet enough to ignore. */
+  .depart { flex: none; padding: 7px 12px 8px; border-bottom: 1px solid var(--divider);
+    background: rgba(var(--value-rgb), 0.07); position: relative; z-index: 4; }
+  .depart .k { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--gold); }
+  .depart .t { margin-top: 3px; font-size: 12px; line-height: 1.5; color: var(--cyan-text); }
+  .depart .t b { font-weight: 600; color: var(--cyan-bright); }
+  .depart .x { position: absolute; top: 5px; right: 7px; width: 16px; height: 16px; padding: 0;
+    line-height: 1; border: 1px solid rgba(var(--accent-rgb), 0.3); border-radius: 4px;
+    background: transparent; color: var(--faint); font-size: 11px; cursor: pointer; }
+  .depart .x:hover { color: var(--cyan-bright); border-color: var(--cyan); }
+
+  /* ── Naming a place ───────────────────────────────────────────────────────
+     Reuses .track's frame so it reads as the same kind of question as the load checklist, tinted
+     cyan rather than gold because it is not a warning — nothing is wrong, the game simply never
+     said where this is. */
+  /* 🔴 THE SUGGESTION LIST MUST NOT BE CLIPPED. It inherited `.track .list`'s `overflow-y: auto`,
+     which is right for the tonnage checklist (many rows, capped height) and fatal here: an
+     absolutely-positioned dropdown inside a scrolling box is cut off at the box's edge, which is
+     exactly what Sub saw. So this section does NOT scroll — it has at most a handful of rows — and
+     the whole strip is raised above #body so the list hangs over the route as far as it likes.
+     Sub: "it should just hang as low as it wants to go." */
+  .track.places { background: rgba(var(--accent-rgb), 0.06); overflow: visible; z-index: 6; }
+  .track.places .list { max-height: none; overflow: visible; }
+  .track.places .th .k { color: var(--cyan-bright); }
+  .prow { padding: 4px 12px 5px; position: relative; }
+  .prow .top { display: flex; align-items: baseline; gap: 6px; }
+  .prow .site { flex: none; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .prow .role { flex: 1; min-width: 0; font-size: 11px; color: var(--cyan-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prow input { width: 100%; margin-top: 3px; font-family: var(--sans); font-size: 12px;
+    color: var(--cyan-bright); background: var(--menu-bg); border: 1px solid var(--divider);
+    border-radius: 5px; padding: 3px 6px; }
+  .prow input:focus { outline: none; border-color: var(--cyan); }
+  /* The suggestions. Absolutely positioned so opening the list never reflows the route underneath
+     it — a list that pushes the page down moves the row you are aiming at. */
+  .psug { position: absolute; left: 12px; right: 12px; top: 100%; z-index: 9;
+    background: var(--menu-bg); border: 1px solid var(--cyan); border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55); overflow: hidden; }
+  .psug div { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; cursor: pointer;
+    font-size: 12px; color: var(--cyan-text); }
+  .psug div:hover, .psug div.on { background: rgba(var(--accent-rgb), 0.22); }
+  .psug .h { margin-left: auto; font-size: 10px; color: var(--faint); white-space: nowrap; }
+  /* A name the GAME has used before. It outranks the 1,125 dataset rows for a reason worth
+     showing: it is known to be a real hauling stop. */
+  .psug .seen { color: var(--green); }
+
+  #body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; z-index: 4; }
+  .sec { display: flex; align-items: baseline; gap: 6px; padding: 9px 12px 5px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+  .sec .n { font-weight: 500; letter-spacing: 0.04em; text-transform: none; font-family: var(--mono); }
+  .empty { padding: 26px 16px; text-align: center; color: var(--faint); font-size: 13px; line-height: 1.7; }
+  .note { padding: 5px 12px; font-size: 11px; line-height: 1.5; color: var(--amber); }
+
+  /* ── Route ───────────────────────────────────────────────────────────────── */
+  .stop { display: flex; gap: 8px; padding: 6px 12px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* Done: collected, not yet delivered. Dimmed so it reads as history, not as an instruction —
+     but kept in the numbering, because it IS a step of this contract and hiding it made the list
+     open mid-sentence. */
+  .stop.done { opacity: 0.45; }
+  .stop.done .num { border-color: var(--divider); color: var(--faint); }
+  .stop .num { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px;
+    font-family: var(--mono); font-size: 11px; font-weight: 700; border: 1px solid var(--divider);
+    color: var(--cyan-dim); background: rgba(0, 0, 0, 0.22); }
+  .stop.pickup .num { border-color: var(--cyan); color: var(--cyan-bright); }
+  .stop.dropoff .num { border-color: var(--gold); color: var(--gold); }
+  .stop.same .num { border-style: dashed; }
+  .stop .mid { flex: 1; min-width: 0; }
+  .stop .nm.editable > span:first-child, .stop .nm.editable { }
+  .stop .nm .pen { flex: none; margin-left: 5px; font-size: 11px; color: var(--cyan-dim); opacity: 0.75; }
+  .stop .nm.editable:hover .pen { color: var(--cyan-bright); opacity: 1; }
+  .stop .nm.editable:hover .nmt { text-decoration: underline dotted rgba(var(--accent-rgb), 0.6); }
+  .ratereset { margin-left: 8px; background: transparent; border: none; padding: 0; cursor: pointer;
+    font-size: 10px; color: var(--faint); text-decoration: underline; }
+  .ratereset:hover { color: var(--cyan-bright); }
+  /* 🔴 SAY IT WHERE THE THING IS, not in a release note nobody re-reads. Sub: "I want it to be very
+     apparent that it is experimental. This isn't like our other apps that I think are pretty much
+     fully functional." So the badge rides the widget's own title bar, in the alert colour, and it
+     does not go away — it is a property of the widget, not a first-run notice. */
+  .expbadge { flex: none; margin-left: 6px; padding: 1px 5px; border-radius: 4px;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.09em; cursor: help;
+    color: var(--gold); border: 1px solid rgba(var(--value-rgb), 0.5);
+    background: rgba(var(--value-rgb), 0.10); }
+  .stop .pinbox { width: 46px; margin-left: 5px; font-family: var(--mono); font-size: 11px;
+    text-align: right; color: var(--cyan-bright); background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(var(--accent-rgb), 0.5); border-radius: 4px; padding: 0 3px; }
+  .stop .pinbox:focus { outline: none; border-color: var(--cyan); }
+  .stop .pinderived { margin-left: 5px; font-size: 9.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--cyan); }
+  .stop .nminp { font-family: var(--sans); font-size: 13px; font-weight: 600; width: 150px;
+    color: var(--cyan-bright); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--cyan);
+    border-radius: 4px; padding: 1px 4px; }
+  .stop .nminp:focus { outline: none; }
+  /* 🔴 THE PENCIL MUST NOT BE WHAT GETS CUT. `.nm` truncated as one string, so narrowing the
+     widget ate the pencil first and the row stopped looking editable exactly when there was least
+     room to guess. The row is a flex line now: the TITLE shrinks and ellipsises, the pencil is
+     flex:none and always present. */
+  .stop .nm { display: flex; align-items: baseline; gap: 0;
+    font-size: 13px; font-weight: 600; color: var(--cyan-bright); position: relative; }
+  .stop .nm .nmt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stop .acts { font-size: 11px; color: var(--cyan-dim); line-height: 1.5; margin-top: 1px; }
+  .stop .acts .c { color: var(--cyan-text); }
+  .stop .rt { flex: none; text-align: right; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  /* The tonnage half, moved INSIDE .mid (see the note in hauling-tab-route.js). As a sibling it was
+     flex:none and stole width from the place name until the name ellipsised; under .acts it cannot
+     squeeze anything and the name spans the full row. Left-aligned down here — it is reading as a
+     caption under the step now, not as a right-hand column. */
+  .stop .mid .tons { text-align: left; margin-top: 1px; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .stop .mid .tons .ld { color: var(--gold); }
+  .stop .mid .tons .hold { color: var(--faint); font-size: 10px; }
+  /* 🔴 THE FIGURE ON A STEP IS THE FIGURE THAT STEP MOVES. This was `loadAfterScu` — what is in the
+     hold on LEAVING — so the final drop-off of a run always read "0 SCU", which is true and useless:
+     Sub read a step headed DROP OFF next to a zero and reasonably asked what it thought he was
+     dropping off. A numbered instruction states its own quantity; where the hold ends up is a
+     separate fact and now rides underneath in the faint line. */
+  .stop .rt .ld { color: var(--gold); }
+  .stop .rt .hold { color: var(--faint); font-size: 10px; }
+
+  /* ── Contract cards ──────────────────────────────────────────────────────── */
+  .card { padding: 6px 12px 7px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* The turn-around, parked in the picture's bottom-left corner. Quiet until hovered — it is a
+     control, not part of the diagram — and tinted gold while turned so the state is visible
+     without reading the door label. */
+  /* A foldable section header. The caret is the affordance; the whole strip is the target. */
+  .sec.fold { cursor: pointer; user-select: none; }
+  .sec.fold .caret { flex: none; margin-right: 4px; color: var(--faint); font-size: 10px; }
+  .sec.fold:hover .caret { color: var(--cyan-bright); }
+  /* The "why" reduced to one glyph. The reason stays reachable on hover; it stops eating four
+     lines of a small overlay on every render. */
+  .whyinfo { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid rgba(var(--accent-rgb), 0.35); color: var(--cyan-dim); font-size: 10px;
+    cursor: help; }
+  .whyinfo:hover { color: var(--cyan-bright); border-color: var(--cyan); }
+  .isowrap { position: relative; }
+  .spincorner { position: absolute; left: 4px; bottom: 4px; width: 22px; height: 22px; padding: 0;
+    display: grid; place-items: center; border-radius: 6px; cursor: pointer;
+    border: 1px solid rgba(var(--accent-rgb), 0.28); background: rgba(0, 0, 0, 0.35);
+    color: var(--cyan-dim); font-size: 14px; line-height: 1; opacity: 0.55; transition: opacity .12s; }
+  .spincorner:hover { opacity: 1; color: var(--cyan-bright); border-color: var(--cyan); }
+  .spincorner.on { opacity: 1; color: var(--gold); border-color: var(--gold); }
+  .card.done { opacity: 0.6; }
+  /* Set aside: dimmed and struck through the title, so it reads as "not part of this run" rather
+     than "finished". Still listed — the player has to be able to put it back. */
+  .card.setaside { opacity: 0.45; }
+  .card.setaside .t { text-decoration: line-through; }
+  .card .cardx { flex: none; margin-left: 6px; width: 18px; height: 18px; line-height: 1; padding: 0;
+    border: 1px solid rgba(var(--accent-rgb), 0.3); border-radius: 5px; background: transparent;
+    color: var(--faint); font-size: 12px; cursor: pointer; }
+  .card .cardx:hover { color: var(--red); border-color: var(--red); }
+  /* The tick sits at the FRONT of the row, where a list of things you are doing wants it, and the
+     ✕ stays at the end where a destructive control belongs. */
+  .card .cardtick { flex: none; margin-right: 2px; width: 15px; height: 15px; padding: 0;
+    border: 1px solid rgba(var(--accent-rgb), 0.45); border-radius: 4px; background: transparent;
+    color: var(--cyan-bright); font-size: 11px; line-height: 1; cursor: pointer; }
+  .card .cardtick:hover { border-color: var(--cyan); }
+  .card.setaside .cardtick { color: var(--faint); }
+  .droprow { display: flex; align-items: center; gap: 8px; padding: 3px 12px 6px;
+    font-size: 10.5px; color: var(--faint); }
+  .droprow button { background: transparent; border: none; padding: 0; cursor: pointer;
+    color: var(--cyan-dim); font-size: 10.5px; text-decoration: underline; }
+  .card.setaside .cardx:hover { color: var(--cyan-bright); border-color: var(--cyan); }
+  .card .top { display: flex; align-items: baseline; gap: 6px; }
+  .card .t { flex: 1; min-width: 0; font-size: 12.5px; color: var(--cyan-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .amt { flex: none; font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--gold); }
+  /* 🔴 PROVENANCE IS A COLOUR, NOT A PILL. Every load figure and every box count still has to say
+     where it came from — that has been true since the first version — but it was saying it with a
+     word in a bordered chip next to the number, and a card carried up to three of them. Sub: "let's
+     just change the colour of the SCU count rather than having that pill there." He is right: the
+     number IS the thing being qualified, so qualify the number. One key at the foot of the list
+     carries the wording that used to be repeated on every row.
+     ⚠️ The tooltips move WITH the colour — a hue nobody can name is not provenance. */
+  .card .amt.src-log, .card .amt.src-manifest { color: var(--green); }
+  .card .amt.src-pinned { color: var(--cyan-bright); }
+  /* Arithmetic off a figure the player gave, so it reads as theirs — one shade quieter. */
+  .card .amt.src-derived { color: var(--cyan); }
+  .card .amt.src-dataset { color: var(--cyan-dim); }
+  .card .amt.src-range { color: var(--gold); }
+  .card .amt.src-unknown { color: var(--red); }
+  .card .sub { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px;
+    font-size: 10.5px; color: var(--faint); }
+  .card .chips { font-family: var(--mono); font-size: 11px; color: var(--cyan-dim); margin-top: 2px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  /* A box size, and how many. The SIZE is the identity — a box has one shape — so it reads large
+     and the count rides beside it as a multiplier. Written as a run of text ("12 × 8") it was read
+     as a dimension, and four of them in a row was the busiest thing on the card. */
+  .card .boxpill { display: inline-flex; align-items: baseline; gap: 3px; padding: 1px 5px;
+    border: 1px solid rgba(var(--accent-rgb), 0.28); border-radius: 999px;
+    background: rgba(var(--accent-rgb), 0.06); white-space: nowrap; }
+  .card .boxpill b { font-weight: 700; color: var(--cyan-bright); font-size: 11px; }
+  .card .boxpill i { font-style: normal; font-size: 10px; color: var(--faint); }
+  /* Same rule as the SCU figure: gold = this split was worked out here (the game never logs a box
+     breakdown for a cargo haul), green = the game enumerated the boxes itself. Replaces the
+     "modelled" badge, which Sub called noise — the counts have been right every time he checked. */
+  .card .boxpill.src-partition { border-color: rgba(var(--value-rgb), 0.45); background: rgba(var(--value-rgb), 0.08); }
+  .card .boxpill.src-partition b { color: var(--gold); }
+  .card .boxpill.src-manifest { border-color: rgba(46, 230, 160, 0.4); background: rgba(46, 230, 160, 0.08); }
+  .card .boxpill.src-manifest b { color: var(--green); }
+  .card .boxcap { font-size: 10px; color: var(--faint); white-space: nowrap; }
+  /* The key. One per list, at the foot, because the colours are only decodable together. */
+  .srckey { display: flex; flex-wrap: wrap; gap: 3px 10px; padding: 6px 12px 10px;
+    font-size: 10px; color: var(--faint); }
+  .srckey span { display: inline-flex; align-items: center; gap: 4px; }
+  .srckey i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  /* Now only the load-checklist's row state. The provenance badge that used to share this class is
+     gone — a colour on the figure itself says the same thing without a chip per row (.amt.src-*). */
+  /* ⚠️ `white-space: nowrap` is load-bearing, not tidiness. A pill is a bordered box, so a line
+     break inside its label leaves half a box at the end of one line and half at the start of the
+     next. Measured doing exactly that on the Runs tab, 2026-08-22. */
+  .badge { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    white-space: nowrap;
+    border-radius: 4px; padding: 1px 4px; border: 1px solid var(--divider); color: var(--faint); }
+  .badge.pinned { color: var(--cyan-bright); border-color: var(--border); }
+  /* The three states of the track prompt. Only `todo` is an instruction — `waiting` is the state
+     where the player has already done everything tracking can do, and colouring it like an action
+     is how a prompt starts lying. */
+  .badge.todo { color: var(--gold); border-color: rgba(var(--value-rgb), 0.45); }
+  .badge.waiting { color: var(--cyan-dim); }
+  /* Rank tier + size band, straight off the contract title — how the row is matched to mobiGlas. */
+  .trow .bd { flex: none; font-size: 10px; letter-spacing: 0.04em; color: var(--faint);
+    white-space: nowrap; }
+  .tick { flex: none; font-size: 11px; color: var(--green); }
+
+  /* ── Stow ─────────────────────────────────────────────────────────────────
+     The load order first, the picture second. 🔴 The freight elevator UI does not name missions,
+     so "load this one first" is only actionable if it comes with a BOX SIGNATURE — the commodity
+     plus the exact split — which is how the player finds the right lift among four. */
+  .gridwrap { padding: 4px 12px 12px; }
+
+  .steps { padding: 0 12px 4px; }
+  .step { display: flex; gap: 8px; padding: 7px 8px; margin-bottom: 5px; border-radius: 8px;
+    border: 1px solid var(--divider); background: rgba(0, 0, 0, 0.2); cursor: pointer;
+    border-left-width: 3px; }
+  .step:hover { border-color: var(--border); }
+  .step.on { background: rgba(var(--accent-rgb), 0.11); border-color: var(--cyan); }
+  .step .ord { flex: none; width: 20px; height: 20px; display: grid; place-items: center;
+    border-radius: 50%; font-family: var(--mono); font-size: 11px; font-weight: 700;
+    color: #04121a; }
+  .step .mid { flex: 1; min-width: 0; }
+  /* The signature. Deliberately the biggest text in the panel — it is the thing the player reads
+     off the elevator and matches by eye. */
+  .step .sig { font-size: 13px; font-weight: 600; color: var(--cyan-bright); line-height: 1.35; }
+  .step .sig .what { color: var(--gold); }
+  .step .meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 2px; }
+  .step .drops { margin-top: 4px; }
+  .drop { display: flex; align-items: baseline; gap: 6px; font-size: 11px; color: var(--cyan-dim);
+    line-height: 1.6; }
+  .drop i { flex: none; width: 8px; height: 8px; border-radius: 2px; display: inline-block;
+    transform: translateY(1px); }
+  .drop .d { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: var(--cyan-text); }
+  .drop .b { flex: none; font-family: var(--mono); color: var(--cyan-dim); }
+  .drop .deep { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--faint); }
+  /* ⚠️ Two missions with the same commodity AND the same split are indistinguishable at the
+     elevator. Saying so beats issuing an instruction the player cannot follow. */
+  .step.clash { border-left-color: var(--amber) !important; }
+  .step .clash-why { font-size: 10.5px; color: var(--amber); margin-top: 3px; line-height: 1.45; }
+
+  .glabel { display: flex; align-items: baseline; gap: 6px; font-size: 10.5px; color: var(--faint);
+    font-family: var(--mono); margin: 8px 0 2px; }
+  .glabel .gn { font-family: var(--sans); font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--cyan-dim); font-size: 10px; }
+  .glabel .here { color: var(--cyan-bright); }
+
+  /* The isometric drawing. Everything inside is in CELL units — the viewBox does the scaling — so
+     one cell is one SCU at every zoom and two grids on the same page are at the same true scale. */
+  .isowrap { background: rgba(0, 0, 0, 0.26); border: 1px solid var(--divider); border-radius: 6px;
+    padding: 4px; }
+  /* 🔑 No max-height. Height follows width, and the width is set per grid so every hold on the
+     ship shares one scale (see renderGrids) — a height cap would letterbox one drawing and quietly
+     break that. .isowrap centres whatever it is given. */
+  svg.iso { display: block; width: 100%; height: auto; overflow: visible; margin: 0 auto; }
+  svg.iso .iso-floor { fill: rgba(var(--accent-rgb), 0.07); stroke: rgba(var(--accent-rgb), 0.3);
+    stroke-width: 0.04; }
+  svg.iso .iso-wall { fill: rgba(var(--accent-rgb), 0.045); stroke: rgba(var(--accent-rgb), 0.22);
+    stroke-width: 0.04; }
+  svg.iso .iso-wall-b { fill: rgba(var(--accent-rgb), 0.02); }
+  svg.iso .iso-rule { stroke: rgba(var(--accent-rgb), 0.16); stroke-width: 0.025; }
+  /* The ramp edge. Gold and heavier than a cell rule, because "which way am I looking" has to be
+     answerable at a glance — especially once the view can be spun. */
+  svg.iso .iso-door-bar { fill: none; stroke: var(--gold); stroke-width: 0.09; stroke-linecap: round; }
+  svg.iso .iso-door-label { fill: var(--gold); font-family: var(--sans); font-size: 0.5px;
+    font-weight: 700; letter-spacing: 0.06px; }
+  svg.iso .iso-face { stroke: rgba(0, 0, 0, 0.55); stroke-width: 0.03; stroke-linejoin: round; }
+  /* A ghosted lift must still read as CARGO IS HERE — the hold is not empty just because you are
+     looking at a different lift — while never competing with the one you are being told to load. */
+  svg.iso .iso-box.ghost { opacity: 0.45; }
+  svg.iso .iso-num { fill: #04121a; font-family: var(--mono); font-weight: 700;
+    text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 8px; font-size: 10.5px; color: var(--cyan-dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  /* The zone key: one row per drop-off stop, stacked rather than wrapped inline, because each row
+     now carries the stop AND what is in it and two of those side by side is unreadable at 420px. */
+  .legend.zones { flex-direction: column; gap: 4px; }
+  .legend.zones span { align-items: baseline; font-size: 11.5px; color: var(--cyan-text); }
+  .legend.zones i { flex: none; transform: translateY(1px); }
+  .legend.zones b { font-weight: 400; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+
+  /* ── The advisor ──────────────────────────────────────────────────────────
+     "What should I go looking for?" — a ranked list of contract TYPES, matched against the board
+     by its TITLE, because the title IS the model: "<Rung> Rank - Direct <Size> Cargo Haul". */
+  .stand { padding: 8px 12px; border-bottom: 1px solid var(--divider); }
+  .stand .row { display: flex; align-items: center; gap: 6px; }
+  .stand select, .stand input { font-family: var(--sans); font-size: 12px; color: var(--cyan-bright);
+    background: var(--menu-bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; }
+  .stand select { flex: 1; min-width: 0; }
+  .stand select option { background: var(--menu-bg); color: var(--cyan-bright); }
+  .stand input { width: 74px; font-family: var(--mono); text-align: right; }
+  .stand input:focus, .stand select:focus { outline: none; border-color: var(--cyan); }
+  /* The headline the whole tab exists for. */
+  .climb { margin-top: 7px; font-size: 12px; line-height: 1.5; color: var(--cyan-text); }
+  .climb .big { font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--gold); }
+  .climb .sub { display: block; margin-top: 2px; font-size: 10.5px; color: var(--faint); }
+  .climb .none { color: var(--amber); }
+
+  .arow { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* Locked = above your rung, so it is not on your board at all. Kept in the list because seeing
+     what the next rank unlocks is half the reason to grind toward it. */
+  .arow.locked { opacity: 0.45; }
+  .arow .ph { font-size: 10px; color: var(--cyan-dim); white-space: nowrap; }
+  .arow.clickable { cursor: pointer; }
+  .arow.clickable:hover { background: rgba(var(--accent-rgb), 0.07); }
+
+  .arow .n { flex: none; width: 18px; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .arow .mid { flex: 1; min-width: 0; }
+  .arow .t { font-size: 12.5px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .arow.locked .t { color: var(--cyan-dim); }
+  .arow .m { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 1px; }
+  .arow .r { flex: none; text-align: right; }
+  .arow .r .v { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--gold); }
+  .arow .r .u { display: block; font-size: 9.5px; color: var(--faint); }
+  .lockpill { font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--amber); }
+  /* The rep/aUEC switch, in the open where it can be flipped back and forth. Sized down from .hbtn
+     because it rides inside a section heading, not a toolbar. */
+  .goalseg { display: inline-flex; gap: 3px; margin-left: 4px; }
+  .goalseg .hbtn { padding: 1px 6px; font-size: 10px; letter-spacing: 0.02em; text-transform: none; }
+  /* The family filter — also in the open, for the same reason as the goal switch. Wraps, because a
+     420px panel cannot hold five of these on one line. */
+  .typebar { display: flex; flex-wrap: wrap; gap: 3px; padding: 7px 12px 2px;
+    border-bottom: 1px solid var(--divider); }
+  .typebar .hbtn { padding: 2px 7px; font-size: 10px; letter-spacing: 0.02em; text-transform: none; }
+
+  /* ⛔ Open haulers load themselves. The panel that replaces the whole view for them. */
+  .noplan { padding: 30px 20px; text-align: center; }
+  .noplan .k { font-size: 14px; font-weight: 600; color: var(--gold); }
+  .noplan .why { margin-top: 8px; font-size: 12px; line-height: 1.65; color: var(--cyan-dim); }

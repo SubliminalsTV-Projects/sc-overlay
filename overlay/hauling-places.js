@@ -109,17 +109,35 @@
     }
   }
 
-  /** Ask the server to rank the candidates. Debounced: one request per character is fine at this
-   *  size, but a burst while someone types fast is pure waste. */
+  /**
+   * Ask the server to rank the candidates. Debounced: one request per character is fine at this
+   * size, but a burst while someone types fast is pure waste.
+   *
+   * 🔴 A COMMODITY LEG ASKS A DIFFERENT QUESTION. Sub: *"right now I can change the drop-off point
+   * or the pickup point to someplace where you can't even pick up Neon. It shows places that are
+   * used before, but the only thing that matters is where you can pick it up from and where you can
+   * drop it off at."* With a commodity and a side, the sidecar answers from the price table's
+   * `buyAt`/`sellAt` instead of from "places you have been" — the same source the Commodities tab's
+   * slots use, so the two surfaces cannot offer different answers to one question.
+   *
+   * ⚠️ A CONTRACT stop passes no context and keeps the old list, deliberately: it is an anonymous
+   * set of coordinates the game handed you, no price table has an opinion about it, and there
+   * "used before + dataset" is exactly right.
+   */
   let sugTimer = null;
   function askPlaces(locationId, q, row) {
+    const ctx = (placeRows.get(locationId) || {}).ctx || null;
     clearTimeout(sugTimer);
     sugTimer = setTimeout(async () => {
       try {
-        const r = await fetch("/api/hauling/places?q=" + encodeURIComponent(q), { cache: "no-store" });
+        let u = "/api/hauling/places?q=" + encodeURIComponent(q);
+        if (ctx && ctx.commodity && ctx.side) {
+          u += "&commodity=" + encodeURIComponent(ctx.commodity) + "&side=" + encodeURIComponent(ctx.side);
+        }
+        const r = await fetch(u, { cache: "no-store" });
         if (!r.ok) return;
-        const places = (await r.json()).places || [];
-        showSug(locationId, places, row);
+        const j = await r.json();
+        showSug(locationId, j.places || [], row, !!j.constrained, ctx);
       } catch { /* sidecar down — typing still saves, it just cannot suggest */ }
     }, 90);
   }
@@ -131,12 +149,24 @@
     sugFor = null; sugList = []; sugIndex = -1;
   }
 
-  function showSug(locationId, places, row) {
+  function showSug(locationId, places, row, constrained, ctx) {
     row.querySelector(".psug")?.remove();
     sugFor = locationId; sugList = places; sugIndex = places.length ? 0 : -1;
-    if (!places.length) return;
+    /* 🔴 A CONSTRAINED LIST WITH NOTHING IN IT STILL HAS SOMETHING TO SAY. An empty dataset list
+       means "no match for what you typed"; an empty PRICE-TABLE list means "nowhere trades this",
+       which is a fact about the commodity rather than about the typing. Returning early on both
+       would make those two look identical, and only one of them is the player's to fix. */
+    if (!places.length && !constrained) return;
     const box = document.createElement("div");
     box.className = "psug";
+    if (constrained) {
+      const head = document.createElement("span");
+      head.className = "phead";
+      head.textContent = ctx && ctx.side === "buy"
+        ? places.length + (places.length === 1 ? " place sells " : " places sell ") + (ctx.commodity || "this")
+        : places.length + (places.length === 1 ? " place buys " : " places buy ") + ((ctx && ctx.commodity) || "this");
+      box.appendChild(head);
+    }
     places.forEach((p, i) => {
       const d = document.createElement("div");
       if (i === sugIndex) d.className = "on";
@@ -145,11 +175,27 @@
       n.textContent = p.name;
       d.appendChild(n);
       if (p.hint) { const h = document.createElement("span"); h.className = "h"; h.textContent = p.hint; d.appendChild(h); }
+      /* The price, and the stock or demand behind it. A list of only VALID places may as well also
+         say which of them is worth picking — that is the difference between a filter and a
+         recommendation, and the figures are already in the payload. */
+      if (p.price !== undefined && p.price !== null) {
+        const pr = document.createElement("span");
+        pr.className = "pr " + (ctx && ctx.side === "buy" ? "buyp" : "sellp");
+        pr.textContent = num(Math.round(p.price))
+          + (p.scu === null || p.scu === undefined ? "" : "  ·  " + num(p.scu) + " SCU");
+        d.appendChild(pr);
+      }
       // pointerdown, not click: the input's blur fires first on a click and would close the list
       // out from under the pointer.
-      d.addEventListener("pointerdown", (e) => { e.preventDefault(); savePlace(locationId, p.name); });
+      d.addEventListener("pointerdown", (e) => { e.preventDefault(); savePlace(locationId, p.name, p); });
       box.appendChild(d);
     });
+    if (constrained && !places.length) {
+      const none = document.createElement("span");
+      none.className = "pfoot";
+      none.textContent = "Nowhere in the price table trades this, so there is nothing to move it to.";
+      box.appendChild(none);
+    }
     row.appendChild(box);
   }
 
@@ -168,15 +214,58 @@
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      const pick = sugIndex >= 0 && sugList[sugIndex] ? sugList[sugIndex].name : inp.value.trim();
-      if (pick) savePlace(locationId, pick);
+      const hit = sugIndex >= 0 ? sugList[sugIndex] : null;
+      const pick = hit ? hit.name : inp.value.trim();
+      if (pick) savePlace(locationId, pick, hit);
     }
   }
 
-  async function savePlace(locationId, name) {
+  /**
+   * Two very different writes behind one gesture, and which one happens is decided by whether the
+   * stop is a COMMODITY leg.
+   *
+   * 🔴 ON A CONTRACT STOP this NAMES a place: `config.haulingPlaces[locationId]` is a display name
+   * for a set of coordinates the game never named. That is all it has ever done.
+   *
+   * 🔴 ON A COMMODITY LEG THAT WAS THE BUG. The stop relabelled and the route went on buying where
+   * it always had — a control whose apparent effect and its real effect differ, which is worse than
+   * one that merely offers the wrong options, and it was doing both. A commodity leg now RE-POINTS
+   * the pick, which is what "change the pickup" has to mean.
+   *
+   * ⚠️ Free text still names rather than moves, even on a commodity leg: a terminal the price table
+   * has never heard of cannot be re-pointed to, and refusing the keystroke outright would take away
+   * naming a place for no gain. Only a pick from the list carries the body and system a re-point
+   * needs, which is exactly why the whole suggestion object is threaded through rather than a name.
+   */
+  async function savePlace(locationId, name, place) {
+    const ctx = (placeRows.get(locationId) || {}).ctx || null;
     closeSug(locationId);
     const r = placeRows.get(locationId);
-    if (r) { r.inp.value = name; r.inp.blur(); }
+    if (r && r.inp) { r.inp.value = name; r.inp.blur(); }
+
+    if (ctx && ctx.buyId && place && place.price !== undefined) {
+      try {
+        const res = await fetch("/api/hauling/buy/repoint", {
+          method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+          body: JSON.stringify({
+            id: ctx.buyId,
+            side: ctx.side === "buy" ? "from" : "to",
+            terminal: { terminal: place.name, body: place.body || null, system: place.system || null },
+            price: place.price,
+          }),
+        });
+        const j = await res.json().catch(() => null);
+        // 🔴 A REFUSAL IS SAID. "It did not move" and "it did not move because the log already
+        // recorded this purchase" are different messages, and only the second tells the player what
+        // to do next. Silence here would be the original bug wearing a better list.
+        routeNote(j && j.moved ? "" : "That run did not move — " + ((j && j.why) || "the app's background service is not answering") + ".");
+      } catch {
+        routeNote("The app's background service is not answering, so that run did not move.");
+      }
+      load();
+      return;
+    }
+
     try {
       await fetch("/api/hauling/place", {
         method: "POST", headers: { "Content-Type": "application/json" },

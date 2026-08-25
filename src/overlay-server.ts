@@ -22,6 +22,10 @@ import { buildHaulingPlan, gridsOf } from "./hauling-plan.js";
 import { HaulingBuys } from "./hauling-buys.js";
 import type { CommodityPurchase } from "./trade-log.js";
 import { tradeRoutes, tradeTable } from "./trade-routes.js";
+// The Route tab's place picker is fed from the price table on a commodity leg — see
+// `commodityPlaceSuggestions`. Same function the Commodities tab's slots use, so the two surfaces
+// cannot drift into offering different answers to the same question.
+import { lookupCommodity } from "./trade-finder.js";
 // 🔑 The log feed goes through `priceFeedLine` rather than `tradeLogLine` at all three read sites.
 // It still does everything `tradeLogLine` did — the trade journal is untouched — and additionally
 // records observed ITEM prices, the half of the shop data the app had never read. One wrapper so
@@ -796,6 +800,82 @@ function fuzzyScore(name: string, q: string): number | null {
 }
 
 /** Ranked suggestions for the naming box: names the game has used, then the shipped dataset. */
+/** One row the Route tab's picker can offer. `body`/`system` are separate FIELDS as well as being
+ *  inside `hint`, because a re-point has to carry them and a display string cannot be parsed back
+ *  into them safely. */
+interface PlacePick {
+  name: string;
+  hint: string | null;
+  seen: boolean;
+  price: number | null;
+  scu: number | null;
+  body: string | null;
+  system: string | null;
+}
+
+/**
+ * 🔴 WHERE A COMMODITY LEG CAN ACTUALLY START OR END.
+ *
+ * Sub, on the Route tab: *"right now I can change the drop-off point or the pickup point to
+ * someplace where you can't even pick up Neon. It shows places that are used before, but the only
+ * thing that matters is where you can pick it up from and where you can drop it off at."*
+ *
+ * He is right, and the correct source was already in the process: `lookupCommodity` returns `buyAt`
+ * (cheapest first) and `sellAt` (best first) for exactly this. So the picker on a commodity leg is
+ * fed from the price table rather than from "places you have been", and a place the commodity
+ * cannot be traded at becomes UNREACHABLE rather than merely unlikely.
+ *
+ * ⚠️ SCOPED TO COMMODITY LEGS, and the scope is the whole reason this is safe. A hauling CONTRACT
+ * stop is an anonymous set of coordinates the game handed the player; no price table has an opinion
+ * about where it is, and there the "used before + dataset" list below is exactly right. Constraining
+ * both would break the inline stop-naming control Sub asked for a week earlier — which is also why
+ * his offered fallback (remove the picker outright) was the wrong trade: it amputates a control that
+ * works on contract stops to fix a bug that only exists on commodity ones.
+ *
+ * 🔑 IT STILL RANKS WITH `fuzzyScore` AND STILL CAPS AT `PLACE_LIMIT`, so typing behaves identically
+ * to the unconstrained picker. Only the candidate list changed.
+ */
+function commodityPlaceSuggestions(
+  commodity: string,
+  side: "buy" | "sell",
+  q: string,
+): PlacePick[] {
+  const look = lookupCommodity(tradeTable(tradeDeps).quotes, commodity, "live");
+  if (!look) return [];
+  const ends = side === "buy" ? look.buyAt : look.sellAt;
+  const out: (PlacePick & { rank: number })[] = [];
+  for (const e of ends) {
+    // 🔑 The SHORT name, because that is what every surface in this app renders and therefore what
+    // a player recognises — and what the route's name-merge compares against the game's own names.
+    const s = q ? fuzzyScore(e.terminalShort, q) : 0;
+    if (s === null) continue;
+    out.push({
+      name: e.terminalShort,
+      hint: [e.body, e.system].filter(Boolean).join(" · ") || null,
+      /* 🔴 THE BODY AND THE SYSTEM AS FIELDS, not only inside `hint`. A re-point has to carry them:
+         the tiered travel model prices a leg off which WORLD each end is on, and the price table
+         knows a terminal's body even though it knows no coordinates. Without them every re-pointed
+         leg is charged the flat cross-body rate and every ordering involving one TIES — the
+         "it isn't optimising" failure the contract side already hit through a different door.
+         Caught by driving the picker and re-reading the plan; a screenshot showed nothing wrong. */
+      body: e.body,
+      system: e.system,
+      // `seen` tints a row green in the existing picker to mean "the game has used this name". A
+      // price-table terminal has not been, so it is false — reusing the flag to mean "recommended"
+      // would make one class mean two things in one list.
+      seen: false,
+      price: e.price,
+      scu: e.scu,
+      rank: s,
+    });
+  }
+  // Ties keep the incoming order, which is cheapest-first for a buy and best-first for a sell —
+  // the order `lookupCommodity` already sorted them into, and the useful one either way.
+  out.sort((a, b) => a.rank - b.rank);
+  return out.slice(0, PLACE_LIMIT).map(({ name, hint, seen, price, scu, body, system }) =>
+    ({ name, hint, seen, price, scu, body, system }));
+}
+
 function haulingPlaceSuggestions(q: string): { name: string; hint: string | null; seen: boolean }[] {
   const out: { name: string; hint: string | null; seen: boolean; rank: number }[] = [];
   const taken = new Set<string>();
@@ -2855,9 +2935,26 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
    * just autocorrect it."
    */
   if (url.startsWith("/api/hauling/places") && req.method === "GET") {
-    const q = (new URL(req.url ?? "", "http://x").searchParams.get("q") ?? "").trim();
+    const qs = new URL(req.url ?? "", "http://x").searchParams;
+    const q = (qs.get("q") ?? "").trim();
+    /* 🔴 A COMMODITY LEG GETS A DIFFERENT LIST. See `commodityPlaceSuggestions` for why, and for
+       why a CONTRACT stop must keep the unconstrained one. Both params are required together: a
+       side with no commodity has nothing to look up, and a commodity with no side cannot tell a
+       pickup from a drop-off — either alone falls through to the general list rather than
+       guessing, because guessing here is how the wrong places got offered in the first place. */
+    const commodity = (qs.get("commodity") ?? "").trim();
+    const side = qs.get("side");
+    if (commodity && (side === "buy" || side === "sell")) {
+      const places = commodityPlaceSuggestions(commodity, side, q);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      /* `constrained` is reported rather than inferred from the rows. An empty list from the price
+         table and an empty list from the dataset mean opposite things — "nowhere trades this" and
+         "no match for what you typed" — and the widget must be able to say which. */
+      res.end(JSON.stringify({ ok: true, constrained: true, commodity, side, places }));
+      return;
+    }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ ok: true, places: haulingPlaceSuggestions(q) }));
+    res.end(JSON.stringify({ ok: true, constrained: false, places: haulingPlaceSuggestions(q) }));
     return;
   }
   /**
@@ -3177,6 +3274,42 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // red. Same rule as the trade journal's own forget. The flag is reported so a caller CAN tell.
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true, removed: !!gone, buy: gone }));
+    return;
+  }
+  /**
+   * Move one end of a commodity pick to a different terminal.
+   *
+   * 🔴 THE ROUTE TAB'S PICKER USED TO WRITE A DISPLAY NAME AND NOTHING ELSE. On a commodity leg it
+   * relabelled the stop while the route went on buying where it always had — so the control looked
+   * like it changed where you go and did not. This is the write that makes it true.
+   *
+   * ⚠️ `moved: false` is a 200, like `buy/forget`'s `removed: false`. The refusals are ordinary
+   * outcomes with reasons a player can act on (the log already saw this purchase; both ends would
+   * be the same place), not server errors — but they are REPORTED, because a control that silently
+   * does nothing is the failure being fixed here.
+   */
+  if (url === "/api/hauling/buy/repoint" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    const id = typeof body.id === "string" ? body.id : "";
+    const side = body.side === "to" ? "to" : "from";
+    const t = (body.terminal ?? {}) as Record<string, unknown>;
+    const end = {
+      terminal: typeof t.terminal === "string" ? t.terminal : "",
+      body: typeof t.body === "string" ? t.body : null,
+      system: typeof t.system === "string" ? t.system : null,
+    };
+    const price = typeof body.price === "number" && Number.isFinite(body.price) ? body.price : null;
+    const before = id ? haulingBuys.list().find((b) => b.id === id) ?? null : null;
+    const moved = id && end.terminal ? haulingBuys.repoint(id, side, end, price) : null;
+    if (moved) hauling.emit("change");
+    // Name the reason. "It did not move" and "it did not move BECAUSE you already bought it there"
+    // are different messages, and only the second one tells the player what to do next.
+    const why = moved ? null
+      : !before ? "that run is no longer on the plan"
+        : before.scu !== null ? "the log already recorded this purchase, so where it happened is a fact rather than a plan"
+          : "both ends of the run would be the same place";
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, moved: !!moved, why, buy: moved }));
     return;
   }
   // The solved plan: route order, box layout, and every load figure tagged with where it came

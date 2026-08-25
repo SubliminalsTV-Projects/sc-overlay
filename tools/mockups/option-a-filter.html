@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Commodities — Option A: search filters the board</title>
+<!-- Real widget styling. Relative paths so this file opens by double-click as well as over HTTP. -->
+<link rel="stylesheet" href="../../overlay/widget-theme.css" />
+<link rel="stylesheet" href="../../overlay/skins.css" />
+<link rel="stylesheet" href="_hauling-style.css" />
+<link rel="stylesheet" href="_new.css" />
+<style>
+  /* Fonts again, by RELATIVE url. widget-theme.css declares them against `/fonts/…`, which only
+     resolves when the sidecar is serving; these make the mockup look right off the filesystem too.
+     Same family, same weights — a re-declaration, not a substitute. */
+  @font-face { font-family: "Inter"; font-style: normal; font-weight: 400 700; font-display: swap;
+    src: url("../../overlay/fonts/Inter-latin.woff2") format("woff2"); }
+  @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 500 700; font-display: swap;
+    src: url("../../overlay/fonts/SpaceGrotesk-latin.woff2") format("woff2"); }
+  /* The canvas is transparent over the game; a flat dark ground is the honest stand-in. */
+  html, body { background: #14171a; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+</style>
+</head>
+<body>
+<div id="panel" class="wpanel"></div>
+
+<script src="_mock-data.js"></script>
+<script src="_rig.js"></script>
+<script>
+/**
+ * ══ OPTION A — SEARCH FILTERS THE BOARD ═══════════════════════════════════════════════════════
+ *
+ * THE IDEA IN ONE SENTENCE: there is exactly one kind of row on this tab — the ranked run — and
+ * searching a commodity does not change the shape of the answer, only which runs are in it.
+ *
+ * WHAT IT OPTIMISES FOR: continuity and cost. The board a player already knows stays the default
+ * and stays first; everything added is one field and one row of pills. It is the only one of the
+ * three that a player who never types anything cannot tell apart from today.
+ *
+ * HOW IT ANSWERS "WHAT CAN I DO WITH NEON": by ranking EVERY pairing of Neon's 3 buy terminals
+ * against its 19 sell terminals — 57 runs — instead of only the ones that made the global top 25.
+ * The safe options are in the list; they are simply further down it.
+ *
+ * HOW IT ANSWERS "SOMETHING SAFER": the existing `buy in` pills gain a `sell in` twin. Setting
+ * `sell in: Stanton` on a Neon search is the whole of "get me out of Pyro", and it costs one row.
+ *
+ * WHAT IT COSTS: a player looking for a safer route has to read down a ranked list to find it,
+ * because the ranking is still by money. Nothing on screen says "this one is in another system"
+ * until you reach the chip on the row. The two-way filter helps and does not remove the problem.
+ */
+
+const PANEL = document.getElementById("panel");
+const QS = new URLSearchParams(location.search);
+const STATE = QS.get("state") || "rest";
+if (QS.get("theme")) document.documentElement.setAttribute("data-theme", QS.get("theme"));
+if (QS.has("embedded")) document.body.classList.add("embedded");
+
+/** The tab bar the tab already has, unchanged. */
+function barA(body) {
+  const bar = document.createElement("div");
+  bar.className = "tdbar";
+  rigProvenance(bar);
+  rigSep(bar);
+  rigLbl(bar, "buy in");
+  tdBtn(bar, "All", false); tdBtn(bar, "Stanton", false);
+  tdBtn(bar, "Pyro", STATE !== "search"); tdBtn(bar, "Nyx", false);
+  /* NEW — the `sell in` twin. The tab has always been able to filter where a run STARTS and never
+     where it ENDS, and "where it ends" is the entire safety question. One row, same control. */
+  if (STATE === "search") {
+    rigSep(bar);
+    rigLbl(bar, "sell in");
+    tdBtn(bar, "All", true); tdBtn(bar, "Stanton", false); tdBtn(bar, "Pyro", false);
+  }
+  rigSep(bar);
+  tdBtn(bar, "Confirmed stock", false);
+  rigSep(bar);
+  tdBtn(bar, "Per run", true); tdBtn(bar, "Per SCU", false);
+  body.appendChild(bar);
+}
+
+/* NEW — the search field. In flow, directly under the filter bar, above the list it filters. */
+function findA(body, value, showAutocomplete) {
+  const f = document.createElement("div");
+  f.className = "tdfind";
+  const gl = document.createElement("span"); gl.className = "gl"; gl.textContent = "⌕";
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.placeholder = "Search a commodity — Neon, Laranite, Bexalite…";
+  inp.value = value || "";
+  f.append(gl, inp);
+  if (value) {
+    const x = document.createElement("button"); x.className = "clr"; x.textContent = "✕";
+    f.appendChild(x);
+  }
+  body.appendChild(f);
+  /* The autocomplete is fed by GET /api/trade/names, which already exists and already returns
+     every tradable commodity. Shown here mid-type to make the point that the field is not a
+     free-text box a player can spell wrong. */
+  if (showAutocomplete) {
+    const ac = document.createElement("div"); ac.className = "tdac";
+    for (const [n, hint, on] of [["Neon", "3 buy · 19 sell", true],
+                                 ["Neon (Ore)", "not bought anywhere", false]]) {
+      const d = document.createElement("div");
+      if (on) d.className = "on";
+      const s = document.createElement("span"); s.textContent = n;
+      const h = document.createElement("span"); h.className = "h"; h.textContent = hint;
+      d.append(s, h);
+      ac.appendChild(d);
+    }
+    body.appendChild(ac);
+  }
+}
+
+/** The shipped row, with the ONE change Sub asked for: the button hard right. */
+function runRow(body, r, rank) {
+  const { row, chips } = tdSpineRow({
+    rank,
+    title: r.commodity,
+    profit: (r.scuBound === "unknown" ? "≤ " : "") + tdMoney(r.profit),
+    profitLabel: "profit",
+    route: r.from.terminalShort + "  →  " + r.to.terminalShort,
+    rate: tdMoney(r.profitPerHour) + "/hr",
+    buy: Math.round(r.from.price),
+    sell: Math.round(r.to.price),
+    marginPct: r.marginPct,
+    metrics: [[num(r.moveScu), "SCU"], [tdMoney(r.capitalRequired), "in"]],
+  });
+  const age = tdAge(r.ageDays);
+  tdChip(chips, age ? age + " old" : "age unknown", tdAgeClass(r.ageDays));
+  if (r.scuBound === "unknown") tdChip(chips, "stock unknown", "warn");
+  else if (r.scuBound === "stock") tdChip(chips, num(r.moveScu) + " on the shelf", "calm");
+  else if (r.scuBound === "demand") tdChip(chips, "buyer takes " + num(r.moveScu), "calm");
+  if (r.crossSystem) tdChip(chips, (r.from.system || "?") + " → " + (r.to.system || "?"), "xsys");
+  /* NEW — `pushright` is the whole of the button fix in this option: one declaration, and the
+     control lands in a column of its own at the right edge of every row. */
+  tdBtn(chips, "+ Route", false, "Sequence this run in the Route tab", "pushright");
+  body.appendChild(row);
+}
+
+/* ── the three states ─────────────────────────────────────────────────────── */
+
+function renderRest() {
+  rigHead(PANEL, "Commodities");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+  barA(body);
+  findA(body, "", false);
+  rigSec(body, "Worth carrying", BOARD.ship + " · " + num(BOARD.capacityScu) + " SCU hold");
+  BOARD.routes.slice(0, 6).forEach((r, i) => runRow(body, r, i + 1));
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+function renderSearch() {
+  rigHead(PANEL, "Commodities");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+  barA(body);
+  findA(body, "Neon", false);
+
+  /* NEW — the header strip. Two ranges and two counts, straight off /api/trade/commodity's own
+     `buy` and `sell` summaries. It is what turns "no results" into "3 places sell it, 19 buy it,
+     and here is the spread you are working inside". */
+  const h = document.createElement("div"); h.className = "cmdhead";
+  const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = NEON.commodity;
+  const two = document.createElement("div"); two.className = "two";
+  const side = (cls, k, v, u) => {
+    const d = document.createElement("div"); d.className = "side " + cls;
+    const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k;
+    const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v;
+    const uu = document.createElement("div"); uu.className = "u"; uu.textContent = u;
+    d.append(kk, vv, uu); two.appendChild(d);
+  };
+  side("b", "buy it at", num(NEON.buy.low) + " – " + num(NEON.buy.high),
+    NEON.buy.terminals + " places · freshest " + tdAge(NEON.buy.freshestDays));
+  side("s", "sell it at", num(NEON.sell.low) + " – " + num(NEON.sell.high),
+    NEON.sell.terminals + " places · freshest " + tdAge(NEON.sell.freshestDays));
+  h.append(nm, two);
+  body.appendChild(h);
+
+  const pairs = pairingsFor(NEON, BOARD.capacityScu);
+  rigSec(body, "Neon runs", pairs.length + " pairings · best first");
+  pairs.slice(0, 5).forEach((r, i) => runRow(body, r, i + 1));
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+/**
+ * The Route tab, with the pickup picker open.
+ *
+ * 🔴 THE BUG THIS FIXES. Today the box under a stop name is fed by GET /api/hauling/places, which
+ * ranks "places you have used before" and then all 1,125 rows of `locations.json`. On a COMMODITY
+ * leg that is the wrong list: the only places that can be the pickup for a Neon run are the three
+ * terminals that sell Neon. Everything else on offer is a place the run cannot start from.
+ *
+ * The fix is to source the candidates from the lookup this widget already has —
+ * `buyAt` for a pickup, `sellAt` for a drop-off.
+ *
+ * ⚠️ SCOPED TO COMMODITY LEGS, and that scope is the point. A CONTRACT stop is an anonymous set of
+ * coordinates the game gave you; no price table has an opinion about it, and there the existing
+ * "used before + dataset" list is exactly right. Constraining both would break the control Sub
+ * asked for on the stops where it works.
+ */
+function renderRoute() {
+  rigHead(PANEL, "Route");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+
+  rigSec(body, "Trip 1", "2 stops · 14 min");
+
+  // Stop 1 — pickup, with the picker open.
+  const s1 = document.createElement("div"); s1.className = "stop pickup";
+  s1.style.position = "relative";
+  const n1 = document.createElement("div"); n1.className = "num"; n1.textContent = "↑";
+  const m1 = document.createElement("div"); m1.className = "mid";
+  const nm1 = document.createElement("div"); nm1.className = "nm editable";
+  const t1 = document.createElement("span"); t1.className = "nmt";
+  t1.textContent = "1. PICK UP — ";
+  const inp = document.createElement("input"); inp.className = "nminp"; inp.value = "Last Landings";
+  t1.appendChild(inp);
+  const pen = document.createElement("span"); pen.className = "pen"; pen.textContent = "✎";
+  nm1.append(t1, pen);
+  const a1 = document.createElement("div"); a1.className = "acts";
+  a1.textContent = "Neon — your own buy";
+  m1.append(nm1, a1);
+  s1.append(n1, m1);
+
+  /* NEW — the constrained picker. Same `.psug` container the widget already draws; what changed is
+     WHERE the rows come from and that each one states its price and stock, because a list of only
+     valid places may as well also say which of them is worth picking. */
+  const sug = document.createElement("div"); sug.className = "psug";
+  const head = document.createElement("span"); head.className = "phead";
+  head.textContent = "3 places sell Neon · cheapest first";
+  sug.appendChild(head);
+  NEON.buyAt.forEach((b, i) => {
+    const d = document.createElement("div");
+    if (i === 1) d.className = "on";
+    const n = document.createElement("span"); n.textContent = b.terminalShort;
+    const hh = document.createElement("span"); hh.className = "h";
+    hh.textContent = b.body + " · " + b.system + " · " + num(b.scu) + " SCU";
+    const pr = document.createElement("span"); pr.className = "pr buyp"; pr.textContent = num(b.price);
+    d.append(n, hh, pr);
+    sug.appendChild(d);
+  });
+  const foot = document.createElement("span"); foot.className = "pfoot";
+  foot.textContent = "Somewhere else? Type it — the name still sticks to these coordinates.";
+  sug.appendChild(foot);
+  s1.appendChild(sug);
+  body.appendChild(s1);
+
+  // Stop 2 — the drop-off, closed, so the second control is visible without a second dropdown.
+  const s2 = document.createElement("div"); s2.className = "stop dropoff";
+  const n2 = document.createElement("div"); n2.className = "num"; n2.textContent = "↓";
+  const m2 = document.createElement("div"); m2.className = "mid";
+  const nm2 = document.createElement("div"); nm2.className = "nm editable";
+  const t2 = document.createElement("span"); t2.className = "nmt";
+  t2.textContent = "2. DROP OFF — Patch City";
+  const pen2 = document.createElement("span"); pen2.className = "pen"; pen2.textContent = "✎";
+  nm2.append(t2, pen2);
+  const a2 = document.createElement("div"); a2.className = "acts";
+  a2.innerHTML = "";
+  a2.textContent = "Neon · 120 SCU · sells at 19,000";
+  const tons = document.createElement("div"); tons.className = "tons";
+  tons.textContent = "19 places buy Neon — click the name to change where";
+  m2.append(nm2, a2, tons);
+  const rt = document.createElement("div"); rt.className = "rt"; rt.textContent = "+575k";
+  s2.append(n2, m2, rt);
+  body.appendChild(s2);
+
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+({ rest: renderRest, search: renderSearch, route: renderRoute }[STATE] || renderRest)();
+</script>
+</body>
+</html>

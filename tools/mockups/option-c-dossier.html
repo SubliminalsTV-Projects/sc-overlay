@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Commodities — Option C: the commodity dossier</title>
+<link rel="stylesheet" href="../../overlay/widget-theme.css" />
+<link rel="stylesheet" href="../../overlay/skins.css" />
+<link rel="stylesheet" href="_hauling-style.css" />
+<link rel="stylesheet" href="_new.css" />
+<style>
+  @font-face { font-family: "Inter"; font-style: normal; font-weight: 400 700; font-display: swap;
+    src: url("../../overlay/fonts/Inter-latin.woff2") format("woff2"); }
+  @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 500 700; font-display: swap;
+    src: url("../../overlay/fonts/SpaceGrotesk-latin.woff2") format("woff2"); }
+  html, body { background: #14171a; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+</style>
+</head>
+<body>
+<div id="panel" class="wpanel"></div>
+
+<script src="_mock-data.js"></script>
+<script src="_rig.js"></script>
+<script>
+/**
+ * ══ OPTION C — THE COMMODITY DOSSIER ══════════════════════════════════════════════════════════
+ *
+ * THE IDEA IN ONE SENTENCE: searching a commodity does not return runs, it returns PLACES — every
+ * place that sells it and every place that buys it, complete, with the system called out loudly,
+ * and you assemble a run by taking one from each list.
+ *
+ * WHAT IT OPTIMISES FOR: seeing the whole option space. Sub's thesis is that the top of a
+ * leaderboard is where you get killed, so the player needs to see the boring safe options ON THE
+ * SAME FOOTING as the hot ones rather than N rows further down a ranking. A place list does that
+ * by construction: it is not ranked by danger-blind profit, it is a complete inventory with the
+ * money as a column.
+ *
+ * IT ALSO SAYS WHAT SAFETY COSTS, in words, once. On the real numbers captured here, leaving Pyro
+ * with a hold of Neon pays MORE per run and LESS per hour — which is exactly the shape of decision
+ * a leaderboard cannot show you, because it only ever sorts by one of those.
+ *
+ * WHAT IT COSTS: the tab now has two row shapes — the run row and the place row — and the
+ * leaderboard is demoted to a folded section at the top. A player who only ever wants "what is
+ * most profitable right now" pays one click for it that they do not pay today. It is also the most
+ * new CSS of the three.
+ */
+
+const PANEL = document.getElementById("panel");
+const QS = new URLSearchParams(location.search);
+const STATE = QS.get("state") || "rest";
+if (QS.get("theme")) document.documentElement.setAttribute("data-theme", QS.get("theme"));
+if (QS.has("embedded")) document.body.classList.add("embedded");
+
+/** Where the log says the player is. Everything else is "away", and away is amber. */
+const HOME_SYSTEM = "Pyro";
+
+/* NEW — the search field, which is this option's headline control rather than a filter on a list. */
+function findC(body, value) {
+  const f = document.createElement("div");
+  f.className = "tdfind";
+  const gl = document.createElement("span"); gl.className = "gl"; gl.textContent = "⌕";
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.placeholder = "What do you want to move? Neon, Laranite, Bexalite…";
+  inp.value = value || "";
+  f.append(gl, inp);
+  if (value) { const x = document.createElement("button"); x.className = "clr"; x.textContent = "✕"; f.appendChild(x); }
+  body.appendChild(f);
+}
+
+/* NEW — a place row. It leads with WHERE and carries the money as a right-hand column, which is
+   the opposite emphasis from a run row and is the whole reason it is a different row. */
+function placeRow(body, spec) {
+  const row = document.createElement("div");
+  row.className = "prow " + spec.side + (spec.picked ? " picked" : "");
+  const mid = document.createElement("div"); mid.className = "mid";
+  const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = spec.name;
+  const sub = document.createElement("div"); sub.className = "sub";
+  const sysb = document.createElement("span");
+  sysb.className = "sysb " + (spec.system === HOME_SYSTEM ? "home" : "away");
+  sysb.textContent = spec.system;
+  sub.appendChild(sysb);
+  const where = document.createElement("span"); where.textContent = spec.body;
+  sub.appendChild(where);
+  if (spec.stock) { const st = document.createElement("span"); st.className = "st"; st.textContent = spec.stock; sub.appendChild(st); }
+  tdChip(sub, spec.age, spec.ageCls);
+  mid.append(nm, sub);
+  const rail = document.createElement("div"); rail.className = "rail";
+  const pr = document.createElement("div"); pr.className = "pr"; pr.textContent = num(spec.price);
+  rail.appendChild(pr);
+  if (spec.gain) { const g = document.createElement("div"); g.className = "gain"; g.textContent = spec.gain; rail.appendChild(g); }
+  if (spec.btn) tdBtn(rail, spec.btn, spec.picked, spec.btnTitle);
+  row.append(mid, rail);
+  body.appendChild(row);
+  return row;
+}
+
+/** The board rows, kept — folded, but kept. Same shape as today plus the right rail. */
+function runRow(body, r, rank) {
+  const { row, chips, rail } = tdSpineRow({
+    rail: true, rank,
+    title: r.commodity,
+    profit: (r.scuBound === "unknown" ? "≤ " : "") + tdMoney(r.profit),
+    profitLabel: "profit",
+    route: r.from.terminalShort + "  →  " + r.to.terminalShort,
+    rate: tdMoney(r.profitPerHour) + "/hr",
+    buy: Math.round(r.from.price), sell: Math.round(r.to.price),
+    marginPct: r.marginPct,
+    metrics: [[num(r.moveScu), "SCU"], [tdMoney(r.capitalRequired), "in"]],
+  });
+  const age = tdAge(r.ageDays);
+  tdChip(chips, age ? age + " old" : "age unknown", tdAgeClass(r.ageDays));
+  if (r.scuBound === "stock") tdChip(chips, num(r.moveScu) + " on the shelf", "calm");
+  else if (r.scuBound === "demand") tdChip(chips, "buyer takes " + num(r.moveScu), "calm");
+  else if (r.scuBound === "unknown") tdChip(chips, "stock unknown", "warn");
+  if (r.crossSystem) tdChip(chips, (r.from.system || "?") + " → " + (r.to.system || "?"), "xsys");
+  tdBtn(rail, "+ Route", false, "Sequence this run in the Route tab");
+  body.appendChild(row);
+}
+
+/* ── the three states ─────────────────────────────────────────────────────── */
+
+function renderRest() {
+  rigHead(PANEL, "Commodities");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+
+  const bar = document.createElement("div"); bar.className = "tdbar";
+  rigProvenance(bar);
+  rigSep(bar);
+  tdBtn(bar, "Confirmed stock", false);
+  rigSep(bar);
+  tdBtn(bar, "Per run", true); tdBtn(bar, "Per SCU", false);
+  body.appendChild(bar);
+
+  findC(body, "");
+
+  /* With nothing searched the body IS the leaderboard, unfolded — so the tab at rest is the tab
+     everybody already has, with a field above it. The fold only appears once a search has taken
+     the body over (see the search state). */
+  rigSec(body, "Best runs right now", BOARD.ship + " · " + num(BOARD.capacityScu) + " SCU hold");
+  BOARD.routes.slice(0, 5).forEach((r, i) => runRow(body, r, i + 1));
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+function renderSearch() {
+  rigHead(PANEL, "Commodities");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+  findC(body, "Neon");
+
+  const h = document.createElement("div"); h.className = "cmdhead";
+  const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = NEON.commodity;
+  const two = document.createElement("div"); two.className = "two";
+  const side = (cls, k, v, u) => {
+    const d = document.createElement("div"); d.className = "side " + cls;
+    const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k;
+    const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v;
+    const uu = document.createElement("div"); uu.className = "u"; uu.textContent = u;
+    d.append(kk, vv, uu); two.appendChild(d);
+  };
+  side("b", "3 places sell it", num(NEON.buy.low) + " – " + num(NEON.buy.high), "all of them in Pyro");
+  side("s", "19 places buy it", num(NEON.sell.low) + " – " + num(NEON.sell.high), "4 of them in Stanton");
+  h.append(nm, two);
+  body.appendChild(h);
+
+  /* BUY side — complete, cheapest first, exactly as `buyAt` arrives. */
+  rigSec(body, "Buy it at", "cheapest first");
+  const picked = NEON.buyAt[1];   // Last Landings — the one with real stock behind it
+  for (const b of NEON.buyAt) {
+    placeRow(body, {
+      side: "b", picked: b === picked, name: b.terminalShort, system: b.system, body: b.body,
+      price: b.price, stock: num(b.scu) + " SCU",
+      age: tdAge(ageOf(b.asOf)) + " old", ageCls: tdAgeClass(ageOf(b.asOf)),
+      btn: b === picked ? "loading here ✓" : "load here",
+      btnTitle: "Price the sell side against this terminal",
+    });
+  }
+
+  /* SELL side — priced against the chosen buy, so every row states what this run makes. Complete,
+     not a top-N: the whole point is that the safe drop-off is visible. */
+  const pairs = pairingsFor(NEON, BOARD.capacityScu)
+    .filter((p) => p.from.terminalShort === picked.terminalShort);
+  rigSec(body, "Take it to", "19 places · from " + picked.terminalShort);
+
+  /* NEW — what the safer choice costs, in words, computed from the same rows. The best-paying
+     drop-off and the best-per-hour drop-off are different terminals in different systems, which is
+     precisely the decision a ranked leaderboard cannot show. */
+  const byMoney = [...pairs].sort((a, b) => b.profit - a.profit)[0];
+  const byHour = [...pairs].sort((a, b) => b.profitPerHour - a.profitPerHour)[0];
+  if (byMoney && byHour && byMoney !== byHour) {
+    const t = document.createElement("div"); t.className = "tradeoff";
+    t.innerHTML = "";
+    const mk = (s, cls) => { const e = document.createElement(cls || "span"); e.textContent = s; return e; };
+    t.append(
+      mk("Two different answers. "),
+      mk(byMoney.to.terminalShort + " (" + byMoney.to.system + ")", "b"),
+      mk(" clears " + tdMoney(byMoney.profit) + " in ~" + byMoney.minutes + " min. "),
+      mk(byHour.to.terminalShort + " (" + byHour.to.system + ")", "b"),
+      mk(" clears " + tdMoney(byHour.profit) + " in ~" + byHour.minutes + " min — "
+        + tdMoney(byMoney.profit - byHour.profit) + " less, but you never leave the system."),
+    );
+    body.appendChild(t);
+  }
+
+  for (const p of pairs.slice(0, 6)) {
+    placeRow(body, {
+      side: "s", name: p.to.terminalShort, system: p.to.system, body: p.to.body,
+      price: p.to.price,
+      stock: p.to.scu === null ? "demand unknown" : num(p.to.scu) + " SCU wanted",
+      age: tdAge(ageOf(p.to.asOf)) + " old", ageCls: tdAgeClass(ageOf(p.to.asOf)),
+      gain: "+" + tdMoney(p.profit) + " · " + p.minutes + "m",
+      btn: "+ Route", btnTitle: "Sequence " + picked.terminalShort + " → " + p.to.terminalShort,
+    });
+  }
+
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+/**
+ * The Route tab. Clicking a stop name opens the SAME place list the dossier draws — so the picker
+ * is not a second implementation of "where can this go", it is the dossier, inline.
+ *
+ * 🔴 The bug today: GET /api/hauling/places ranks "places you have used before" and then all 1,125
+ * rows of `locations.json`, which on a commodity leg is a list of places the run cannot start from.
+ * ⚠️ SCOPED TO COMMODITY LEGS. A contract stop is anonymous coordinates; the price table has no
+ * opinion about it and the existing list is right there.
+ */
+function renderRoute() {
+  rigHead(PANEL, "Route");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+
+  rigSec(body, "Trip 1", "2 stops · 14 min");
+
+  const s1 = document.createElement("div"); s1.className = "stop pickup";
+  const n1 = document.createElement("div"); n1.className = "num"; n1.textContent = "↑";
+  const m1 = document.createElement("div"); m1.className = "mid";
+  const nm1 = document.createElement("div"); nm1.className = "nm editable";
+  const t1 = document.createElement("span"); t1.className = "nmt"; t1.textContent = "1. PICK UP — Last Landings";
+  const pen = document.createElement("span"); pen.className = "pen"; pen.textContent = "✎";
+  nm1.append(t1, pen);
+  const a1 = document.createElement("div"); a1.className = "acts"; a1.textContent = "Neon — your own buy";
+  m1.append(nm1, a1);
+  s1.append(n1, m1);
+  body.appendChild(s1);
+
+  rigSec(body, "Load it at", "3 places sell Neon");
+  for (const b of NEON.buyAt) {
+    placeRow(body, {
+      side: "b", picked: b.terminalShort === "Last Landings",
+      name: b.terminalShort, system: b.system, body: b.body, price: b.price,
+      stock: num(b.scu) + " SCU",
+      age: tdAge(ageOf(b.asOf)) + " old", ageCls: tdAgeClass(ageOf(b.asOf)),
+      btn: b.terminalShort === "Last Landings" ? "this stop ✓" : "move here",
+      btnTitle: "Make this the pickup for the Neon leg",
+    });
+  }
+
+  const s2 = document.createElement("div"); s2.className = "stop dropoff";
+  const n2 = document.createElement("div"); n2.className = "num"; n2.textContent = "↓";
+  const m2 = document.createElement("div"); m2.className = "mid";
+  const nm2 = document.createElement("div"); nm2.className = "nm editable";
+  const t2 = document.createElement("span"); t2.className = "nmt"; t2.textContent = "2. DROP OFF — Patch City";
+  const pen2 = document.createElement("span"); pen2.className = "pen"; pen2.textContent = "✎";
+  nm2.append(t2, pen2);
+  const a2 = document.createElement("div"); a2.className = "acts"; a2.textContent = "Neon · 120 SCU · sells at 19,000";
+  const tons = document.createElement("div"); tons.className = "tons";
+  tons.textContent = "click the name for the 19 places that buy it";
+  m2.append(nm2, a2, tons);
+  const rt = document.createElement("div"); rt.className = "rt"; rt.textContent = "+575k";
+  s2.append(n2, m2, rt);
+  body.appendChild(s2);
+
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+({ rest: renderRest, search: renderSearch, route: renderRoute }[STATE] || renderRest)();
+</script>
+</body>
+</html>

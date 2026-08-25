@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Commodities tab — three mockups</title>
+<style>
+  /* ⚠️ This page is the COMPARE RIG, not the design. None of this styling is proposed for the
+     widget; it exists so three options can be put side by side at real widget size. Everything
+     inside the frames below is the real widget chrome. */
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: #101315; color: #c8d4da;
+    font: 13px/1.5 "Inter", system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: #0b0e10;
+    border-bottom: 1px solid #23303a; padding: 10px 16px; }
+  h1 { margin: 0 0 2px; font-size: 15px; font-weight: 700; letter-spacing: .02em; color: #e6f1f6; }
+  .sub { font-size: 11.5px; color: #6f8794; }
+  .ctl { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 9px; }
+  .ctl label { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: #6f8794;
+    display: flex; gap: 5px; align-items: center; }
+  select, .seg button { font: inherit; font-size: 12px; background: #161d22; color: #cfe0e8;
+    border: 1px solid #2b3a45; border-radius: 5px; padding: 3px 7px; }
+  .seg { display: inline-flex; gap: 3px; }
+  .seg button { cursor: pointer; }
+  .seg button.on { background: #24424f; border-color: #3d7c92; color: #d8f0f8; }
+  main { padding: 16px; }
+  .stage { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .frame { }
+  .cap { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: #7d97a4;
+    margin-bottom: 6px; }
+  .cap b { color: #d6e8f0; font-weight: 700; }
+  iframe { border: 0; display: block; background: #14171a; }
+  .why { max-width: 1360px; margin: 22px 0 8px; font-size: 12.5px; line-height: 1.75; color: #93a9b5; }
+  .why b { color: #d6e8f0; }
+  .why code { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: #9fd6e6; }
+  .note { margin-top: 10px; padding: 9px 12px; border-left: 2px solid #3d7c92; background: #131b20;
+    font-size: 12px; line-height: 1.65; color: #9fb4bf; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Commodities tab — three mockups</h1>
+  <div class="sub">Real widget chrome, real UEX data (captured 2026-08-24), real widget size.
+    Each frame below is exactly the size the widget is on the canvas.</div>
+  <div class="ctl">
+    <label>Option
+      <span class="seg" id="opt">
+        <button data-v="option-a-filter.html" class="on">A · search filters the board</button>
+        <button data-v="option-b-funnel.html">B · what → buy at → sell at</button>
+        <button data-v="option-c-dossier.html">C · commodity dossier</button>
+      </span>
+    </label>
+    <label>Width
+      <span class="seg" id="wid">
+        <button data-v="440" class="on">440 (default)</button>
+        <button data-v="320">320 (minimum)</button>
+        <button data-v="700">700 (widened)</button>
+      </span>
+    </label>
+    <label>Skin
+      <select id="skin">
+        <option value="">mobiGlas (default)</option>
+        <option value="drake">Drake</option>
+        <option value="anvil">Anvil</option>
+        <option value="rsi">RSI</option>
+        <option value="origin">Origin</option>
+        <option value="crusader">Crusader</option>
+        <option value="misc">MISC</option>
+        <option value="aegis">Aegis</option>
+        <option value="argo">Argo</option>
+        <option value="banu">Banu</option>
+        <option value="cnou">C.O.</option>
+        <option value="esperia">Esperia</option>
+        <option value="gatac">Gatac</option>
+        <option value="greys">Greycat</option>
+        <option value="kruger">Kruger</option>
+        <option value="mirai">Mirai</option>
+      </select>
+    </label>
+  </div>
+</header>
+
+<main>
+  <div class="stage" id="stage"></div>
+  <div class="why" id="why"></div>
+</main>
+
+<script>
+const STATES = [
+  ["rest",   "At rest",          "the best runs, as today"],
+  ["search", "Searched: Neon",   "where to buy it, where to sell it"],
+  ["route",  "A route",          "what the pickup picker offers"],
+];
+
+const COPY = {
+  "option-a-filter.html": {
+    h: "Option A — search filters the board",
+    p: "<b>One kind of row, always.</b> A search field over the existing list; typing a commodity "
+      + "ranks every pairing of its buy terminals against its sell terminals instead of only the "
+      + "ones that reached the global top 25. Neon has 3 buy terminals and 19 sell terminals, so a "
+      + "Neon search is 57 runs, ranked. The <code>buy in</code> pills gain a <code>sell in</code> "
+      + "twin, which is the whole of “get me out of Pyro”."
+      + "<br><b>Optimises for:</b> continuity and cost — a player who never types cannot tell it "
+      + "from today. <b>Costs:</b> the answer is still a money ranking, so a safer route is found "
+      + "by reading down rather than by looking. <b>“+ Route” fix:</b> one declaration "
+      + "(<code>margin-left:auto</code>) puts the button in its own column at the right edge.",
+  },
+  "option-b-funnel.html": {
+    h: "Option B — what → buy at → sell at",
+    p: "<b>Three constraint slots, each only offering what the one above permits.</b> This is Sub's "
+      + "sentence built as a control. With all three empty the body is exactly today's leaderboard; "
+      + "each slot you fill narrows it, and the body always shows the options for the first slot you "
+      + "have not filled. The route page's picker is the same component, so an invalid place is "
+      + "unreachable in both places for the same reason."
+      + "<br><b>Optimises for:</b> steering — “what can I do from where I'm standing” and “sell it "
+      + "in Stanton” are one click each. <b>Costs:</b> ~78px of chrome before any content, and the "
+      + "most state of the three. <b>“+ Route” fix:</b> a right rail carrying the profit figure and "
+      + "the button — literally the same column as the price.",
+  },
+  "option-c-dossier.html": {
+    h: "Option C — the commodity dossier",
+    p: "<b>Search returns places, not runs.</b> Every terminal that sells Neon and every terminal "
+      + "that buys it, complete, with the system as the loudest thing on the row that is not money. "
+      + "Pick a buy and the sell list re-prices against it. It states the trade-off in words: on "
+      + "these real numbers, leaving Pyro pays <b>more per run and less per hour</b> — a shape a "
+      + "leaderboard cannot show, because a leaderboard sorts by one of those."
+      + "<br><b>Optimises for:</b> seeing the whole option space, which is what a player choosing "
+      + "safety over money actually needs. <b>Costs:</b> two row shapes on one tab, and the "
+      + "leaderboard is demoted below the search field. <b>“+ Route” fix:</b> right rail, aligned "
+      + "under the price.",
+  },
+};
+
+let opt = "option-a-filter.html", wid = 440, skin = "";
+
+function seg(id, fn) {
+  document.getElementById(id).addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    [...b.parentNode.children].forEach((c) => c.classList.toggle("on", c === b));
+    fn(b.dataset.v);
+  });
+}
+seg("opt", (v) => { opt = v; draw(); });
+seg("wid", (v) => { wid = Number(v); draw(); });
+document.getElementById("skin").addEventListener("change", (e) => { skin = e.target.value; draw(); });
+
+function draw() {
+  const stage = document.getElementById("stage");
+  stage.textContent = "";
+  for (const [state, name, hint] of STATES) {
+    const f = document.createElement("div"); f.className = "frame";
+    const cap = document.createElement("div"); cap.className = "cap";
+    const b = document.createElement("b"); b.textContent = name;
+    cap.append(b, document.createTextNode(" — " + hint));
+    const ifr = document.createElement("iframe");
+    ifr.width = wid; ifr.height = 620;
+    ifr.src = opt + "?embedded&state=" + state + (skin ? "&theme=" + skin : "");
+    f.append(cap, ifr);
+    stage.appendChild(f);
+  }
+  const c = COPY[opt];
+  document.getElementById("why").innerHTML = "<b>" + c.h + "</b><br>" + c.p
+    + "<div class='note'>Widget size is a real constraint: <code>canvas.js</code> gives hauling "
+    + "<code>w 440, h 620, minW 320, maxW 1200</code>. Check every option at 320 before judging it "
+    + "— that is the width where a design either holds or folds.</div>";
+}
+draw();
+</script>
+</body>
+</html>

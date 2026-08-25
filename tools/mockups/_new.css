@@ -1,0 +1,199 @@
+/**
+ * EVERYTHING IN THIS FILE IS PROPOSED. Nothing here exists in the shipping widget.
+ *
+ * `_hauling-style.css` beside it is a VERBATIM copy of the `<style>` block in `overlay/hauling.html`
+ * — that file is what the widget looks like today and it is not edited. Splitting them this way
+ * means the whole cost of a design can be read as one file, and a design that needs less CSS is
+ * visibly a design that needs less CSS.
+ *
+ * All three options load this whole file; each uses only its own block. Colours are drawn from
+ * tokens that are defined in every skin (`--green`, `--cyan`, `--gold`, `--amber`, `--red`).
+ * ⛔ `--good` is defined in NO theme — `var(--good)` renders colourless while looking deliberate.
+ */
+
+/* ══ SHARED: the "+ Route" fix ═══════════════════════════════════════════════
+   Sub: "It would look a lot better if it was right justified. Right now it's a massive pill right
+   next to the smaller pills for the different commodities."
+
+   Two answers, and each option picks one so they can be compared:
+     (1) `.tdchips .pushright` — the button keeps its place in the chip row but is shoved to the
+         right edge. One declaration. Used by option A.
+     (2) `.rail` — the profit figure AND the button leave the text block for a right-hand column,
+         which is the "same column as the price" reading. Used by options B and C. */
+
+.tdchips .pushright { margin-left: auto; }
+
+/* The rail is the LAST child of the row, so its right edge comes from the row's own padding and
+   one right edge is guaranteed across every row with no spacer element to keep in sync. */
+.tdrow.railed .mid { min-width: 0; }
+.tdrow.railed .rail {
+  flex: none; display: flex; flex-direction: column; align-items: flex-end;
+  justify-content: flex-start; gap: 1px; margin-left: 6px; text-align: right;
+}
+.tdrow.railed .rail .rp { display: flex; align-items: baseline; }
+.tdrow.railed .rail .rk {
+  font-size: 8.5px; color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase;
+}
+/* Under the price, hard right, and SMALLER than the profit above it — the money is what the eye
+   should land on first, the control is what the hand reaches for second. */
+.tdrow.railed .rail .hbtn {
+  margin-top: 5px; font-size: 10px; padding: 3px 7px; height: auto;
+}
+
+/* ══ OPTION A: a search field over the existing board ════════════════════════ */
+
+.tdfind { display: flex; align-items: center; gap: 6px; padding: 6px 12px 7px;
+  border-bottom: 1px solid var(--divider); }
+.tdfind .gl { flex: none; font-size: 12px; color: var(--cyan-dim); }
+.tdfind input {
+  flex: 1; min-width: 0; font-family: var(--sans); font-size: 12.5px; color: var(--cyan-text);
+  background: rgba(0, 0, 0, 0.25); border: 1px solid var(--divider); border-radius: 6px;
+  padding: 4px 8px;
+}
+.tdfind input::placeholder { color: var(--faint); }
+.tdfind input:focus { outline: none; border-color: var(--cyan); }
+.tdfind .clr {
+  flex: none; cursor: pointer; color: var(--faint); font-size: 13px; padding: 0 3px; background: none;
+  border: none;
+}
+
+/* The autocomplete over the commodity names. Same shape as `.psug`, but in flow under the field
+   rather than absolutely positioned — see the note in hauling-tab-trade.js about the first cut of
+   the commodity input, which rendered below the panel because it lived inside `.psug`. */
+.tdac { border-bottom: 1px solid var(--divider); background: rgba(0, 0, 0, 0.22); }
+.tdac div { display: flex; align-items: baseline; gap: 6px; padding: 4px 12px; font-size: 12px;
+  color: var(--cyan-text); cursor: pointer; }
+.tdac div.on, .tdac div:hover { background: rgba(var(--accent-rgb), 0.22); }
+.tdac .h { margin-left: auto; font-size: 10px; color: var(--faint); font-family: var(--mono); }
+
+/* ══ SHARED: the commodity header strip (A and C) ════════════════════════════
+   Two ranges and two terminal counts, which is the whole of what `/api/trade/commodity` returns
+   in summary form. It states the SPREAD, because the spread is the decision. */
+
+.cmdhead { padding: 8px 12px 9px; border-bottom: 1px solid var(--divider);
+  background: rgba(var(--accent-rgb), 0.05); }
+.cmdhead .nm { font-family: var(--sans); font-size: 15px; font-weight: 700; color: var(--cyan-bright);
+  letter-spacing: 0.02em; }
+.cmdhead .two { display: flex; gap: 14px; margin-top: 4px; flex-wrap: wrap; }
+.cmdhead .side { min-width: 0; }
+.cmdhead .side .k { font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--faint); }
+.cmdhead .side .v { font-family: var(--mono); font-size: 13px; margin-top: 1px; }
+.cmdhead .side.b .v { color: var(--gold); }
+.cmdhead .side.s .v { color: var(--green); }
+.cmdhead .side .u { font-size: 9.5px; color: var(--faint); margin-top: 1px; }
+
+/* ══ OPTION B: the three constraint slots ═══════════════════════════════════
+   WHAT → BUY AT → SELL AT. An unset slot is a filter that is not applied, so with all three unset
+   the list underneath is exactly today's leaderboard. Each slot only ever offers values the one
+   above it permits, which is what makes an invalid pick unreachable rather than merely discouraged. */
+
+.funnel { border-bottom: 1px solid var(--divider); background: rgba(0, 0, 0, 0.16); }
+.slot { display: flex; align-items: center; gap: 6px; padding: 4px 12px; min-height: 26px; }
+.slot + .slot { border-top: 1px solid rgba(var(--accent-rgb), 0.08); }
+.slot .k { flex: none; width: 52px; font-size: 8.5px; font-weight: 700; letter-spacing: 0.11em;
+  text-transform: uppercase; color: var(--faint); }
+.slot .v { flex: 1; min-width: 0; font-size: 12.5px; color: var(--cyan-bright);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text; }
+/* An UNSET slot must not read like a value. It is dim, italic and says what it would do. */
+.slot .v.off { color: var(--faint); font-style: italic; }
+.slot .h { flex: none; font-size: 10px; color: var(--faint); font-family: var(--mono); }
+.slot .x { flex: none; background: none; border: none; color: var(--faint); cursor: pointer;
+  font-size: 12px; padding: 0 2px; }
+/* A slot that cannot be filled yet is not offered as if it could — the third slot before a buy is
+   picked would otherwise look broken rather than sequenced. */
+.slot.locked { opacity: 0.45; }
+.slot.open { background: rgba(var(--accent-rgb), 0.1); }
+.slot input {
+  flex: 1; min-width: 0; font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+  color: var(--cyan-bright); background: transparent; border: none; border-bottom: 1px solid var(--cyan);
+  padding: 1px 0;
+}
+.slot input:focus { outline: none; }
+
+/* The slot's own dropdown. In flow, under the funnel, so it can never render past the panel edge. */
+.slotlist { max-height: 190px; overflow-y: auto; background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid var(--divider); border-bottom: 1px solid var(--divider); }
+.slotlist .o { display: flex; align-items: baseline; gap: 6px; padding: 5px 12px; cursor: pointer; }
+.slotlist .o:hover, .slotlist .o.on { background: rgba(var(--accent-rgb), 0.2); }
+.slotlist .o .nm { flex: 1; min-width: 0; font-size: 12px; color: var(--cyan-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slotlist .o .pr { flex: none; font-family: var(--mono); font-size: 11.5px; }
+.slotlist .o.buy .pr { color: var(--gold); }
+.slotlist .o.sell .pr { color: var(--green); }
+.slotlist .o .sub { display: block; font-size: 9.5px; color: var(--faint); font-weight: 400; }
+
+/* ══ OPTION C: place rows ══════════════════════════════════════════════════
+   A place row is NOT a run row, and it is not pretending to be one. It answers "where", where the
+   run row answers "how much" — so it leads with the place and carries the price as a column. */
+
+.plist { }
+.prow { display: flex; align-items: baseline; gap: 8px; padding: 6px 12px;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+.prow:hover { background: rgba(var(--accent-rgb), 0.07); }
+.prow.picked { background: rgba(var(--accent-rgb), 0.14); }
+.prow .mid { flex: 1; min-width: 0; }
+.prow .nm { font-size: 12.5px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.prow .sub { font-size: 10px; color: var(--faint); margin-top: 1px; display: flex; gap: 5px;
+  align-items: baseline; flex-wrap: wrap; }
+.prow .sub .st { font-family: var(--mono); color: var(--cyan-dim); }
+/* Auto-width, right-aligned, LAST — so every price in the list shares one right edge for free. */
+.prow .rail { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.prow .rail .pr { font-family: var(--mono); font-size: 13.5px; }
+.prow.b .rail .pr { color: var(--gold); }
+.prow.s .rail .pr { color: var(--green); }
+.prow .rail .gain { font-family: var(--mono); font-size: 10.5px; color: var(--cyan-bright); }
+.prow .rail .hbtn { margin-top: 3px; font-size: 10px; padding: 2px 6px; }
+
+/* 🔑 THE SYSTEM IS THE STEERING SIGNAL, so it is the loudest thing in a place row that is not
+   money. "Which of these gets me out of Pyro" has to be answerable by scanning rather than reading.
+   ⚠️ It means A JUMP AWAY, not DANGEROUS. Which system is dangerous depends on where the player is
+   and what they fly; the app knows the jump and does not know the risk, so the badge states the
+   jump and the trade-off line states the money. Anything else would be the app having an opinion
+   it cannot support.
+
+   🔴 COLOUR ALONE DOES NOT SURVIVE THE SKINS, and this was MEASURED rather than assumed. On
+   mobiGlas `home` is cyan #7FE3EF against `away` amber #F5A623 — obvious. On DRAKE the same two
+   tokens compute to rgb(251,178,74) and rgb(246,169,58): two oranges 21 units apart across all
+   three channels, i.e. the distinction is gone on a skin Sub can switch to in one click. So `away`
+   carries a FILL and `home` does not, which no palette can collapse. */
+.sysb { flex: none; font-size: 9px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  border-radius: 3px; padding: 1px 4px; border: 1px solid var(--divider); color: var(--faint);
+  background: transparent; }
+.sysb.home { color: var(--cyan-bright); border-color: var(--border); background: transparent; }
+.sysb.away { color: var(--amber); border-color: rgba(var(--value-rgb), 0.55);
+  background: rgba(var(--value-rgb), 0.18); }
+
+/* A collapsed section header that can be opened. Used for "Best runs right now" when a search has
+   taken the body over, so the leaderboard is never gone — only folded. */
+.sec.fold { cursor: pointer; }
+.sec.fold:hover { color: var(--cyan-dim); }
+.sec .caret { flex: none; color: var(--cyan-dim); font-size: 9px; }
+
+/* ══ SHARED: the constrained place picker on the Route tab ═══════════════════
+   The existing `.psug` gains a header saying WHERE the candidates came from, and each row carries
+   the price and the stock, because a picker that only lists valid places should also say why each
+   one is worth picking. Rows are the shipped `.psug div`; these are the additions. */
+
+.psug .phead { display: block; padding: 4px 8px 3px; font-size: 8.5px; font-weight: 700;
+  letter-spacing: 0.11em; text-transform: uppercase; color: var(--faint);
+  border-bottom: 1px solid var(--divider); cursor: default; }
+.psug .phead:hover { background: none; }
+.psug .pr { flex: none; font-family: var(--mono); font-size: 11px; }
+.psug .buyp { color: var(--gold); }
+.psug .sellp { color: var(--green); }
+/* A quiet footer for the one thing the constrained picker must still allow: a place the price
+   table has never heard of. Refusing free text outright would break naming an anonymous CONTRACT
+   stop, which has nothing to do with the price table. */
+.psug .pfoot { display: block; padding: 4px 8px; font-size: 10px; color: var(--faint);
+  border-top: 1px solid var(--divider); cursor: default; }
+.psug .pfoot:hover { background: none; }
+
+/* ══ SHARED: a "what this costs you" line under a steered result ═════════════
+   When a player picks the safer option, the thing they most need to see is the SIZE of what they
+   gave up. Stated once, in words, never as a bare delta. */
+.tradeoff { padding: 6px 12px; font-size: 11px; line-height: 1.5; color: var(--cyan-dim);
+  background: rgba(var(--accent-rgb), 0.06); border-bottom: 1px solid var(--divider); }
+.tradeoff b { color: var(--cyan-bright); font-weight: 600; }
+.tradeoff .warn { color: var(--amber); }
