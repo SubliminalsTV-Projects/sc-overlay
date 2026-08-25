@@ -188,19 +188,59 @@
      🔴 FIVE CLASSES, FIVE DISTINCT COLOURS — AND THAT WAS NOT TRUE UNTIL FLIGHT `onerow`.
      `poolfill` painted `live` and `fresh` BOTH `var(--green)`, separated only by weight and border
      strength, so the ladder had five rungs and four colours: a price confirmed twenty minutes ago
-     and one read six days ago were the same hue. Sub asked for freshness to read at a glance and
-     that is the rung where the glance matters most, because it is the only one this whole feature
-     can move. `fresh` is `--cyan` now, one step along the same green → cyan → amber → red ladder
-     the containment pills already use, so the two ladders agree and neither invents a colour.
+     and one read six days ago were the same hue.
+
+     🔴 AND `onerow`'s REPAIR — `fresh: --cyan`, `recent: --cyan-dim` — WAS ONLY EVER CORRECT ON
+     ONE SKIN, because it put the ACCENT on two rungs of a SEMANTIC ladder. `--cyan` is the
+     manufacturer's brand colour and its whole job is to be a different hue in every theme, so the
+     SHAPE of the ladder became whatever Drake or Esperia happened to pick. Measured across all 16
+     palettes (`--green`/`--cyan`/`--cyan-dim`/`--amber`/`--red`): **10 adjacent-rung inversions**,
+     and the smallest gap between two neighbouring bands was **ΔE 5.6** — invisible.
+       · argo    — `fresh` ORANGE, `stale` GREEN. A 3-month reading looked SAFER than a 7-hour one.
+       · esperia — `fresh` is #E8455A, i.e. the alarm colour, two rungs below `ancient`.
+       · banu    — `fresh` h14 against `ancient` h11: seven hours and three years, same red.
+       · drake   — `fresh` h27 vs `stale` h35, with a grey-brown `recent` between them. THIS IS THE
+                   ONE SUB SCREENSHOTTED: 7h orange · 32d grey · 8d grey · 3mo orange.
+
+     🔑 SO THE LADDER IS BUILT FROM `--green` AND `--red` AND NOTHING ELSE. Those two are the only
+     tokens whose MEANING is fixed across every skin — green is a green in all 16 (h94–157) and red
+     is a red in all 16 (h0–11) — and interpolating between two fixed endpoints cannot invert, by
+     construction rather than by review. Measured on the same 16: **0 inversions, minimum ΔE 24.4.**
+     It still retints per manufacturer, because the endpoints are still their tokens.
+     🔴 `--amber` IS DELIBERATELY NOT AN ANCHOR, and this is the `--good` trap wearing a new coat:
+     argo declares `--amber: #4FD97A`, a GREEN, in a token named amber. A green→amber ramp collapses
+     to one colour there while reading as perfectly deliberate in the source. Left alone — retinting
+     a manufacturer's semantic palette reaches every widget on that skin and is Sub's call, not a
+     side effect of a pill fix — but do not anchor anything else on `--amber` before checking it.
+     🔑 `in oklch` ARCS THROUGH YELLOW AND ORANGE; `in srgb` would cut through muddy olive-brown.
+     If a browser ever fails to support it the declaration is invalid at computed-value time and the
+     pill inherits its colour — which is exactly the failure the suite's "not one of them is the
+     inherited colour of an unstyled pill" assertion catches, so this is guarded rather than hoped.
      🔑 Assert DISTINCTNESS, never the named values — a skin is free to retint any of them, and a
      test pinning "rgb(46,230,160)" would go red on a manufacturer theme doing its job. */
   .age.live    { color: var(--green); font-weight: 700;
     border-color: color-mix(in srgb, var(--green) 60%, transparent);
     background: color-mix(in srgb, var(--green) 18%, transparent); }
-  .age.fresh   { color: var(--cyan); }
-  .age.recent  { color: var(--cyan-dim); }
-  .age.stale   { color: var(--amber); }
+  .age.fresh   { color: color-mix(in oklch, var(--green) 75%, var(--red)); }
+  .age.recent  { color: color-mix(in oklch, var(--green) 50%, var(--red)); }
+  .age.stale   { color: color-mix(in oklch, var(--green) 25%, var(--red)); }
   .age.ancient { color: var(--red); }
+
+  /* ── 🔴 THE SOURCE WORD, INSIDE THE PILL ────────────────────────────────────────────────────
+     Sub, twice, and the second time exactly: *"maybe it could be four hours ago and then a space
+     and then say SCO"* → *"[5h SCO] is what I was looking for."* It was two `.tag` spans, so the
+     chip styling split one phrase into two boxes.
+
+     🔴 FRESHNESS AND SOURCE ARE ORTHOGONAL AND MUST STAY SO. The pill's COLOUR says how current
+     the reading is; the WORD says who took it. So this rule sets no colour of its own — it
+     inherits `currentColor` from whichever band class landed — and it is styled IDENTICALLY for
+     `UEX` and `SCO`. The moment the source word picks its own hue, the deleted bright/dim split is
+     back: colour would be answering two questions at once and neither legibly.
+     🔑 The subordination is the SAME treatment `.unit` gives "aUEC" inside `.price` — smaller,
+     lighter, tracked out — so the number stays what the eye compares down the column. Constant
+     across both marks, so it encodes nothing. */
+  .age .src { font-size: 0.86em; font-weight: 700; letter-spacing: 0.08em; opacity: 0.72;
+    margin-left: 1px; }
   .more { font-size: 9.5px; color: var(--faint); margin-top: 6px; padding-top: 5px;
     border-top: 1px solid rgba(var(--accent-rgb), 0.07); }
 
@@ -232,13 +272,17 @@
      name a shop, the row now sits in its place group with the game's own name on it, which makes
      exactly the same modest claim without a heading to itself.
 
-     🔑 SAME CHIP FAMILY AS `.age`, one step dimmer. It qualifies the pill beside it rather than
-     competing with it, and `--cyan` retints with all 16 skins.
-     🔑 THE `age` VARIANT IS DIMMER STILL: that row's NUMBER is UEX's and only its age is ours, so
-     the mark says less and has to look like it says less. */
-  .tag.sco { color: var(--cyan); font-family: var(--mono); letter-spacing: 0.08em;
-    font-weight: 700; font-size: 8.5px; }
-  .tag.sco.sco-age { color: var(--cyan-dim); }
+     🔴 IT IS NOT A CHIP OF ITS OWN ANY MORE — `.tag.sco` AND `.tag.sco.sco-age` ARE DELETED, AND
+     THE SECOND OF THOSE IS THE POINT. It keyed off `confirmed.setPrice`: bright when our own
+     observation supplied the number, dim when only the age was ours. Sub could not decode it, and
+     there was nothing to decode. `foldsOnto` (`src/shop-placement.ts`) only ever folds a
+     place-level confirmation when `observedPrice === rowPrice`, so the "dim" case is a number WE
+     VERIFIED that happens to equal the one UEX already had. The split encoded which database typed
+     it first — bookkeeping, not information. Sub: *"I don't see the reason to attribute the price
+     to UEX just because we got the price from them first and it hasn't changed."*
+     🔴 `confirmed.setPrice` STAYS IN THE PAYLOAD and still reads on the tooltip and in the tests;
+     what was deleted is a COLOUR that claimed to mean something to the player.
+     The mark itself now lives INSIDE the age pill — see `.age .src` above. */
   /* ⚠️ `.tag.seen` (the contributor count) and `.tag.mine` (the "you" footnote) LIVED HERE AND ARE
      GONE — both are tooltips on the SCO mark now, on Sub's call: *"'2 people' can be a tool tip
      when they hover."* Do not reintroduce either as a chip without him asking; every one of them
@@ -968,52 +1012,78 @@
         // bottoms out at "today" because a survey quote is a median 83 days old and days are the
         // interesting unit there. A confirmation can be four minutes old, and rounding that to
         // "today" throws away the only thing that is new.
-        const a = document.createElement("span");
-        const shownAt = cf ? cf.asOf : q.asOf;
-        a.className = "age " + ageBand(shownAt);
-        a.textContent = cf ? receiptAge(shownAt) : ageOf(shownAt);
-        a.title = cf
-          ? "Last confirmed in game " + receiptAge(shownAt) + " ago"
-            + (q.observedOnly
-              ? "."
-              : cf.setPrice
-                ? " — this is a price a player was actually charged, not the survey figure."
-                : " — a player was charged this same price at this station "
-                  + receiptAge(shownAt) + " ago. The number is UEX's and has not moved.")
-            + " The colour is how recently somebody checked, not how wrong it might be — shop "
-            + "prices in Star Citizen are fixed rather than a live market."
-          : "Last reported to UEX " + ageOf(shownAt).replace(/^(\d+)d$/, "$1 days ago")
-            + ". Shop prices in Star Citizen are fixed rather than a live market — 99.6% of them "
-            + "were never once seen to change over a month — so an old reading is usually still "
-            + "correct. The colour is how recently someone checked, not how wrong it might be.";
-        row.appendChild(a);
-
-        // 🔴 "SCO", AND SUB NAMED IT — *"maybe it could be four hours ago and then a space and then
-        // say SCO. Now of course we'll need to let the player know that it's coming from us and
-        // not UEX."* It is a source mark, so it rides immediately after the age it qualifies and
-        // before the price, exactly where the eye already is.
         //
-        // 🔑 IT IS NOT A SECOND AGE AND MUST NEVER GROW INTO ONE. The instinct is to put the
-        // contributor count or "confirmed" in here; both already have homes, and a mark that
-        // accumulates words becomes the second block again, four characters at a time.
-        if (cf) {
+        // 🔴 ONE PILL, NOT TWO — Sub, after seeing `[7h] [SCO]` rendered as two chips:
+        // *"maybe it could be four hours ago and then a space and then say SCO"*, and then
+        // exactly: *"[5h SCO] is what I was looking for."* The age and the source mark were
+        // already adjacent; what split them was the CHIP STYLING, which gave each its own box.
+        // They are one phrase — "seven hours ago, according to us" — so they are one box.
+        //
+        // 🔴 AND BOTH SOURCES ARE LABELLED. A lone unexplained SCO is the question Sub knew he
+        // would be asked on stream: *"people are going to inevitably ask me, what does SCO mean?
+        // Let's go ahead and just remove confusion and just put UEX after the UEX price."* The
+        // CONTRAST is the explanation — `[8d UEX]` beside `[7h SCO]` teaches what both mean with
+        // no legend, where one mark alone teaches nothing and invites the question.
+        //
+        // 🔑 THE MARK MAY NEVER GROW WORDS. Same rule it carried as a chip: the contributor count
+        // and the "you" footnote are tooltips, and a mark that accumulates words becomes the
+        // second block again four characters at a time.
+        const shownAt = cf ? cf.asOf : q.asOf;
+        // 🔴 NO STATABLE AGE ⇒ NO PILL, and a bare source word is the wrong answer rather than a
+        // lesser one. The pill answers "how current is this?"; without a date there is no answer,
+        // and `UEX` alone would print a mark whose whole job is to sit beside an age, in the one
+        // colour the band ladder cannot supply — i.e. the inherited one, which is precisely the
+        // colourless-but-deliberate-looking failure `--good` taught this file. Silence is honest
+        // and costs nothing: the row still carries its shop and its price.
+        // ⚠️ IT CANNOT HAPPEN TODAY AND IS STILL WRITTEN DOWN. Both feeds refuse an undated quote
+        // before the widget sees it — `item-shops.ts` drops `m <= 0` (all 24,288 shipped item
+        // quotes carry a real date) and `verse-commodities.ts` drops a quote with no `asOf`. This
+        // is the renderer's behaviour if either guard is ever relaxed, pinned by the suite so it
+        // is a decision rather than whatever `ageBand(null)` happens to return.
+        const dated = typeof shownAt === "number" && shownAt > 0;
+        if (dated) {
+          const a = document.createElement("span");
+          a.className = "age " + ageBand(shownAt);
+          a.textContent = cf ? receiptAge(shownAt) : ageOf(shownAt);
+          // The source word rides INSIDE the pill, as a child so it can be subordinated
+          // typographically without taking a colour of its own — see `.age .src`.
           const src = document.createElement("span");
-          src.className = "tag sco" + (cf.setPrice ? "" : " sco-age");
-          src.textContent = "SCO";
-          // Who is behind it, in words, on the mark that says it is ours. `people` reads
-          // "1 player" / "5 different players", and adds the receipt count only where it differs
-          // from the number of people — otherwise it is the same fact stated twice.
-          const n = typeof cf.contributors === "number" && cf.contributors > 0 ? cf.contributors : 1;
-          const people = n === 1 ? "1 player has" : n + " different players have";
-          const also = typeof cf.samples === "number" && cf.samples > n
-            ? " (" + cf.samples + " purchases in all)" : "";
-          src.title = (cf.setPrice
-            ? "This figure came from SC Overlay players' own game logs, not from UEX's survey. "
-            : "SC Overlay players confirmed this price at this station, at a shop we cannot yet "
-              + "tell apart from this one — so the age is theirs and the number is still UEX's. ")
-            + people + " paid this here" + also + "."
-            + (cf.mine ? " One of them was you." : "");
-          row.appendChild(src);
+          src.className = "src";
+          src.textContent = cf ? " SCO" : " UEX";
+          a.appendChild(src);
+
+          // ONE TOOLTIP, because there is now one element. It carries what the two used to say
+          // between them: how to read the colour, and — where the reading is ours — who is behind
+          // it. `people` reads "1 player" / "5 different players", and adds the receipt count only
+          // where it differs from the number of people, or it states the same fact twice.
+          if (cf) {
+            const n = typeof cf.contributors === "number" && cf.contributors > 0 ? cf.contributors : 1;
+            const people = n === 1 ? "1 player has" : n + " different players have";
+            const also = typeof cf.samples === "number" && cf.samples > n
+              ? " (" + cf.samples + " purchases in all)" : "";
+            a.title = "SCO — confirmed in game by SC Overlay players " + receiptAge(shownAt)
+              + " ago, not surveyed by UEX."
+              // 🔑 `setPrice` STILL READS HERE. Deleting the bright/dim COLOUR did not delete the
+              // distinction; it moved it somewhere it can be stated in words instead of asking
+              // the player to decode two shades of one hue.
+              + (q.observedOnly
+                ? ""
+                : cf.setPrice
+                  ? " This is a price a player was actually charged, not the survey figure."
+                  : " A player was charged this same price at this station — the number matches"
+                    + " UEX's and has not moved.")
+              + " " + people + " paid this here" + also + "."
+              + (cf.mine ? " One of them was you." : "")
+              + " The colour is how recently somebody checked, not how wrong it might be — shop "
+              + "prices in Star Citizen are fixed rather than a live market.";
+          } else {
+            a.title = "UEX — last reported to UEX's community survey "
+              + ageOf(shownAt).replace(/^(\d+)d$/, "$1 days ago")
+              + ". Shop prices in Star Citizen are fixed rather than a live market — 99.6% of them "
+              + "were never once seen to change over a month — so an old reading is usually still "
+              + "correct. The colour is how recently someone checked, not how wrong it might be.";
+          }
+          row.appendChild(a);
         }
 
         // 🔑 THE UNIT IS NAMED (Sub: "it just says seven"). Dimmed child span so the AMOUNT is what

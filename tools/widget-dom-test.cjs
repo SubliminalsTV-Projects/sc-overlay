@@ -2770,7 +2770,14 @@ const VERSEPOOL = `(async () => {
   // most dangerous failure this harness has — it passes while measuring nothing.
   const rows = [...document.querySelectorAll("#results .shops .grow")];
   ok("the fixture rendered a shop list", rows.length === 4, rows.length + " rows");
-  const marked = rows.filter((r) => !!r.querySelector(".sco"));
+  // 🔴 THE SOURCE MARK LIVES INSIDE THE AGE PILL NOW — flight onepill. It used to be a .tag chip
+  // sitting beside the pill, which is exactly what made Sub read one phrase as two boxes.
+  const srcOf = (r) => {
+    if (!r) return "(no row)";
+    const s = r.querySelector(".age .src");
+    return s ? (s.textContent || "").trim() : "(no .src)";
+  };
+  const marked = rows.filter((r) => srcOf(r) === "SCO");
   ok("three of those rows carry a confirmation", marked.length === 3, marked.length);
 
   // ══ 🔴 THERE IS NO SECOND LIST ══════════════════════════════════════════════════════════════
@@ -2826,28 +2833,85 @@ const VERSEPOOL = `(async () => {
        return !!a && !!b && getComputedStyle(a).color !== getComputedStyle(b).color;
      })(), bandOf(cargo) + " vs " + bandOf(quiet));
 
-  // ══ 🔴 SCO — the mark Sub named ═════════════════════════════════════════════════════════════
-  const scoOf = (r) => (r ? r.querySelector(".sco") : null);
-  ok("🔴 a confirmed row is marked SCO", (() => {
-       const s = scoOf(cargo);
-       return !!s && (s.textContent || "").trim() === "SCO";
-     })(), cargo ? (cargo.textContent || "").trim() : "(no row)");
-  ok("...and an unconfirmed row is not", !scoOf(quiet),
+  // ══ 🔴 ONE PILL, AND BOTH SOURCES NAMED — flight onepill ════════════════════════════════════
+  // Sub, looking at the two-chip rendering: "maybe it could be four hours ago and then a space and
+  // then say SCO", and then exactly: "[5h SCO] is what I was looking for."
+  const scoOf = (r) => (r ? r.querySelector(".age .src") : null);
+  const pillOf = (r) => (r ? r.querySelector(".age") : null);
+  ok("🔴 a confirmed row is marked SCO", srcOf(cargo) === "SCO",
+     cargo ? (cargo.textContent || "").trim() : "(no row)");
+  // 🔴 THE HALF THAT USED TO BE MISSING. An unconfirmed row carried NO mark at all, so the lone
+  // SCO had nothing to be read against — which is the question Sub knew he would be asked live:
+  // "people are going to inevitably ask me, what does SCO mean?" The contrast is the answer.
+  ok("🔴 ...and an UNCONFIRMED row is marked UEX, not left blank", srcOf(quiet) === "UEX",
      quiet ? (quiet.textContent || "").trim() : "(no row)");
-  // 🔑 It sits between the age and the price, because it qualifies the age.
-  ok("SCO rides immediately after the age it qualifies", (() => {
+  ok("every drawn row names a source, one of exactly two words", (() => {
+       const words = rows.map(srcOf);
+       return words.length === 4 && words.every((w) => w === "SCO" || w === "UEX");
+     })(), rows.map(srcOf).join(" | "));
+
+  // 🔴 ONE BOX, NOT TWO. This is the assertion the flight exists to make true: the mark is a CHILD
+  // of the age pill, so there is exactly one bordered chip carrying "7h SCO" rather than a [7h]
+  // and a [SCO]. Asserted structurally AND by counting the chips, because either alone can pass on
+  // a rendering Sub would still call two pills.
+  ok("🔴 the source mark is INSIDE the age pill, not a chip beside it", (() => {
+       const p = pillOf(cargo), s = scoOf(cargo);
+       return !!p && !!s && s.parentElement === p;
+     })(), cargo ? [...cargo.children].map((c) => c.className).join(" / ") : "(no row)");
+  ok("🔴 no .tag chip survives between the age and the price", (() => {
        if (!cargo) return false;
        const kids = [...cargo.children].map((c) => c.className.split(" ")[0]);
        const ai = kids.indexOf("age");
-       return ai >= 0 && kids[ai + 1] === "tag" && kids[ai + 2] === "price";
+       return ai >= 0 && kids[ai + 1] === "price";
      })(), cargo ? [...cargo.children].map((c) => c.className).join(" / ") : "(no row)");
-  // 🔑 The two kinds of fold look different: only one of them supplied the number.
-  ok("a fold that only moved the AGE is marked more quietly than one that moved the price", (() => {
-       const a = scoOf(cargo);
-       const b = scoOf(rowFor("Refinery Shop"));
-       return !!a && !!b && a.className.indexOf("sco-age") >= 0 && b.className.indexOf("sco-age") === -1
-         && getComputedStyle(a).color !== getComputedStyle(b).color;
-     })(), scoOf(cargo) ? scoOf(cargo).className : "(none)");
+  ok("🔴 and the old SCO chip class is gone from the document",
+     document.querySelectorAll(".tag.sco").length === 0,
+     document.querySelectorAll(".tag.sco").length + " .tag.sco");
+  // The pill reads as one phrase, in Sub's own order: number first, then who.
+  // ⚠️ No regex — a suite body IS a template literal, so an escape is eaten before the pattern is
+  // ever compiled and a mangled pattern simply never matches, which passes every must-not check.
+  ok("the pill reads NUMBER then SOURCE, in one string", (() => {
+       const p = pillOf(cargo);
+       const t = p ? (p.textContent || "").trim() : "";
+       const digits = "0123456789";
+       return t.length > 4 && digits.indexOf(t.charAt(0)) >= 0
+         && t.slice(-3) === "SCO" && t.indexOf(" SCO") > 0;
+     })(), pillOf(cargo) ? (pillOf(cargo).textContent || "").trim() : "(no pill)");
+
+  // ══ 🔴 FRESHNESS AND SOURCE ARE ORTHOGONAL ══════════════════════════════════════════════════
+  // The bright/dim SCO split is DELETED. It keyed off confirmed.setPrice — bright when our
+  // observation set the price, dim when only the age was ours — and Sub could not decode it
+  // because there is nothing to decode: foldsOnto only folds a place-level confirmation when the
+  // price it saw already equals the row's, so the dim case is a number we verified. The rule that
+  // replaces it: colour says HOW CURRENT, the word says WHO, and neither may leak into the other.
+  //
+  // 🔑 Cargo (setPrice false) and Refinery (setPrice true) are the two sides of the deleted split
+  // and they must now be styled IDENTICALLY, while their age BANDS legitimately differ.
+  const refinery = rowFor("Refinery Shop");
+  ok("🔴 the two kinds of fold are marked IDENTICALLY — the deleted bright/dim split", (() => {
+       const a = scoOf(cargo), b = scoOf(refinery);
+       if (!a || !b) return false;
+       const ca = getComputedStyle(a), cb = getComputedStyle(b);
+       return ca.opacity === cb.opacity && ca.fontWeight === cb.fontWeight
+         && ca.letterSpacing === cb.letterSpacing;
+     })(), scoOf(cargo) ? "opacity " + getComputedStyle(scoOf(cargo)).opacity
+       + " vs " + (scoOf(refinery) ? getComputedStyle(scoOf(refinery)).opacity : "?") : "(none)");
+  // 🔴 THE POSITIVE HALF, and without it the assertion above is satisfied by a page that styles
+  // nothing at all. The two rows carry DIFFERENT bands (live vs recent), so their pills must
+  // still differ in colour — proving the ladder is live while the source styling is flat.
+  ok("...while their FRESHNESS still separates them", (() => {
+       const a = pillOf(cargo), b = pillOf(refinery);
+       return !!a && !!b && getComputedStyle(a).color !== getComputedStyle(b).color;
+     })(), bandOf(cargo) + " vs " + bandOf(refinery));
+  // 🔴 AND THE SOURCE WORD MAY NOT PULL COLOUR BACK INTO ITSELF. It inherits currentColor from the
+  // band, so a SCO pill and a UEX pill in the SAME band are the same colour — if the word ever
+  // took its own hue, the thing just deleted would be back under another name.
+  ok("🔴 the source word takes no colour of its own — it inherits the band", (() => {
+       const s = scoOf(cargo), p = pillOf(cargo);
+       if (!s || !p) return false;
+       return getComputedStyle(s).color === getComputedStyle(p).color;
+     })(), scoOf(cargo) ? getComputedStyle(scoOf(cargo)).color + " vs "
+       + getComputedStyle(pillOf(cargo)).color : "(none)");
 
   // ══ 🔑 THE COUNT IS A TOOLTIP — Sub, 2026-08-24: "2 people can be a tool tip when they hover" ═
   const face = cargo ? (cargo.textContent || "") : "";
@@ -2855,7 +2919,8 @@ const VERSEPOOL = `(async () => {
      face.indexOf("people") === -1 && face.indexOf("4 ") === -1, face.trim());
   ok("...nor is the you footnote", face.toLowerCase().indexOf("you") === -1, face.trim());
   // Positive half: it still has to be REACHABLE, or this is a deletion rather than a move.
-  const tip = scoOf(cargo) ? (scoOf(cargo).title || "") : "";
+  // 🔑 The tooltip is on the PILL now, because the pill is the one element.
+  const tip = pillOf(cargo) ? (pillOf(cargo).title || "") : "";
   ok("but it IS in the SCO tooltip", tip.indexOf("4 different players") >= 0, tip.slice(0, 120));
   ok("...along with whether one of them was you", tip.indexOf("was you") >= 0, tip.slice(-60));
   ok("and it counts PEOPLE, never the 9 purchases behind them",
@@ -2904,28 +2969,147 @@ const VERSEPOOL = `(async () => {
   // and rendered identically. Probe the real computed colour, require the five to be distinct,
   // AND require none of them to match an unstyled sibling — because a base colour on .age would
   // make the distinctness check pass for free while the pills stayed unpainted.
-  const probe = document.createElement("div");
-  probe.style.position = "absolute";
-  probe.style.left = "-9999px";
   const BANDS = ["live", "fresh", "recent", "stale", "ancient"];
-  const spans = BANDS.map((b) => {
-    const s = document.createElement("span");
-    s.className = "age " + b;
-    s.textContent = "x";
-    probe.appendChild(s);
-    return s;
-  });
-  const bare = document.createElement("span");
-  bare.textContent = "x";
-  probe.appendChild(bare);
-  document.body.appendChild(probe);
-  const cols = spans.map((s) => getComputedStyle(s).color);
-  const bareCol = getComputedStyle(bare).color;
-  probe.remove();
-  ok("🔴 all five recency bands paint DISTINCT colours",
-     new Set(cols).size === BANDS.length, BANDS.join("/") + " = " + cols.join(" | "));
+  // 🔴 DO NOT STRING-PARSE THE COMPUTED COLOUR. getComputedStyle serialises a color-mix() in oklch
+  // as "oklch(0.803 0.167 127.7)" — three SPACE-separated values in a space this metric knows
+  // nothing about — so an rgb() parser returns NaN for exactly the three middle bands. Every
+  // comparison against a NaN is false, so the inversion check below reported ZERO inversions while
+  // measuring nothing at all. Caught by the first run of this very assertion, and it is the
+  // cheapest false pass in the file: the metric was wrong, not the ladder.
+  // 🔑 Let the BROWSER do the conversion. A 1x1 canvas fill accepts any CSS colour and hands back
+  // real bytes, so this works for rgb, oklch and anything either ever becomes.
+  const cvs = document.createElement("canvas");
+  cvs.width = 1; cvs.height = 1;
+  const ctx = cvs.getContext("2d");
+  const rgbOf = (css) => {
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = "#000000";
+    ctx.fillStyle = css;          // ignored silently if unparseable, leaving black
+    ctx.fillRect(0, 0, 1, 1);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  };
+  // How ALARMING a colour reads, as red minus green. A green sits deeply negative, a red deeply
+  // positive, and every warm step between them climbs. Crude on purpose, and measured: it is
+  // strictly monotonic under the shipped ramp in all 16 skins with a minimum step of 25 of 255,
+  // so a threshold of 10 has real headroom without going slack.
+  const alarmOf = (c) => { const v = rgbOf(c); return v[0] - v[1]; };
+  const probeTheme = () => {
+    const probe = document.createElement("div");
+    probe.style.position = "absolute";
+    probe.style.left = "-9999px";
+    const spans = BANDS.map((b) => {
+      const s = document.createElement("span");
+      s.className = "age " + b;
+      s.textContent = "x";
+      probe.appendChild(s);
+      return s;
+    });
+    const bare = document.createElement("span");
+    bare.textContent = "x";
+    probe.appendChild(bare);
+    document.body.appendChild(probe);
+    const cols = spans.map((s) => getComputedStyle(s).color);
+    const bareCol = getComputedStyle(bare).color;
+    probe.remove();
+    return { cols: cols, bareCol: bareCol };
+  };
+
+  // 🔴 SWEEP SKINS, NEVER ONE. This is the whole reason flight onepill touched the ladder: the
+  // rules it replaced painted the fresh band with the cyan token and the recent band with the
+  // cyan-dim one, which are the MANUFACTURER ACCENT and so a different hue in every theme. On
+  // drake — the skin Sub
+  // screenshotted — that rendered 7h orange, 8d grey, 32d grey, 3mo orange; on argo a 3-month
+  // reading came out GREEN while a 7-hour one came out ORANGE. Every one of those skins passed a
+  // one-theme distinctness check, because in the base theme the accent happens to be a cyan
+  // sitting neatly between green and amber. A ladder is only correct if it is correct everywhere.
+  const root = document.documentElement;
+  const themeWas = root.getAttribute("data-theme");
+  // Base plus the four whose accent was measurably breaking the ladder, plus one cool control.
+  const SKINS = ["mobiglas", "drake", "argo", "esperia", "banu", "mirai"];
+  const broken = [];
+  const inverted = [];
+  const flat = [];
+  const unreadable = [];
+  const ends = [];
+  for (const sk of SKINS) {
+    if (sk === "mobiglas") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", sk);
+    const res = probeTheme();
+    if (new Set(res.cols).size !== BANDS.length) broken.push(sk + ": " + res.cols.join("/"));
+    if (res.cols.some((c) => c === res.bareCol)) flat.push(sk + " bare=" + res.bareCol);
+    const alarms = res.cols.map(alarmOf);
+    // The metric has to be LIVE before its verdict means anything — see the canvas note above.
+    if (alarms.some((a) => a !== a)) unreadable.push(sk + ": " + alarms.join("/"));
+    ends.push(sk + " live=" + alarms[0] + " ancient=" + alarms[alarms.length - 1]);
+    if (!(alarms[alarms.length - 1] - alarms[0] > 100)) {
+      unreadable.push(sk + " ends too close: " + alarms.join("/"));
+    }
+    for (let i = 1; i < alarms.length; i++) {
+      if (alarms[i] <= alarms[i - 1] + 10) {
+        inverted.push(sk + " " + BANDS[i - 1] + "(" + alarms[i - 1] + ") -> "
+          + BANDS[i] + "(" + alarms[i] + ")");
+      }
+    }
+  }
+  if (themeWas) root.setAttribute("data-theme", themeWas); else root.removeAttribute("data-theme");
+
+  ok("🔴 all five recency bands paint DISTINCT colours, in every skin swept",
+     broken.length === 0, broken.length ? broken.join(" | ") : SKINS.join(", ") + " all distinct");
   ok("🔴 and not one of them is the inherited colour of an unstyled pill",
-     cols.every((c) => c !== bareCol), "bare=" + bareCol);
+     flat.length === 0, flat.length ? flat.join(" | ") : "none inherited in " + SKINS.length + " skins");
+  // 🔴 POSITIVE FIRST, and this one is not ceremony — it is the assertion that caught the flight's
+  // own false pass. Until the canvas went in, the three middle bands measured NaN, every ordering
+  // comparison was therefore false, and the inversion check below reported a clean ladder while
+  // reading nothing. A metric that cannot produce a number cannot produce a verdict.
+  ok("🔴 the warmth metric actually reads every band, in every skin swept",
+     unreadable.length === 0, unreadable.length ? unreadable.join(" | ") : ends.join("  ·  "));
+  // 🔴 THE INVERSION CHECK, and it is the assertion this flight added. A distinctness check alone
+  // is satisfied by a ladder that runs green, ORANGE, grey, orange, red — five different colours
+  // saying nothing, which is what shipped. Fresher must always read cooler than staler.
+  ok("🔴 fresher NEVER reads more alarming than staler, in any skin swept",
+     inverted.length === 0,
+     inverted.length ? inverted.join(" | ") : "monotonic across " + SKINS.join(", "));
+
+  // ══ 🔴 A ROW WITH NO STATABLE AGE DRAWS NO PILL AT ALL ══════════════════════════════════════
+  // Neither feed can produce one today — item-shops.ts drops a quote whose date is <= 0 and
+  // verse-commodities.ts drops one with no asOf — so this is the renderer's stated behaviour if
+  // either guard is ever relaxed, rather than whatever ageBand() happens to do with a null.
+  // A bare source word is the WRONG answer: the pill exists to say how current a reading is, and
+  // with no date there is nothing to say. It would also be the one pill the band ladder cannot
+  // colour, i.e. an inherited colour that looks deliberate — the --good trap exactly.
+  const undated = {
+    query: "undatedprobe",
+    results: [{
+      name: "Undated Probe Widget", kind: "item", shopCount: 1, quotes: [
+        { terminal: "Dateless Shop - Probeville", system: "Stanton", body: null, place: "Probeville",
+          price: 555, asOf: null, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-place" },
+      ], low: 555, high: 555, rentLow: null, rentHigh: null,
+    }],
+    origin: null, order: null,
+  };
+  render(undated);
+  await sleep(120);
+  const undatedRows = [...document.querySelectorAll("#results .shops .grow")];
+  // POSITIVE FIRST: without this, every must-not below is free on a render that drew nothing.
+  ok("the undated fixture still drew its row", undatedRows.length === 1,
+     undatedRows.length + " rows");
+  ok("...carrying its price, so the row is not degraded", (() => {
+       const p = undatedRows[0] ? undatedRows[0].querySelector(".price") : null;
+       return !!p && (p.textContent || "").indexOf("555") >= 0;
+     })(), undatedRows[0] ? (undatedRows[0].textContent || "").trim() : "(no row)");
+  ok("🔴 but it draws NO age pill", (() => {
+       const r = undatedRows[0];
+       return !!r && r.querySelectorAll(".age").length === 0;
+     })(), undatedRows[0] ? undatedRows[0].querySelectorAll(".age").length + " .age" : "(no row)");
+  ok("🔴 and no bare source word floating without one", (() => {
+       const r = undatedRows[0];
+       if (!r) return false;
+       const t = (r.textContent || "");
+       return r.querySelectorAll(".src").length === 0
+         && t.indexOf("UEX") === -1 && t.indexOf("SCO") === -1;
+     })(), undatedRows[0] ? (undatedRows[0].textContent || "").trim() : "(no row)");
 
   return out;
 })()`;
@@ -3117,7 +3301,19 @@ const VERSEFINDER = `(async () => {
     return d <= 7 ? "fresh" : d <= 45 ? "recent" : d <= 100 ? "stale" : "ancient";
   };
   const agrees = (want, got) => (want === "today" ? (got === "live" || got === "fresh") : want === got);
-  const checked = pills.map((p) => ({ want: bandOf(p.textContent), got: BANDS.find((b) => p.classList.contains(b)) }))
+  // 🔴 RE-POINTED, flight onepill: the pill now carries the SOURCE WORD inside it, so its
+  // textContent reads "8d UEX" and the anchored pattern above matched none of them. That drove
+  // the checked list to zero and the assertion went red on its own non-empty guard, not on a
+  // wrong band — which is the guard doing exactly its job, and the reason it is written that way.
+  // The mark is appended LAST, so trimming its length off the end recovers the age exactly.
+  const ageTextOf = (p) => {
+    const s = p.querySelector(".src");
+    const whole = p.textContent || "";
+    const mark = s ? (s.textContent || "") : "";
+    return mark && whole.slice(-mark.length) === mark
+      ? whole.slice(0, whole.length - mark.length) : whole;
+  };
+  const checked = pills.map((p) => ({ want: bandOf(ageTextOf(p)), got: BANDS.find((b) => p.classList.contains(b)) }))
     .filter((x) => x.want !== null);
   ok("the band really matches the age it prints", checked.length > 0 && checked.every((x) => agrees(x.want, x.got)),
      checked.length + " checked, first mismatch: "
