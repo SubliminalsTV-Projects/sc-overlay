@@ -674,6 +674,11 @@ const haulingBuys = new HaulingBuys(userDir);
  *  three log-feed sites cannot drift apart; every field is read lazily inside that module. */
 const tradeDeps = {
   dataDir, userDir, economy, haulingData, system: currentSystem, logPath: () => config.logPath,
+  /* Where the player is standing, named. The SAME expression the hauling plan uses for its own
+     origin picker (see `atLocationLabel`), so the Commodities tab's "buy where I am" and the Route
+     tab's "Auto" can never disagree about where that is. */
+  place: () => locationTokenLabel(dataDir, haulingWhereAmI(hauling.view())?.token),
+  placeToken: () => haulingWhereAmI(hauling.view())?.token ?? null,
   /* 🔴 THE PURCHASE OVERRIDE, HOOKED ON THE PARSE RATHER THAN AT THE THREE FEED SITES. This is the
      other half of "they don't need to pick it… we'll know how much they bought and then it'll
      override it": a pick routed with an unknown tonnage learns the real one here, and the route,

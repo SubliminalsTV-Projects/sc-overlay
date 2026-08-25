@@ -1047,7 +1047,28 @@
             + (e.asOf ? " · " + tdAge((Date.now() - e.asOf * 1000) / 86400000) + " old" : ""),
         }));
       }
-      opts = systems.concat(terminals);
+      /* 🔴 "BUY WHERE I AM", AND THE NAME IS THE SERVER'S, NOT THE GAME'S. The label the log gives
+         ("Stanton Gateway") is not what UEX calls the terminal ("Stanton Gateway (Nyx)"), and
+         `sameTerminal` matches exactly — sending the game's name returns an empty board, which
+         reads as "nothing to buy here" rather than as a name that did not match. So the sidecar
+         resolves it against the real quote table and hands back `hereTerminal`, or null. Null means
+         no option: a "buy here" that pins the wrong station is worse than no button.
+         🔑 It leads the list because it is the one entry the player does not have to know the name
+         of, and it names the game's own wording underneath so the two are visibly the same place.
+         ⚠️ Filtered out of `terminals` as well, or it appears twice under two different subtitles. */
+      const hereName = which === "buy" && tradeStatus ? tradeStatus.hereTerminal : null;
+      let here = [];
+      if (hereName) {
+        const gameName = tradeStatus.herePlace;
+        const already = terminals.find((t) => t.name === hereName);
+        here = [{
+          kind: "terminal", name: hereName, price: already ? already.price : undefined,
+          system: already ? already.system : undefined,
+          sub: "where you are now" + (gameName && gameName !== hereName ? " · the game says " + gameName : ""),
+        }];
+        terminals = terminals.filter((t) => t.name !== hereName);
+      }
+      opts = here.concat(systems).concat(terminals);
     }
     if (!typed) return opts;
     /* Prefix before contains, so typing the start of a name puts it first — the ranking people

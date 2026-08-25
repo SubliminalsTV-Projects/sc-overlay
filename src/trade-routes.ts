@@ -32,7 +32,9 @@
 import type { ServerResponse } from "node:http";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { TradePriceStore, type PlaceInfo, type BundledCommodity, type TradeTable } from "./trade-prices.js";
+import { TradePriceStore, type PlaceInfo, type BundledCommodity, type TradeTable, type TradeQuote } from "./trade-prices.js";
+// The starmap join's own normalisers, imported rather than copied — see `hereTerminalName`.
+import { matchKey, systemKey } from "./verse-proximity.js";
 import { findRoutes, lookupCommodity, tradableNames, buyableSystems } from "./trade-finder.js";
 import { TradeJournal } from "./trade-journal.js";
 import { TradeConfirmations, TRADE_LOG_MARKER, type CommodityPurchase } from "./trade-log.js";
@@ -74,6 +76,19 @@ export interface TradeDeps {
   /** What system the player is in, when the log has said. Used only to DEFAULT the filter -- the
    *  widget always sends an explicit choice, so a wrong guess here can never silently filter. */
   system?: () => string | null;
+  /**
+   * The PLACE the log says the player is standing at, already turned into a human name — "Stanton
+   * Gateway", not `RR_JP_NyxCastra`. Used to offer "buy where I am" as a real terminal.
+   *
+   * ⚠️ SEPARATE FROM `system` AND NOT DERIVABLE FROM IT. A system is a filter over many terminals;
+   * this is one place, and the whole point of the option is to pin the single terminal the player
+   * can walk to right now.
+   */
+  place?: () => string | null;
+  /** The RAW location token behind `place` (`Nyx_Levski`, `RR_JP_NyxCastra`). Kept separate because
+   *  `place` is null for the many tokens nothing can name, and the token still often carries the
+   *  station's own word — see `hereTerminalName` for how narrowly that is allowed to be used. */
+  placeToken?: () => string | null;
   /** The configured game.log path, used to find `logbackups/` for the journal catch-up. */
   logPath?: () => string | null;
   /**
@@ -304,7 +319,100 @@ function provenance(s: TradePriceStore, deps?: TradeDeps) {
     systems: buyableSystems(t.quotes),
     /** Where the log says the player is, or null. Only ever a DEFAULT for the filter. */
     here: deps?.system?.() ?? null,
+    /** The place name the log gives, unresolved — shown as the label of the "here" option. */
+    herePlace: deps?.place?.() ?? null,
+    /**
+     * 🔴 THE PLAYER'S CURRENT PLACE AS A TERMINAL THE PRICE TABLE ACTUALLY HAS, or null.
+     *
+     * This is the whole feature, and the reason it needs resolving rather than passing the label
+     * straight through: `sameTerminal` in `trade-finder.ts` demands an exact (case-insensitive)
+     * match on the long or short name. The game calls the Nyx gateway "Stanton Gateway"; UEX calls
+     * it "Stanton Gateway (Nyx)". Measured against the live table on 2026-08-25:
+     *     fromTerminal="Stanton Gateway"        ->  0 routes
+     *     fromTerminal="Stanton Gateway (Nyx)"  -> 51 routes
+     * A widget sending the raw label would produce an empty board — indistinguishable from "there
+     * is nothing to buy here", which is the exact failure `sameTerminal`'s own comment warns about.
+     *
+     * 🔑 NULL RATHER THAN A GUESS. When the label resolves to nothing, or to more than one terminal,
+     * no option is offered at all. A "buy here" button that quietly pins the wrong station is worse
+     * than no button, and this codebase's standing rule is that an ambiguous name resolves to
+     * nothing.
+     */
+    hereTerminal: hereTerminalName(
+      t.quotes, deps?.place?.() ?? null, deps?.placeToken?.() ?? null, deps?.system?.() ?? null,
+    ),
   };
+}
+
+/**
+ * Find the buy terminal matching a place name the GAME supplied.
+ *
+ * 🔑 THE SAME NORMALISER THE STARMAP JOIN USES, imported rather than re-written. `matchKey` squashes
+ * punctuation and `stripSystemSuffix` removes UEX's parenthesised system, which together are what
+ * turn "Stanton Gateway" and "Stanton Gateway (Nyx)" into one key. A second copy of that rule here
+ * would be free to drift from the one that was measured — the same reason a log prefilter must
+ * import its marker from the parser.
+ */
+function hereTerminalName(
+  quotes: readonly TradeQuote[],
+  place: string | null,
+  token: string | null,
+  system: string | null,
+): string | null {
+  const sys = systemKey(system);
+  const buys = quotes.filter((q) => q.buy !== null && q.buy !== undefined);
+
+  /** Terminals whose place or name IS this word. Whole-key equality, never a substring. */
+  const matching = (want: string): Set<string> => {
+    const hits = new Set<string>();
+    if (!want) return hits;
+    for (const q of buys) {
+      if (matchKey(q.place) === want || matchKey(q.terminalShort) === want || matchKey(q.terminal) === want) {
+        hits.add(q.terminalShort);
+      }
+    }
+    return hits;
+  };
+
+  /** One terminal, or none. The system is a TIE-BREAK and never a requirement — `deps.system()` can
+   *  be a raw token ("OOC_Stanton_") matching no system name, and demanding it would refuse
+   *  everything. It only narrows a word that matched twice. */
+  const settle = (hits: Set<string>): string | null => {
+    if (hits.size === 1) return [...hits][0];
+    if (hits.size > 1 && sys) {
+      const inSys = new Set<string>();
+      for (const q of buys) {
+        if (hits.has(q.terminalShort) && systemKey(q.system) === sys) inSys.add(q.terminalShort);
+      }
+      if (inSys.size === 1) return [...inSys][0];
+    }
+    return null;
+  };
+
+  // 1. The resolved place name, which is the good evidence. `locationTokenLabel` produces it for the
+  //    tokens it can name — including the jump rings, where it is the ONLY thing that gets
+  //    "RR_JP_NyxCastra" to "Stanton Gateway".
+  const byPlace = settle(matching(matchKey(place)));
+  if (byPlace) return byPlace;
+
+  /* 2. Failing that, the raw token's own segments — because `locationTokenLabel` returns null for a
+        plain token like `Nyx_Levski` and that is the ordinary case, not the exotic one.
+        🔴 THIS IS DELIBERATELY THE NARROWEST POSSIBLE VERSION OF A NAMING HEURISTIC, because this
+        codebase's standing finding is that an asset name can be confidently wrong about the present
+        (`RR_JP_NyxCastra` is the Stanton Gateway today and the Castra Gateway later). So:
+          · WHOLE-SEGMENT EQUALITY against a terminal's own name — never a substring, never a
+            subsequence. That is what stops "Nyx" reaching "NyxCastra", the exact miss that makes
+            `matchLocationToken` answer wrongly for the rings.
+          · SEGMENTS SHORTER THAN FOUR CHARACTERS ARE SKIPPED, which drops the "RR" and "JP"
+            prefixes and any bare system initialism.
+          · EXACTLY ONE terminal across ALL segments, or nothing. Two segments naming two different
+            terminals is a token we cannot read, not a coin to toss.
+        A wrong answer here pins the player's board to a station they are not at, so the bar is a
+        refusal rather than a best guess. */
+  const segs = String(token ?? "").split(/[^A-Za-z0-9]+/).filter((s) => s.length >= 4);
+  const all = new Set<string>();
+  for (const s of segs) for (const hit of matching(matchKey(s))) all.add(hit);
+  return settle(all);
 }
 
 const qs = (u: string) => new URL(u, "http://x").searchParams;
