@@ -278,10 +278,30 @@
     return b;
   }
 
-  /** The provenance strip: one pill and an ⓘ, replacing the two paragraphs of the first cut.
-   *  🔑 THREE STATES, THREE COLOURS, because "offline by choice", "tried and failed" and "fresh"
-   *  are different facts and must not read alike. */
+  /**
+   * The provenance strip: one pill and an ⓘ, replacing the two paragraphs of the first cut.
+   * 🔑 THREE STATES, THREE COLOURS, because "offline by choice", "tried and failed" and "fresh"
+   * are different facts and must not read alike.
+   *
+   * 🔴 IT RENDERS INTO THE CREDIT BAR NOW, beside UEX's own mark (Sub, 2026-08-25) — see the
+   * `#uexfresh` comment in hauling.html. Still ONE writer: this function.
+   *
+   * ⚠️ THE AGE ON THE FACE IS WHEN WE LAST FETCHED THE TABLE, NOT HOW OLD THE PRICES ARE, and
+   * those differ by about five weeks — the live table's median row age measured 38 days on
+   * 2026-08-22, against a six-hourly refresh. That is exactly the misreading the ⓘ has always
+   * existed to deny, which is why the age ships WITH the pill that carries the ⓘ rather than as a
+   * bare number somewhere else, and why the denial is the second sentence of the tip rather than
+   * the last. Per-row age is still on every row and is still the number worth trusting.
+   */
   function tdProvenance(bar, d) {
+    /** "2h" / "3d" for a fetch time, or "" when there is nothing to say. */
+    const fetched = (at) => {
+      if (!at) return "";
+      const mins = Math.round((Date.now() - at) / 60000);
+      if (mins < 60) return mins < 1 ? "just now" : mins + "m";
+      const hrs = Math.round(mins / 60);
+      return hrs < 48 ? hrs + "h" : Math.round(hrs / 24) + "d";
+    };
     const pill = document.createElement("span");
     const dot = document.createElement("span");
     dot.className = "dot";
@@ -295,7 +315,8 @@
       tip = "Fetching the price table.";
     } else if (d.source === "live") {
       pill.className = "tdsrc live";
-      txt.textContent = "live";
+      const age = fetched(d.fetchedAt);
+      txt.textContent = age ? "live · " + age : "live";
       const mins = d.fetchedAt ? Math.round((Date.now() - d.fetchedAt) / 60000) : null;
       tip = "Live prices, community-reported through UEX."
         + (mins !== null ? " Our copy was refreshed " + (mins < 1 ? "just now" : mins < 90 ? mins + " minutes ago" : Math.round(mins / 60) + " hours ago") + "." : "")
@@ -304,7 +325,8 @@
         + (d.droppedOffline ? " " + d.droppedOffline + " terminals are hidden: UEX has prices for them but they are not in the game right now." : "");
     } else if (d.source === "cache") {
       pill.className = "tdsrc cache";
-      txt.textContent = "last known";
+      const age = fetched(d.fetchedAt);
+      txt.textContent = age ? "cache · " + age : "cache";
       const mins = d.fetchedAt ? Math.round((Date.now() - d.fetchedAt) / 60000) : null;
       tip = "Showing the last good copy of the price table"
         + (mins !== null ? ", from " + (mins > 90 ? Math.round(mins / 60) + " hours" : mins + " minutes") + " ago" : "")
@@ -715,7 +737,13 @@
     // override is what made the first cut's pills three different sizes.
     const bar = document.createElement("div");
     bar.className = "tdbar";
-    tdProvenance(bar, tradeStatus);
+    /* 🔴 THE PROVENANCE PILL RENDERS INTO THE CREDIT BAR, not into this filter bar (Sub,
+       2026-08-25: "next to the UEX badge at the bottom"). It is a MOVE — `tdProvenance` is still
+       the only writer — and it is emptied first, because `#uexfresh` lives outside `#body` and so
+       survives the `body.textContent = ""` above that clears everything else on this tab. Without
+       the clear it would accumulate one pill per render, forever. */
+    const fresh = $("uexfresh");
+    if (fresh) { fresh.textContent = ""; tdProvenance(fresh, tradeStatus); }
 
     // ⚠️ Runs / Look up used to be buttons in here, then TOP TABS. Look up (Market) is retired
     // and this bar carries only the Runs filters, unconditionally — the `tradeMode` guard that used

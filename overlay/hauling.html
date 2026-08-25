@@ -120,6 +120,11 @@
   /* The typographic fallback, shown only when the image cannot load. */
   .uexbadge #uexname { font-family: var(--sans); font-size: 10px; font-weight: 700;
     letter-spacing: 0.04em; color: var(--cyan-text); white-space: nowrap; }
+  /* 🔑 Holds the pill + its ⓘ, and carries NO colour of its own — the three states are painted by
+     the `.tdsrc` rules below, which is the whole point of moving the existing pill here rather
+     than styling a new one. `margin-left` gives it the breathing room Sub's sketch showed; the
+     badge's own `margin-left: auto` still pins the pair to the right edge. */
+  .uexfresh { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; }
 
   .tdbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
     padding: 6px 12px 4px; border-bottom: 1px solid var(--divider); }
@@ -131,13 +136,28 @@
     text-transform: uppercase; }
 
   /* The source pill. Three states, three colours — "we chose offline", "we tried and failed" and
-     "this is fresh" must not look alike. */
+     "this is fresh" must not look alike.
+
+     🔴 THE MIDDLE RUNG WAS `--gold` AND ON `argo` THAT IS A GREEN. Measured across six skins on
+     2026-08-25, reading the COMPUTED colour through a 1x1 canvas rather than parsing a string:
+     argo renders `live` and `cache` as the SAME rgb(94,232,132) — a summed channel delta of ZERO,
+     so a table we could not refresh looked exactly as safe as a live one. Same disease as the
+     documented `--amber: #4FD97A` on that skin: the token exists, so nothing falls back and
+     nothing looks wrong in the source.
+
+     ✅ Anchored on `--green` and `--red` through `color-mix(in oklch, …)`, which is the ladder
+     `onepill` arrived at for the freshness bands. Those two are the only tokens whose MEANING
+     holds in all 16 skins, and interpolating between two fixed endpoints cannot collapse or
+     invert BY CONSTRUCTION rather than by review. It still retints per manufacturer, because the
+     endpoints are still their tokens. `in oklch` arcs through amber; `in srgb` goes olive-brown.
+     ⚠️ Do NOT reach for `--gold`/`--amber`/the `--cyan` accent for a rung of this again. */
   .tdsrc { height: 21px; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px;
     border-radius: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
     text-transform: uppercase; border: 1px solid; }
   .tdsrc.live { color: var(--green, #7de6a0); border-color: rgba(120, 230, 160, 0.5);
     background: rgba(120, 230, 160, 0.12); }
-  .tdsrc.cache { color: var(--gold, #e8c56a); border-color: rgba(var(--value-rgb), 0.5);
+  .tdsrc.cache { color: color-mix(in oklch, var(--green, #7de6a0) 50%, var(--red, #eb7878));
+    border-color: color-mix(in oklch, var(--green, #7de6a0) 50%, var(--red, #eb7878) 50%);
     background: rgba(var(--value-rgb), 0.12); }
   .tdsrc.bundled { color: var(--red, #eb7878); border-color: rgba(235, 120, 120, 0.5);
     background: rgba(235, 120, 120, 0.12); }
@@ -1018,6 +1038,13 @@
         title="Commodity prices are community-reported through UEX. Open uexcorp.space"><img
           id="uexmark" src="/logos/uex-powered.png" alt="Powered by UEX"
           onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" /></button>
+      <!-- 🔴 THE PROVENANCE PILL LIVES HERE NOW — Sub, 2026-08-25: "I think it would look better if
+           we put some sort of live indication next to the UEX badge at the bottom."
+           ⚠️ It MOVED, it was not copied. `tdProvenance()` is still the only thing that writes it,
+           because a second freshness indicator is a second writer of one fact and the two drift —
+           the same rule that made the mining prefs move out of Settings rather than be mirrored.
+           It also keeps the Commodities filter bar to the ONE row `tradelook` measured it down to. -->
+      <span id="uexfresh" class="uexfresh"></span>
     </div>
 
     <div id="wsettings" class="wsettings">
