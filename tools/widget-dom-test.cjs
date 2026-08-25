@@ -8548,5 +8548,9 @@ app.whenReady().then(async () => {
   }
   console.log(fails ? `\nFAILED (${fails})` : ONLY ? "\nall SELECTED widget DOM tests passed" : "\nall widget DOM tests passed");
   process.exitCode = fails ? 1 : 0;
-  app.quit();
+  // 🔴 app.quit() is a GRACEFUL Electron shutdown and it EXITS 0, discarding
+  // process.exitCode. Measured 2026-08-25: a run printing "FAILED (1)" returned exit 0, so
+  // the landing gate reported success on a red suite to every script that asked. app.exit()
+  // takes the code and uses it.
+  app.exit(fails ? 1 : 0);
 });
