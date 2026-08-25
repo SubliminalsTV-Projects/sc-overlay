@@ -70,8 +70,11 @@ if (!APP_VERSION) {
     /* version is optional metadata */
   }
 }
-// Periodically share the current session's scrubbed log (dedup by content hash). The
-// last tick before the app closes captures the fullest session; opt-in + no-op when off.
+// Periodically trickle scrubbed ROTATED sessions to the site; opt-in and a no-op when off.
+// ⚠️ The CURRENT session is no longer uploaded — see the header of src/log-share.ts. A session
+// reaches us when the player next launches SC and it rotates into logbackups/.
+// ⚠️ setInterval only, so the first pass is 20 minutes after launch, never at startup. The
+// immediate one is the Share-logs off->on gesture, which calls maybeShareLog directly.
 const LOG_SHARE_INTERVAL_MS = 20 * 60 * 1000;
 setInterval(() => void maybeShareLog(config, APP_VERSION, sharedLogStatePath), LOG_SHARE_INTERVAL_MS);
 
