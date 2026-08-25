@@ -313,7 +313,17 @@
   /* Line two — where it happens, and the rate. Both ends truncate rather than wrap: a terminal
      name is recognisable from its start, and a wrapped one would push the strip down a line. */
   .tdrow .l2 { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; }
+  /* 🔴 `text-align: left` IS LOAD-BEARING, NOT A DEFAULT BEING RESTATED. `.arow .r` further down
+     means "the right-hand column" and sets `flex: none; text-align: right`. This rule overrode the
+     `flex` and left the alignment behind, so the route string was right-aligned inside a 313px box
+     it never filled: every row's pickup name began at a different x, ragged left, while the rate
+     column stayed put. Sub, 2026-08-25: "it gives no value for it to be right justified. It looks
+     like it's not aligned properly when the location gets really long."
+     🔑 The general trap is the one this stylesheet already warns about twice — reusing a class name
+     that already means something. `.r` is the right-hand column in `.arow` and the ROUTE here, and
+     an override that changes only some of the inherited declarations leaves the rest live. */
   .tdrow .l2 .r { flex: 1; min-width: 0; font-family: var(--mono); font-size: 10.5px;
+    text-align: left;
     color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tdrow .l2 .hr { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--cyan-dim); }
 
