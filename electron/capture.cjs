@@ -96,46 +96,6 @@ function rightPanelCrop(image, w, h) {
   return { img: image.crop({ x, y: 0, width: cw, height: ch }), w: cw, h: ch };
 }
 
-/**
- * ── SYNC LOCATION ────────────────────────────────────────────────────────────────────────────
- *
- * `r_DisplayInfo 1` prints `CamPos Planet Zone: <x> <y> <z>` in the top-right — the player's
- * position in the PLANET-FIXED frame, which is the same frame every mission marker uses. One press
- * reads one frame; nothing here runs on a timer.
- *
- * 🔴 MATCHED BY LABEL, NOT BY POSITION. The block is fixed-size text anchored to the top-right, so
- * it occupies ~28% of an ultrawide's width and ~51% of a 1920px one — a fixed fractional rectangle
- * cannot port between them. A generous right-hand crop plus a search for the line's own label works
- * on any resolution, and survives the player running a different `r_DisplayInfo` number as long as
- * that line is present.
- *
- * 🔑 THE PARSE KEYS ON DIGITS. Measured by running this exact engine over Sub's screenshot: all
- * twelve significant figures of the coordinates came back perfect, while letters were mangled
- * throughout ("RR ARc LE0", "ooc Stanton 3", "Pa9e"). So the label match is deliberately loose
- * about its own spelling — `CamPos` may arrive as `CanPos` — and strict about the numbers.
- */
-/** How long a "sync location" press stays live. Long enough to cover a slow tick, short enough
- *  that an unserved press cannot keep the capture loop armed. Mirrors HAULING_LOCATE_TTL_MS in
- *  the sidecar — keep the two in step. */
-const LOCATE_TTL_MS = 20000;
-const LOCATE_SCALE = 3;                    // the text is tiny; RapidOCR wants it magnified
-const LOCATE_WIDTH_FRAC = 0.62;            // right-hand share of the frame to search
-const LOCATE_HEIGHT_FRAC = 0.42;           // top share — the block sits well inside this
-/** Tolerates OCR damage in the LABEL while demanding three clean signed decimals after it. */
-const LOCATE_RE = /(?:cam|can|carn)\s*pos[^\n]*?zone\s*[:.]?\s*(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)/i;
-
-function parseCamPos(lines) {
-  // Try each line on its own first, then the joined text — RapidOCR sometimes splits the label
-  // from its numbers, and sometimes runs two rows together.
-  const texts = lines.map((l) => String(l.text || ""));
-  for (const t of texts) {
-    const m = LOCATE_RE.exec(t);
-    if (m) return { x: +m[1], y: +m[2], z: +m[3] };
-  }
-  const m = LOCATE_RE.exec(texts.join(" "));
-  return m ? { x: +m[1], y: +m[2], z: +m[3] } : null;
-}
-
 // The mining scan region, in pixels — deliberately duplicated from screen-read.ts's scanRegion()/
 // DEFAULT_SCAN_REGION rather than imported: that module is TypeScript run via tsx in the sidecar
 // process, and this file is plain CommonJS in the Electron main process with no build step wiring
@@ -593,7 +553,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
   const tmpPanel = path.join(os.tmpdir(), "sc-fab-panel.png"); // upper-right crop fed to RapidOCR
   const tmpMiningCrop = path.join(os.tmpdir(), "sc-mining-crop.png"); // scan-region crop fed to RapidOCR
   const tmpContractCrop = path.join(os.tmpdir(), "sc-contract-crop.png"); // offers-panel crop fed to RapidOCR
-  const tmpLocateCrop = path.join(os.tmpdir(), "sc-locate-crop.png"); // debug-overlay crop, sync location
   let busy = false;
   let busyAt = 0;             // when the current tick set busy (watchdog against a wedged loop)
   const TICK_WATCHDOG_MS = 15000; // if a tick has "held" busy this long, it hung — force re-arm
@@ -725,22 +684,8 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
     // Requires a calibrated panel; without one the parser cannot separate the columns and
     // arming the loop would burn OCR for nothing.
     const payout = cfg.payoutScan === true && !!cfg.contractRegion;
-    /* 🔑 A pending "sync location" press arms the loop ON ITS OWN. Every other consumer here is an
-       opt-in feature, so a player with all of them off would have no capture loop for the button to
-       piggyback on — and that is exactly the player this is for, since the whole requirement was
-       not leaving anything running.
-       ⚠️ ASKED OVER HTTP, NOT READ FROM CONFIG. The first cut routed the press through config.json
-       because capture re-reads it each tick — but that channel is write-only from here and
-       impossible to observe, and when the button did nothing there was no way to tell whether the
-       request had ever arrived. This costs one localhost GET every few seconds and can be checked
-       with curl. */
-    let locate = false;
-    try {
-      const lr = await fetch(`http://localhost:${port}/api/hauling/locate`, { signal: AbortSignal.timeout(1500) });
-      if (lr.ok) locate = (await lr.json()).pending === true;
-    } catch { /* sidecar busy or restarting — just no request this tick */ }
-    fgWatch.want("ocr", fab || miss || mining || claim || payout || locate);
-    if (!fab && !miss && !mining && !claim && !payout && !locate) { emitContext("off"); return; }
+    fgWatch.want("ocr", fab || miss || mining || claim || payout);
+    if (!fab && !miss && !mining && !claim && !payout) { emitContext("off"); return; }
     // Watchdog: a single hung await (e.g. a fetch to the sidecar while it's restarting during an
     // auto-update) must never latch the loop forever. If a prior tick has held `busy` well past
     // any real tick, treat it as wedged and re-arm — otherwise the overlay freezes on its last
@@ -753,19 +698,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
     const tFg = Date.now();
     const fg = await foregroundWindow();
     if (!/^StarCitizen$/i.test(fg.name)) {
-      /* 🔑 ANSWER A PENDING SYNC EVEN THOUGH WE CANNOT READ. The read needs Star Citizen on screen,
-         so this early return is right — but silently returning leaves the button spinning for its
-         full timeout and then guessing at the reason. Telling the player which of the two
-         preconditions failed is the difference between a five-second fix and a mystery. */
-      if (locate) {
-        try {
-          await fetch(`http://localhost:${port}/api/hauling/locate-result`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ error: "Star Citizen was not the window in front — bring the game forward and press Sync again." }),
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-          });
-        } catch { /* sidecar restarting; the widget times out and says so */ }
-      }
       emitContext("idle");
       return;                                                             // only ever look at SC
     }
@@ -798,33 +730,6 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
       if (!shot) return;
       stage.capture = Date.now() - t0;
       stage.frame = `${cap.width}x${cap.height}`;
-
-      /* ── SYNC LOCATION: one press, one read ──────────────────────────────────────────────
-         Its OWN try, like every other pass here: a failure to find the debug overlay must never
-         take down the fabricator or mining read this tick also serves. And it ALWAYS reports —
-         success or failure — because "nothing happened" is the one outcome the player cannot act
-         on, and the button is waiting on an answer either way. */
-      if (locate) {
-        let out = { error: "could not read the debug overlay" };
-        try {
-          const rx = Math.round(cap.width * (1 - LOCATE_WIDTH_FRAC));
-          const rh = Math.round(cap.height * LOCATE_HEIGHT_FRAC);
-          const crop = shot.crop({ x: rx, y: 0, width: cap.width - rx, height: rh });
-          const big = crop.resize({ width: (cap.width - rx) * LOCATE_SCALE, height: rh * LOCATE_SCALE, quality: "best" });
-          fs.writeFileSync(tmpLocateCrop, big.toPNG());
-          const lines = await ocrRapidLines(tmpLocateCrop);
-          const pos = parseCamPos(lines);
-          out = pos ? { pos } : { error: "no CamPos line on screen — is r_DisplayInfo 1 on?" };
-        } catch (e) {
-          out = { error: String((e && e.message) || e).slice(0, 160) };
-        }
-        try {
-          await fetch(`http://localhost:${port}/api/hauling/locate-result`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(out), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-          });
-        } catch { /* sidecar restarting — the press times out in the widget, which says so */ }
-      }
       // 🔑 SKIP THE WHOLE-FRAME PASS WHILE ACTIVELY SCANNING. Measured 2026-08-08: encoding the
       // 3440x1440 PNG costs 1,104ms and the Windows OCR over it another 227ms — 1.33s of every
       // 4.6s tick — and for mining it produces nothing but wrong numbers (1922, 8401, 6001, 2006

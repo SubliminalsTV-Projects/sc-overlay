@@ -438,11 +438,6 @@
   #shipPick, #startPick { flex: 1; min-width: 0; font-family: var(--sans); font-size: 12px; color: var(--cyan-bright);
     background: var(--menu-bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; }
   #startPick { margin-top: 5px; }
-  /* The sync control sits with the location picker, because that is the field it fills in. */
-  #syncLoc { margin-top: 5px; }
-  .syncmsg { margin-top: 4px; font-size: 11px; line-height: 1.45; color: var(--cyan-dim); }
-  .syncmsg.bad { color: var(--amber); }
-  .syncmsg.good { color: var(--green); }
   /* The dropdown's own list is drawn by the OS, which does not inherit the control's colours —
      without this the options render dark-on-dark (or white-on-white) once it is open. */
   #shipPick option, #startPick option { background: var(--menu-bg); color: var(--cyan-bright); }
@@ -953,18 +948,14 @@
         <select id="shipPick" title="The ship you are flying. The log names it when it can; pick it here when it cannot."></select>
         <span class="src" id="shipSrc"></span>
       </div>
-      <!-- 🔴 Where the player is standing. The game does not log it, and without it the optimiser
-           has no origin: on mirrored contracts (A→B and B→A) it opens wherever it likes, which
-           sent Sub to Baijini EMPTY while the load he wanted was at his feet. -->
+      <!-- 🔴 Where the player is standing — without it the optimiser has no origin: on mirrored
+           contracts (A→B and B→A) it opens wherever it likes, which sent Sub to Baijini EMPTY while
+           the load he wanted was at his feet. The GAME states this now (whereami's one location
+           service reads it off inventory opens, ASOP terminals and shop kiosks), so this control is
+           the override, not the source. -->
       <div class="shiprow">
         <select id="startPick" title="Where you are right now. The route starts here, so it stops sending you to the far end empty."></select>
-        <!-- 🔴 ON-DEMAND POSITION READ. Sub: "I don't want the app to rely on having this up on
-             screen… maybe we can have a button that they click to sync location." One press, one
-             frame, then it stops — nothing here runs on a timer. -->
-        <button id="syncLoc" class="hbtn" type="button">Sync</button>
-        <span class="whyinfo" id="syncWhy">ⓘ</span>
       </div>
-      <div class="syncmsg" id="syncMsg" style="display:none"></div>
       <div class="caps" id="caps"></div>
       <div class="facts" id="facts"></div>
       <!-- 🔴 THE RATES GET THEIR OWN STRIP. Sitting in .facts they read as another property of the
@@ -1685,73 +1676,6 @@
 </script>
 <script src="/hauling-places.js"></script>
 <script src="/hauling-tab-rank.js"></script>
-<script>
-  /**
-   * 🔴 SYNC LOCATION — read the player's real position off the game's debug overlay, once.
-   *
-   * `r_DisplayInfo 1` prints `CamPos Planet Zone`, which is the player's position in the SAME
-   * coordinate frame as every mission marker. So this does not need a name match at all: it snaps
-   * to the nearest stop by distance. Checked against Sub's own screenshot, his CamPos sat 2.26 km
-   * from Baijini Point's marker while he stood in Baijini's hangar.
-   *
-   * ⛔ ON DEMAND, DELIBERATELY. Sub was explicit that he does not want the overlay up permanently:
-   * "it takes up way too much of the screen. It's distracting. I just want to be more immersed."
-   * One press arms one read; nothing polls the screen before or after.
-   *
-   * ⚠️ IT ALWAYS SAYS WHAT HAPPENED. A silent failure is the worst outcome here, because the most
-   * likely cause is simply that `r_DisplayInfo 1` is off — which the player can fix in five
-   * seconds if told, and cannot fix at all if the button just does nothing.
-   */
-  let syncing = false;
-  function syncMsg(text, cls) {
-    const el = $("syncMsg");
-    el.className = "syncmsg" + (cls ? " " + cls : "");
-    el.textContent = text || "";
-    el.style.display = text ? "" : "none";
-  }
-
-  async function syncLocation() {
-    if (syncing) return;
-    syncing = true;
-    $("syncLoc").textContent = "Reading…";
-    syncMsg("Looking for the debug overlay…");
-    try {
-      await fetch("/api/hauling/locate", { method: "POST" });
-      // Poll for the capture loop's answer. Its tick is a few seconds, so give it a fair window
-      // rather than declaring failure before it has looked once.
-      const deadline = Date.now() + 14000;
-      let result = null;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 700));
-        const res = await fetch("/api/hauling/locate?_=" + Date.now(), { cache: "no-store" });
-        if (!res.ok) continue;
-        const j = await res.json();
-        if (j.result) { result = j.result; break; }
-      }
-      if (!result) {
-        syncMsg("No answer from the screen reader. Is Star Citizen in front, and r_DisplayInfo 1 on?", "bad");
-      } else if (!result.ok) {
-        syncMsg(result.error || "Could not read the overlay.", "bad");
-      } else {
-        await load();
-        const sr = (plan && plan.startResolved) || {};
-        if (sr.detected && sr.detectedBy === "coordinates") {
-          const name = (plan.locationNames || {})[sr.detected] || "a stop on your route";
-          const km = sr.detectedMetres != null ? " (" + (sr.detectedMetres / 1000).toFixed(1) + " km)" : "";
-          syncMsg("You are at " + name + km + ".", "good");
-        } else {
-          // 🔑 A read that matches nothing is NOT an error — it means you are genuinely nowhere
-          // near a stop on this board, which is worth being told plainly rather than dressed up.
-          syncMsg("Read your position, but you are not near any stop on this board.", "bad");
-        }
-      }
-    } catch {
-      syncMsg("The screen reader is not responding.", "bad");
-    }
-    $("syncLoc").textContent = "Sync";
-    syncing = false;
-  }
-</script>
 <script src="/hauling-tab-route.js"></script>
 <script src="/hauling-tab-stow.js"></script>
 <script src="/hauling-tab-trade.js"></script>
@@ -1870,11 +1794,6 @@
     try { localStorage.setItem(SPIN_KEY, stowSpin ? "1" : "0"); } catch { /* private mode */ }
     render();
   });
-  $("syncLoc").addEventListener("click", syncLocation);
-  $("syncLoc").title = "Read your exact position off the game's debug overlay, once.";
-  $("syncWhy").title = "Needs the console command r_DisplayInfo 1 to be on — it prints your"
-    + " coordinates in the top-right. Turn it on, press Sync, turn it back off. The app never"
-    + " reads the screen except while you are pressing this.";
   $("startPick").addEventListener("change", () => {
     startPick = $("startPick").value;
     saveStart();
