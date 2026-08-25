@@ -573,6 +573,28 @@
   /* A name the GAME has used before. It outranks the 1,125 dataset rows for a reason worth
      showing: it is known to be a real hauling stop. */
   .psug .seen { color: var(--green); }
+  /* 🔴 THE CONSTRAINED PICKER (2026-08-25). On a COMMODITY leg this list comes from the price
+     table's buyAt/sellAt rather than from "places you have been", so it can say how many places
+     trade the thing and what each one pays. A contract stop keeps the plain list and draws none of
+     these — see `commodityPlaceSuggestions` in overlay-server.ts for why the scope matters. */
+  .psug .phead { display: block; padding: 4px 8px 3px; font-size: 8.5px; font-weight: 700;
+    letter-spacing: 0.11em; text-transform: uppercase; color: var(--faint);
+    border-bottom: 1px solid var(--divider); cursor: default; }
+  .psug .phead:hover { background: none; }
+  /* Auto-width and LAST in the row, so every price shares one right edge with no spacer to keep in
+     sync — the rule the Verse Finder's `.pricecol` learned the expensive way. */
+  .psug .pr { flex: none; margin-left: auto; font-family: var(--mono); font-size: 10.5px; }
+  /* ⚠️ `.psug .h` ALREADY carries `margin-left:auto`, and two auto margins on one flex line SPLIT
+     the free space between them — the hint would drift to the middle and the price would stop being
+     flush right. When a hint precedes the price, the hint's auto has already done the pushing. */
+  .psug .h + .pr { margin-left: 0; }
+  .psug .buyp { color: var(--gold); }
+  .psug .sellp { color: var(--green); }
+  /* A constrained list with nothing in it still has something to say: "nowhere trades this" is a
+     fact about the commodity, where an empty dataset list is a fact about the typing. */
+  .psug .pfoot { display: block; padding: 5px 8px; font-size: 10px; line-height: 1.45;
+    color: var(--faint); border-top: 1px solid var(--divider); cursor: default; }
+  .psug .pfoot:hover { background: none; }
 
   #body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; z-index: 4; }
   .sec { display: flex; align-items: baseline; gap: 6px; padding: 9px 12px 5px;

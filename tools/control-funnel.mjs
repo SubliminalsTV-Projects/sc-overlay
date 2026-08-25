@@ -3,10 +3,15 @@
  *
  *   npm run control:funnel
  *
- * Each control re-injects one exact regression into `src/trade-finder.ts`, requires `test:trade` to
- * go RED **naming the assertion it should redden**, then restores from HEAD and requires it green
+ * Each control re-injects one exact regression into the source, requires that control's OWN suite
+ * to go RED **naming the assertion it should redden**, then restores the file and requires green
  * again. Lives as a script rather than a one-off so it cannot rot — same shape as
  * `control:sellvolume`.
+ *
+ * Two files, two suites: `src/trade-finder.ts` against `test:trade` for the three filters the slots
+ * drive, and `src/hauling-buys.ts` against `test:buys` for the re-point guard. The last one is the
+ * only control here that protects real data rather than a layout — nothing would LOOK wrong if it
+ * went; the Ledger would simply start disagreeing with the game about where money was spent.
  *
  * 🔴 IT GRADES ON THE TEXT, NEVER ON THE EXIT CODE. `npm run test:trade` has been observed to exit
  * 0 while printing failures, and a wrapper reading `status` alone has already announced "GREEN, the
@@ -24,6 +29,10 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FINDER = path.join(ROOT, "src", "trade-finder.ts");
+const BUYS = path.join(ROOT, "src", "hauling-buys.ts");
+
+const TRADE_SUITE = path.join(ROOT, "src", "trade.test.ts");
+const BUYS_SUITE = path.join(ROOT, "src", "hauling-buys.test.ts");
 
 /** Each control names the assertion it must redden, so a red run on some OTHER line is a failure
  *  of the control rather than proof of the fix. */
@@ -49,11 +58,23 @@ const CONTROLS = [
     to: "return q.terminal.toLowerCase() === w;",
     reddens: "fromTerminal matches the SHORT name",
   },
+  {
+    /* 🔴 THE ONE THAT PROTECTS REAL DATA. Once the log has matched a purchase to a pick, where it
+       happened is a fact; re-pointing it would overwrite an observation with an intention. Nothing
+       about the widget would look wrong if this guard went — the Ledger would simply start
+       disagreeing with the game about where money was spent. */
+    name: "a re-point is allowed after the log has already recorded the purchase",
+    file: BUYS,
+    suite: BUYS_SUITE,
+    from: "if (buy.scu !== null) return null;   // the log already recorded where this really happened",
+    to: "if (false) return null;",
+    reddens: "and now it REFUSES to move",
+  },
 ];
 
-function runSuite() {
+function runSuite(suite) {
   const r = spawnSync(process.execPath, [path.join(ROOT, "node_modules", "tsx", "dist", "cli.mjs"),
-    path.join(ROOT, "src", "trade.test.ts")], { cwd: ROOT, encoding: "utf8" });
+    suite || TRADE_SUITE], { cwd: ROOT, encoding: "utf8" });
   return (r.stdout || "") + (r.stderr || "");
 }
 
@@ -77,7 +98,7 @@ for (const c of CONTROLS) {
   }
   writeFileSync(c.file, patched);
   let out;
-  try { out = runSuite(); } finally { writeFileSync(c.file, original); }
+  try { out = runSuite(c.suite); } finally { writeFileSync(c.file, original); }
 
   const red = out.includes("FAIL");
   const named = out.split("\n").some((l) => l.includes("FAIL") && l.includes(c.reddens));
@@ -98,6 +119,8 @@ for (const c of CONTROLS) {
 }
 
 const after = runSuite();
+const afterBuys = runSuite(BUYS_SUITE);
+if (afterBuys.includes("FAIL")) { console.error("RESTORE FAILED in hauling-buys.ts."); bad++; }
 if (after.includes("FAIL")) { console.error("\nRESTORE FAILED — the tree is still patched."); bad++; }
 else console.log("\nrestored: green");
 

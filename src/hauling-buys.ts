@@ -245,6 +245,42 @@ export class HaulingBuys {
     return buy;
   }
 
+  /**
+   * Move one END of a pick to a different terminal — "buy it over there instead".
+   *
+   * 🔴 THIS IS WHAT THE ROUTE TAB'S PICKER ACTUALLY NEEDS, and until now it had no way to do it.
+   * That picker writes `config.haulingPlaces[locationId]`, which is a DISPLAY NAME for a location
+   * and nothing else — so on a commodity leg it relabelled the stop while the route kept buying
+   * where it always had. A control whose apparent effect and real effect differ is worse than one
+   * that offers the wrong options, and it was doing both.
+   *
+   * 🔴 REFUSED ONCE THE LOG HAS SPOKEN. `scu` is non-null only when a real purchase line was matched
+   * to this pick, and at that point where you bought it is a FACT rather than a plan. Re-pointing it
+   * would overwrite an observation with an intention — the same rule the override itself keeps, from
+   * the other side. Returns null so the caller can say so rather than silently doing nothing.
+   *
+   * 🔑 The quote fields move with the end they belong to, and the OTHER end's quote is left alone:
+   * they are display-only forecasts, and a buy price from the old terminal sitting beside the new
+   * one's name is a number that was never true anywhere.
+   */
+  repoint(id: string, side: "from" | "to", end: BuyEnd, price: number | null): CommodityBuy | null {
+    const s = this.read();
+    const buy = s.buys.find((b) => b.id === id);
+    if (!buy) return null;
+    if (buy.scu !== null) return null;   // the log already recorded where this really happened
+    const name = (end.terminal ?? "").trim();
+    if (!name) return null;
+    // Buying and selling at one terminal is not a run — the planner drops such a leg with a note,
+    // so refusing it here means the player is told at the moment they do it rather than later.
+    const other = side === "from" ? buy.to.terminal : buy.from.terminal;
+    if (name.toLowerCase() === (other ?? "").trim().toLowerCase()) return null;
+    buy[side] = { terminal: name, body: end.body ?? null, system: end.system ?? null };
+    if (side === "from") buy.buyPrice = price;
+    else buy.sellPrice = price;
+    this.save();
+    return buy;
+  }
+
   /** Drop a pick. Returns what was removed, or null when the id was already gone — a second click
    *  on a stale widget is not an error, the row is off the list either way. */
   remove(id: string): CommodityBuy | null {

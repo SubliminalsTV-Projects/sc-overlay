@@ -102,6 +102,51 @@ const pick = (store: HaulingBuys, commodity: string, guid: string | null, at: nu
   check("...and it is the pick that was already there, not a new row", s.list().length === 1);
 }
 
+/* ── re-pointing a pick: "buy it over there instead" ────────────────────────
+   🔴 THE ROUTE TAB'S PICKER USED TO WRITE A DISPLAY NAME AND NOTHING ELSE, so on a commodity leg it
+   relabelled the stop while the route went on buying where it always had. Sub reported the half of
+   that he could see — the picker offering places the commodity is not even sold at. This is the
+   write that makes the control mean what it looks like it means. */
+{
+  const s = new HaulingBuys(mkdtempSync(join(tmpdir(), "haulbuys-")));
+  const b = pick(s, "Processed Food", FOOD_GUID, 1_000);
+  const moved = s.repoint(b.id, "from", { terminal: "Ashland", body: "Ignis", system: "Pyro" }, 15_449);
+  check("🔴 re-pointing really moves the end, rather than naming it",
+    !!moved && moved.from.terminal === "Ashland", `${moved?.from.terminal}`);
+  check("...and the body and system travel with it, because the travel model prices a leg off them",
+    moved?.from.body === "Ignis" && moved?.from.system === "Pyro", `${moved?.from.body}/${moved?.from.system}`);
+  check("...and the quote for that end moves too", moved?.buyPrice === 15_449, `${moved?.buyPrice}`);
+  check("...while the OTHER end is left alone",
+    moved?.to.terminal === "Baijini Point" && moved?.sellPrice === 1506, `${moved?.to.terminal}`);
+  check("...and it is the same pick, not a new one", s.list().length === 1 && s.list()[0].id === b.id);
+
+  // Buying and selling at one terminal is not a run — the planner drops such a leg with a note, so
+  // refusing it here tells the player at the moment they do it rather than later.
+  check("a re-point onto the OTHER end is refused",
+    s.repoint(b.id, "from", { terminal: "Baijini Point", body: null, system: null }, 1) === null);
+  check("...and an unknown id is refused rather than minting a pick",
+    s.repoint("buy-nope", "from", { terminal: "Ashland", body: null, system: null }, 1) === null);
+  check("...and an empty terminal name is refused",
+    s.repoint(b.id, "from", { terminal: "   ", body: null, system: null }, 1) === null);
+}
+
+/* 🔴 THE GUARD THAT MATTERS. Once the log has matched a real purchase to this pick, where it
+   happened is a FACT. Re-pointing it would overwrite an observation with an intention — the same
+   rule `applyPurchase` keeps from the other side, and the reason `scu` is the discriminator rather
+   than a separate flag: there is exactly one thing that sets it, and it is the log. */
+{
+  const s = new HaulingBuys(mkdtempSync(join(tmpdir(), "haulbuys-")));
+  const b = pick(s, "Processed Food", FOOD_GUID, 1_000);
+  check("the pick is re-pointable while nothing has been bought",
+    !!s.repoint(b.id, "from", { terminal: "Ashland", body: null, system: null }, 1));
+  const filled = s.applyPurchase(buyOf(BUY_FOOD));
+  check("...the purchase lands on it", !!filled && filled.scu !== null, `scu ${filled?.scu}`);
+  check("🔴 and now it REFUSES to move, because the log says where this really happened",
+    s.repoint(b.id, "from", { terminal: "Last Landings", body: null, system: null }, 1) === null);
+  check("...and the terminal the log agreed with is untouched",
+    s.list()[0].from.terminal === "Ashland", s.list()[0].from.terminal);
+}
+
 // ── what must NOT fill a pick ─────────────────────────────────────────────
 {
   const s = new HaulingBuys(mkdtempSync(join(tmpdir(), "haulbuys-")));

@@ -30,6 +30,46 @@
     return scu > 0 ? "≥ " + num(scu) + " SCU" : "what you buy";
   }
 
+  /** One line under the route, for the only thing here that can refuse. Cleared by the next action
+   *  rather than on a timer — a message that vanishes while you are reading it is worse than one
+   *  that waits. Same rule as the Commodities tab's own note. */
+  let routeMsg = "";
+  function routeNote(text) { routeMsg = text; }
+
+  /**
+   * Is this stop a COMMODITY leg, and if so which side of which run?
+   *
+   * 🔴 THE SCOPE IS THE SAFETY PROPERTY. Only a stop whose every action belongs to one commodity
+   * pick, on one side, naming one commodity gets the constrained picker and the re-point write. A
+   * contract stop, or a stop where a contract and a commodity share one landing, falls through to
+   * the ordinary place-naming behaviour — because there the price table has no opinion and a
+   * re-point would move a leg the player was not editing.
+   *
+   * 🔑 `group` is "buyleg:<buy id>" (see `buyGroup` in hauling-plan.ts), which is how a commodity
+   * action is told from a contract one and how the pick's id is recovered. It is a GROUPING key,
+   * not a mission reference — the solver has never read it as one.
+   */
+  function buyLegCtx(s) {
+    const acts = (s && s.actions) || [];
+    if (!acts.length) return null;
+    const PREFIX = "buyleg:";
+    let commodity = null;
+    let side = null;
+    let buyId = null;
+    for (const a of acts) {
+      const g = String(a.group || "");
+      if (g.indexOf(PREFIX) !== 0) return null;               // a contract shares this landing
+      const id = g.slice(PREFIX.length);
+      const kind = a.kind === "dropoff" ? "sell" : "buy";
+      if (buyId === null) { buyId = id; side = kind; commodity = a.commodity || null; }
+      // Two different runs, or both ends of one, on a single landing: there is no single thing to
+      // move, so offer nothing rather than guess which.
+      else if (id !== buyId || kind !== side || (a.commodity || null) !== commodity) return null;
+    }
+    if (!buyId || !commodity) return null;
+    return { buyId, side, commodity };
+  }
+
   function renderRoute() {
     commodityOfGroup = new Map();
     legByGroupUI = new Map();
@@ -49,6 +89,10 @@
     body.textContent = "";
     for (const n of plan.notes) {
       const d = document.createElement("div"); d.className = "note"; d.textContent = n;
+      body.appendChild(d);
+    }
+    if (routeMsg) {
+      const d = document.createElement("div"); d.className = "note"; d.textContent = routeMsg;
       body.appendChild(d);
     }
     /* 🔴 A PICK THAT COULD NOT BE ROUTED IS SAID, never silently absent — same rule as `unrouted`
@@ -228,7 +272,7 @@
                  The suggestion list is the SAME machinery the old panel used; registering this
                  editor in `placeRows` under the locationId is all it needs, so ask/close/arrow-keys
                  all work unchanged and there is no second implementation to drift. */
-              placeRows.set(s.locationId, { row: nm, inp });
+              placeRows.set(s.locationId, { row: nm, inp, ctx: buyLegCtx(s) });
               inp.addEventListener("focus", () => { grabOn(inp); askPlaces(s.locationId, inp.value, nm); });
               inp.addEventListener("blur", () => { grabOff(); setTimeout(() => closeSug(s.locationId), 120); });
               inp.addEventListener("pointerdown", (ev) => { ev.stopPropagation(); wantFocus = inp; });
