@@ -13,6 +13,7 @@
     "missions-replay": "tsx src/missions-replay.ts",
     "screen-read-dump": "tsx src/screen-read-dump.ts",
     "test:widgets": "node tools/check-suite-literals.cjs && node --check tools/widget-dom-test.cjs && electron tools/widget-dom-test.cjs",
+    "test:widgets:release": "node tools/check-suite-literals.cjs && node --check tools/widget-dom-test.cjs && electron tools/widget-dom-test.cjs --pairs",
     "test:widgets:sandbox": "node tools/test-widgets-sandbox.mjs",
     "standalone": "tsx src/standalone.ts",
     "overlay-app": "electron electron/main.cjs",
