@@ -351,29 +351,44 @@
     pill.title = tip;
     bar.appendChild(pill);
 
-    // 🔑 A real <button> + popover: `title` alone cannot be opened by clicking, and Sub has
-    // already hit that once on a different info affordance and reported it as doing nothing.
-    const info = document.createElement("button");
-    info.type = "button";
-    info.className = "tdi";
-    info.textContent = "i";
-    info.title = tip;
-    info.setAttribute("popovertarget", "tdInfoPop");
-    bar.appendChild(info);
+    /* 🔴 THE PILL NO LONGER CARRIES AN ⓘ OF ITS OWN — the UEX ⓘ in the credit sentence carries
+       this exact text instead (Sub, 2026-08-25, asked for one ⓘ per SOURCE). Three ⓘ in a 440px
+       strip is clutter, and two of them would have explained the same subject: the pill IS the
+       freshness of UEX's table, so "how fresh is this" and "what is UEX" are one answer. The pill
+       keeps its `title` for hover; the click affordance moved rather than being dropped, which is
+       the same rule as the pill itself moving rather than being copied. */
+    setCreditTip("uex", tip);
+  }
 
-    let pop = document.getElementById("tdInfoPop");
+  /**
+   * Fill one of the two credit ⓘ popovers, and its button's hover `title`.
+   *
+   * 🔑 A real <button> + popover, because `title` alone cannot be opened by CLICKING and Sub has
+   * already hit that once on a different info affordance and reported it as doing nothing. The
+   * popover is in the TOP LAYER, so it is immune to every ancestor's `overflow` and takes no space
+   * in layout — which is what makes it safe to hang out of a 440px strip.
+   * ⚠️ Filled on open and cleared on close, so the explanation is never also sitting inside the
+   * strip's own textContent.
+   */
+  function setCreditTip(which, tip) {
+    const btn = document.getElementById(which === "sco" ? "scoInfo" : "uexInfo");
+    if (!btn) return;
+    btn.title = tip;
+    const id = which === "sco" ? "scoInfoPop" : "uexInfoPop";
+    let pop = document.getElementById(id);
     if (!pop) {
       pop = document.createElement("div");
-      pop.id = "tdInfoPop";
+      pop.id = id;
       pop.className = "tdpop";
       pop.setAttribute("popover", "");
       document.body.appendChild(pop);
+      pop.addEventListener("beforetoggle", (e) => {
+        pop.textContent = e.newState === "open" ? (pop.dataset.tip || "") : "";
+      });
     }
-    // ⚠️ Filled on open and cleared on close, so the explanation is never also sitting inside the
-    // pill's own textContent.
-    pop.addEventListener("beforetoggle", (e) => {
-      pop.textContent = e.newState === "open" ? tip : "";
-    });
+    // Held on the element rather than closed over, so a re-render replaces the text instead of
+    // stacking another listener that would fight the first one for the same node.
+    pop.dataset.tip = tip;
   }
 
   /* ── loading ────────────────────────────────────────────────────────────── */
