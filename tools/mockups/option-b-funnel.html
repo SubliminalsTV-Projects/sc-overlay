@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Commodities — Option B: what → buy at → sell at</title>
+<link rel="stylesheet" href="../../overlay/widget-theme.css" />
+<link rel="stylesheet" href="../../overlay/skins.css" />
+<link rel="stylesheet" href="_hauling-style.css" />
+<link rel="stylesheet" href="_new.css" />
+<style>
+  @font-face { font-family: "Inter"; font-style: normal; font-weight: 400 700; font-display: swap;
+    src: url("../../overlay/fonts/Inter-latin.woff2") format("woff2"); }
+  @font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 500 700; font-display: swap;
+    src: url("../../overlay/fonts/SpaceGrotesk-latin.woff2") format("woff2"); }
+  html, body { background: #14171a; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+</style>
+</head>
+<body>
+<div id="panel" class="wpanel"></div>
+
+<script src="_mock-data.js"></script>
+<script src="_rig.js"></script>
+<script>
+/**
+ * ══ OPTION B — WHAT → BUY AT → SELL AT ════════════════════════════════════════════════════════
+ *
+ * THE IDEA IN ONE SENTENCE: three constraint slots at the top of the tab, each one only ever
+ * offering values the slot above it permits — and the body underneath always shows the options
+ * for the first slot you have NOT filled in.
+ *
+ * This is Sub's own sentence built as a control:
+ *   "we'll let them search for the buy-in location. And we'll let them search for the drop-off
+ *    location once they pick the pickup location."
+ *
+ * WHAT IT OPTIMISES FOR: steering. It is the only one of the three where "what can I do from where
+ * I am standing" and "get me out of Pyro" are single clicks rather than a scan down a ranked list.
+ * With all three slots empty the body is exactly today's leaderboard, so the tab has not been
+ * taken away from anyone — it has been given a steering wheel.
+ *
+ * WHY AN INVALID PICK BECOMES UNREACHABLE: the BUY AT slot is filled from `buyAt` and the SELL AT
+ * slot from `sellAt`. There is no code path that offers a place the commodity cannot be bought or
+ * sold at, so the route page's bug cannot be re-introduced by a different route into the same
+ * control — because it is the same control.
+ *
+ * WHAT IT COSTS: three rows of chrome, ~78px, before any content — on a panel that is 620px tall
+ * with 118px already spent on the head and the ship rows. It is also the most state of the three:
+ * three slots that persist, three lists to populate, and a rule for what happens to slot 3 when
+ * slot 2 changes underneath it.
+ */
+
+const PANEL = document.getElementById("panel");
+const QS = new URLSearchParams(location.search);
+const STATE = QS.get("state") || "rest";
+if (QS.get("theme")) document.documentElement.setAttribute("data-theme", QS.get("theme"));
+if (QS.has("embedded")) document.body.classList.add("embedded");
+
+/* NEW — the funnel. `spec` is [key, value, hint, state] per slot; state is "" | "off" | "locked"
+   | "open". An unset slot renders dim and italic and says what filling it would do, so it can
+   never be mistaken for a value. */
+function funnel(body, slots) {
+  const f = document.createElement("div"); f.className = "funnel";
+  for (const s of slots) {
+    const row = document.createElement("div");
+    row.className = "slot" + (s.state === "locked" ? " locked" : "") + (s.state === "open" ? " open" : "");
+    const k = document.createElement("span"); k.className = "k"; k.textContent = s.k;
+    row.appendChild(k);
+    if (s.state === "open") {
+      const inp = document.createElement("input"); inp.type = "text"; inp.value = s.typed || "";
+      inp.placeholder = s.value;
+      row.appendChild(inp);
+    } else {
+      const v = document.createElement("span");
+      v.className = "v" + (s.state === "off" || s.state === "locked" ? " off" : "");
+      v.textContent = s.value;
+      row.appendChild(v);
+    }
+    if (s.hint) { const h = document.createElement("span"); h.className = "h"; h.textContent = s.hint; row.appendChild(h); }
+    if (s.state === "" || s.state === "open") {
+      const x = document.createElement("button"); x.className = "x"; x.textContent = "✕"; row.appendChild(x);
+    }
+    f.appendChild(row);
+  }
+  body.appendChild(f);
+  return f;
+}
+
+/* NEW — the list a slot offers. In flow under the funnel, never absolutely positioned: the first
+   cut of the commodity input in the shipping widget lived inside `.psug` and rendered below the
+   panel, which is a mistake that only has to be made once. */
+function slotList(body, rows) {
+  const l = document.createElement("div"); l.className = "slotlist";
+  for (const r of rows) {
+    const o = document.createElement("div"); o.className = "o " + r.side + (r.on ? " on" : "");
+    const nm = document.createElement("span"); nm.className = "nm";
+    nm.textContent = r.name;
+    const sub = document.createElement("span"); sub.className = "sub"; sub.textContent = r.sub;
+    nm.appendChild(sub);
+    const sysb = document.createElement("span");
+    sysb.className = "sysb " + (r.system === "Pyro" ? "away" : "home");
+    sysb.textContent = r.system;
+    const pr = document.createElement("span"); pr.className = "pr"; pr.textContent = num(r.price);
+    o.append(nm, sysb, pr);
+    l.appendChild(o);
+  }
+  body.appendChild(l);
+  return l;
+}
+
+/** The shipped row, with the profit AND the button moved into a right rail — literally "the same
+ *  column as the price". */
+function runRow(body, r, rank) {
+  const { row, chips, rail } = tdSpineRow({
+    rail: true,
+    rank,
+    title: r.commodity,
+    profit: (r.scuBound === "unknown" ? "≤ " : "") + tdMoney(r.profit),
+    profitLabel: "profit",
+    route: r.from.terminalShort + "  →  " + r.to.terminalShort,
+    rate: tdMoney(r.profitPerHour) + "/hr",
+    buy: Math.round(r.from.price),
+    sell: Math.round(r.to.price),
+    marginPct: r.marginPct,
+    metrics: [[num(r.moveScu), "SCU"], [tdMoney(r.capitalRequired), "in"]],
+  });
+  const age = tdAge(r.ageDays);
+  tdChip(chips, age ? age + " old" : "age unknown", tdAgeClass(r.ageDays));
+  if (r.scuBound === "unknown") tdChip(chips, "stock unknown", "warn");
+  else if (r.scuBound === "stock") tdChip(chips, num(r.moveScu) + " on the shelf", "calm");
+  else if (r.scuBound === "demand") tdChip(chips, "buyer takes " + num(r.moveScu), "calm");
+  if (r.crossSystem) tdChip(chips, (r.from.system || "?") + " → " + (r.to.system || "?"), "xsys");
+  tdBtn(rail, "+ Route", false, "Sequence this run in the Route tab");
+  body.appendChild(row);
+}
+
+/* ── the three states ─────────────────────────────────────────────────────── */
+
+function renderRest() {
+  rigHead(PANEL, "Commodities");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+
+  const bar = document.createElement("div"); bar.className = "tdbar";
+  rigProvenance(bar);
+  rigSep(bar);
+  tdBtn(bar, "Confirmed stock", false);
+  rigSep(bar);
+  tdBtn(bar, "Per run", true); tdBtn(bar, "Per SCU", false);
+  body.appendChild(bar);
+
+  /* Empty slots. The board underneath is unchanged, so a player who ignores all three sees the tab
+     they already have. Note the third slot is not "locked" here — with no buy pinned it still
+     means something ("only runs ending in X"), which is a perfectly good filter on its own. */
+  funnel(body, [
+    { k: "what", value: "any commodity", state: "off", hint: "122" },
+    { k: "buy at", value: "anywhere", state: "off", hint: "" },
+    { k: "sell at", value: "anywhere", state: "off", hint: "" },
+  ]);
+
+  rigSec(body, "Worth carrying", BOARD.ship + " · " + num(BOARD.capacityScu) + " SCU hold");
+  BOARD.routes.slice(0, 5).forEach((r, i) => runRow(body, r, i + 1));
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+function renderSearch() {
+  rigHead(PANEL, "Commodities");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+
+  const bar = document.createElement("div"); bar.className = "tdbar";
+  rigProvenance(bar);
+  rigSep(bar);
+  tdBtn(bar, "Confirmed stock", false);
+  rigSep(bar);
+  tdBtn(bar, "Per run", true); tdBtn(bar, "Per SCU", false);
+  body.appendChild(bar);
+
+  /* WHAT is set; BUY AT is open with its three candidates below. SELL AT stays dim until a buy is
+     chosen, because "the drop-off you can reach from here" is a different list from "everywhere
+     that buys Neon" and offering the second one first is how the route page's bug happened. */
+  funnel(body, [
+    { k: "what", value: "Neon", state: "", hint: "3 · 19" },
+    { k: "buy at", value: "pick where you load", typed: "", state: "open", hint: "3 places" },
+    { k: "sell at", value: "pick a buy first", state: "locked", hint: "19 places" },
+  ]);
+
+  slotList(body, NEON.buyAt.map((b, i) => ({
+    side: "buy", on: i === 1, name: b.terminalShort, price: b.price, system: b.system,
+    sub: b.body + " · " + num(b.scu) + " SCU on the shelf · " + tdAge(ageOf(b.asOf)) + " old",
+  })));
+
+  const pairs = pairingsFor(NEON, BOARD.capacityScu);
+  rigSec(body, "Neon runs", pairs.length + " pairings");
+  pairs.slice(0, 3).forEach((r, i) => runRow(body, r, i + 1));
+
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+/**
+ * The Route tab. The stop picker IS the funnel's slot list — same component, same source, so the
+ * two surfaces cannot drift into offering different answers to the same question.
+ *
+ * 🔴 The bug today: this box is fed by GET /api/hauling/places, which ranks "places you have used
+ * before" and then all 1,125 rows of `locations.json`. On a commodity leg the only valid pickups
+ * are the three terminals that sell Neon.
+ *
+ * ⚠️ SCOPED TO COMMODITY LEGS. A contract stop is anonymous coordinates the game handed you; no
+ * price table has an opinion about it, and there the existing list is correct.
+ */
+function renderRoute() {
+  rigHead(PANEL, "Route");
+  rigSummary(PANEL);
+  const body = document.createElement("div"); body.id = "body";
+
+  rigSec(body, "Trip 1", "2 stops · 14 min");
+
+  const s1 = document.createElement("div"); s1.className = "stop pickup";
+  const n1 = document.createElement("div"); n1.className = "num"; n1.textContent = "↑";
+  const m1 = document.createElement("div"); m1.className = "mid";
+  const nm1 = document.createElement("div"); nm1.className = "nm editable";
+  const t1 = document.createElement("span"); t1.className = "nmt"; t1.textContent = "1. PICK UP — Last Landings";
+  const pen = document.createElement("span"); pen.className = "pen"; pen.textContent = "✎";
+  nm1.append(t1, pen);
+  const a1 = document.createElement("div"); a1.className = "acts"; a1.textContent = "Neon — your own buy";
+  m1.append(nm1, a1);
+  s1.append(n1, m1);
+  body.appendChild(s1);
+
+  /* The picker, opened on stop 1 — rendered as the funnel's own slot + list, in flow. The player
+     is looking at the same two elements they used on the Commodities tab. */
+  funnel(body, [
+    { k: "buy at", value: "Last Landings", typed: "", state: "open", hint: "3 places sell Neon" },
+  ]);
+  slotList(body, NEON.buyAt.map((b, i) => ({
+    side: "buy", on: i === 1, name: b.terminalShort, price: b.price, system: b.system,
+    sub: b.body + " · " + num(b.scu) + " SCU · " + tdAge(ageOf(b.asOf)) + " old",
+  })));
+
+  const s2 = document.createElement("div"); s2.className = "stop dropoff";
+  const n2 = document.createElement("div"); n2.className = "num"; n2.textContent = "↓";
+  const m2 = document.createElement("div"); m2.className = "mid";
+  const nm2 = document.createElement("div"); nm2.className = "nm editable";
+  const t2 = document.createElement("span"); t2.className = "nmt"; t2.textContent = "2. DROP OFF — Patch City";
+  const pen2 = document.createElement("span"); pen2.className = "pen"; pen2.textContent = "✎";
+  nm2.append(t2, pen2);
+  const a2 = document.createElement("div"); a2.className = "acts";
+  a2.textContent = "Neon · 120 SCU · sells at 19,000";
+  const tons = document.createElement("div"); tons.className = "tons";
+  tons.textContent = "19 places buy Neon — the same list, filtered to what you can reach";
+  m2.append(nm2, a2, tons);
+  const rt = document.createElement("div"); rt.className = "rt"; rt.textContent = "+575k";
+  s2.append(n2, m2, rt);
+  body.appendChild(s2);
+
+  PANEL.appendChild(body);
+  rigCredit(PANEL);
+}
+
+({ rest: renderRest, search: renderSearch, route: renderRoute }[STATE] || renderRest)();
+</script>
+</body>
+</html>
