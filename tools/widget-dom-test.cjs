@@ -5334,9 +5334,14 @@ const CALIBRATE = `(async () => {
   return out;
 })()`;
 
+// Per-suite wall clock, so "the suite is slow" can be answered with a number instead of an
+// impression. Filled by `run()`, printed as a table at the end of the pass.
+const TIMINGS = [];
+
 // `page` targets a widget's OWN page instead of the canvas — a notifier is easiest to drive
 // standalone, without the whole canvas around it.
 async function run(label, script, preload, query, page) {
+  const t0 = Date.now();
   const web = preload ? { preload, contextIsolation: false } : {};
   const win = new BrowserWindow({ show: false, width: 1920, height: 1080, webPreferences: web });
   // A widget that logs an error or 404s an asset is broken even when every assertion passes -
@@ -5367,6 +5372,7 @@ async function run(label, script, preload, query, page) {
     if (d.statusCode === 404 && EXPECTED_404.test(d.url)) return;
     noise.push("HTTP " + d.statusCode + " " + d.url.replace(/^https?:\/\//, "").slice(0, 70));
   });
+  let asserts = 0, failed = 0;
   try {
     const base = page ? `http://localhost:${PORT}/${page}` : URL;
     await win.loadURL(query ? base + (base.includes("?") ? "&" : "?") + query : base);
@@ -5383,6 +5389,7 @@ async function run(label, script, preload, query, page) {
       console.log(`
 ${label}`);
       console.log("  FAIL suite threw before it could report   [" + String((e && e.message) || e).slice(0, 180) + "]");
+      failed = 1;
       return 1;
     }
     let fails = 0;
@@ -5394,9 +5401,15 @@ ${label}`);
     const uniq = [...new Set(noise)];
     if (uniq.length) { fails++; console.log("  FAIL console/network clean   [" + uniq.slice(0, 4).join(" | ") + "]"); }
     else console.log("  ok   console/network clean");
-    console.log(`  ${res.length + 1 - fails}/${res.length + 1} passed` + (fails ? `  <<< ${fails} FAILED` : ""));
+    asserts = res.length + 1;
+    failed = fails;
+    console.log(`  ${res.length + 1 - fails}/${res.length + 1} passed` + (fails ? `  <<< ${fails} FAILED` : "")
+      + `  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     return fails;
-  } finally { win.destroy(); }
+  } finally {
+    win.destroy();
+    TIMINGS.push({ label, ms: Date.now() - t0, asserts, failed, page: page || "missions.html" });
+  }
 }
 
 // The summoned cog / open hub times itself out once the GAME has focus, because that's when it
@@ -8193,6 +8206,24 @@ app.whenReady().then(async () => {
       console.log(`\nscan read area: a suite moved it; ${back ? "restored" : "⚠ COULD NOT RESTORE"} ` +
                   JSON.stringify(region0));
       if (!back) { console.log(`  it is now ${JSON.stringify(now)} — re-drag it, or use Reset.`); fails++; }
+    }
+  }
+  // 🔑 THE COST, AS A NUMBER RATHER THAN AN IMPRESSION. A flight that changed two widgets should be
+  // able to see what the other fifty suites cost it, and the tower should be able to see which
+  // suite to look at when a pass starts feeling slow.
+  if (TIMINGS.length) {
+    const total = TIMINGS.reduce((a, t) => a + t.ms, 0);
+    const asserts = TIMINGS.reduce((a, t) => a + t.asserts, 0);
+    const byPage = new Map();
+    for (const t of TIMINGS) byPage.set(t.page, (byPage.get(t.page) || 0) + t.ms);
+    console.log(`\n── cost ──  ${TIMINGS.length} suites · ${asserts} assertions · ${(total / 1000).toFixed(1)}s`);
+    console.log("   slowest suites:");
+    for (const t of [...TIMINGS].sort((a, b) => b.ms - a.ms).slice(0, 12)) {
+      console.log(`     ${(t.ms / 1000).toFixed(1).padStart(6)}s  ${String(t.asserts).padStart(4)} asserts  ${t.label}`);
+    }
+    console.log("   by page:");
+    for (const [p, ms] of [...byPage].sort((a, b) => b[1] - a[1])) {
+      console.log(`     ${(ms / 1000).toFixed(1).padStart(6)}s  ${(ms / total * 100).toFixed(0).padStart(3)}%  ${p}`);
     }
   }
   console.log(fails ? `\nFAILED (${fails})` : "\nall widget DOM tests passed");
