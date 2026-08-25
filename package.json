@@ -88,6 +88,8 @@
     "probe:shoploc": "tsx tools/probe-shoploc.ts",
     "test:onerow": "tsx src/verse-onerow.test.ts",
     "control:onepill": "node tools/control-onepill.mjs",
+    "control:noisegate": "node tools/control-noisegate.cjs",
+    "control:logviewcap": "node tools/control-logviewcap.cjs",
     "probe:keepayear": "tsx tools/probe-keepayear.ts",
     "control:keepayear": "node tools/control-keepayear.mjs"
   },

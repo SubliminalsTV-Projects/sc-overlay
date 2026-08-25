@@ -375,10 +375,24 @@
   function clearLog() { $("log").textContent = ""; }
 
   // ── third-party emotes (7TV / BTTV / FFZ) ────────────────────────────────────
-  // All public + CORS-friendly, no credentials. The channel sets are keyed by Twitch user id,
-  // which ivr.fi resolves from a login without an API key (same source MC uses for avatars).
+  // 🔴 EVERY PROVIDER GOES THROUGH THE SIDECAR, AND NONE OF THEM MAY BE FETCHED FROM HERE.
+  // A cross-origin fetch that fails CORS is reported by CHROMIUM, not by our JS — the tasks below
+  // are already wrapped in Promise.allSettled, so nothing throws and chat renders perfectly, and
+  // the console still fills with "Access to fetch at 'https://api.frankerfacez.com/…' has been
+  // blocked by CORS policy" on every single load. There is no JS that removes that line while the
+  // page issues the request. Measured 2026-08-25 during an FFZ outage: two errors per load, for
+  // every user, on the shipped default channel. Same-origin through `/api/emotes`, that class of
+  // failure cannot exist. See the provider table in src/overlay-server.ts.
+  // The channel sets are keyed by Twitch user id, which ivr.fi resolves from a login without an
+  // API key (same source MC uses for avatars) — proxied for the same reason.
+  const emoteApi = (p, q) => "/api/emotes?p=" + encodeURIComponent(p) + (q ? "&q=" + encodeURIComponent(q) : "");
+  // 🔑 The proxy answers 200 with `null` for a provider that is down, unreachable or simply has
+  // nothing for this channel — a dead provider is not an error here, it is "no emotes from them".
+  // Every consumer below already guards with `?.` / `?? []`, so null degrades to an empty set.
+  // ⚠️ 8s, and it must stay ABOVE the sidecar's own 6s upstream timeout: a page timeout shorter
+  // than the server's turns a provider we were about to give up on cleanly into an abort here.
   async function j(url) {
-    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) throw new Error(String(r.status));
     return r.json();
   }
@@ -387,7 +401,7 @@
     const add = (n, u) => { if (n && u) map[n] = u.startsWith("//") ? "https:" + u : u; };
     let userId = null;
     try {
-      const d = await j("https://api.ivr.fi/v2/twitch/user?login=" + encodeURIComponent(login));
+      const d = await j(emoteApi("twitch-user", login));
       userId = String((Array.isArray(d) ? d[0] : d)?.id || "") || null;
     } catch { /* channel emotes will be skipped */ }
 
@@ -399,11 +413,11 @@
       }
     };
     const tasks = [
-      j("https://7tv.io/v3/emote-sets/global").then(sevenTv),
-      j("https://api.betterttv.net/3/cached/emotes/global").then((d) => {
+      j(emoteApi("7tv-global")).then(sevenTv),
+      j(emoteApi("bttv-global")).then((d) => {
         for (const e of d ?? []) add(e.code, "https://cdn.betterttv.net/emote/" + e.id + "/2x");
       }),
-      j("https://api.frankerfacez.com/v1/set/global").then((d) => {
+      j(emoteApi("ffz-global")).then((d) => {
         for (const set of Object.values(d?.sets ?? {})) for (const e of set.emoticons ?? []) {
           const u = e.animated?.[2] || e.animated?.[1] || e.urls?.[2] || e.urls?.[1] || e.urls?.[4];
           add(e.name, u);
@@ -412,11 +426,11 @@
     ];
     if (userId) {
       tasks.push(
-        j("https://7tv.io/v3/users/twitch/" + userId).then((d) => sevenTv(d?.emote_set)),
-        j("https://api.betterttv.net/3/cached/users/twitch/" + userId).then((d) => {
+        j(emoteApi("7tv-user", userId)).then((d) => sevenTv(d?.emote_set)),
+        j(emoteApi("bttv-user", userId)).then((d) => {
           for (const e of [...(d?.channelEmotes ?? []), ...(d?.sharedEmotes ?? [])]) add(e.code, "https://cdn.betterttv.net/emote/" + e.id + "/2x");
         }),
-        j("https://api.frankerfacez.com/v1/room/id/" + userId).then((d) => {
+        j(emoteApi("ffz-room", userId)).then((d) => {
           for (const set of Object.values(d?.sets ?? {})) for (const e of set.emoticons ?? []) {
             const u = e.animated?.[2] || e.animated?.[1] || e.urls?.[2] || e.urls?.[1] || e.urls?.[4];
             add(e.name, u);

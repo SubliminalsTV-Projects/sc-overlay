@@ -1583,6 +1583,84 @@ async function scFeedItems(): Promise<FeedItem[]> {
   return scFeedCache.items;
 }
 
+// ── Third-party emote providers (7TV / BTTV / FFZ) ───────────────────────────
+// 🔴 THE WIDGET MUST NOT FETCH THESE DIRECTLY, and the reason is not tidiness: a provider's
+// outage becomes console noise the app CANNOT SUPPRESS. A cross-origin fetch that fails CORS is
+// reported by Chromium itself, not by our JS — `twitchchat.html` already wraps every provider in
+// Promise.allSettled, so nothing throws and chat renders perfectly, and Chromium still prints
+// "Access to fetch at 'https://api.frankerfacez.com/…' has been blocked by CORS policy" on every
+// load. There is no JS that removes that line while the page issues the request.
+//
+// Measured 2026-08-25, with FFZ's origin down behind Cloudflare (`/v1/set/global` answered 000,
+// 522 and 503 on three consecutive tries, body `error code: 1200`, and www.frankerfacez.com and
+// cdn.frankerfacez.com were down too — a flapping origin, never a policy change). A Cloudflare
+// error page carries none of the origin's headers, so "no Access-Control-Allow-Origin" is a
+// SYMPTOM of the outage rather than a second, separate fault. Two console errors per load, for
+// every user, because `twitchChannel` ships defaulted to subliminalstv.
+//
+// Same reasoning and same shape as the SC Feed proxy above: same-origin through the sidecar, the
+// CORS class of failure cannot exist at all, and a dead provider degrades to "no emotes from
+// them" in silence. Cached so the overlay and an OBS browser-source share one upstream request.
+//
+// 🔑 THE CALLER NAMES A KEY, NEVER A URL. This route is PUBLIC on purpose — OBS browser sources
+// run on a second PC and want emotes too — so a `?url=` passthrough would be an unauthenticated
+// SSRF hop into the user's LAN. `/api/can-embed` is loopback-only for precisely that reason; this
+// one can only ever reach the seven hosts below, and `q` is validated before it is interpolated.
+const EMOTE_PROVIDERS: Record<string, { needs: "id" | "login" | "none"; url: (q: string) => string }> = {
+  "ffz-global":  { needs: "none",  url: () => "https://api.frankerfacez.com/v1/set/global" },
+  "ffz-room":    { needs: "id",    url: (q) => `https://api.frankerfacez.com/v1/room/id/${q}` },
+  "7tv-global":  { needs: "none",  url: () => "https://7tv.io/v3/emote-sets/global" },
+  "7tv-user":    { needs: "id",    url: (q) => `https://7tv.io/v3/users/twitch/${q}` },
+  "bttv-global": { needs: "none",  url: () => "https://api.betterttv.net/3/cached/emotes/global" },
+  "bttv-user":   { needs: "id",    url: (q) => `https://api.betterttv.net/3/cached/users/twitch/${q}` },
+  // Resolves a login to a Twitch user id without an API key — the other five channel lookups are
+  // keyed by that id, so this one runs first and the rest are skipped when it comes back null.
+  "twitch-user": { needs: "login", url: (q) => `https://api.ivr.fi/v2/twitch/user?login=${encodeURIComponent(q)}` },
+};
+const EMOTE_TTL_OK_MS = 15 * 60 * 1000;
+// 🔑 CACHE THE FAILURE TOO. Without this a dead provider becomes one upstream request per widget
+// load — and this widget reloads on every regroup, every hide/show and every OBS source refresh.
+const EMOTE_TTL_FAIL_MS = 60 * 1000;
+const emoteCache = new Map<string, { at: number; ok: boolean; body: unknown }>();
+let emoteLastLogged = "";
+
+/** The provider's own JSON, or `null` for "nothing from them" — down, unreachable, or no such
+ *  channel. Never throws and never reports an error status: from the widget's point of view a
+ *  missing provider is a normal, silent degradation, and the diagnosis belongs in sidecar.log. */
+async function emotePayload(key: string, q: string): Promise<unknown> {
+  const p = EMOTE_PROVIDERS[key];
+  if (!p) return null;
+  if (p.needs === "id" && !/^\d{1,20}$/.test(q)) return null;
+  if (p.needs === "login" && !/^[A-Za-z0-9_]{1,25}$/.test(q)) return null;
+  // The sandboxed widget suite sets this so a run touches no network of its own, exactly as it
+  // does for the two price endpoints. See tools/test-widgets-sandbox.mjs.
+  if (process.env.SC_EMOTE_PROXY === "0") return null;
+
+  const ck = `${key}:${p.needs === "none" ? "" : q}`;
+  const hit = emoteCache.get(ck);
+  if (hit && Date.now() - hit.at < (hit.ok ? EMOTE_TTL_OK_MS : EMOTE_TTL_FAIL_MS)) return hit.body;
+
+  let body: unknown = null;
+  let why = "";
+  try {
+    const r = await fetch(p.url(q), { signal: AbortSignal.timeout(6000) });
+    // A 404 here is the COMMON case, not a fault: it means this channel is not registered with
+    // that provider. It caches as a failure so we re-ask in a minute rather than every load.
+    if (r.ok) body = await r.json();
+    else why = `HTTP ${r.status}`;
+  } catch (e) {
+    why = String((e as Error)?.message ?? e).slice(0, 90);
+  }
+  emoteCache.set(ck, { at: Date.now(), ok: !why, body });
+  // Deduped, so a provider that is down for a week costs one line rather than one per load. The
+  // Log View widget exists because a tripwire nobody reads is not a tripwire.
+  if (why && emoteLastLogged !== key + why) {
+    emoteLastLogged = key + why;
+    console.log(`[emotes] ${key} unavailable (${why}) — chat renders without their emotes`);
+  }
+  return body;
+}
+
 // Subscriber-skin entitlement: poll subliminal.gg with the device token to learn whether the
 // linked account is an ACTIVE Twitch subscriber. That server-resolved result (not the local
 // premiumOverride) is what lets a pinned manufacturer skin stay up instead of reverting after
@@ -4562,6 +4640,18 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   }
 
   // SC Feed (OmniFeed) headlines for the SC Feed widget — proxied + flattened, see scFeedItems().
+  // Third-party emotes for the Twitch Chat widget — proxied so the page never makes a
+  // cross-origin request it cannot report on, see emotePayload(). PUBLIC on purpose: OBS browser
+  // sources on a second PC render chat too. It reaches a fixed table of seven hosts and accepts
+  // no caller-supplied URL, so it is not an SSRF hop and does not belong in SENSITIVE_GET.
+  if (url === "/api/emotes" && req.method === "GET") {
+    const qs = new URL(req.url ?? "/", "http://localhost").searchParams;
+    const body = await emotePayload(qs.get("p") ?? "", qs.get("q") ?? "");
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(body ?? null));
+    return;
+  }
+
   if (url === "/api/scfeed" && req.method === "GET") {
     const items = await scFeedItems();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
