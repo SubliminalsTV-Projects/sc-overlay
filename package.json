@@ -83,6 +83,7 @@
     "control:sellvolume": "node tools/control-sellvolume.mjs",
     "test:itemshoplog": "tsx src/item-shop-log.test.ts",
     "measure:itemshops": "tsx tools/measure-item-shops.mts",
+    "probe:shoploc": "tsx tools/probe-shoploc.ts",
     "test:onerow": "tsx src/verse-onerow.test.ts"
   },
   "dependencies": {
