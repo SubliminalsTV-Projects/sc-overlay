@@ -2712,6 +2712,17 @@ const VERSEPOOL = `(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(400);
 
+  // 🔴 ONE LIST. Flight onerow deleted the SEEN IN GAME group this suite used to be about. A
+  // community confirmation now arrives either ON a survey row (q.confirmed) or as a row already
+  // sitting in its own place group (q.observedOnly), and the assertions below are all about the
+  // difference between those two and the block they replaced. Sub, on the block:
+  //
+  //   "it tells me 25 days ago 7 aUEC and also 7 aUEC four hours ago. It's just too much."
+  //
+  // ⚠️ A FIXTURE, not the live endpoint. The pool is a real network resource whose contents change
+  // when a stranger buys a drink, and a suite that fetched it would pass or fail on that.
+  // ⚠️ No backticks and no backslashes anywhere in this suite, comments included: the body IS a
+  // template literal, so a quoted selector ends the string and a newline escape ends a comment.
   const nowSec = Math.round(Date.now() / 1000);
   const DAY = 86400;
   const fixture = {
@@ -2719,17 +2730,35 @@ const VERSEPOOL = `(async () => {
     results: [{
       name: "Pool Probe Widget",
       kind: "item",
+      shopCount: 9,
+      unplacedConfirmations: 3,
       quotes: [
-        { terminal: "A Survey Shop", system: "Stanton", body: null, place: "Somewhere",
+        // Sub's own case: UEX says 90 days, a player confirmed the same number this morning, and
+        // the placement is only place-level so the AGE moves and the number does not.
+        { terminal: "Cargo Services - Probeville", system: "Stanton", body: null, place: "Probeville",
           price: 111, asOf: nowSec - 90 * DAY, minutes: null, metres: null, jumps: null,
-          travelBasis: null, containment: null },
+          travelBasis: null, containment: "same-place",
+          confirmed: { asOf: nowSec - 120, contributors: 4, samples: 9, mine: true,
+            precision: "place-level", token: "SCShop_Probe_Cargo", setPrice: false } },
+        // An exact placement: ours supplied the price as well.
+        { terminal: "Refinery Shop - Probeville", system: "Stanton", body: null, place: "Probeville",
+          price: 222, asOf: nowSec - 200 * DAY, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-place",
+          confirmed: { asOf: nowSec - 3 * DAY, contributors: 1, samples: 1, mine: false,
+            precision: "exact", token: "SCShop_Probe_Refinery", setPrice: true } },
+        // A row nobody has confirmed. The control group.
+        { terminal: "Quiet Shop - Probeville", system: "Stanton", body: null, place: "Probeville",
+          price: 333, asOf: nowSec - 200 * DAY, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-place" },
+        // Placed but never named: a confirmation with no UEX terminal under it, which belongs IN
+        // the list under the station it is at rather than in a block of raw tokens.
+        { terminal: "SCShop_Probe_Unnamed", system: "Stanton", body: null, place: "Faraway",
+          price: 444, asOf: nowSec - 5 * DAY, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-system", observedOnly: true, placeId: "x-faraway",
+          confirmed: { asOf: nowSec - 5 * DAY, contributors: 2, samples: 2, mine: false,
+            token: "SCShop_Probe_Unnamed", setPrice: true } },
       ],
-      observed: [
-        { terminal: "SCShop_Probe_Live", price: 7, asOf: nowSec - 120, quantity: 1,
-          contributors: 4, samples: 9, confidence: "confirmed", mine: true },
-        { terminal: "SCShop_Probe_Old", price: 7, asOf: nowSec - 200 * DAY, quantity: 1,
-          contributors: 1, samples: 1, confidence: "seen-once", mine: false },
-      ],
+      low: 111, high: 444, rentLow: null, rentHigh: null,
     }],
     origin: null,
     order: null,
@@ -2737,79 +2766,166 @@ const VERSEPOOL = `(async () => {
   render(fixture);
   await sleep(120);
 
-  const obgrp = document.querySelector("#results .grp.obgrp");
-  // POSITIVE FIRST. Every must-not below is free if this group never rendered at all, which is
-  // exactly what a fixture that failed to land produces.
-  ok("the observed prices render as a group in the shop list", !!obgrp,
-     obgrp ? "found" : "(no .grp.obgrp)");
-  const obRows = obgrp ? [...obgrp.querySelectorAll(".grow")] : [];
-  ok("both observations are drawn", obRows.length === 2, obRows.length + " rows");
+  // POSITIVE FIRST, always. Every must-not below is free if the fixture never landed, which is the
+  // most dangerous failure this harness has — it passes while measuring nothing.
+  const rows = [...document.querySelectorAll("#results .shops .grow")];
+  ok("the fixture rendered a shop list", rows.length === 4, rows.length + " rows");
+  const marked = rows.filter((r) => !!r.querySelector(".sco"));
+  ok("three of those rows carry a confirmation", marked.length === 3, marked.length);
 
-  // 🔴 SUB'S ACTUAL COMPLAINT. The words "you paid" were the whole problem — it was built as a
-  // receipt. Asserted against the group's own text, so a label put back anywhere in it is caught.
-  const obText = obgrp ? (obgrp.textContent || "").toLowerCase() : "";
-  ok("🔴 it does not call itself a receipt", obText.indexOf("you paid") === -1,
-     obText.slice(0, 80));
+  // ══ 🔴 THERE IS NO SECOND LIST ══════════════════════════════════════════════════════════════
+  ok("🔴 no observations group exists any more",
+     document.querySelectorAll(".obgrp").length === 0,
+     document.querySelectorAll(".obgrp").length + " .obgrp");
+  const headings = [...document.querySelectorAll("#results .gplace")].map((h) =>
+    (h.textContent || "").toLowerCase());
+  ok("🔴 no group calls itself Seen in game",
+     headings.indexOf("seen in game") === -1, headings.join(" | "));
+  ok("every group heading is a PLACE",
+     headings.length === 2 && headings.indexOf("probeville") >= 0 && headings.indexOf("faraway") >= 0,
+     headings.join(" | "));
 
-  // 🔴 IT IS INSIDE THE SHOP LIST, NOT A BOX ABOVE IT. That relocation IS the fix; a block that
-  // renders the same rows outside .shops is the old design wearing new words.
-  const shops = document.querySelector("#results .shops");
-  ok("🔴 the group sits INSIDE the shop list", !!shops && !!obgrp && shops.contains(obgrp),
-     shops ? "shops contains obgrp: " + shops.contains(obgrp) : "(no .shops)");
-  // ...and FIRST, because these are the freshest numbers in the widget.
-  const groups = [...document.querySelectorAll("#results .grp")];
-  ok("it is the FIRST group", groups.length > 1 && groups[0] === obgrp,
-     groups.length + " groups, first is " + (groups[0] ? groups[0].className : "(none)"));
+  // 🔴 THE DUPLICATE. This is the assertion the whole rework exists to make true: at Probeville the
+  // survey says 111 aUEC and a player confirmed 111 aUEC, and that is ONE row. The design this
+  // replaced drew both, which is the sentence Sub objected to.
+  const probeGroup = [...document.querySelectorAll("#results .grp")].find((g) => {
+    const h = g.querySelector(".gplace");
+    return h && (h.textContent || "").toLowerCase() === "probeville";
+  });
+  const probeRows = probeGroup ? [...probeGroup.querySelectorAll(".grow")] : [];
+  ok("Probeville draws its three shops", probeRows.length === 3, probeRows.length + " rows");
+  const priceOf = (r) => {
+    const p = r.querySelector(".price");
+    return p ? (p.textContent || "").replace(" aUEC", "").trim() : "(no price)";
+  };
+  const prices = probeRows.map(priceOf);
+  ok("🔴 no price is printed twice at one place — the 7 aUEC twice Sub rejected",
+     prices.length === new Set(prices).size, prices.join(" | "));
 
-  // 🔴 THE ROW IDIOM IS THE SURVEY'S. If an observation row is built out of different parts from
-  // a shop row it reads as a different kind of thing again, which is what was wrong before.
-  const parts = (row) => ["gshop", "age", "price"].filter((c) => !!row.querySelector("." + c));
-  ok("an observed row carries a shop, an age and a price like every other row",
-     obRows.length > 0 && obRows.every((r) => parts(r).length === 3),
-     obRows.map((r) => parts(r).join("+")).join(" | "));
+  // ══ 🔴 THE AGE IS THE CONFIRMATION'S ════════════════════════════════════════════════════════
+  // Sub: "instead of Cargo Services at Levski saying 25 days old, it would simply say four hours
+  // ago". Asserted as a BAND rather than a string, because the string is a rounding of a clock.
+  const rowFor = (name) => probeRows.find((r) => {
+    const w = r.querySelector(".gshop");
+    return w && (w.textContent || "").indexOf(name) >= 0;
+  });
+  const bandOf = (r) => {
+    if (!r) return "(no row)";
+    const a = r.querySelector(".age");
+    return a ? a.className.replace("age", "").trim() : "(no age)";
+  };
+  const cargo = rowFor("Cargo Services");
+  const quiet = rowFor("Quiet Shop");
+  ok("🔴 a confirmed row ages from the CONFIRMATION, not from UEX",
+     bandOf(cargo) === "live", bandOf(cargo));
+  ok("...while the identically-old survey row beside it does not",
+     bandOf(quiet) === "ancient", bandOf(quiet));
+  ok("the two therefore paint different colours", (() => {
+       const a = cargo ? cargo.querySelector(".age") : null;
+       const b = quiet ? quiet.querySelector(".age") : null;
+       return !!a && !!b && getComputedStyle(a).color !== getComputedStyle(b).color;
+     })(), bandOf(cargo) + " vs " + bandOf(quiet));
 
-  // 🔴 THE BANDS. A two-minute-old confirmation and a 200-day-old one must not paint the same,
-  // which they did for months — none of the band classes had a colour rule anywhere.
-  const ages = obRows.map((r) => r.querySelector(".age"));
-  const bands = ages.map((a) => a.className.replace("age", "").trim());
-  ok("the fresh row is the live band and the old row is not",
-     bands[0] === "live" && bands[1] === "ancient", bands.join(" / "));
-  const colours = ages.map((a) => getComputedStyle(a).color);
-  ok("🔴 the two bands paint DIFFERENT colours", colours[0] !== colours[1], colours.join(" vs "));
+  // ══ 🔴 SCO — the mark Sub named ═════════════════════════════════════════════════════════════
+  const scoOf = (r) => (r ? r.querySelector(".sco") : null);
+  ok("🔴 a confirmed row is marked SCO", (() => {
+       const s = scoOf(cargo);
+       return !!s && (s.textContent || "").trim() === "SCO";
+     })(), cargo ? (cargo.textContent || "").trim() : "(no row)");
+  ok("...and an unconfirmed row is not", !scoOf(quiet),
+     quiet ? (quiet.textContent || "").trim() : "(no row)");
+  // 🔑 It sits between the age and the price, because it qualifies the age.
+  ok("SCO rides immediately after the age it qualifies", (() => {
+       if (!cargo) return false;
+       const kids = [...cargo.children].map((c) => c.className.split(" ")[0]);
+       const ai = kids.indexOf("age");
+       return ai >= 0 && kids[ai + 1] === "tag" && kids[ai + 2] === "price";
+     })(), cargo ? [...cargo.children].map((c) => c.className).join(" / ") : "(no row)");
+  // 🔑 The two kinds of fold look different: only one of them supplied the number.
+  ok("a fold that only moved the AGE is marked more quietly than one that moved the price", (() => {
+       const a = scoOf(cargo);
+       const b = scoOf(rowFor("Refinery Shop"));
+       return !!a && !!b && a.className.indexOf("sco-age") >= 0 && b.className.indexOf("sco-age") === -1
+         && getComputedStyle(a).color !== getComputedStyle(b).color;
+     })(), scoOf(cargo) ? scoOf(cargo).className : "(none)");
 
-  // 🔑 PEOPLE, NOT RECEIPTS — and a lone observation gets no tag at all.
-  const tagText = (row) => [...row.querySelectorAll(".tag")].map((t) => t.textContent).join(",");
-  ok("a corroborated row says how many PEOPLE", tagText(obRows[0]).indexOf("4 people") >= 0,
-     tagText(obRows[0]));
-  ok("it counts people rather than the 9 purchases behind them",
-     tagText(obRows[0]).indexOf("9") === -1, tagText(obRows[0]));
-  ok("a single observation carries no count tag", tagText(obRows[1]).indexOf("people") === -1,
-     tagText(obRows[1]));
+  // ══ 🔑 THE COUNT IS A TOOLTIP — Sub, 2026-08-24: "2 people can be a tool tip when they hover" ═
+  const face = cargo ? (cargo.textContent || "") : "";
+  ok("🔴 the contributor count is NOT on the face of the row",
+     face.indexOf("people") === -1 && face.indexOf("4 ") === -1, face.trim());
+  ok("...nor is the you footnote", face.toLowerCase().indexOf("you") === -1, face.trim());
+  // Positive half: it still has to be REACHABLE, or this is a deletion rather than a move.
+  const tip = scoOf(cargo) ? (scoOf(cargo).title || "") : "";
+  ok("but it IS in the SCO tooltip", tip.indexOf("4 different players") >= 0, tip.slice(0, 120));
+  ok("...along with whether one of them was you", tip.indexOf("was you") >= 0, tip.slice(-60));
+  ok("and it counts PEOPLE, never the 9 purchases behind them",
+     tip.indexOf("4 different players") >= 0 && tip.indexOf("9 purchases") >= 0,
+     tip.slice(0, 160));
 
-  // 🔑 "you" IS A FOOTNOTE, NOT THE HEADLINE.
-  ok("the player's own purchase is marked on the row", tagText(obRows[0]).indexOf("you") >= 0,
-     tagText(obRows[0]));
-  ok("a row that is not yours is not marked", tagText(obRows[1]).indexOf("you") === -1,
-     tagText(obRows[1]));
+  // ══ 🔴 A PLACED CONFIRMATION IS IN THE LIST, UNDER ITS OWN STATION ══════════════════════════
+  // Sub: "The ones that we can't merge with UEX because they use different names, just put those
+  // in line with everything else, but still have it sorted by distance."
+  const faraway = [...document.querySelectorAll("#results .grp")].find((g) => {
+    const h = g.querySelector(".gplace");
+    return h && (h.textContent || "").toLowerCase() === "faraway";
+  });
+  const placed = faraway ? faraway.querySelector(".grow") : null;
+  ok("a confirmation we cannot name is a row inside its own place group", !!placed,
+     faraway ? "found" : "(no Faraway group)");
+  ok("...named with the game's token, tidied for reading rather than raw", (() => {
+       const w = placed ? placed.querySelector(".gshop") : null;
+       const t = w ? (w.textContent || "").trim() : "";
+       return t.length > 0 && t.indexOf("SCShop") === -1 && t.indexOf("Probe") >= 0;
+     })(), placed ? (placed.querySelector(".gshop") || {}).textContent : "(none)");
+  ok("...with the raw token still reachable on hover", (() => {
+       const w = placed ? placed.querySelector(".gshop") : null;
+       return !!w && (w.title || "").indexOf("SCShop_Probe_Unnamed") >= 0;
+     })(), placed ? (placed.querySelector(".gshop") || {}).title : "(none)");
 
-  // 🔴 IT MUST NEVER CLAIM TO BE A UEX ROW. 0 of 75 game shop tokens match a terminal name, so
-  // the two lists cannot be reconciled and the widget has to say so.
-  const survey = groups.find((g) => !g.classList.contains("obgrp"));
-  ok("the survey rows are still their own group", !!survey && survey !== obgrp,
-     survey ? survey.querySelector(".gplace").textContent : "(none)");
-  ok("no observed row was sorted into a survey group",
-     !!survey && [...survey.querySelectorAll(".grow")].every((r) =>
-       (r.querySelector(".gshop").textContent || "").indexOf("Probe") === -1),
-     survey ? survey.querySelectorAll(".grow").length + " survey rows" : "(none)");
-  ok("the group explains why the two lists are separate",
-     obText.indexOf("separately") >= 0, obText.slice(0, 160));
+  // ══ 🔴 WHAT WE CANNOT PLACE IS COUNTED, NEVER NAMED ═════════════════════════════════════════
+  // Sub: "The other locations that I'm showing, I don't know where those would be. It's useless
+  // information to the viewer." A count is not a location, and swallowing it silently would break
+  // this codebase's rule that a discarded thing is said.
+  const more = document.querySelector("#results .more");
+  const moreText = more ? (more.textContent || "") : "";
+  ok("the unplaceable confirmations are counted on the notes line",
+     moreText.indexOf("3 more confirmations") >= 0, moreText);
+  ok("🔴 and none of their names is printed anywhere",
+     (document.querySelector("#results").textContent || "").indexOf("SCShop_") === -1,
+     moreText);
+  // 🔴 A ROW WE ADDED IS NOT A UEX SHOP. shopCount is 9 and four rows are drawn, one of which we
+  // invented — so the hidden figure is 9 - 3, not 9 - 4. Getting this wrong understates it by
+  // exactly the number of confirmations on screen.
+  ok("the hidden-shop count excludes the row we added ourselves",
+     moreText.indexOf("+6 more shops") >= 0, moreText);
 
-  // 🔴 AND THE POINT OF THE WHOLE FEATURE: the same price, confirmed far more recently than the
-  // survey says. Asserted as a relation rather than as numbers, which would rot.
-  const surveyAge = survey ? survey.querySelector(".age").className : "";
-  ok("the observation is a fresher band than the survey quote beside it",
-     bands[0] === "live" && surveyAge.indexOf("stale") >= 0,
-     "observed=" + bands[0] + " survey=" + surveyAge);
+  // ══ 🔴 EVERY BAND PAINTS, AND THEY ALL PAINT DIFFERENTLY ════════════════════════════════════
+  // A class-name check cannot see this: for months every band class had NO colour rule anywhere
+  // and rendered identically. Probe the real computed colour, require the five to be distinct,
+  // AND require none of them to match an unstyled sibling — because a base colour on .age would
+  // make the distinctness check pass for free while the pills stayed unpainted.
+  const probe = document.createElement("div");
+  probe.style.position = "absolute";
+  probe.style.left = "-9999px";
+  const BANDS = ["live", "fresh", "recent", "stale", "ancient"];
+  const spans = BANDS.map((b) => {
+    const s = document.createElement("span");
+    s.className = "age " + b;
+    s.textContent = "x";
+    probe.appendChild(s);
+    return s;
+  });
+  const bare = document.createElement("span");
+  bare.textContent = "x";
+  probe.appendChild(bare);
+  document.body.appendChild(probe);
+  const cols = spans.map((s) => getComputedStyle(s).color);
+  const bareCol = getComputedStyle(bare).color;
+  probe.remove();
+  ok("🔴 all five recency bands paint DISTINCT colours",
+     new Set(cols).size === BANDS.length, BANDS.join("/") + " = " + cols.join(" | "));
+  ok("🔴 and not one of them is the inherited colour of an unstyled pill",
+     cols.every((c) => c !== bareCol), "bare=" + bareCol);
 
   return out;
 })()`;
@@ -2835,7 +2951,7 @@ const VERSEFINDER = `(async () => {
   // ⚠️ No backticks anywhere in this comment: a suite body IS a template literal, and quoting a
   // selector the way this codebase normally would ends the string, after which the file still
   // parses and electron throws at load with no suite name and no line.
-  const shopRows = () => [...document.querySelectorAll("#results .grp:not(.obgrp) .grow")];
+  const shopRows = () => [...document.querySelectorAll("#results .grow:not(.obs)")];
 
   // Nothing typed is not the same as nothing found — the empty state must invite, not report.
   ok("with an empty box it prompts rather than listing everything",
@@ -2845,7 +2961,7 @@ const VERSEFINDER = `(async () => {
   await search("cannon");
   ok("a real search returns items", items().length > 0, items().length);
   ok("...and every one of them names at least one shop",
-     items().every((el) => el.querySelectorAll(".grp:not(.obgrp) .grow").length > 0));
+     items().every((el) => el.querySelectorAll(".grow:not(.obs)").length > 0));
 
   // 🔴 THE CORE RULE. A price with no place is the thing this widget must never show.
   ok("every shop row names its TERMINAL",
@@ -2881,7 +2997,7 @@ const VERSEFINDER = `(async () => {
     const m = el.querySelector(".more");
     return m && m.textContent.indexOf("depending where you buy") > -1;
   });
-  const multi = items().filter((el) => el.querySelectorAll(".grp:not(.obgrp) .grow").length > 1);
+  const multi = items().filter((el) => el.querySelectorAll(".grow:not(.obs)").length > 1);
   ok("the result set contains multi-shop items at all", multi.length > 0, multi.length);
   ok("...and at least one states its spread instead of one number",
      spread.length > 0, spread.length + " of " + multi.length);
@@ -2897,7 +3013,7 @@ const VERSEFINDER = `(async () => {
      // counted every row in the card and the community observations are now rows in the same
      // list. A card with observations counted 6 or 7 while the note was perfectly correct.
      truncated.length === 0 || truncated.every((el) =>
-       el.querySelectorAll(".grp:not(.obgrp) .grow").length === 5),
+       el.querySelectorAll(".grow:not(.obs)").length === 5),
      truncated.length + " truncated");
 
   // 🔴 The provenance footer. Sub's requirement is that the user knows when they are on a

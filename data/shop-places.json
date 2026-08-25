@@ -1,0 +1,141 @@
+{
+ "schema": 1,
+ "note": "Hand-curated shop token -> UEX terminal names. shoploc's log replay ships separately as data/shop-terminals.json and is read in its own schema; the two are merged per token at runtime.",
+ "shops": {
+  "SCShop_AdminOffice_GrimHex": {
+   "terminal": "Admin - GrimHEX",
+   "precision": "exact",
+   "kind": "commodity"
+  },
+  "SCShop_AstroArmada_Area18": {
+   "terminal": "Astro Armada - Area 18",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_Centermass_Area18": {
+   "terminal": "CenterMass - IO North Tower - Area 18",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_Centermass_NewBabbage": {
+   "terminal": "CenterMass - New Babbage",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_CommEx_TDD_NewBabbage": {
+   "terminal": "TDD - Trade and Development Division - Commons - New Babbage",
+   "precision": "exact",
+   "kind": "commodity"
+  },
+  "SCShop_CommEx_TDD_Orison": {
+   "terminal": "TDD - Trade and Development Division - Cloudview Center - Orison",
+   "precision": "exact",
+   "kind": "commodity"
+  },
+  "SCShop_ConscientiousObjects_Levski-001": {
+   "terminal": "Conscientious Objects - Levski",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_Cordrys_Levski-001": {
+   "terminal": "Cordry's - Levski",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_Entity_CubbyBlast_Area18": {
+   "terminal": "Cubby Blast - Area 18",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_Entity_Dumpers_Depot_Area18": {
+   "terminal": "Dumper's Depot - Area 18",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_H_Pharmacy_Levski": {
+   "terminal": "Pharmacy - Levski",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_Hospital_Pharmacy_Orison_01": {
+   "terminal": "Pharmacy - Orison General Hospital",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_Levski_CargoOffice_Commodities": {
+   "terminal": "Levski",
+   "precision": "exact",
+   "kind": "commodity"
+  },
+  "SCShop_Levski_CargoOffice_ITEM": {
+   "terminal": "Cargo Services - Levski",
+   "precision": "place-level",
+   "kind": "item"
+  },
+  "SCShop_Levski_Dealership_Teachs": {
+   "terminal": "Levski",
+   "precision": "exact",
+   "kind": "commodity"
+  },
+  "SCShop_Levski_GrandBarter_ElectronicsStand": {
+   "terminal": "Levski",
+   "precision": "exact",
+   "kind": "commodity"
+  },
+  "SCShop_Levski_Refinery_Store": {
+   "terminal": "Refinery Shop - Levski",
+   "precision": "place-level",
+   "kind": "item"
+  },
+  "SCShop_Levski_ShipItems_Teachs": {
+   "terminal": "Levski",
+   "precision": "exact",
+   "kind": "commodity"
+  },
+  "SCShop_Levski_ShipRentals_Teachs": {
+   "terminal": "Levski",
+   "precision": "exact",
+   "kind": "commodity"
+  },
+  "SCShop_Lorville_Spaceport_KeltoShipServices": {
+   "terminal": "Kel-To - Teasa Spaceport - Lorville",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_NewDeal_Interior_Lorville": {
+   "terminal": "New Deal - Teasa Spaceport - Lorville",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_OmegaPro_NewBabbage": {
+   "terminal": "Omega Pro - New Babbage",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_ProvidenceSurplus_Orison": {
+   "terminal": "Providence Surplus - Providence Platform - Orison",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_RegalLuxuryRentals_NewBabbage": {
+   "terminal": "Regal Luxury Rentals - New Babbage Interstellar Spaceport - New Babbage",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_ShubinInterstellar_NewBabbage": {
+   "terminal": "Shubin Interstellar - Commons - New Babbage",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_Skutters_GrimHex": {
+   "terminal": "Skutters - GrimHEX",
+   "precision": "exact",
+   "kind": "item"
+  },
+  "SCShop_VantageRentals_Lorville": {
+   "terminal": "Vantage Rentals - Lorville",
+   "precision": "exact",
+   "kind": "item"
+  }
+ }
+}

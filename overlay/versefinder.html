@@ -183,11 +183,21 @@
      different KINDS of claim, and the chrome around them says so — but "how long since anybody
      looked" means exactly the same thing for both, so it may not mean two things here. The old
      `.age.obage` rule pinned every receipt green regardless of age and had to go: a receipt from
-     March is not fresh because it is yours. */
+     March is not fresh because it is yours.
+
+     🔴 FIVE CLASSES, FIVE DISTINCT COLOURS — AND THAT WAS NOT TRUE UNTIL FLIGHT `onerow`.
+     `poolfill` painted `live` and `fresh` BOTH `var(--green)`, separated only by weight and border
+     strength, so the ladder had five rungs and four colours: a price confirmed twenty minutes ago
+     and one read six days ago were the same hue. Sub asked for freshness to read at a glance and
+     that is the rung where the glance matters most, because it is the only one this whole feature
+     can move. `fresh` is `--cyan` now, one step along the same green → cyan → amber → red ladder
+     the containment pills already use, so the two ladders agree and neither invents a colour.
+     🔑 Assert DISTINCTNESS, never the named values — a skin is free to retint any of them, and a
+     test pinning "rgb(46,230,160)" would go red on a manufacturer theme doing its job. */
   .age.live    { color: var(--green); font-weight: 700;
     border-color: color-mix(in srgb, var(--green) 60%, transparent);
     background: color-mix(in srgb, var(--green) 18%, transparent); }
-  .age.fresh   { color: var(--green); }
+  .age.fresh   { color: var(--cyan); }
   .age.recent  { color: var(--cyan-dim); }
   .age.stale   { color: var(--amber); }
   .age.ancient { color: var(--red); }
@@ -210,39 +220,29 @@
     white-space: nowrap;
     border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
     background: color-mix(in srgb, currentColor 12%, transparent); }
-  /* ── 🔴 SEEN IN GAME — PRICES, NOT RECEIPTS ────────────────────────────────────────────────
-     This block used to be a box labelled "you paid", sitting ABOVE the shop list. Sub:
+  /* ── 🔴 SCO — WHERE THIS ROW'S AGE CAME FROM ───────────────────────────────────────────────
+     The mark Sub named: *"maybe it could be four hours ago and then a space and then say SCO."*
 
-       "I bought Cruise Lux at Levski Cargo Office 20 hours ago, but under Levski it doesn't show
-        that updated price. It just says 'you paid'... I don't really need it to tell me what I
-        bought. I just wanted to update the price for everybody."
+     🔴 THE CLASSES THAT USED TO LIVE HERE (`.grp.obgrp`, `.obnote`) ARE GONE, AND THE BLOCK THEY
+     STYLED IS GONE WITH THEM. `poolfill` drew community prices as a group of their own above the
+     shop list, and this comment argued for it: the game's tokens do not join to UEX's terminal
+     names, so an observation "sits BESIDE the survey rows and may never claim to BE one". The
+     reasoning was right and the conclusion was wrong — the answer to a join we cannot derive is to
+     LOOK IT UP (`data/shop-places.json`), not to draw a second list. Where the lookup still cannot
+     name a shop, the row now sits in its place group with the game's own name on it, which makes
+     exactly the same modest claim without a heading to itself.
 
-     He is right, and the fix is not a label change. It was built as a PERSONAL RECEIPT — its own
-     box, its own colour, held apart from the prices — and it had to become a PRICE: the first
-     GROUP in the shop list, in the same row idiom as every other shop, carrying how many people
-     have confirmed it and how recently. `mine` is now a footnote on a price rather than the
-     headline.
-
-     🔴 IT IS STILL A SEPARATE GROUP AND MUST STAY ONE. The game calls a terminal
-     `SCShop_CommEx_TDD_Orison` and UEX calls it "TDD - Trade and Development Division - Orison";
-     0 of 75 tokens match a terminal name and no string comparison bridges them. So an observation
-     sits BESIDE the survey rows and may never claim to BE one — a group heading of its own is
-     what says that without a sentence. When Sub's hand-curated token→place map lands, a row can
-     move INSIDE the matching place group and nothing else here changes.
-
-     🔑 Its heading is `.gplace` like every other group, so it retints with all 16 skins and needs
-     no colour of its own — the old green box was the visual claim that this was a different kind
-     of thing, and that claim is exactly what Sub was objecting to. */
-  .grp.obgrp .gplace { color: var(--green); }
-  /* One line under the heading, said ONCE rather than repeated per row: what these are and why
-     they are not merged with the shops below. */
-  .obnote { font-size: 9px; color: var(--faint); line-height: 1.4; padding: 0 0 3px 9px; }
-  /* How many people, in the monospaced chip family the stock figure already uses. */
-  .tag.seen { color: var(--cyan-dim); text-transform: none; letter-spacing: 0.02em;
-    font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-  /* 🔑 A FOOTNOTE, NOT A HEADLINE. Small, dim, and after the shop name — it says one of the
-     people behind this price was you, which is worth knowing and is not what the row is about. */
-  .tag.mine { color: var(--green); }
+     🔑 SAME CHIP FAMILY AS `.age`, one step dimmer. It qualifies the pill beside it rather than
+     competing with it, and `--cyan` retints with all 16 skins.
+     🔑 THE `age` VARIANT IS DIMMER STILL: that row's NUMBER is UEX's and only its age is ours, so
+     the mark says less and has to look like it says less. */
+  .tag.sco { color: var(--cyan); font-family: var(--mono); letter-spacing: 0.08em;
+    font-weight: 700; font-size: 8.5px; }
+  .tag.sco.sco-age { color: var(--cyan-dim); }
+  /* ⚠️ `.tag.seen` (the contributor count) and `.tag.mine` (the "you" footnote) LIVED HERE AND ARE
+     GONE — both are tooltips on the SCO mark now, on Sub's call: *"'2 people' can be a tool tip
+     when they hover."* Do not reintroduce either as a chip without him asking; every one of them
+     is a third thing to read on a row whose job is a price and how current it is. */
   .tag.sold { color: var(--cyan-dim); }
   .tag.qty { color: var(--faint); text-transform: none; letter-spacing: 0.02em;
     font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -567,8 +567,16 @@
     // proof that somebody just did, and it was previously indistinguishable from a six-day-old
     // one. UEX quotes can legitimately land here too (its own `date_modified` is per row), and
     // that is correct: the band means "how recently someone checked", whoever they were.
+    //
+    // 🔴 SIX HOURS, NOT ONE — widened by flight `onerow` because the one-hour window did not
+    // contain the case the band exists for. Sub's own acceptance example is *"instead of Cargo
+    // Services at Levski saying 25 days old, it would simply say four hours ago"*, and at a
+    // one-hour cut that row fell into `fresh` and drew the same colour as a six-day-old reading.
+    // Six hours is also about the length of one play session, which is the honest meaning of
+    // "somebody is checking this now" — a reading from earlier today is one somebody took while
+    // the game world was in the state you are looking at.
     const s = Math.max(0, Math.floor(Date.now() / 1000 - sec));
-    if (s <= 3600) return "live";
+    if (s <= 6 * 3600) return "live";
     const d = daysSince(sec);
     if (d <= 7) return "fresh";
     if (d <= 45) return "recent";
@@ -798,130 +806,26 @@
     const shops = document.createElement("div");
     shops.className = "shops";
 
-    // ══ 🔴 SEEN IN GAME — THE FIRST GROUP IN THE SHOP LIST, NOT A RECEIPT ABOVE IT ═══════════
+    // ══ 🔴 THERE IS NO "SEEN IN GAME" BLOCK ANY MORE — flight `onerow`, 2026-08-24 ════════════
     //
-    // This used to be a green box labelled "you paid", drawn OUTSIDE `.shops`. Sub, looking at it:
+    // `poolfill` drew community prices as a group of their own at the top of this list. Sub, on
+    // the result:
     //
-    //   "It just says 'you paid'... I don't really need it to tell me what I bought. I just
-    //    wanted to update the price for everybody."
+    //   "The only thing that I wanted to change with the UI is simply instead of Cargo Services at
+    //    Levski saying 25 days old, it would simply say four hours ago... Instead, it tells me 25
+    //    days ago 7 aUEC and also 7 aUEC four hours ago. It's just too much."
     //
-    // It was built as a personal receipt and it had to become a PRICE. So it is a group in the
-    // same list, in the same row idiom, carrying the two things a price needs and a receipt does
-    // not: HOW MANY PEOPLE have confirmed it, and HOW RECENTLY. Whether one of them was you is a
-    // small tag after the shop name.
+    //   "The other locations that I'm showing, I don't know where those would be."
     //
-    // 🔴 STILL A GROUP OF ITS OWN, AND THAT IS NOT TIDINESS. The game calls a terminal
-    // `SCShop_Orison_KelTo`; UEX calls it "Kel-To - Aspire Grand - New Babbage". 0 of 75 log shop
-    // tokens match a UEX terminal name and no string comparison bridges them — so these rows sit
-    // BESIDE the survey rows and must never claim to be one of them. Sorting them into the
-    // cheapest-first list would be exactly that claim, made silently.
-    // 🔑 THE SEAM FOR THE MAP THAT FIXES IT: when a curated token→place map exists, a row whose
-    // terminal resolves moves into the matching place group and this block draws only the rest.
-    // Nothing else in this renderer has to change, which is why the grouping is built here rather
-    // than being a property of the box.
+    // So the block is gone and a confirmation now arrives as a property of a row (`q.confirmed`)
+    // or as a row of its own (`q.observedOnly`) already sitting in the right place group. The
+    // server does the folding and the placing — see `applyConfirmations` in `verse-routes.ts` —
+    // because it has to happen BEFORE the proximity ordering and the cap, or the two halves of
+    // the list would be ranked by two different rules and it would be two lists again.
     //
-    // ⚠️ FIRST, not last. The whole point is that these are the freshest numbers in the widget —
-    // a median 26 days against UEX's 83, and often minutes — so burying them under a survey that
-    // nobody has checked in three months would be the same mistake in a different direction.
-    if (r.observed && r.observed.length) {
-      const gEl = document.createElement("div");
-      gEl.className = "grp obgrp";
-
-      const head = document.createElement("div");
-      head.className = "ghead";
-      const pl = document.createElement("span");
-      pl.className = "gplace";
-      pl.textContent = "Seen in game";
-      pl.title = "Prices read out of real players' game logs — what a shop actually charged, not "
-        + "what somebody typed into a survey.";
-      head.appendChild(pl);
-      head.appendChild(Object.assign(document.createElement("span"), { className: "grule" }));
-      gEl.appendChild(head);
-
-      const note = document.createElement("div");
-      note.className = "obnote";
-      // 🔑 SAID ONCE, UNDER THE HEADING. The old design repeated the same caveat in every row's
-      // tooltip, where a skimming reader never meets it.
-      note.textContent = "The game names these shops differently from the survey below, so they "
-        + "are listed separately rather than matched up.";
-      gEl.appendChild(note);
-
-      for (const o of r.observed) {
-        const row = document.createElement("div");
-        row.className = "grow";
-
-        const w = document.createElement("span");
-        w.className = "gshop";
-        // ⚠️ THE GAME'S OWN SHOP TOKEN, TIDIED FOR READING ONLY. It is not a display name and there
-        // is no display name to be had — this shop is not joinable to the UEX terminal list. The
-        // raw token stays on hover so a player can report it or search for it.
-        w.textContent = shopToken(o.terminal);
-        w.title = o.terminal + " — the game's own name for this shop.";
-        row.appendChild(w);
-
-        // 🔑 A FOOTNOTE ON A PRICE. It answers "is this mine?", which is worth a word and is not
-        // what the row is about — the old design made this the heading of the whole block.
-        if (o.mine) {
-          const mt = document.createElement("span");
-          mt.className = "tag mine";
-          mt.textContent = "you";
-          mt.title = "One of the purchases behind this price was yours.";
-          row.appendChild(mt);
-        }
-
-        // 🔴 A COMMODITY HAS A BUY PRICE AND A SELL PRICE AT ONE TERMINAL AND THEY ARE NOT
-        // INTERCHANGEABLE. An unlabelled sell row would say a shop sells Laranite for what it
-        // pays you for it. Items never carry this — you cannot sell one back.
-        if (o.side === "sell") {
-          const st = document.createElement("span");
-          st.className = "tag sold";
-          st.textContent = "sold";
-          st.title = "What this terminal PAID for it, not what it charges to buy.";
-          row.appendChild(st);
-        }
-
-        // 🔴 PEOPLE, NOT RECEIPTS. One player buying ammunition twenty times at one shop is
-        // twenty receipts and ONE witness, so a count of receipts would present that as
-        // consensus. The tooltip carries both figures when they differ.
-        //
-        // ⚠️ THIS DELIBERATELY INVERTS THE MISSION-PAYOUT RULE, and the difference is real rather
-        // than an oversight. There, the sample count is shown only while it is SMALL, because a
-        // thin sample undermines the number beside it. Here the count IS the feature — Sub's ask
-        // was "an app that can verify a price within a matter of days if we have enough people
-        // using it", so how many people is the answer rather than a caveat on it. A lone
-        // observation still gets no tag: the absence is the thin case, and printing "1 person" on
-        // most rows is exactly the clutter he objected to in the first place.
-        if (typeof o.contributors === "number" && o.contributors > 1) {
-          const ct = document.createElement("span");
-          ct.className = "tag seen";
-          ct.textContent = o.contributors + " people";
-          ct.title = o.contributors + " different players have paid this here"
-            + (typeof o.samples === "number" && o.samples > o.contributors
-              ? " (" + o.samples + " purchases in all)." : ".");
-          row.appendChild(ct);
-        }
-
-        const a = document.createElement("span");
-        // 🔴 THE SAME BAND LADDER AS EVERY OTHER ROW. It used to be pinned green by a rule of its
-        // own, which said a receipt from March was fresh because it was yours.
-        a.className = "age " + ageBand(o.asOf);
-        a.textContent = receiptAge(o.asOf);
-        a.title = "Last confirmed in game " + receiptAge(o.asOf) + " ago. The colour is how "
-          + "recently somebody checked, not how wrong it might be — shop prices in Star Citizen "
-          + "are fixed rather than a live market.";
-        row.appendChild(a);
-
-        const p = document.createElement("span");
-        p.className = "price";
-        p.textContent = fmt(Math.round(o.price));
-        p.appendChild(Object.assign(document.createElement("span"), {
-          className: "unit", textContent: " aUEC",
-        }));
-        row.appendChild(p);
-        gEl.appendChild(row);
-      }
-      shops.appendChild(gEl);
-    }
+    // 🔑 WHAT THIS RENDERER OWES THAT DESIGN: never draw a confirmation anywhere except on the row
+    // it belongs to. Anything that walks the results looking for confirmations and prints them
+    // together rebuilds the block Sub rejected, whatever it is called.
 
     // Consecutive-run grouping, NOT a map keyed by place: the incoming order is the proximity
     // order and must be preserved exactly. Bucketing by name would silently re-sort the results.
@@ -965,16 +869,66 @@
 
       for (const q of g.quotes) {
         const row = document.createElement("div");
-        row.className = "grow";
+        // 🔴 `obs` MARKS A ROW WE ADDED, AND THE WIDGET SUITE DEPENDS ON IT. Every survey assertion
+        // in VERSEFINDER is about UEX's own rows — "every shop row names its terminal", "this item
+        // has exactly five shops" — and a community row sitting in the same group would be counted
+        // as one of them, changing what those assertions measure without changing what they say.
+        // They used to say `.grp:not(.obgrp)`, which worked while the community rows were a group;
+        // now that they are rows, the marker has to be on the ROW.
+        row.className = "grow" + (q.observedOnly ? " obs" : "");
+
+        const cf = q.confirmed || null;
 
         const w = document.createElement("span");
         w.className = "gshop";
-        w.textContent = shortName(q.terminal, q.place, q.body);
-        // ⚠️ The FULL terminal name stays reachable on hover. Stripping is a display convenience;
-        // the name UEX actually publishes is what a player would search for or report a problem
-        // about, so it must not become unrecoverable.
-        w.title = q.terminal;
+        // 🔑 A ROW WE ADDED SHOWS THE GAME'S OWN NAME, TIDIED — and that is honest here in a way it
+        // was not in the old block, because the heading above it now says where the shop IS. Sub's
+        // objection was never the token; it was a token with no location beside it.
+        if (q.observedOnly && /^SCShop/i.test(q.terminal)) {
+          w.textContent = shopToken(q.terminal);
+          w.title = q.terminal + " — the game's own name for this shop. Nobody has matched it to a "
+            + "shop in the survey yet, so it is listed on its own under the station it is at.";
+        } else {
+          w.textContent = shortName(q.terminal, q.place, q.body);
+          // ⚠️ The FULL terminal name stays reachable on hover. Stripping is a display convenience;
+          // the name UEX actually publishes is what a player would search for or report a problem
+          // about, so it must not become unrecoverable.
+          w.title = q.terminal;
+        }
         row.appendChild(w);
+
+        // 🔴 NO "you" CHIP EITHER, and it goes for the same reason the contributor count went.
+        // Sub's original complaint about this whole feature was *"I don't really need it to tell
+        // me what I bought. I just wanted to update the price for everybody"* — a chip saying
+        // `you` is precisely that sentence rendered in four characters. It survives in the SCO
+        // mark's tooltip ("One of them was you"), which is where a footnote belongs.
+        //
+        // ⚠️ `mine` IS STILL LOAD-BEARING ON THE WIRE. It is what stops the same purchase being
+        // counted as two independent confirmations when the player is also a shared-log
+        // contributor — see `confirmationsFor`. Not rendering it is a display decision and must
+        // never be read as permission to drop the field.
+
+        // 🔴 A COMMODITY HAS A BUY PRICE AND A SELL PRICE AT ONE TERMINAL AND THEY ARE NOT
+        // INTERCHANGEABLE. An unlabelled sell row would say a shop sells Laranite for what it pays
+        // you for it. Only ever on a row we added — every surveyed row is a buy price.
+        if (cf && cf.side === "sell") {
+          const st = document.createElement("span");
+          st.className = "tag sold";
+          st.textContent = "sold";
+          st.title = "What this terminal PAID for it, not what it charges to buy.";
+          row.appendChild(st);
+        }
+
+        // 🔴 THE CONTRIBUTOR COUNT IS A TOOLTIP, NOT A CHIP — Sub, 2026-08-24, looking at the row
+        // this rework produced: *"[5h SCO] is what I was looking for. '2 people' can be a tool tip
+        // when they hover."* It was a visible chip for one afternoon and he is right: the row
+        // answers "what does this cost and how current is that", and how many people is the
+        // supporting evidence for the second half rather than a third thing to read. It rides the
+        // SCO mark's tooltip, which is already the "where did this come from" affordance.
+        //
+        // 🔑 STILL PEOPLE, NEVER RECEIPTS, wherever it is rendered. One player buying ammunition
+        // twenty times at one shop is twenty receipts and ONE witness, and a count of receipts
+        // would present that as consensus.
 
         // 🔴 RENT, RIGHT AFTER THE SHOP — and NOT beside the price, which is where it was first
         // written. Putting it there felt right (it qualifies that number) and it broke an older
@@ -1005,14 +959,62 @@
           row.appendChild(st);
         }
 
+        // 🔴 ONE AGE PILL PER ROW, SHOWING THE LATEST CONFIRMATION FROM ANY SOURCE. This single
+        // line is the whole feature: Sub asked that "instead of Cargo Services at Levski saying 25
+        // days old, it would simply say four hours ago". A row confirmed in game ages from the
+        // confirmation; every other row still ages from UEX's own reading.
+        //
+        // 🔑 `receiptAge` NOT `ageOf` ON A CONFIRMED ROW, and they are not interchangeable. `ageOf`
+        // bottoms out at "today" because a survey quote is a median 83 days old and days are the
+        // interesting unit there. A confirmation can be four minutes old, and rounding that to
+        // "today" throws away the only thing that is new.
         const a = document.createElement("span");
-        a.className = "age " + ageBand(q.asOf);
-        a.textContent = ageOf(q.asOf);
-        a.title = "Last reported to UEX " + ageOf(q.asOf).replace(/^(\d+)d$/, "$1 days ago")
-          + ". Shop prices in Star Citizen are fixed rather than a live market — 99.6% of them were "
-          + "never once seen to change over a month — so an old reading is usually still correct. "
-          + "The colour is how recently someone checked, not how wrong it might be.";
+        const shownAt = cf ? cf.asOf : q.asOf;
+        a.className = "age " + ageBand(shownAt);
+        a.textContent = cf ? receiptAge(shownAt) : ageOf(shownAt);
+        a.title = cf
+          ? "Last confirmed in game " + receiptAge(shownAt) + " ago"
+            + (q.observedOnly
+              ? "."
+              : cf.setPrice
+                ? " — this is a price a player was actually charged, not the survey figure."
+                : " — a player was charged this same price at this station "
+                  + receiptAge(shownAt) + " ago. The number is UEX's and has not moved.")
+            + " The colour is how recently somebody checked, not how wrong it might be — shop "
+            + "prices in Star Citizen are fixed rather than a live market."
+          : "Last reported to UEX " + ageOf(shownAt).replace(/^(\d+)d$/, "$1 days ago")
+            + ". Shop prices in Star Citizen are fixed rather than a live market — 99.6% of them "
+            + "were never once seen to change over a month — so an old reading is usually still "
+            + "correct. The colour is how recently someone checked, not how wrong it might be.";
         row.appendChild(a);
+
+        // 🔴 "SCO", AND SUB NAMED IT — *"maybe it could be four hours ago and then a space and then
+        // say SCO. Now of course we'll need to let the player know that it's coming from us and
+        // not UEX."* It is a source mark, so it rides immediately after the age it qualifies and
+        // before the price, exactly where the eye already is.
+        //
+        // 🔑 IT IS NOT A SECOND AGE AND MUST NEVER GROW INTO ONE. The instinct is to put the
+        // contributor count or "confirmed" in here; both already have homes, and a mark that
+        // accumulates words becomes the second block again, four characters at a time.
+        if (cf) {
+          const src = document.createElement("span");
+          src.className = "tag sco" + (cf.setPrice ? "" : " sco-age");
+          src.textContent = "SCO";
+          // Who is behind it, in words, on the mark that says it is ours. `people` reads
+          // "1 player" / "5 different players", and adds the receipt count only where it differs
+          // from the number of people — otherwise it is the same fact stated twice.
+          const n = typeof cf.contributors === "number" && cf.contributors > 0 ? cf.contributors : 1;
+          const people = n === 1 ? "1 player has" : n + " different players have";
+          const also = typeof cf.samples === "number" && cf.samples > n
+            ? " (" + cf.samples + " purchases in all)" : "";
+          src.title = (cf.setPrice
+            ? "This figure came from SC Overlay players' own game logs, not from UEX's survey. "
+            : "SC Overlay players confirmed this price at this station, at a shop we cannot yet "
+              + "tell apart from this one — so the age is theirs and the number is still UEX's. ")
+            + people + " paid this here" + also + "."
+            + (cf.mine ? " One of them was you." : "");
+          row.appendChild(src);
+        }
 
         // 🔑 THE UNIT IS NAMED (Sub: "it just says seven"). Dimmed child span so the AMOUNT is what
         // the eye compares down the column, and so `.price` still holds only the number.
@@ -1038,8 +1040,23 @@
     // the server keeps an extra row for any containment tier the cap would have deleted, so a card
     // can legitimately draw 6 or 7. Subtracting the cap instead of the real count overstates the
     // hidden shops by exactly the rows sitting right above the note — the reader can count them.
-    const drawn = r.quotes.length;
+    // 🔴 AND DO NOT COUNT A ROW WE ADDED. `shopCount` is how many shops UEX says sell this; a
+    // community row placed into the list is not one of them, so counting it makes the "+N more"
+    // figure too small by exactly the number of confirmations on screen — a wrong number, quietly,
+    // on the most-read line of the card.
+    const drawn = r.quotes.filter((q) => !q.observedOnly).length;
     if (r.shopCount > drawn) notes.push("+" + (r.shopCount - drawn) + " more shop" + (r.shopCount - drawn === 1 ? "" : "s"));
+    // 🔴 A COUNT, NEVER A NAME — the judgement call on Sub's *"the other locations… I don't know
+    // where those would be. It's useless information to the viewer."* What he rejected was a name
+    // the reader cannot place. The evidence itself is real (one of these is five different players
+    // agreeing on a price three days ago) and this codebase's standing rule is that a discarded
+    // thing is SAID rather than swallowed — so it is counted, in the notes line the card already
+    // draws, which in most cards costs no new line at all. If the shop-places map ever names these
+    // shops they stop being a count and become rows, with no change here.
+    if (r.unplacedConfirmations) {
+      notes.push(r.unplacedConfirmations + " more confirmation"
+        + (r.unplacedConfirmations === 1 ? "" : "s") + " from shops we cannot place yet");
+    }
     // 🔴 TWO SPREADS, NEVER ONE. `low`/`high` are the PURCHASE range and `rentLow`/`rentHigh` the
     // rental one; a single min/max across both would run from a 28,665 aUEC hire to a 1,089,270
     // aUEC sale and describe no transaction anybody can make. Either may be null — nothing here

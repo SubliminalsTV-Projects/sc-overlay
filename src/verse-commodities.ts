@@ -46,7 +46,7 @@
  * a price. So a commodity row carries it and an item row does not, and that difference is real.
  */
 import type { TradeQuote, TradeTable } from "./trade-prices.js";
-import type { ResolvedQuote, SearchHit } from "./item-search.js";
+import type { ResolvedQuote, SearchHit, QuoteContext } from "./item-search.js";
 import { scoreItem, tokenize } from "./item-search.js";
 import type { ShopItem } from "./item-shops.js";
 
@@ -117,8 +117,12 @@ export interface CommoditySearchOptions {
   quotesPerItem?: number;
   /** Same hook, same reason, as `searchItems`: order BEFORE the truncation, or you are ordering the
    *  cheapest few rather than all of them — and it OWNS the cap, so its answer is never re-sliced.
-   *  See `searchItems`' copy for why that second half matters. */
-  orderQuotes?: (quotes: ResolvedQuote[], cap: number) => ResolvedQuote[];
+   *  See `searchItems`' copy for why that second half matters.
+   *
+   *  ⚠️ `ctx.uuid` IS ALWAYS NULL HERE. UEX's trade table is keyed by NAME and has never carried
+   *  the game's UUID, so the hook must resolve the name itself if it needs one — which is exactly
+   *  what `VerseDeps.commodityUuid` is for. Passing a fabricated id would be worse than null. */
+  orderQuotes?: (quotes: ResolvedQuote[], cap: number, ctx: QuoteContext) => ResolvedQuote[];
 }
 
 /**
@@ -174,7 +178,9 @@ export function searchCommodities(
       shopCount: quotes.length,
       // The hook orders AND caps — see `orderQuotes`. Re-slicing here would drop the far-system
       // rows it keeps on purpose.
-      quotes: opts.orderQuotes ? opts.orderQuotes(quotes, perItem) : quotes.slice(0, perItem),
+      quotes: opts.orderQuotes
+        ? opts.orderQuotes(quotes, perItem, { name: g.name, uuid: null, kind: "commodity" })
+        : quotes.slice(0, perItem),
       low,
       high,
       rentLow: null,
