@@ -46,6 +46,7 @@ import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLine
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
 import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, contractRegionOrDefault, DEFAULT_CONTRACT_REGION, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
+import { readRepPage, repRankFromBars, type RepBarRead } from "./rep-page.js";
 import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
@@ -680,6 +681,12 @@ function missionsPayload(): string {
       // calibrating against pixels it cannot see. null = no crop has been taken yet, which is not
       // the same as "it's fine" and must not be reported as such.
       payoutOnPrimary: contractCropOnPrimary,
+      // The REP-page re-baseline: whether it is armed, and what the last scan did. Both ride
+      // prefs so the widget can say "syncing from your rep page" and "the page is scrolled, I
+      // will not guess" from the same place the mode itself is read — the payout panel's lesson
+      // about one switch with one meaning, applied before it can go wrong twice.
+      repScan: config.repScan,
+      repScanLast,
     },
   });
 }
@@ -1127,6 +1134,27 @@ let lastFrame = "";
  *  game is on another monitor" are different answers and only one of them is worth interrupting
  *  someone over. Deliberately NOT persisted: it describes this session's screen layout. */
 let contractCropOnPrimary: boolean | null = null;
+
+/** What the last REP-page scan did — the ONE surface the widget reads, so "the page synced" and
+ *  "the page was refused, here is why" can never be reported by two things that disagree. Rides
+ *  the missions SSE like every other piece of live tracker state. */
+interface RepScanLast {
+  at: number;
+  ok: boolean;
+  refusal?: string;
+  giver?: string;
+  scope?: string;
+  rank?: number;
+  progress?: number | null;
+  floor?: number;
+  ceiling?: number | null;
+  before?: number;
+  after?: number;
+  outcome?: "kept" | "raised" | "lowered";
+  /** False on a PTU scan: it was read and is being shown, and it was deliberately not stored. */
+  envIsLive?: boolean;
+}
+let repScanLast: RepScanLast | null = null;
 let payoutMatcher: ContractMatcher | null = null;
 let payoutMatcherFor = "";
 
@@ -2757,6 +2785,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // true on frames where no signature parsed — which is exactly when the capture loop still
     // needs to know the player is scanning, so it can keep polling fast instead of idling.
     let scanHud = false;
+    // The REP page read for this same frame, when that mode is armed. Null means "not armed, or
+    // not looked at on this branch"; an object with ok:false carries WHY the page was refused,
+    // which is what the player gets told instead of being left staring at a page not syncing.
+    let repRead: unknown = null;
     if (!screenCatalog) screenCatalog = loadCatalog(dataDir);
     if (body.miningCrop === true && Array.isArray(body.lines)) {
       // RapidOCR re-read of a TIGHT CROP already limited to the configured mining scan region —
@@ -2822,6 +2854,20 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       const ocr = await ocrImage(body.path);
       result = classifyScreen(ocr, screenCatalog, { scanRegion: config.scanRegion });
       scanHud = hasScanHud(ocr);
+      // 🔑 The REP page rides on THIS OCR rather than taking one of its own. 4.10's reputation
+      // page is set large enough that Windows OCR reads every rank name on it correctly — unlike
+      // the contract board in the note just below — so the full-frame glance that already happens
+      // every tick is all it needs, and the whole feature costs no extra capture, no extra OCR
+      // and no extra round trip. It is attached BESIDE `result` rather than becoming another
+      // `kind`, because the two answer different questions and a frame can legitimately be
+      // neither of them.
+      if (config.repScan) {
+        const rp = readRepPage(ocr, tracker.repScopesForScan(), tracker.giverScopes());
+        repRead = rp.layout
+          ? { ok: true, scope: rp.layout.scope, giver: rp.layout.giver,
+              faction: rp.layout.factionRaw, section: rp.layout.sectionRaw, cards: rp.layout.cards }
+          : { ok: false, refusal: rp.refusal };
+      }
       // 🔑 Contract parsing does NOT happen on this branch. This is Windows OCR, which
       // mangles the panel's ~12px giver line badly enough to lose otherwise-perfect rows
       // ("UNG FAMILY HAULING" for Ling Family Hauling, "ROUGH B READY" for Rough & Ready,
@@ -2857,7 +2903,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // share the one captured image across all of them (the log/kiosk can't say which size).
     else if (rd.kind === "fabricator" && rd.name) rd.items = tracker.itemUuidsForName(rd.name);
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ...(result as object), scanHud }));
+    res.end(JSON.stringify({ ...(result as object), scanHud, rep: repRead }));
     return;
   }
 
@@ -3762,6 +3808,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.missionOcr === "boolean") config.missionOcr = body.missionOcr;
     if (typeof body.fabClaim === "boolean") config.fabClaim = body.fabClaim;
     if (typeof body.miningAssistant === "boolean") config.miningAssistant = body.miningAssistant;
+    if (typeof body.repScan === "boolean") config.repScan = body.repScan;
     // The dragged scan region. `null` resets to the default band. Stored as fractions, and only
     // if it's usable: a region dragged off-frame or collapsed to nothing would silently stop all
     // scanning, and "my scanner died and I don't know why" is the worst outcome here.
@@ -4445,6 +4492,92 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // ── The in-game REP page ──────────────────────────────────────────────────────────────
+  //
+  // Two steps, because reading this page takes both halves of the machine and they live in
+  // different processes. The page states which ladder you are looking at in TEXT (so the sidecar,
+  // which owns the datasets, can resolve it) and states where you are on it in COLOUR ONLY (so
+  // only capture.cjs, which holds the bitmap, can answer it). The same split the mining scan
+  // glyph already uses, for the same reason.
+  //
+  //   1. capture.cjs POSTs the frame's OCR lines here -> we return the ladder and, per rank card,
+  //      the box to read that card's progress bar out of.
+  //   2. capture.cjs reads those boxes and POSTs the bar readings to /api/rep-scan, which decides
+  //      the rank and re-baselines.
+  //
+  // 🔑 Step 1 answers with a REFUSAL rather than a guess whenever the page is not unambiguous — a
+  // partly-scrolled ladder above all. Because a scan OVERWRITES the stored standing, an uncertain
+  // read has to produce nothing at all. See src/rep-page.ts.
+  if (url === "/api/rep-read" && req.method === "POST") {
+    const body = await readBody(req);
+    let out: unknown = { ok: false, refusal: "not-armed" };
+    if (config.repScan && Array.isArray(body?.lines)) {
+      const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
+      const r = readRepPage(ocr, tracker.repScopesForScan(), tracker.giverScopes());
+      out = r.layout
+        ? { ok: true, scope: r.layout.scope, giver: r.layout.giver, faction: r.layout.factionRaw,
+            section: r.layout.sectionRaw, cards: r.layout.cards }
+        : { ok: false, refusal: r.refusal };
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
+  if (url === "/api/rep-scan" && req.method === "POST") {
+    const body = await readBody(req);
+    // A refusal the player can act on, forwarded with no bars — see ACTIONABLE_REP_REFUSALS in
+    // capture.cjs. Broadcast so the widget can say WHY the page in front of them is not syncing.
+    if (typeof body?.refusalOnly === "string") {
+      repScanLast = { at: Date.now(), ok: false, refusal: body.refusalOnly };
+      broadcastMissions();
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: false, refusal: body.refusalOnly }));
+      return;
+    }
+    const scope = typeof body?.scope === "string" ? body.scope : "";
+    const giver = typeof body?.giver === "string" ? body.giver : "";
+    const bars = Array.isArray(body?.bars) ? (body.bars as RepBarRead[]) : [];
+    const v = repRankFromBars(bars);
+    let out: Record<string, unknown>;
+    if (!scope || !giver) {
+      // A page whose faction did not resolve to a dataset giver is readable but not writable:
+      // `repWitnessed` is keyed by giver, so there is nowhere to put the answer. Say so rather
+      // than inventing a key — a giver spelling we made up would never be read back by anything.
+      out = { ok: false, refusal: "no-giver", rank: v.rank, progress: v.progress };
+    } else if (v.refusal) {
+      out = { ok: false, refusal: v.refusal };
+    } else if (!tracker.envIsLiveForScan) {
+      // 🔴 THE PTU GATE — Sub's call, 2026-08-26, taken over refusing to scan at all. Reputation
+      // on the test server is not the player's reputation, so a scan taken there must never reach
+      // the stored standing or the sync push. It still READS and still reports, because the PTU is
+      // where a new patch's page exists first and a feature that cannot be exercised there cannot
+      // be ready when it goes live. This is the app's THIRD isLiveEnv gate, beside the blueprint
+      // receipt and the event journal entry, and it reads the same getter they do.
+      out = { ok: false, refusal: "not-live", rank: v.rank, progress: v.progress,
+              scope, giver, envIsLive: false };
+    } else {
+      const applied = tracker.applyRepScan(giver, scope, v.rank!);
+      out = applied
+        ? { ok: true, ...applied, progress: v.progress, envIsLive: true }
+        : { ok: false, refusal: "unknown-scope" };
+      if (applied) {
+        console.log(
+          `[rep-scan] ${giver} / ${scope}: page says rank ${applied.rank} ` +
+          `(band ${applied.floor}..${applied.ceiling ?? "max"}), stored ${applied.before} -> ` +
+          `${applied.after} (${applied.outcome})`,
+        );
+        broadcastMissions();
+      }
+    }
+    if (!out.ok) console.log(`[rep-scan] refused: ${out.refusal}${scope ? ` (${giver} / ${scope})` : ""}`);
+    repScanLast = { at: Date.now(), ...out } as RepScanLast;
+    if (!out.ok) broadcastMissions();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out));
     return;
   }
 

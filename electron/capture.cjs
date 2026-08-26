@@ -59,6 +59,11 @@ function writeFgPs1() {
 // costs nothing. The spawn below is now only the cold-start / helper-died fallback — it used to
 // run on EVERY tick, i.e. ~20 PowerShell launches a minute for one HWND.
 const fgWatch = require("./foreground.cjs");
+const { readBars, pixelsOf } = require("./rep-bars.cjs");
+/** REP-page refusals worth telling the player about: each one means the page is on screen and
+ *  we declined it, so the player can act (scroll the ladder fully into view, pick a faction).
+ *  Everything else just means this frame was not the rep page. */
+const ACTIONABLE_REP_REFUSALS = new Set(["cards-incomplete", "scope-ambiguous", "no-scope"]);
 function foregroundWindow() {
   if (fgWatch.ready()) return Promise.resolve(fgWatch.foreground());
   return new Promise((resolve) => {
@@ -684,8 +689,13 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
     // Requires a calibrated panel; without one the parser cannot separate the columns and
     // arming the loop would burn OCR for nothing.
     const payout = cfg.payoutScan === true && !!cfg.contractRegion;
-    fgWatch.want("ocr", fab || miss || mining || claim || payout);
-    if (!fab && !miss && !mining && !claim && !payout) { emitContext("off"); return; }
+    // The REP-page re-baseline. Its own opt-in, and enough on its own to arm the loop. It needs
+    // no calibration (the page is located by its own text, not by a region the user has to drag)
+    // and no OCR of its own: the sidecar reads it off the SAME full-frame glance every other
+    // consumer here already takes, and hands back the boxes whose pixels we read below.
+    const rep = cfg.repScan === true;
+    fgWatch.want("ocr", fab || miss || mining || claim || payout || rep);
+    if (!fab && !miss && !mining && !claim && !payout && !rep) { emitContext("off"); return; }
     // Watchdog: a single hung await (e.g. a fetch to the sidecar while it's restarting during an
     // auto-update) must never latch the loop forever. If a prior tick has held `busy` well past
     // any real tick, treat it as wedged and re-arm — otherwise the overlay freezes on its last
@@ -764,6 +774,47 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
           });
           read = await resp.json();
           stage.winOcr = Date.now() - t2;
+          // ── The REP page: read the rank bars this frame's OCR found ──────────
+          // The sidecar worked out WHICH ladder is on screen and where every rank card's
+          // progress bar is; it cannot see which of them is green, because Windows OCR is
+          // text-only. We hold the bitmap, so that half is ours — the same division of labour
+          // as the mining scan glyph, and for the same reason.
+          //
+          // 🔑 Posted only when the page is READ, not on every tick. A frame that is not the
+          // rep page comes back `ok:false` and costs nothing beyond the glance that already
+          // happened. The refusals ARE forwarded though (below), because "your page is
+          // scrolled and I will not guess" is the one thing a player staring at a page that
+          // is not syncing actually needs to hear.
+          if (rep && read && read.rep) {
+            try {
+              if (read.rep.ok && Array.isArray(read.rep.cards) && read.rep.cards.length) {
+                const bars = readBars(pixelsOf(shot), read.rep.cards, cap.width);
+                await fetch(`http://localhost:${port}/api/rep-scan`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ scope: read.rep.scope, giver: read.rep.giver, bars }),
+                  signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+                });
+              } else if (!read.rep.ok && ACTIONABLE_REP_REFUSALS.has(read.rep.refusal)) {
+                // 🔑 Only the refusals the PLAYER can do something about are forwarded. Most
+                // frames are not the rep page at all and refuse with `no-heading`/`no-section`
+                // every tick; reporting those would be a status message that says "you are not
+                // looking at the thing" several times a second. These three mean the opposite —
+                // the page IS up and we are declining it — and that is the case where silence
+                // reads as a broken feature.
+                await fetch(`http://localhost:${port}/api/rep-scan`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ refusalOnly: read.rep.refusal }),
+                  signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+                });
+              }
+            } catch (e) {
+              // Never let a rep read take the tick down with it — every other consumer of this
+              // frame is independent of it.
+              console.warn("[fab-capture] rep bar read failed:", e && e.message);
+            }
+          }
         } catch (e) {
           stage.glanceError = String((e && e.message) || e).slice(0, 200);
         }

@@ -22,7 +22,9 @@ import type { OcrLine, OcrResult, Rect } from "./screen-read.js";
 
 /** One rank ladder as `data/rep-scopes.json` ships it. */
 export interface RepScope {
-  displayName: string;
+  /** Nullable to match the dataset: a scope with no display name simply can never be matched to
+   *  a section header, which is the safe direction — it declines rather than joining on "". */
+  displayName: string | null;
   ranks: { minRep: number; name: string }[];
 }
 export type RepScopes = Record<string, RepScope>;
@@ -227,7 +229,9 @@ export function readRepPage(
   // The section header names a scope we ship. Vocabulary, not geometry.
   const byDisplay = new Map<string, string[]>();
   for (const [key, s] of Object.entries(scopes)) {
+    if (!s.displayName) continue;
     const k = normRep(s.displayName);
+    if (!k) continue;
     const arr = byDisplay.get(k);
     if (arr) arr.push(key); else byDisplay.set(k, [key]);
   }

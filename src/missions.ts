@@ -244,6 +244,11 @@ export interface GrindTrack {
    *  that rank's floor, and everything derived from it ("2,400 to Associate", "12 runs") is an
    *  UPPER bound on what is left, not a reading. The UI has to say so. */
   repFloorFromRank: boolean;
+  /** The last re-baseline of this giver from the in-game REP page, if there has ever been one.
+   *  🔑 Null means NOT SCANNED. It must never be rendered as "scanned at rank 0" — several real
+   *  ladders have a legitimate rank 0 the player can be sitting on (Recco Battaglia's
+   *  "Prospective Associate"), so 0 and "never" are genuinely different answers here. */
+  repScan: { rank: number; at: number } | null;
   ranks: { rank: number; name: string; minRep: number; missions: GrindMission[] }[];
   /** Highest rank whose mission the giver has actually OFFERED you (from inferredRank — an
    *  observed fact, unlike the rep estimate). -1 when nothing's been seen. */
@@ -828,6 +833,9 @@ interface Persisted {
    *  repeats through and every leak was permanent (see accrueForCompletion). Absent in older
    *  state files, which is harmless: the next "Verify from logs" rebuilds both together. */
   repAccruedMissionIds?: string[];
+  /** giver -> the last REP-page scan. Purely additive: an older state file simply has none, and
+   *  the app behaves exactly as it did before scanning existed. See applyRepScan. */
+  repScanned?: Record<string, { scope: string; rank: number; at: number }>;
   /** normalized mission TITLE -> how many times it's been completed. The log never reports a
    *  mission's guaranteed physical rewards (ships, armour sets), but it DOES report the
    *  completion — so a completed count is the only honest "you actually received this" signal.
@@ -1330,6 +1338,10 @@ export class MissionTracker extends EventEmitter {
    *  Live real-time completions add to it; verifyFromLogs rebuilds it authoritatively
    *  from every logbackup. See accrueRep / computeRepBar. */
   private repWitnessed = new Map<string, { scope: string; sum: number }>();
+  /** giver -> the last in-game REP page scan for them. See applyRepScan. Kept beside the total
+   *  rather than folded into it because a scanned RANK is a different kind of evidence from a
+   *  summed total, and both the bar and `giverTrack` need to know which one they are looking at. */
+  private repScanned = new Map<string, { scope: string; rank: number; at: number }>();
   /** missionIds already credited to repWitnessed — see accrueForCompletion. Persisted, because
    *  the over-count it prevents is itself persisted. */
   private repAccruedMissionIds = new Set<string>();
@@ -3138,6 +3150,100 @@ export class MissionTracker extends EventEmitter {
     return true;
   }
 
+  /** Which rep scopes each giver's missions actually award, straight off the loaded dataset.
+   *
+   *  🔑 This is the third and strongest of the REP page's three joins, and the only one that can
+   *  separate the ladders that are character-identical: `Courier` and `Courier_TransportGuild`,
+   *  `Security` and `Security_MercenaryGuild`, and the four `Mercenary` scopes all have the same
+   *  rank names in the same order, so a page showing one of them is decidable only by which
+   *  faction it belongs to. Scopes with no ladder in `rep-scopes.json` (`Affinity`,
+   *  `NPC_Reliability`) are dropped — they can never be a section header, so carrying them would
+   *  only widen the candidate set. */
+  /** The loaded rank ladders, for the REP-page reader. Exposed rather than re-read from disk so
+   *  a scan can never be judged against a different dataset from the one the bars beside it are
+   *  drawn from. */
+  repScopesForScan(): Record<string, RepScope> { return this.repScopes; }
+
+  giverScopes(): Record<string, string[]> {
+    const out: Record<string, Set<string>> = {};
+    for (const m of Object.values(this.dataset?.missions ?? {})) {
+      if (!m.giver) continue;
+      const set = (out[m.giver] ??= new Set<string>());
+      for (const r of m.reputationGained ?? []) if (r.scope && this.repScopes[r.scope]) set.add(r.scope);
+    }
+    return Object.fromEntries(Object.entries(out).map(([g, s]) => [g, [...s]]));
+  }
+
+  /** True when the app is watching a LIVE (PUB) game log. The REP scan is gated on this — see
+   *  the route — and it reads the same getter the blueprint receipt and the event journal entry
+   *  do, so the three can never disagree about what environment the player is in. */
+  get envIsLiveForScan(): boolean { return this.isLiveEnv; }
+
+  /**
+   * Re-baseline one giver's standing from a scan of the in-game REP page.
+   *
+   * 🔴 THE SCAN WINS. Sub's decision, made explicitly and not to be relitigated: a scan
+   * overwrites and becomes the new floor. It does not ratchet and it does not ask. The point is
+   * that it SELF-HEALS — the app's witnessed total is built from completions it happened to see,
+   * so it drifts low whenever the app was closed and can drift high if anything ever
+   * double-counts. The page is ground truth for the rank, so the page decides.
+   *
+   * 🔑 What the page states is a RANK, which is a BAND, not a number — rank 2 of the guild
+   * ladder means "somewhere in [1, 3000)". So "the scan wins" is implemented as *the scan's band
+   * is authoritative, and the stored value is moved into it*:
+   *   · stored value already inside the band -> KEPT. The scan does not contradict it, and the
+   *     witnessed total is the more precise of the two. Replacing it with the band floor would
+   *     destroy real information to no purpose and would make the bar jump backwards every time
+   *     the player opened their own rep page.
+   *   · stored value outside the band -> REPLACED by the floor, in either direction. This is the
+   *     whole feature: a total that says rank 4 when the page says rank 2 is wrong, and a total
+   *     of zero when the page says rank 2 is wrong the other way.
+   * Both cases are "the scan always wins" — the disagreement is always resolved the scan's way.
+   * The only thing not thrown away is precision the scan does not actually dispute.
+   *
+   * ⚠️ `repAccruedMissionIds` is deliberately NOT cleared. It is the exactly-once guard for
+   * completions, not a record of the total; clearing it would let every completion still in the
+   * log re-credit itself on the next seed and walk the freshly-corrected number straight back up.
+   *
+   * Returns what it did, so the caller can tell the player rather than silently adjusting a
+   * number they were looking at.
+   */
+  applyRepScan(giver: string, scope: string, rank: number): {
+    applied: boolean;
+    giver: string;
+    scope: string;
+    rank: number;
+    /** The rank's band, for the UI to explain the result with. */
+    floor: number;
+    ceiling: number | null;
+    before: number;
+    after: number;
+    /** "kept" = the stored total was already inside the scanned rank's band and was more precise
+     *  than its floor; "raised"/"lowered" = it was outside and the scan moved it. */
+    outcome: "kept" | "raised" | "lowered";
+  } | null {
+    const ladder = [...(this.repScopes[scope]?.ranks ?? [])].sort((a, b) => a.minRep - b.minRep);
+    if (!ladder.length || rank < 0 || rank >= ladder.length) return null;
+    // A negative floor is the game's way of writing "locked" (Not Eligible ships at -1000, and
+    // -320000 on Emergency). It is not a debt, and letting one through would push a witnessed
+    // total below zero and off the bottom of every bar.
+    const floor = Math.max(0, ladder[rank].minRep);
+    const ceiling = rank + 1 < ladder.length ? Math.max(0, ladder[rank + 1].minRep) : null;
+    const before = this.repWitnessed.get(giver)?.sum ?? 0;
+    const inside = before >= floor && (ceiling === null || before < ceiling);
+    const after = inside ? before : floor;
+    this.repWitnessed.set(giver, { scope, sum: after });
+    // Remembered so the bar can say where its floor came from, and so giverTrack can prefer this
+    // over `inferredRank` — which is an INFERENCE from what work a giver offers, while this is
+    // the giver's own page read directly. When those two disagree the page is right.
+    this.repScanned.set(giver, { scope, rank, at: Date.now() });
+    this.saveState();
+    return {
+      applied: true, giver, scope, rank, floor, ceiling, before, after,
+      outcome: inside ? "kept" : after > before ? "raised" : "lowered",
+    };
+  }
+
   /** Exactly-once rep accrual for one completed mission.
    *
    *  🔑 One MISSION can raise three completion signals (see beginCompletion), so "has this
@@ -3713,14 +3819,40 @@ export class MissionTracker extends EventEmitter {
      */
     const witnessedSum = this.repWitnessed.get(giver)?.sum ?? 0;
     const rankFloor = reachedRank >= 0 ? (ladder[reachedRank]?.minRep ?? 0) : 0;
-    const pos = repLadderPosition(this.repScopes[scope], Math.max(witnessedSum, rankFloor));
+
+    /**
+     * 🔴 A SCAN OUTRANKS BOTH FLOORS, AND IT IS THE ONLY THING THAT CAN EVER LOWER THIS BAR.
+     *
+     * The two floors above are both lower bounds, which is why the LARGER of them is the better
+     * answer. A scan is a different kind of evidence: the player's own rep page, read directly,
+     * stating the rank outright. So it does not join the max() — it replaces the inferred floor.
+     *
+     * That matters in exactly one direction, and it is the whole feature. `reachedRank` is an
+     * inference from the giver having been seen offering rank-N work, and `witnessedSum` is
+     * accumulated from completions; both only ever rise, so neither can correct an over-count. If
+     * the page says rank 2 while something in here says rank 4, keeping the max would go on
+     * insisting on 4 forever and the re-baseline would silently do nothing.
+     *
+     * `applyRepScan` has already moved the stored total into the scanned rank's band, so the sum
+     * needs no clamping here — taking it straight is what keeps the precision the scan did not
+     * dispute.
+     */
+    const scan = this.repScanned.get(giver) ?? this.repScanned.get(canonical);
+    const scanned = scan && scan.scope === scope ? scan : null;
+    const scanFloor = scanned ? Math.max(0, ladder[scanned.rank]?.minRep ?? 0) : 0;
+    const basis = scanned ? Math.max(witnessedSum, scanFloor) : Math.max(witnessedSum, rankFloor);
+    const pos = repLadderPosition(this.repScopes[scope], basis);
     return {
       faction: canonical,
       scope,
       /** True when the standing above rests on the observed RANK rather than on summed
        *  completions — i.e. the number is the rank's floor and the player's real total is
        *  somewhere above it, with no upper bound the app can name. */
-      repFloorFromRank: rankFloor > witnessedSum,
+      repFloorFromRank: (scanned ? scanFloor : rankFloor) > witnessedSum,
+      /** When this giver's standing was last re-baselined from the in-game REP page, and which
+       *  rank it read. Null when it never has been — which is every giver until the player opens
+       *  the page, so the UI must read a null as "not scanned", never as "scanned at rank 0". */
+      repScan: scanned ? { rank: scanned.rank, at: scanned.at } : null,
       // Same shape the panel gets, including what the next rank unlocks — an empty nextRewards
       // here while the panel's is populated would just be a trap for the next reader.
       bar: pos
@@ -4626,6 +4758,7 @@ export class MissionTracker extends EventEmitter {
       this.inferredRank = new Map(Object.entries(data.inferredRank ?? {}));
       this.repWitnessed = new Map(Object.entries(data.repWitnessed ?? {}));
       this.repAccruedMissionIds = new Set(data.repAccruedMissionIds ?? []);
+      this.repScanned = new Map(Object.entries(data.repScanned ?? {}));
       this.completedTitles = new Map(Object.entries(data.completedTitles ?? {}));
       this.completedKeys = new Map(Object.entries(data.completedKeys ?? {}));
       // 🔴 REPAIR THE DOUBLE-COUNTED HISTORY ALREADY ON DISK. The insert-side dedupe below only
@@ -4651,6 +4784,7 @@ export class MissionTracker extends EventEmitter {
       inferredRank: Object.fromEntries(this.inferredRank),
       repWitnessed: Object.fromEntries(this.repWitnessed),
       repAccruedMissionIds: [...this.repAccruedMissionIds],
+      repScanned: Object.fromEntries(this.repScanned),
       completedTitles: Object.fromEntries(this.completedTitles),
       completedKeys: Object.fromEntries(this.completedKeys),
       observedAt: Object.fromEntries(this.observedAt),

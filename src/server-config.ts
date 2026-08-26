@@ -90,6 +90,14 @@ export interface Config {
    *  it is simply stripped on save. The QUEUE is persisted separately, so ending a session
    *  never loses gathered observations. */
   payoutScan: boolean;
+  /** Read the in-game REP page and re-baseline the player's standing from it.
+   *
+   *  🔑 A STANDING preference, deliberately unlike `payoutScan` above, which is forced off on
+   *  every load. That one is a temporary MODE because it feeds a shared dataset, which is a
+   *  different bargain from the rest of the OCR here. This one reads the player's own screen for
+   *  the player's own bar — the same bargain as the Mining Scanner and the fabricator capture —
+   *  so it stays where they are: opt-in, off by default, and it means it when it is on. */
+  repScan: boolean;
   /** Where the offers PANEL sits, as fractions of the frame. Null = not calibrated, and
    *  the scan will not run without it: the parser needs the panel to tell the title column
    *  from the amount column, and guessing produced garbage (the bottom nav pushed the
@@ -364,6 +372,7 @@ export const DEFAULTS: Config = {
   miningDebug: false,
   scanRegion: null,
   payoutScan: false,
+  repScan: false,
   // 🔑 A REGION, never null. `null` used to mean "not calibrated yet", and the settings card
   // disabled the Start button until one existed — while the only surface that could set one was
   // the box that appears once scanning is armed. Nobody but Sub (who had POSTed his own) could
