@@ -324,22 +324,53 @@ function startServer() {
     // either way — but the flag costs nothing and this exact spawn is where the regression
     // lived, so it does not come off on an argument from subsystem flags.
     // Inject the authoritative app version — the bundled sidecar can't read package.json.
+    // SC_PARENT_PID arms the sidecar's own watchdog (src/overlay-server.ts). This spawn is a
+    // DIRECT child, so `server.kill()` on before-quit already reaches it — the watchdog is for
+    // the case before-quit never runs at all (a crash, or the shell being TerminateProcess'd).
     server = spawn(process.execPath, [serverJs], {
       cwd: path.dirname(serverJs),
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", APP_VERSION, SC_INSTANCE: INSTANCE_ID },
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        APP_VERSION,
+        SC_INSTANCE: INSTANCE_ID,
+        SC_PARENT_PID: String(process.pid),
+      },
       stdio,
       windowsHide: true,
     });
   } else {
-    // Dev: run the TS server via tsx. Same flag, same reason — `shell:true` means cmd.exe, which is
-    // a console app too.
+    // Dev: run the TS server via tsx, spawned the SAME WAY prod spawns its bundle — our own exe
+    // in Node mode, no shell.
+    //
+    // 🔴 `shell: true` USED TO BE HERE AND IT ORPHANED THE SIDECAR ON EVERY QUIT. On Windows it
+    // means `cmd.exe /c "npx tsx ..."`, so the tree was
+    //     electron -> cmd.exe -> node (npx) -> node (tsx, the actual sidecar)
+    // and `server` was a handle to the CMD.EXE. `app.on("before-quit")` calls `server.kill()`,
+    // which therefore terminated a shell wrapper and left the two node grandchildren alive,
+    // holding :8778 with nothing able to reap or respawn them. The freshly installed app then
+    // had nowhere to put its own service and gave up — which reaches the user as
+    // "my background service didn't start". That is the 0.1.45 failure, and it recurred on
+    // 2026-08-26 during the 0.1.46 install.
+    // 🔑 Measured on the real spawn shape, three ways, with a two-sided control (see
+    //    references/release.md): shell:true orphans on server.kill(), on a parent exit AND on a
+    //    parent TerminateProcess; this form releases the port in all three.
+    // ⚠️ Quitting from the TRAY did not help and could not: the sidecar was never the shell's
+    //    child, so nothing the shell did on its way out could reach it.
+    //
     // SC_DEV unlocks the dev-replay endpoint (simulate finishing a mission without playing —
     // see src/dev-replay.ts). It is set HERE and nowhere else, so the packaged spawn above can
     // never carry it: that endpoint writes to the real blueprint collection, which syncs.
-    server = spawn("npx tsx src/overlay-server.ts", {
+    server = spawn(process.execPath, [require.resolve("tsx/cli"), "src/overlay-server.ts"], {
       cwd: ROOT,
-      shell: true,
-      env: { ...process.env, APP_VERSION, SC_DEV: "1", SC_INSTANCE: INSTANCE_ID },
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        APP_VERSION,
+        SC_DEV: "1",
+        SC_INSTANCE: INSTANCE_ID,
+        SC_PARENT_PID: String(process.pid),
+      },
       stdio,
       windowsHide: true,
     });
