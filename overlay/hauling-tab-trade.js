@@ -106,8 +106,45 @@
   const TD_WHAT_KEY = "sc-trade-what";
   const TD_BUYAT_KEY = "sc-trade-buyat";
   const TD_SELLAT_KEY = "sc-trade-sellat";
-  const TD_STOCK_KEY = "sc-trade-known-stock";
+  const TD_HOLD_KEY = "sc-trade-hold";
+  const TD_SORT_KEY = "sc-trade-sort";
   const TD_UNIT_KEY = "sc-trade-unit";
+  /**
+   * Which question the board's ORDER answers. "hour" is what it has always done.
+   *
+   * 🔴 IT WAS HARDCODED, AND THAT WAS BURYING THE BEST RUNS. Profit is `margin x moveScu`, moveScu
+   * is capped by a stock figure a median 2.4 days old, and the top quartile by margin has a median
+   * shelf of 75 SCU against 738 for bulk — so the least reliable number in the table was deciding
+   * the order of exactly the rows worth seeing. Waste at 291% with a reported stock of 1 ranks as
+   * one SCU of profit.
+   * 🔑 `margin` and `scu` rank on figures stock cannot touch, which is what makes a scarce row
+   * findable. The FIGURES still respect stock — see the note on `sort` in trade-finder.ts.
+   * 🔑 `profit` is the gap Sub named: a full Hull C of bulk at 10% can beat a small run at 300%,
+   * and per-hour normalises precisely that difference away.
+   */
+  let tdSort = (() => {
+    try {
+      const v = localStorage.getItem(TD_SORT_KEY);
+      return v === "profit" || v === "margin" || v === "scu" ? v : "hour";
+    } catch { return "hour"; }
+  })();
+  /**
+   * How much the player intends to buy, when that is not "as much as the ship holds".
+   *
+   * 🔴 THIS IS NOT THE PICK'S TONNAGE AND MUST NEVER BECOME IT. The standing ruling — that a run
+   * sent to the Route carries NO tonnage, because the log will state what was really bought — is
+   * about the QUANTITY OF A PURCHASE. This is the `capacity` the finder ranks against, which has
+   * always been an input (it is what the ship picker feeds) and is a question about the SEARCH, not
+   * a claim about a transaction. `tdPickBuy` still sends no tonnage; nothing here changes that.
+   * 🔑 null = auto, i.e. the whole hold. Stored as a number so `0` and "unset" cannot be confused.
+   */
+  let tdHold = (() => {
+    try {
+      const raw = localStorage.getItem(TD_HOLD_KEY);
+      const n = raw === null ? NaN : Number(raw);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    } catch { return null; }
+  })();
   /** "run" = what the whole trip clears. "scu" = what one unit is worth carrying. Two real
    *  answers to two different questions, and the second is what stays comparable across rows
    *  whose hold fills differ. */
@@ -121,7 +158,6 @@
     try { return localStorage.getItem(TD_PERIOD_KEY) === "all" ? "all" : "today"; }
     catch { return "today"; }
   })();
-  let tradeKnownOnly = (() => { try { return localStorage.getItem(TD_STOCK_KEY) === "1"; } catch { return false; } })();
 
   /* ── helpers ────────────────────────────────────────────────────────────── */
 
@@ -353,35 +389,69 @@
     pill.title = tip;
     bar.appendChild(pill);
 
-    // 🔑 A real <button> + popover: `title` alone cannot be opened by clicking, and Sub has
-    // already hit that once on a different info affordance and reported it as doing nothing.
-    const info = document.createElement("button");
-    info.type = "button";
-    info.className = "tdi";
-    info.textContent = "i";
-    info.title = tip;
-    info.setAttribute("popovertarget", "tdInfoPop");
-    bar.appendChild(info);
+    /* 🔴 THE PILL NO LONGER CARRIES AN ⓘ OF ITS OWN — the UEX ⓘ in the credit sentence carries
+       this exact text instead (Sub, 2026-08-25, asked for one ⓘ per SOURCE). Three ⓘ in a 440px
+       strip is clutter, and two of them would have explained the same subject: the pill IS the
+       freshness of UEX's table, so "how fresh is this" and "what is UEX" are one answer. The pill
+       keeps its `title` for hover; the click affordance moved rather than being dropped, which is
+       the same rule as the pill itself moving rather than being copied. */
+    setCreditTip("uex", tip);
+  }
 
-    let pop = document.getElementById("tdInfoPop");
+  /**
+   * Fill one of the two credit ⓘ popovers, and its button's hover `title`.
+   *
+   * 🔑 A real <button> + popover, because `title` alone cannot be opened by CLICKING and Sub has
+   * already hit that once on a different info affordance and reported it as doing nothing. The
+   * popover is in the TOP LAYER, so it is immune to every ancestor's `overflow` and takes no space
+   * in layout — which is what makes it safe to hang out of a 440px strip.
+   * ⚠️ Filled on open and cleared on close, so the explanation is never also sitting inside the
+   * strip's own textContent.
+   */
+  function setCreditTip(which, tip) {
+    const btn = document.getElementById(which === "sco" ? "scoInfo" : "uexInfo");
+    if (!btn) return;
+    btn.title = tip;
+    const id = which === "sco" ? "scoInfoPop" : "uexInfoPop";
+    let pop = document.getElementById(id);
     if (!pop) {
       pop = document.createElement("div");
-      pop.id = "tdInfoPop";
+      pop.id = id;
       pop.className = "tdpop";
       pop.setAttribute("popover", "");
       document.body.appendChild(pop);
+      pop.addEventListener("beforetoggle", (e) => {
+        pop.textContent = e.newState === "open" ? (pop.dataset.tip || "") : "";
+      });
     }
-    // ⚠️ Filled on open and cleared on close, so the explanation is never also sitting inside the
-    // pill's own textContent.
-    pop.addEventListener("beforetoggle", (e) => {
-      pop.textContent = e.newState === "open" ? tip : "";
-    });
+    // Held on the element rather than closed over, so a re-render replaces the text instead of
+    // stacking another listener that would fight the first one for the same node.
+    pop.dataset.tip = tip;
   }
 
   /* ── loading ────────────────────────────────────────────────────────────── */
 
+  /**
+   * How much hold the board should rank against.
+   *
+   * 🔴 `plan.shipScu` NEVER EXISTED. It appeared exactly once in this repository — on the line that
+   * read it — and nothing has ever written it; the sidecar publishes `plan.ship.totalScu`. So this
+   * function returned null on every call for its whole life and `loadTrade()` fell through to the
+   * hardcoded 64. Sub's C2 Hercules holds **696**, and the board was ranking every run for a 64 SCU
+   * hold: `scuBound: "hold"` on the top rows means that wrong number was the BINDING constraint, so
+   * the ORDER was wrong, not merely the profit figures. Sub, 2026-08-25: "I'm buying a Griseum
+   * right now… and it says 64 SCU. However, in-game, I could buy 256 SCU."
+   * 🔑 The family is the one this codebase has hit repeatedly — a payload is rebuilt or renamed and
+   * a reader keeps naming the old field. `undefined` is falsy, so the fallback swallowed it in
+   * silence and the number on screen was always plausible.
+   *
+   * 🔑 THE OVERRIDE OUTRANKS THE SHIP, because it is the player telling us something we cannot
+   * detect: how much they actually intend to buy. A full hold is the DEFAULT, not the rule.
+   */
   function tdCapacity() {
-    if (plan && plan.shipScu) return plan.shipScu;
+    if (tdHold && tdHold > 0) return tdHold;
+    const totals = plan && plan.ship && plan.ship.totalScu;
+    if (typeof totals === "number" && totals > 0) return totals;
     return null;
   }
 
@@ -395,7 +465,7 @@
       else if (shipPick) p.set("ship", shipPick);
       else p.set("capacity", "64");
       tdSlotParams(p);
-      if (tradeKnownOnly) p.set("knownStock", "1");
+      p.set("sort", tdSort);
       /* 🔑 A PINNED BUY NEEDS A LONGER LIST. With `fromTerminal` set the finder returns one row per
          DESTINATION rather than one per buy point, and that list IS the answer to "where can I take
          this" — capping it at 25 would silently hide drop-offs, which on a commodity like Neon (19
@@ -613,9 +683,7 @@
         ? "Nobody in the price table buys " + tdWhat + " back, so there is no run for it — only places to buy it."
         : noBuy
           ? "Nowhere in the price table sells " + tdWhat + ", so there is nothing to pick up."
-          : tradeKnownOnly
-        ? "Nothing with confirmed stock here. Turn off “Confirmed stock” to see the rest."
-        : tdSellAt
+          : tdSellAt
           ? "Nothing worth carrying to " + tdSellAt.name + (tdWhat ? " — try another commodity, or clear “sell at”." : " — clear “sell at” to see everywhere.")
           : tdBuyAt && tdWhat
             ? "No profitable run for " + tdWhat + " out of " + tdBuyAt.name + ". Clear “buy at” to see it from everywhere."
@@ -751,18 +819,58 @@
     /* ⛔ THE `buy in` PILL ROW IS GONE — it did not shrink, it MOVED. It was "where a run starts",
        which is the funnel's second slot, and leaving a second control writing the same filter is
        how a control and the thing it controls drift apart. The bar keeps only what is genuinely
-       about DISPLAY (Per run / Per SCU) or about the whole table (Confirmed stock), which is also
-       why this bar is now one row where it used to wrap to two. */
+       about DISPLAY (Per run / Per SCU), which is also why this bar is now one row where it used
+       to wrap to two. */
 
-    const sep3 = document.createElement("span"); sep3.className = "sep"; bar.appendChild(sep3);
-    // 🔴 A FIXED LABEL. The first cut swapped between "Any stock" and "Confirmed stock only",
-    // which made it impossible to tell the state from the action.
-    tdBtn(bar, "Confirmed stock", tradeKnownOnly,
-      "Only show runs where someone has reported how much is actually on the shelf", () => {
-        tradeKnownOnly = !tradeKnownOnly;
-        try { localStorage.setItem(TD_STOCK_KEY, tradeKnownOnly ? "1" : "0"); } catch { /* private mode */ }
-        loadTrade();
-      });
+    /* ⛔ "CONFIRMED STOCK" IS GONE (Sub, 2026-08-25). It hid rows on an axis the player can already
+       read off the row: every row carries its own age pill and a `stock unknown` / `N on the shelf`
+       chip, so the toggle asked people to re-derive from a filter what the row already states.
+       Sub: "It seems like whatever confirms it is like the amount of days since it's last been
+       updated. The player can see that themselves. We don't need to help them sort that out."
+       Second reason, and the one that made it actively bad: as a lit/unlit pill with a fixed label
+       there was no way to tell whether it was currently adding rows or removing them.
+       🔑 The server still accepts `knownStock=1` on /api/trade/routes — the widget simply stops
+       sending it. Nothing else in the app ever did, so the parameter is now unused, like `budget`
+       and `maxAgeDays` beside it. Left alone deliberately: deleting a query parameter is a sidecar
+       change, and this is a display decision. */
+
+    /* 🔴 THE RANKING IS A CONTROL NOW. It was one hardcoded `profitPerHour` comparator with no way
+       to ask anything else, and the pills beside it made that worse rather than better: Per run /
+       Per SCU look exactly like a sort and only re-render, so the numbers changed while the order
+       never moved. A control that appears to reorder a list and does not is worse than no control.
+       🔑 SORT FIRST, THEN THE DISPLAY PILLS, separated by a rule — because they are different kinds
+       of thing and sitting them together as six identical pills is what made the old pair readable
+       as a sort. The label says "sort" out loud for the same reason.
+       🔑 It re-FETCHES, unlike the display pills: the server owns the cap and the dedupe, and
+       re-sorting 25 rows on this side would rank the survivors of the OLD ranking. Same reason the
+       Verse Finder's sort re-asks. */
+    const sortLbl = document.createElement("span");
+    sortLbl.className = "lbl";
+    sortLbl.textContent = "sort";
+    bar.appendChild(sortLbl);
+    const setSort = (v) => {
+      if (tdSort === v) return;
+      tdSort = v;
+      try { localStorage.setItem(TD_SORT_KEY, v); } catch { /* private mode */ }
+      loadTrade();
+      render();
+    };
+    /* 🔑 LIT FROM THE SERVER'S ANSWER, not from what was last clicked. `/api/trade/routes` echoes
+       the sort it actually applied after validating it, so a value it rejected can never leave this
+       row claiming a ranking the rows in front of the player are not in. Falls back to the local
+       value only before the first response has landed. */
+    const activeSort = (tradeData && tradeData.sort) || tdSort;
+    tdBtn(bar, "per hour", activeSort === "hour",
+      "Best use of your time — what the run clears divided by how long it takes. The default.",
+      () => setSort("hour"));
+    tdBtn(bar, "profit", activeSort === "profit",
+      "The biggest single payday, however long it takes. A full hold of bulk at a small margin can"
+      + " beat a tiny run at a huge one — this is the order that shows it.",
+      () => setSort("profit"));
+    tdBtn(bar, "margin", activeSort === "margin",
+      "Best percentage, whatever the quantity. This one is independent of the reported stock, so a"
+      + " scarce commodity can still be found on its merits — check the shelf figure on the row.",
+      () => setSort("margin"));
 
     const sep4 = document.createElement("span"); sep4.className = "sep"; bar.appendChild(sep4);
     const setUnit = (u) => {
@@ -770,8 +878,17 @@
       try { localStorage.setItem(TD_UNIT_KEY, u); } catch { /* private mode */ }
       render();   // a display choice; the data is unchanged, so no refetch
     };
-    tdBtn(bar, "Per run", tradeUnit === "run", "What the whole trip clears", () => setUnit("run"));
-    tdBtn(bar, "Per SCU", tradeUnit === "scu", "What one SCU is worth carrying", () => setUnit("scu"));
+    // 🔑 LABELLED "show", because these two change the FIGURE on each row and leave the order
+    // alone. Unlabelled and identical to the three beside them they read as three more sorts —
+    // which is exactly how a control that reorders nothing comes to look broken.
+    const showLbl = document.createElement("span");
+    showLbl.className = "lbl";
+    showLbl.textContent = "show";
+    bar.appendChild(showLbl);
+    tdBtn(bar, "Per run", tradeUnit === "run",
+      "What the whole trip clears. Changes the figure on each row, not the order.", () => setUnit("run"));
+    tdBtn(bar, "Per SCU", tradeUnit === "scu",
+      "What one SCU is worth carrying. Changes the figure on each row, not the order.", () => setUnit("scu"));
 
     /* 🔑 BACKHAUL IS A SHORTCUT INTO THE `sell at` SLOT, not a filter of its own. "I am already
        flying there" is exactly `toBody`, which is what that slot sets — so it writes into `tdSellAt`
@@ -807,6 +924,7 @@
    *  terminal that has nothing to do with it, which returns nothing and looks like a broken board.
    *  A system or a body survives, because those are true of any commodity. */
   function tdSetSlot(which, value) {
+    if (which === "hold") { tdSetHold(value); return; }
     if (which === "what") {
       tdWhat = value || "";
       tdLookup = null;
@@ -819,6 +937,19 @@
     } else {
       tdSetSlotState(which, value);
     }
+    tdOpen = null;
+    tdTyped = "";
+    loadTrade();
+    render();
+  }
+
+  /** Set or clear the hold override. Anything that is not a positive whole number clears it. */
+  function tdSetHold(n) {
+    tdHold = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    try {
+      if (tdHold) localStorage.setItem(TD_HOLD_KEY, String(tdHold));
+      else localStorage.removeItem(TD_HOLD_KEY);
+    } catch { /* private mode */ }
     tdOpen = null;
     tdTyped = "";
     loadTrade();
@@ -863,8 +994,24 @@
        the safest question the tab can answer the one thing you cannot ask first. */
     tdSlot(f, "sell", "sell at", tdSellAt ? tdSellAt.name : "", "anywhere",
       tdWhat && nSell !== null ? nSell + (nSell === 1 ? " place" : " places") : "");
+    /* 🔴 THE FOURTH SLOT, AND IT BELONGS IN THE FUNNEL RATHER THAN THE BAR. The bar's own comment
+       says it keeps only what is about DISPLAY; how much you intend to buy changes the QUERY — it
+       is the `capacity` parameter, the same one the ship feeds — so it goes where the other query
+       constraints live. Sub, 2026-08-25: "we needed the ability for a person in the commodities tab
+       to be able to modify how much they want to buy."
+       🔑 THE PLACEHOLDER STATES THE AUTO VALUE RATHER THAN THE WORD "auto". A slot reading "auto"
+       makes the player open it just to find out what auto MEANS, and this is the number every
+       profit figure on the screen is computed from — it has to be legible without a click. That is
+       also what would have made the 64-vs-696 bug visible on sight instead of invisible for
+       months. */
+    const autoScu = plan && plan.ship && plan.ship.totalScu;
+    tdSlot(f, "hold", "buy", tdHold ? num(tdHold) + " SCU" : "",
+      typeof autoScu === "number" && autoScu > 0 ? num(autoScu) + " SCU — a full hold" : "a full hold",
+      tdHold && typeof autoScu === "number" && autoScu > 0 ? "of " + num(autoScu) : "");
     body.appendChild(f);
-    if (tdOpen) tdSlotList(body);
+    // ⚠️ `hold` is a free numeric entry, so it has no option list. Without this guard the list box
+    // opens empty under it and reads as a search that found nothing.
+    if (tdOpen && tdOpen !== "hold") tdSlotList(body);
   }
 
   function tdSlot(f, which, label, value, placeholder, hint) {
@@ -888,15 +1035,29 @@
       inp.addEventListener("blur", () => grabOff());
       inp.addEventListener("pointerdown", (e) => { e.stopPropagation(); wantFocus = inp; });
       inp.addEventListener("input", () => { tdTyped = inp.value; tdRedrawSlotList(); });
+      // 🔑 A numeric slot needs a numeric keyboard on any touch surface and, more importantly here,
+      // it must not offer the browser's text autofill over a figure the page already states.
+      if (which === "hold") { inp.type = "number"; inp.min = "1"; inp.step = "1"; }
       inp.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { e.preventDefault(); inp.blur(); tdOpen = null; tdTyped = ""; render(); }
         else if (e.key === "Enter") {
           e.preventDefault();
+          /* 🔴 A BAD NUMBER CLEARS BACK TO AUTO RATHER THAN PINNING A NONSENSE HOLD. Typing "abc"
+             or "0" is a mistake, and the honest response is the ship's real capacity — not a 0 SCU
+             hold, which would empty the board and read as the tab being broken. Same reasoning as
+             `num()` never printing a missing tonnage as "0". */
+          if (which === "hold") { tdSetHold(Math.floor(Number(inp.value))); return; }
           const first = tdSlotOptions(which)[0];
           if (first) tdPickOption(which, first);
         }
         e.stopPropagation();
       });
+      // Committing on blur too: a player who types a number and clicks the board has said what they
+      // meant, and losing it to a missed Enter is the kind of small betrayal that stops people
+      // using a control at all.
+      if (which === "hold") {
+        inp.addEventListener("change", () => tdSetHold(Math.floor(Number(inp.value))));
+      }
       row.appendChild(inp);
       // Focus after the row is in the document, or the caret lands nowhere.
       setTimeout(() => { try { inp.focus(); inp.select(); } catch { /* gone */ } }, 0);
@@ -954,7 +1115,28 @@
             + (e.asOf ? " · " + tdAge((Date.now() - e.asOf * 1000) / 86400000) + " old" : ""),
         }));
       }
-      opts = systems.concat(terminals);
+      /* 🔴 "BUY WHERE I AM", AND THE NAME IS THE SERVER'S, NOT THE GAME'S. The label the log gives
+         ("Stanton Gateway") is not what UEX calls the terminal ("Stanton Gateway (Nyx)"), and
+         `sameTerminal` matches exactly — sending the game's name returns an empty board, which
+         reads as "nothing to buy here" rather than as a name that did not match. So the sidecar
+         resolves it against the real quote table and hands back `hereTerminal`, or null. Null means
+         no option: a "buy here" that pins the wrong station is worse than no button.
+         🔑 It leads the list because it is the one entry the player does not have to know the name
+         of, and it names the game's own wording underneath so the two are visibly the same place.
+         ⚠️ Filtered out of `terminals` as well, or it appears twice under two different subtitles. */
+      const hereName = which === "buy" && tradeStatus ? tradeStatus.hereTerminal : null;
+      let here = [];
+      if (hereName) {
+        const gameName = tradeStatus.herePlace;
+        const already = terminals.find((t) => t.name === hereName);
+        here = [{
+          kind: "terminal", name: hereName, price: already ? already.price : undefined,
+          system: already ? already.system : undefined,
+          sub: "where you are now" + (gameName && gameName !== hereName ? " · the game says " + gameName : ""),
+        }];
+        terminals = terminals.filter((t) => t.name !== hereName);
+      }
+      opts = here.concat(systems).concat(terminals);
     }
     if (!typed) return opts;
     /* Prefix before contains, so typing the start of a name puts it first — the ranking people

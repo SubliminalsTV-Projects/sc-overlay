@@ -7727,18 +7727,28 @@ const FUNNEL = `(async () => {
 
   // 🔑 POSITIVE GUARD FIRST. Every claim below is about what the funnel offers, and a funnel that
   // never rendered offers nothing — which satisfies every must-not-contain check for free.
-  ok("the funnel drew all three slots", slots().length === 3,
+  // ⚠️ FOUR since 2026-08-25 — the hold slot joined what/buy/sell. RE-POINTED, not relaxed: this
+  // count is the positive guard for everything below it, so turning it into "at least three" would
+  // retire the thing it exists to catch. The names are listed so a slot going MISSING fails by
+  // name rather than as arithmetic.
+  const FUNNEL_SLOTS = ["what", "buy", "sell", "hold"];
+  ok("the funnel drew all four slots",
+     slots().length === FUNNEL_SLOTS.length
+       && FUNNEL_SLOTS.every(function (n) { return !!slotFor(n); }),
      slots().map(function (s) { return s.dataset.slot; }).join(","));
   ok("...and the board underneath is not empty", rows().length > 0, rows().length + " rows");
 
-  // AT REST the three slots are unset, which is the claim that nothing was taken away: with no
+  // AT REST every slot is unset, which is the claim that nothing was taken away: with no
   // constraint applied this is the leaderboard the tab has always been.
+  // 🔑 The hold slot counts here too. It shows the ship's capacity at rest, but that is a DEFAULT
+  // the app worked out and not a choice the player made, so it must read dim exactly like the
+  // other three — an inherited value that looks like a set one is a bug this project shipped once.
   const offAtRest = slots().filter(function (s) {
     const vEl = s.querySelector(".v");
     return vEl && vEl.classList.contains("off");
   }).length;
-  ok("at rest every slot reads as UNSET", offAtRest === 3,
-     offAtRest + " of 3 dim - " + slots().map(function (s) { return s.dataset.slot + "=" + slotText(s.dataset.slot); }).join(" "));
+  ok("at rest every slot reads as UNSET", offAtRest === FUNNEL_SLOTS.length,
+     offAtRest + " of " + FUNNEL_SLOTS.length + " dim - " + slots().map(function (s) { return s.dataset.slot + "=" + slotText(s.dataset.slot); }).join(" "));
 
   // 🔴 AN UNSET SLOT MUST NOT LOOK LIKE A VALUE, and a class name cannot tell you whether it is
   // PAINTED. Read the computed colour and require a real distance from a set one, because two

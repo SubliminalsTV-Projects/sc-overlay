@@ -759,6 +759,25 @@ export function verseRoutes(
     const px = proximity(deps, table);
     const limit = intParam(p, "limit", 20);
     const shops = intParam(p, "shops", 8);
+    /**
+     * 🔴 THE ORDERING IS A CONTROL NOW, NOT AN IMPLICIT. It already had two bases — travel-time and
+     * containment — and it silently DEGRADES between them as the player's fix ages, which is
+     * exactly how the commodity placement bug hid for as long as it did: the list stopped being
+     * ordered by distance and nothing on screen said so. Naming the choice makes the basis legible
+     * and gives "cheapest, I will travel for it" as a real answer instead of something to
+     * reconstruct by eye.
+     * ⚠️ `near` is the default because it is what the widget has always done.
+     */
+    const sortCheap = (p.get("sort") ?? "near") === "cheap";
+    /**
+     * "Only where I am." Scoped by CONTAINMENT rather than by a system name, so it means the same
+     * thing whether the fix is place-tier or system-tier and needs no second name-matching path.
+     * 🔴 IT REFUSES TO RUN RATHER THAN EMPTY THE CARD. A row we could not place reads as
+     * `elsewhere`, so an unconditional filter would silently delete "we do not know" along with
+     * "somewhere else" — the failure mode this codebase names repeatedly. If scoping would leave a
+     * hit with nothing, that hit keeps its full list and `scopedOut` reports the difference.
+     */
+    const scopeHere = p.get("scope") === "system";
     // 🔴 One ORDER per response, not per item. `basis` and `note` describe how well we know where
     // the player is, which is a property of the session — letting it vary row by row would invite
     // the UI to print a different confidence beside each shop for the same single reading.
@@ -767,6 +786,9 @@ export function verseRoutes(
     // How many confirmations for each hit we could neither fold nor place. Keyed by the same
     // name+kind the hook is handed, because a commodity and an item can share a name.
     const unplacedBy = new Map<string, number>();
+    /** How many shops "only where I am" removed from each hit. Reported so the filter can say what
+     *  it is costing rather than quietly shortening the list. */
+    const scopedOut = new Map<string, number>();
     const ctxKey = (c: QuoteContext) => JSON.stringify([c.kind, c.name]);
 
     // 🔴 THE CAP IS APPLIED HERE, INSIDE THE ORDERER, AND `reserveTierRows` IS WHY. Ordering puts
@@ -790,7 +812,28 @@ export function verseRoutes(
       }
       const r = px.order(applied.quotes);
       order = r;
-      return reserveTierRows(r.quotes, cap);
+
+      /* 🔴 SCOPE FIRST, THEN SORT, AND SCOPE NEVER EMPTIES A CARD. `elsewhere` is returned both by
+         "this is in another system" and by "we could not place this at all", and those must not be
+         deleted by one filter — see `byPlaceName`, which exists because every commodity row used to
+         be the second kind. So the filter is applied only when it leaves something behind, and what
+         it removed is counted either way. */
+      let rows = r.quotes;
+      if (scopeHere) {
+        const near = rows.filter((x) => x.containment && x.containment !== "elsewhere");
+        if (near.length) {
+          scopedOut.set(ctxKey(ctx), rows.length - near.length);
+          rows = near;
+        } else {
+          scopedOut.set(ctxKey(ctx), 0);
+        }
+      }
+      /* Cheapest-first is a PLAIN price sort with no tier reservation, deliberately: reserving a
+         far row past the cap is what stops proximity ordering hiding distant shops, and it would
+         be the opposite of the question here. The travel figures are still on every row — the sort
+         changed, not what is known about each shop. */
+      if (sortCheap) return rows.slice().sort((a, b) => a.price - b.price).slice(0, cap);
+      return reserveTierRows(rows, cap);
     };
 
     // 🔑 Commodities are scored by the SAME scorer and merged into ONE list, not appended as a
@@ -823,13 +866,35 @@ export function verseRoutes(
         // swallowed. It rides the notes line the card already draws, so in most cards it costs no
         // new line at all.
         unplacedConfirmations: unplacedBy.get(JSON.stringify([h.kind === "commodity" ? "commodity" : "item", h.name])) ?? 0,
+        // Shops "only where I am" took off this hit's list. 0 both when the filter is off and when
+        // it removed nothing, which is the same thing to a reader.
+        scopedOut: scopedOut.get(JSON.stringify([h.kind === "commodity" ? "commodity" : "item", h.name])) ?? 0,
       })),
       unpriced: nothing ? searchUnpriced(table, q) : [],
       sellOnly: nothing ? sellOnlyMatches(commodityTable, q) : [],
       origin: px ? originPayload(px.origin) : null,
       // Null when nothing was ordered at all — an empty result set never ran the orderer, and
       // claiming a basis for zero rows would be a statement about data we never looked at.
-      order: order ? { basis: (order as ProximityOrder).basis, note: (order as ProximityOrder).note } : null,
+      order: order
+        ? {
+          basis: (order as ProximityOrder).basis,
+          /* 🔴 THE NOTE HAS TO DESCRIBE THE LIST THAT WAS ACTUALLY DRAWN. `ProximityOrder.note`
+             describes the PROXIMITY basis, which is still computed in cheapest mode because every
+             row keeps its travel figures — so rendering it unchanged printed "Nearest first" over a
+             list sorted by price. The widget draws this verbatim on purpose (it must not assemble a
+             claim the data does not support), which means the correction belongs here. */
+          note: (sortCheap
+            ? "Cheapest first. Every row still shows how far away it is."
+            : (order as ProximityOrder).note)
+            + (scopeHere ? " Only shops in the system you are in." : ""),
+          /* 🔑 What was ASKED FOR, beside what was POSSIBLE. `basis` says how the rows really came
+             out — and it degrades on its own — so a widget drawing only `basis` cannot tell a
+             player who chose "cheapest" from one whose distance ordering quietly fell back. Two
+             fields, because they answer two questions. */
+          sort: sortCheap ? "cheap" : "near",
+          scope: scopeHere ? "system" : "all",
+        }
+        : null,
       ...provenance(table),
     });
     return true;

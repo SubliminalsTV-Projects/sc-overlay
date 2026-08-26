@@ -114,17 +114,38 @@
   /* Attribution, not a button that does work — it only appears on the side of the widget their
      data actually feeds. Carries UEX's supplied badge, at the same 17px slot the Verse Finder
      uses, so the credit is one thing in two places rather than two different-looking claims. */
-  .uexbadge { margin-left: auto; background: none; border: 0; padding: 0 2px; cursor: pointer;
+  .uexbadge { background: none; border: 0; padding: 0 2px; cursor: pointer;
     display: inline-flex; align-items: center; }
   .uexbadge #uexmark { height: 17px; width: auto; display: block; border-radius: 3px; }
   /* The typographic fallback, shown only when the image cannot load. */
   .uexbadge #uexname { font-family: var(--sans); font-size: 10px; font-weight: 700;
     letter-spacing: 0.04em; color: var(--cyan-text); white-space: nowrap; }
-  /* 🔑 Holds the pill + its ⓘ, and carries NO colour of its own — the three states are painted by
-     the `.tdsrc` rules below, which is the whole point of moving the existing pill here rather
-     than styling a new one. `margin-left` gives it the breathing room Sub's sketch showed; the
-     badge's own `margin-left: auto` still pins the pair to the right edge. */
-  .uexfresh { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; }
+  /* 🔑 Holds the pill, and carries NO colour of its own — the three states are painted by the
+     `.tdsrc` rules below, which is the whole point of moving the existing pill here rather than
+     styling a new one. It LEADS the strip now (Sub, 2026-08-25), so the auto margin that pins the
+     credit to the right edge moved to `.credsrc`. */
+  .uexfresh { display: inline-flex; align-items: center; gap: 4px; }
+  /* 🔴 THE PILL MATCHES THE MARK'S HEIGHT, AND 17px IS MEASURED OFF `#uexmark` RATHER THAN PICKED.
+     Sub: "Currently right now the pill is thicker than the powered by UEX." It was `.tdsrc`'s
+     21px, which is the FILTER BAR's control height and correct there — this is the one place the
+     pill sits beside a fixed-height image, so the override is scoped to this container and the
+     bar's own controls keep their 21px.
+     ⚠️ If `#uexmark`'s height ever changes, this number has to move with it. They are the two
+     halves of one alignment and there is no way to derive one from the other in CSS. */
+  .uexfresh .tdsrc { height: 17px; padding: 0 6px; font-size: 9.5px; }
+  /* The credit sentence. `margin-left: auto` lives here now, so the whole phrase — SCO, its ⓘ,
+     the "and", the mark and its ⓘ — travels to the right edge as ONE object and the pill keeps
+     the left. */
+  .credsrc { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+  .credsrc .cby, .credsrc .cand { font-family: var(--sans); font-size: 10px; color: var(--faint);
+    white-space: nowrap; }
+  /* SCO's own mark, set to match the weight and colour of UEX's wordmark fallback so neither
+     source is dressed as the more important one. A button because it opens the site, exactly like
+     the UEX badge beside it. */
+  .credsrc .credname { background: none; border: 0; padding: 0; cursor: pointer;
+    font-family: var(--sans); font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+    color: var(--cyan-text); white-space: nowrap; }
+  .credsrc .credname:hover { color: var(--cyan-bright); }
 
   .tdbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
     padding: 6px 12px 4px; border-bottom: 1px solid var(--divider); }
@@ -313,7 +334,17 @@
   /* Line two — where it happens, and the rate. Both ends truncate rather than wrap: a terminal
      name is recognisable from its start, and a wrapped one would push the strip down a line. */
   .tdrow .l2 { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; }
+  /* 🔴 `text-align: left` IS LOAD-BEARING, NOT A DEFAULT BEING RESTATED. `.arow .r` further down
+     means "the right-hand column" and sets `flex: none; text-align: right`. This rule overrode the
+     `flex` and left the alignment behind, so the route string was right-aligned inside a 313px box
+     it never filled: every row's pickup name began at a different x, ragged left, while the rate
+     column stayed put. Sub, 2026-08-25: "it gives no value for it to be right justified. It looks
+     like it's not aligned properly when the location gets really long."
+     🔑 The general trap is the one this stylesheet already warns about twice — reusing a class name
+     that already means something. `.r` is the right-hand column in `.arow` and the ROUTE here, and
+     an override that changes only some of the inherited declarations leaves the rest live. */
   .tdrow .l2 .r { flex: 1; min-width: 0; font-family: var(--mono); font-size: 10.5px;
+    text-align: left;
     color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tdrow .l2 .hr { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--cyan-dim); }
 
@@ -632,6 +663,16 @@
   .stop .mid { flex: 1; min-width: 0; }
   .stop .nm.editable > span:first-child, .stop .nm.editable { }
   .stop .nm .pen { flex: none; margin-left: 5px; font-size: 11px; color: var(--cyan-dim); opacity: 0.75; }
+  /* Remove a commodity run from the route. `flex: none` for the same reason the pencil has it —
+     the row's TITLE is what shrinks, and a control that gets cut when the widget narrows is a
+     control that disappears exactly when it is hardest to reach. Quiet at rest and red on hover:
+     it is a delete, so it should not read as a decoration, but it also must not shout on every
+     commodity leg in the list. */
+  .stop .nm .dropleg { flex: none; margin-left: 6px; padding: 0 3px; background: none; border: 0;
+    font-family: var(--sans); font-size: 11px; line-height: 1; cursor: pointer;
+    color: var(--faint); opacity: 0.7; }
+  .stop .nm .dropleg:hover { color: var(--red, #eb7878); opacity: 1; }
+  .stop .nm .dropleg:focus-visible { outline: 1px solid var(--cyan); outline-offset: 1px; }
   .stop .nm.editable:hover .pen { color: var(--cyan-bright); opacity: 1; }
   .stop .nm.editable:hover .nmt { text-decoration: underline dotted rgba(var(--accent-rgb), 0.6); }
   .ratereset { margin-left: 8px; background: transparent; border: none; padding: 0; cursor: pointer;
@@ -1028,23 +1069,41 @@
          exactly the tabs that render UEX quotes and is hidden everywhere else. It is not chrome
          that can be dropped for tidiness. -->
     <div id="creditbar" class="creditbar" hidden>
-      <!-- 🔴 UEX'S OWN BADGE, THE SAME ONE THE VERSE FINDER CARRIES (Sub, 2026-08-22). Both
-           widgets are wrappers over the same community-reported table, and until now only one of
-           them said so in UEX's own mark while the other paraphrased it in our type. The mark is
-           used UNMODIFIED — not tinted, not reskinned with the manufacturer themes — because an
-           attribution that changes to suit our theme has stopped being an attribution.
-           ⚠️ The words REPLACE the image if it cannot load; they never merely leave a gap. -->
-      <button id="uexCredit" class="uexbadge" type="button"
-        title="Commodity prices are community-reported through UEX. Open uexcorp.space"><img
-          id="uexmark" src="/logos/uex-powered.png" alt="Powered by UEX"
-          onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" /></button>
-      <!-- 🔴 THE PROVENANCE PILL LIVES HERE NOW — Sub, 2026-08-25: "I think it would look better if
-           we put some sort of live indication next to the UEX badge at the bottom."
+      <!-- 🔴 THE PROVENANCE PILL LEADS THE STRIP — Sub, 2026-08-25: "I want to put that button or
+           pill to the left of the Powered by UEX logo, and I want it to be the exact same height."
+           It was to the RIGHT of the badge and 21px against the mark's 17px, so it read as a
+           heavier object bolted onto the end of an attribution rather than a status ahead of it.
            ⚠️ It MOVED, it was not copied. `tdProvenance()` is still the only thing that writes it,
            because a second freshness indicator is a second writer of one fact and the two drift —
-           the same rule that made the mining prefs move out of Settings rather than be mirrored.
-           It also keeps the Commodities filter bar to the ONE row `tradelook` measured it down to. -->
+           the same rule that made the mining prefs move out of Settings rather than be mirrored. -->
       <span id="uexfresh" class="uexfresh"></span>
+
+      <!-- 🔴 TWO SOURCES, NAMED, EACH WITH ITS OWN ⓘ (Sub, 2026-08-25): "it'll say powered by SCO
+           and UEX. And then they each can have a letter I with a circle around it… they basically
+           learn that UEX is our baseline. But users who use this app can have the values updated
+           in real time as they play."
+           🔑 CREDITING ONLY ONE OF TWO SOURCES IS THE RIDDLE `onepill` ALREADY SOLVED ON THE SHOP
+           ROW: a provenance mark on one kind of thing and nothing on the other makes the reader
+           ask what the mark means. Naming both answers it with no legend.
+           ⚠️ The `and` is a real word between them, not a separator glyph — the strip is a
+           sentence, and "SCO · UEX" would read as a filter breadcrumb. -->
+      <span class="credsrc">
+        <span class="cby">Powered by</span>
+        <button id="scoCredit" class="credname" type="button">SCO</button>
+        <button id="scoInfo" class="tdi" type="button" popovertarget="scoInfoPop">i</button>
+        <span class="cand">and</span>
+        <!-- 🔴 UEX'S OWN BADGE, THE SAME ONE THE VERSE FINDER CARRIES (Sub, 2026-08-22). Both
+             widgets are wrappers over the same community-reported table, and until now only one of
+             them said so in UEX's own mark while the other paraphrased it in our type. The mark is
+             used UNMODIFIED — not tinted, not reskinned with the manufacturer themes — because an
+             attribution that changes to suit our theme has stopped being an attribution.
+             ⚠️ The words REPLACE the image if it cannot load; they never merely leave a gap. -->
+        <button id="uexCredit" class="uexbadge" type="button"
+          title="Commodity prices are community-reported through UEX. Open uexcorp.space"><img
+            id="uexmark" src="/logos/uex-powered.png" alt="Powered by UEX"
+            onerror="this.replaceWith(Object.assign(document.createElement('span'),{id:'uexname',textContent:'Powered by UEX'}))" /></button>
+        <button id="uexInfo" class="tdi" type="button" popovertarget="uexInfoPop">i</button>
+      </span>
     </div>
 
     <div id="wsettings" class="wsettings">
@@ -1350,9 +1409,16 @@
     /* 🔴 THE ASSET NAME IS NOT A PLACE NAME. Sub, at the Nyx gateway on 2026-08-25: "Currently
        right now, the widget says that I'm at RR_JP_NyxCastra. Where are we at with making those
        names more friendly?" The sidecar supplies detectedLabel when it can name the token — for
-       this one, "Stanton Gateway", which is what UEX calls it too. It stays null rather than
-       guessing, and then the raw token is still shown: a string the app plainly could not
-       translate is better than a confident wrong name. See locationTokenLabel. */
+       this one, "Stanton Gateway". It stays null rather than guessing, and then the raw token is
+       still shown: a string the app plainly could not translate is better than a confident wrong
+       name. See locationTokenLabel.
+       🔴 CORRECTION, 2026-08-25: this note used to end "…which is what UEX calls it too". IT DOES
+       NOT. UEX has `Stanton Gateway (Nyx)` (long form `Admin - Stanton Gateway (Nyx)`) and no row
+       called `Stanton Gateway` at all, so `fromTerminal="Stanton Gateway"` returns 0 routes against
+       51 for the real name — measured both ways on the live table. Anything joining this label to
+       the price table by string equality gets an empty answer that reads as "nothing here". That
+       is why `hereTerminal` is resolved in the sidecar rather than by passing this label through;
+       see `hereTerminalName` in trade-routes.ts. */
     const token = sr.detectedLabel || sr.detectedToken;
     const auto = document.createElement("option");
     auto.value = "";
@@ -1844,6 +1910,24 @@
   $("uexCredit").addEventListener("click", () => {
     try { overlayApi.openUrl("https://uexcorp.space"); } catch { /* standalone: no shell */ }
   });
+  $("scoCredit").addEventListener("click", () => {
+    try { overlayApi.openUrl("https://sc-overlay.subliminal.gg"); } catch { /* standalone: no shell */ }
+  });
+  /* 🔴 THE SCO TIP IS SET ONCE AND IS NOT ABOUT THIS BOARD'S PRICES — READ THIS BEFORE "IMPROVING"
+     THE WORDING. Sub's brief for it was "users who use this app can have the values updated in
+     real time as they play", which is a true and shipped property of SC Overlay: the app reads
+     what you really pay out of your own game log, and opted-in players pool those confirmations
+     (`src/price-pool.ts`). But the pool is consumed by `verse-routes.ts` ONLY — `trade-routes.ts`
+     and `trade-finder.ts` never touch it, so the rows on THIS tab are UEX's table alone.
+     So the tip says what is true today and names the gap rather than papering over it. An
+     attribution that overstates is the one thing worse than no attribution: the first person to
+     ask "how is this powered by SCO?" gets an answer the app cannot back.
+     👉 When the pool is wired into the commodity finder, the last sentence is what changes. */
+  setCreditTip("sco",
+    "SC Overlay — this app. It reads the prices you actually pay out of your own game log, and"
+    + " players who opt in pool those confirmations, so a shop can be confirmed minutes ago instead"
+    + " of months. UEX is the baseline everything is built on. The Verse Finder already shows those"
+    + " player confirmations; this board is still built on UEX's table alone.");
   $("objBtn").addEventListener("click", () => {
     objective = objective === "fewest-stops" ? "auec-per-hour" : "fewest-stops";
     load();

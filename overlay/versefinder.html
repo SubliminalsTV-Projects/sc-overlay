@@ -379,6 +379,28 @@
   .ordernote { flex: none; padding: 3px 10px 0; font-family: var(--sans); font-size: 9.5px;
                color: var(--dim); letter-spacing: 0.01em; }
 
+  /* The sort/scope row. `flex: none` so it can never be what shrinks — a control that vanishes as
+     the widget narrows is the pencil bug in `.stop .nm` all over again. It wraps rather than
+     clipping, because at 320px the three buttons plus their gaps do not fit on one line and a
+     clipped control is worse than a two-line row. */
+  .vfctl { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+    padding: 4px 10px 0; }
+  .vfctl[hidden] { display: none; }
+  /* 🔑 `white-space: nowrap` per button, so a label can never be sawn in half at the space in
+     "Only here" — the pill-breaks-inside-its-own-text failure this stylesheet already carries a
+     note about on the hauling chips. */
+  .vfseg { background: none; cursor: pointer; white-space: nowrap;
+    border: 1px solid rgba(var(--accent-rgb), 0.28); border-radius: 5px; padding: 1px 7px;
+    font-family: var(--sans); font-size: 9.5px; letter-spacing: 0.04em; color: var(--dim); }
+  .vfseg:hover { color: var(--cyan-text); border-color: rgba(var(--accent-rgb), 0.5); }
+  /* 🔴 THE LIT STATE CARRIES A BACKGROUND AS WELL AS A COLOUR. Colour alone is one signal, and the
+     manufacturer skins are exactly where one signal goes missing — `--cyan` is the brand accent and
+     computes to wildly different hues, which is the documented reason the freshness ladder had to
+     stop using it. Fill-vs-no-fill cannot be collapsed by any palette. */
+  .vfseg.on { color: var(--cyan-bright); border-color: rgba(var(--accent-rgb), 0.75);
+    background: rgba(var(--accent-rgb), 0.18); }
+  .vfsep { width: 1px; height: 11px; background: var(--divider); margin: 0 3px; }
+
   /* 🔴 A BIGGER FOOTER, TO GIVE UEX ROOM (Sub, 2026-08-22). His framing is the design note:
      "this is really mainly just them. All we're doing is putting up a wrapper for it." So the
      credit is not a 9px afterthought squeezed against two other things — it is the second most
@@ -437,6 +459,23 @@
     </div>
 
     <div id="results"></div>
+
+    <!-- 🔴 THE ORDERING IS A CONTROL, AND IT SITS WITH THE SENTENCE THAT EXPLAINS IT. The list has
+         always had two bases and it DEGRADES between them on its own as the player's position fix
+         ages — which is how a real bug hid for months: commodities silently stopped being ordered
+         by distance and nothing on screen said so. Putting the choice immediately above the note
+         that describes the result is this codebase's own "the box goes where the answer is".
+         🔑 "Only here" is a SCOPE, not a sort, so it is separated rather than made a third segment
+         — three buttons in a row would read as one three-way choice. -->
+    <div id="vfctl" class="vfctl" hidden>
+      <button id="sortNear" class="vfseg" type="button"
+        title="Closest first. Uses travel time when your position is fresh enough, and falls back to what contains what when it is not — the line below says which.">Nearest</button>
+      <button id="sortCheap" class="vfseg" type="button"
+        title="Lowest price first, wherever it is. Every row still shows how far it is.">Cheapest</button>
+      <span class="vfsep"></span>
+      <button id="scopeHere" class="vfseg" type="button"
+        title="Only shops in the system you are in. Shops we could not place are kept rather than hidden, and anything left out is counted on the row.">Only here</button>
+    </div>
 
     <!-- What the ordering means, in one sentence, straight from the server. -->
     <div id="ordernote" class="ordernote" hidden></div>
@@ -525,7 +564,16 @@
   // figure is measured FROM. Never used to compute anything.
   let lastOrigin = null;
 
-  const fmt = (n) => n.toLocaleString("en-US");
+  /* 🔴 ROUNDED, AND THE DECIMALS WERE NOT OURS. `toLocaleString` keeps up to three fraction digits,
+     so a confirmed price arrived on screen as "15,389.999" — which Sub read at a glance as fifteen
+     MILLION. The fraction is float noise out of the game's own field: the buy line states
+     `shopPricePerCentiSCU[153.899994]` beside `price[15390.000000]`, and 153.899994 x 100 is
+     15389.9994. Every number this formats is an aUEC price, an SCU count or an item count — all
+     integers in the game — so there is no case here where a fraction carries information.
+     ⚠️ This rounds the DISPLAY. The value stored and published to the price pool is still
+     15389.9994; rounding at the point the unit price is derived is the real repair and is a
+     sidecar change. */
+  const fmt = (n) => Math.round(n).toLocaleString("en-US");
 
   const daysSince = (sec) => Math.floor((Date.now() / 1000 - sec) / 86400);
 
@@ -1115,7 +1163,17 @@
     // figure too small by exactly the number of confirmations on screen — a wrong number, quietly,
     // on the most-read line of the card.
     const drawn = r.quotes.filter((q) => !q.observedOnly).length;
-    if (r.shopCount > drawn) notes.push("+" + (r.shopCount - drawn) + " more shop" + (r.shopCount - drawn === 1 ? "" : "s"));
+    /* 🔴 THE BARE "+N more" IS SUPPRESSED WHILE "Only here" IS ON, because the scope note below
+       says the same thing with a REASON attached. Left in, the card reads "+8 more shops · 8 more
+       shops outside this system" — two sentences about the same eight, which is precisely the
+       duplication Sub rejected on the old observations block ("it's just too much"). The specific
+       note is strictly better than the generic one, so the generic one goes.
+       ⚠️ Only when the two really are the same set: if the cap ALSO hid some, the generic count is
+       still saying something the scope note is not, and both belong. */
+    const hiddenByCap = r.shopCount - drawn;
+    if (hiddenByCap > 0 && hiddenByCap !== (r.scopedOut || 0)) {
+      notes.push("+" + hiddenByCap + " more shop" + (hiddenByCap === 1 ? "" : "s"));
+    }
     // 🔴 A COUNT, NEVER A NAME — the judgement call on Sub's *"the other locations… I don't know
     // where those would be. It's useless information to the viewer."* What he rejected was a name
     // the reader cannot place. The evidence itself is real (one of these is five different players
@@ -1126,6 +1184,13 @@
     if (r.unplacedConfirmations) {
       notes.push(r.unplacedConfirmations + " more confirmation"
         + (r.unplacedConfirmations === 1 ? "" : "s") + " from shops we cannot place yet");
+    }
+    /* 🔴 A FILTER SAYS WHAT IT COST. "Only here" shortening the list without a word is the same
+       swallowing the line above exists to prevent — the player cannot tell "this is all there is"
+       from "you asked me to hide the rest". It rides the notes line the card already draws. */
+    if (r.scopedOut) {
+      notes.push(r.scopedOut + " more shop" + (r.scopedOut === 1 ? "" : "s")
+        + " outside this system, hidden by “Only here”");
     }
     // 🔴 TWO SPREADS, NEVER ONE. `low`/`high` are the PURCHASE range and `rentLow`/`rentHigh` the
     // rental one; a single min/max across both would run from a 28,665 aUEC hire to a 1,089,270
@@ -1230,6 +1295,9 @@
     // know whether we can see where they are.
     lastOrigin = data.origin || null;
     renderEye(data.origin, data.order);
+    // The controls belong to the RESULTS, so they appear with them and go with them. Offering a
+    // sort over an empty list is offering to reorder nothing.
+    renderCtl(!!(data.query && data.results && data.results.length));
     if (!data.query) {
       showEmpty("Type a name.<br />Weapons, armour, components, gear — ships and commodities too.");
       return;
@@ -1282,6 +1350,45 @@
       + (data.lastError ? "  Last refresh failed: " + data.lastError : "");
   }
 
+  /* ── sort + scope ───────────────────────────────────────────────────────────────────────────
+     Persisted, because which way you want the list is a habit rather than a per-search decision —
+     the same reasoning as the Trade widget's Per run / Per SCU. */
+  const VF_SORT_KEY = "sc-verse-sort";
+  const VF_SCOPE_KEY = "sc-verse-scope";
+  let vfSort = (() => { try { return localStorage.getItem(VF_SORT_KEY) === "cheap" ? "cheap" : "near"; } catch { return "near"; } })();
+  let vfScope = (() => { try { return localStorage.getItem(VF_SCOPE_KEY) === "system" ? "system" : "all"; } catch { return "all"; } })();
+
+  /** Paint the lit states. Driven from the variables, never from what was clicked, so the row can
+   *  never disagree with what the next request will actually ask for. */
+  function renderCtl(hasResults) {
+    const bar = $("vfctl");
+    if (!bar) return;
+    bar.hidden = !hasResults;
+    const set = (id, on) => { const b = $(id); if (b) b.classList.toggle("on", on); };
+    set("sortNear", vfSort === "near");
+    set("sortCheap", vfSort === "cheap");
+    set("scopeHere", vfScope === "system");
+  }
+
+  function setSort(v) {
+    if (vfSort === v) return;
+    vfSort = v;
+    try { localStorage.setItem(VF_SORT_KEY, v); } catch { /* private mode */ }
+    renderCtl(true);
+    // Re-ask rather than re-sorting what is on screen: the server owns the cap and deliberately
+    // keeps rows past it that a client-side sort would have no way to know about.
+    const q = ($("q").value || "").trim();
+    if (q) run(q);
+  }
+
+  function setScope(v) {
+    vfScope = v;
+    try { localStorage.setItem(VF_SCOPE_KEY, v); } catch { /* private mode */ }
+    renderCtl(true);
+    const q = ($("q").value || "").trim();
+    if (q) run(q);
+  }
+
   async function run(q) {
     const mine = ++seq;
     try {
@@ -1291,7 +1398,8 @@
       // cap for any containment tier that would otherwise vanish (see `reserveTierRows`); a slice
       // on this side would delete exactly those rows again. So: one cap, one owner, and the widget
       // draws every quote it is given.
-      const r = await fetch("/api/verse/search?q=" + encodeURIComponent(q) + "&limit=20&shops=" + SHOPS_SHOWN);
+      const r = await fetch("/api/verse/search?q=" + encodeURIComponent(q) + "&limit=20&shops=" + SHOPS_SHOWN
+        + "&sort=" + vfSort + "&scope=" + vfScope);
       if (!r.ok) throw new Error("HTTP " + r.status);
       const data = await r.json();
       // An earlier request landing late must not replace a newer answer.
@@ -1338,6 +1446,14 @@
     if (qEl.value) { qEl.value = ""; lastQuery = ""; seq++; render({ query: "", results: [] }); }
     else qEl.blur();
   });
+
+  /* 🔑 These do NOT take the canvas keyboard grab. They are buttons, not text fields — only a
+     deliberate act on the search box may start typing mode, and a control that quietly grabbed the
+     keyboard would make every click on every monitor stop reaching the game. */
+  $("sortNear").addEventListener("click", () => setSort("near"));
+  $("sortCheap").addEventListener("click", () => setSort("cheap"));
+  $("scopeHere").addEventListener("click", () => setScope(vfScope === "system" ? "all" : "system"));
+  renderCtl(false);
 
   // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
   document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });

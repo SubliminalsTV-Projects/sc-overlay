@@ -118,6 +118,48 @@ export interface TerminalIndex {
   /** Terminals whose name matched more than one starmap place and were therefore REFUSED rather
    *  than guessed. Surfaced so a data change makes itself known instead of mis-placing a shop. */
   ambiguous: number;
+  /**
+   * 🔴 `matchKey(place) + "@" + systemKey(system)` -> starmap ids. THE SAME MAP `byTerminal` IS
+   * BUILT FROM, kept rather than discarded so a row that is not in the terminal table can still be
+   * placed from its own place/body/system.
+   *
+   * This is what commodities needed. `byTerminal` is keyed on ITEM-shop terminal names out of
+   * `data/item-shops.json`, and no commodity terminal is in that file — so every commodity quote
+   * resolved to null, `containmentOf` returned "elsewhere" for all of them, and the Verse Finder
+   * silently fell back to ordering commodities by PRICE. Sub, 2026-08-25, standing on Stanton
+   * Gateway (Nyx): "when I search for methane, it doesn't show the place that I'm currently at. It
+   * shows a place in pyro that has it. And I am not in pyro." The Nyx row was there — seventh,
+   * behind two Pyro terminals that were merely cheaper.
+   * ⚠️ Ambiguity is refused here exactly as it is for terminals; see `placeIdFromNames`.
+   */
+  byPlaceName: Map<string, string[]>;
+}
+
+/**
+ * Place a row from its own place/body/system rather than from a terminal name.
+ *
+ * 🔑 PLACE FIRST, BODY SECOND — the same order and the same reason as `buildTerminalIndex`: a
+ * shop's `place` is where you dock, and `body` is the fallback for rows filed against a moon with
+ * no settlement named.
+ * 🔴 MORE THAN ONE MATCH RESOLVES TO NOTHING. The starmap holds 28 places called "Derelict Outpost"
+ * in Pyro alone, and putting the player at an arbitrary one of them is this codebase's named
+ * failure. A null here costs an ordering; a guess states a location that is wrong.
+ */
+export function placeIdFromNames(
+  index: TerminalIndex,
+  place: string | null | undefined,
+  body: string | null | undefined,
+  system: string | null | undefined,
+): string | null {
+  const sys = systemKey(system);
+  for (const cand of [matchKey(place), matchKey(body)]) {
+    if (!cand) continue;
+    const ids = index.byPlaceName.get(cand + "@" + sys);
+    if (!ids?.length) continue;
+    if (ids.length > 1) return null;
+    return ids[0];
+  }
+  return null;
 }
 
 const lower = (s: string | null | undefined): string => (s ?? "").trim().toLowerCase();
@@ -191,7 +233,7 @@ export function buildTerminalIndex(
       break;
     }
   }
-  return { byTerminal, resolved, total: terminals.length, collisions, ambiguous };
+  return { byTerminal, resolved, total: terminals.length, collisions, ambiguous, byPlaceName: byNameSys };
 }
 
 /* ── Containment ─────────────────────────────────────────────────────────────────────────────── */
@@ -389,8 +431,17 @@ export function orderByProximity(
   // could not be folded onto one — but it does know its starmap place, so it can be ordered by
   // exactly the same rule as every surveyed shop. Without this the only way to show such a row
   // would be a second list ordered by something else, which is the design Sub rejected.
+  /* 🔑 THREE SOURCES, MOST SPECIFIC FIRST, AND THE THIRD IS WHAT MADE COMMODITIES SORTABLE.
+     `placeId` is a placement we were handed. `byTerminal` is the UEX item-shop table. Neither
+     covers a commodity quote — its terminal is not in `data/item-shops.json` — so without the
+     third arm every commodity row placed as null, read as "elsewhere", and the whole list fell
+     back to price order while still calling itself proximity-ordered. See `byPlaceName`.
+     ⚠️ The order matters and is not arbitrary: a name lookup is the WEAKEST evidence of the three
+     and must never outrank a real placement or the surveyed table. */
   const placeOf = (q: ResolvedQuote): string | null =>
-    q.placeId ?? index.byTerminal.get(q.terminal) ?? null;
+    q.placeId
+    ?? index.byTerminal.get(q.terminal)
+    ?? placeIdFromNames(index, q.place, q.body, q.system);
   const contain = (q: ResolvedQuote): Containment =>
     containmentOf(origin.id!, origin.tier, placeOf(q), locations);
 
