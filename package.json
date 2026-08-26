@@ -72,6 +72,7 @@
     "test:proximity": "tsx src/verse-proximity.test.ts",
     "test:signals": "tsx src/origin-signals.test.ts",
     "test:playerloc": "tsx src/player-location.test.ts",
+    "test:reppage": "tsx src/rep-page.test.ts",
     "measure:terminalorigin": "node tools/measure-terminal-origin.mjs",
     "measure:origin": "node tools/measure-origin-coverage.mjs",
     "test:verseroutes": "tsx src/verse-routes.test.ts",
