@@ -203,7 +203,10 @@ const electron = join(ROOT, "node_modules", "electron", "dist", "electron.exe");
 // they are the only thing standing between a stray backtick and a run that hangs for hours.
 let code = await step(process.execPath, [join("tools", "check-suite-literals.cjs")]);
 if (code === 0) code = await step(process.execPath, ["--check", join("tools", "widget-dom-test.cjs")]);
-if (code === 0) code = await step(electron, [join("tools", "widget-dom-test.cjs")]);
+// `--pairs` is forwarded so the RELEASE run can be made here too — the release recipe reaches for
+// this script whenever another session is holding the default port, and a release check that
+// silently could not opt into the pair merges would be the exact false green they exist to prevent.
+if (code === 0) code = await step(electron, [join("tools", "widget-dom-test.cjs"), ...(flag("--pairs") ? ["--pairs"] : [])]);
 
 if (flag("--keep")) {
   console.log(`\nsidecar left running on :${PORT} (pid ${sidecarPid}) - --keep was passed`);

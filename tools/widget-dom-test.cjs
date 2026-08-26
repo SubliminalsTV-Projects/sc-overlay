@@ -63,6 +63,34 @@ const ONLY = (() => {
   return keys.length ? keys : null;
 })();
 
+/* ── `--pairs` — the brute-force pair merge is a RELEASE step, not a landing gate ───────────────
+ *
+ * 🔴 SUB'S CALL, 2026-08-25, AND IT IS A DECISION RATHER THAN AN OVERSIGHT.
+ *   "That seems like something we might be able to just do one time just before an actual
+ *    release... I'm fine with the downside to waiting that long to see if things merge. I think
+ *    it'll far outweigh the amount of time wasted by just sitting there waiting for that script
+ *    to be run."
+ *
+ * The numbers behind it (flight `suiteaudit`, three passes on one tree): `pair merges (brute
+ * force)` is 134s of a 325s pass — 41% — for SEVEN assertions, because it is O(n²) over the
+ * registry (15 widgets = 105 pairs at ~1.28s each). Every widget added to the app adds ~15 pairs,
+ * i.e. ~19s to EVERY landing, forever.
+ *
+ * 🔑 WHY THE RELEASE IS THE RIGHT MOMENT: a broken merge pair can only ever reach a human through
+ * a released build. Landings on `main` ship to nobody, so nothing is at risk between the landing
+ * and the release — only the debugging DISTANCE grows, and Sub accepted that knowingly.
+ *
+ * ⚠️ IT WAS ALSO PROPOSED THAT THIS RUN WHENEVER THE DIFF TOUCHED THE REGISTRY, THE GROUPING CODE
+ * OR A WIDGET'S PANEL SIZING. Sub considered that and DECLINED it. Do not add a trigger condition.
+ *
+ * 🔴 OPT-IN, NEVER `--no-pairs`. A release step that has to remember a negative flag is a step
+ * that gets skipped, and the failure is silent — the flag simply is not typed and nobody notices
+ * the suite did not run. `npm run test:widgets:release` is the whole ritual.
+ */
+const RUN_PAIRS = process.argv.includes("--pairs");
+const PAIRS_LABEL = "pair merges (brute force)";
+const PAIRS_CMD = "npm run test:widgets:release";
+
 /** Registry keys a suite is about. Suites driving a widget's OWN page are tagged from their `page`
  *  argument and are absent here; this map is only for the ones that run inside the canvas, where
  *  nothing in the call site says which widget they belong to. */
@@ -124,8 +152,25 @@ const SWEEP_SUITES = new Set([
 const UNTAGGED = [];
 const SKIPPED = [];
 
-/** Every key --only accepts: the registry keys the pages map to, plus the canvas/shell tags. */
-const KNOWN_TAGS = [...new Set([...Object.values(PAGE_KEYS), ...Object.values(SUITE_TAGS).flat()])].sort();
+/** Registry widgets that have no page of their own, so PAGE_KEYS cannot name them. The Blueprint
+ *  panel is a LOCAL widget — it lives in missions.html itself rather than in an iframe. */
+const LOCAL_KEYS = ["blueprint"];
+
+/* 🔴 `--only` TAKES WIDGET KEYS, AND THE SUITE TAGS ARE NOT WIDGET KEYS. This list used to be the
+   union of PAGE_KEYS and every SUITE_TAGS value, which quietly admitted `canvas` and `shell` —
+   labels for a SURFACE, with no entry in the registry behind either of them. `--only canvas` was
+   therefore accepted, SEL filtered to ZERO widgets, and the registry sweeps then failed their own
+   anti-vacuous guards (`the sweep really walked widgets and skins  [0 widgets x 16 skins]`) on
+   perfectly green code. Two of those three lines were the design working exactly as intended: the
+   bug was never that an empty selection failed, it was that a key selecting nothing was accepted
+   as though it had selected something.
+
+   🔑 The two halves are DERIVED, not hand-listed, so a tag added to SUITE_TAGS later cannot bring
+   this back silently — anything in SUITE_TAGS that is not a widget key lands in SUITE_ONLY_TAGS by
+   construction and is refused with its own message. */
+const WIDGET_KEYS = [...new Set([...Object.values(PAGE_KEYS), ...LOCAL_KEYS])].sort();
+const SUITE_ONLY_TAGS = [...new Set(Object.values(SUITE_TAGS).flat())]
+  .filter((t) => WIDGET_KEYS.indexOf(t) < 0).sort();
 
 /* 🔴 AN UNRECOGNISED KEY MUST NOT PRODUCE A NEARLY-EMPTY PASS. Without this, --only versefinder
    (lower-case f, which is what the PAGE is called) matches nothing, the registry sweeps run
@@ -136,12 +181,24 @@ const KNOWN_TAGS = [...new Set([...Object.values(PAGE_KEYS), ...Object.values(SU
    what git printed.  */
 const ONLY_KEYS_RESOLVED = ONLY && ONLY.map((raw) => {
   const k = raw.trim().toLowerCase().replace(".html", "");
-  return KNOWN_TAGS.find((t) => t.toLowerCase() === k) || PAGE_KEYS[k + ".html"] || null;
+  return WIDGET_KEYS.find((t) => t.toLowerCase() === k) || PAGE_KEYS[k + ".html"] || null;
 });
 if (ONLY && ONLY_KEYS_RESOLVED.some((k) => !k)) {
+  const bad = ONLY.filter((_, n) => !ONLY_KEYS_RESOLVED[n]);
+  const tags = bad.filter((b) => SUITE_ONLY_TAGS.some((t) => t.toLowerCase() === b.trim().toLowerCase()));
   console.error("");
-  console.error("--only: unknown widget key(s): " + ONLY.filter((_, n) => !ONLY_KEYS_RESOLVED[n]).join(", "));
-  console.error("known keys: " + KNOWN_TAGS.join(", "));
+  console.error("--only: unknown widget key(s): " + bad.join(", "));
+  if (tags.length) {
+    console.error("");
+    console.error("  " + tags.join(", ") + " " + (tags.length > 1 ? "are" : "is a")
+      + " SUITE TAG" + (tags.length > 1 ? "S" : "") + ", not a widget. Nothing in the registry"
+      + " carries that key, so it");
+    console.error("  would select no widget at all and the registry sweeps would run over an empty");
+    console.error("  selection. A change to the canvas or the shell can break ANY widget anyway —");
+    console.error("  the right run for one is the full pass, `npm run test:widgets`.");
+  }
+  console.error("");
+  console.error("known keys: " + WIDGET_KEYS.join(", "));
   console.error("(a page filename works too, e.g. --only versefinder.html)");
   process.exit(2);
 }
@@ -172,6 +229,16 @@ const PRELUDE = `
   // prints as skip, is counted separately, and never inflates the pass total. Reach for it
   // when the INPUT could not express the case; ok(name, false) is for when the code is wrong.
   const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  // 🔴 THE BELT ON THE SUITE-TAG BUG, AND IT IS DERIVED FROM THE REGISTRY ITSELF. The argv-time
+  // refusal reads a list built from PAGE_KEYS; this reads WIDGETS. A key that reaches the page and
+  // matches no widget is the exact condition that made --only canvas redden three green sweeps, so
+  // it now fails LOUDLY and by name instead of leaving SEL empty for those guards to trip over.
+  // A full pass sends no keys at all, so this pushes nothing.
+  if (ONLY_KEYS.length && typeof WIDGETS !== "undefined") {
+    const absent = ONLY_KEYS.filter((k) => !WIDGETS.some((w) => w.key === k));
+    if (absent.length) ok("every --only key names a widget in the registry", false,
+      absent.join(",") + " matched no registry entry, so SEL holds " + SEL.length + " widget(s)");
+  }
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   // The Blueprint panel is a LOCAL registry widget: it lives in this document rather than an
   // iframe, so it has no w-/wf- elements and hides via a body class.
@@ -306,9 +373,12 @@ const PAIRS = `(async () => {
   ${PRELUDE}
   // Show everything so every pair is actually mergeable.
   // 🔴 THIS SUITE IS O(n²) OVER THE REGISTRY AND IT IS THE MOST EXPENSIVE THING IN THE PASS.
-  // Measured 2026-08-25: 15 widgets = 105 pairs = 134.4s, which is 41% of a 324.9s full run, for
-  // SEVEN assertions. Every widget added to the registry adds ~15 pairs, i.e. ~19s to every
-  // landing. It walks SEL so that a flight running --only pays for the pairs it can have broken.
+  // Measured 2026-08-25: 15 widgets = 105 pairs = 134.4s, which was 41% of a 324.9s full run, for
+  // SEVEN assertions. Every widget added to the registry adds ~15 pairs, i.e. ~19s to every run.
+  // ⚠️ WHICH IS WHY IT NO LONGER RUNS BY DEFAULT — it is opt-in behind the pairs flag and belongs
+  // to the RELEASE, not to the landing gate. See the flag's block at the top of this file for
+  // Sub's reasoning and for the trigger condition he explicitly declined.
+  // It walks SEL so that a flight running --only pays only for the pairs it can have broken.
   for (const w of SEL) { setWidgetVisible(w, true); }
   await sleep(500);
 
@@ -8415,7 +8485,9 @@ app.whenReady().then(async () => {
   const region0 = await readScanRegion();
   try {
     fails += await run("widget grouping", GROUPING, null);
-    fails += await run("pair merges (brute force)", PAIRS, null);
+    // Opt-in — see the `--pairs` block at the top of this file. The default gate does NOT run it,
+    // and says so in as many words at the end of the pass.
+    if (RUN_PAIRS) fails += await run(PAIRS_LABEL, PAIRS, null);
     fails += await run("title-bar chrome", CHROME, null);
     fails += await run("controls visible + reachable", REACH, null);
     fails += await run("sweeps: themes / sizes / text / stacks", SWEEPS, null);
@@ -8532,6 +8604,17 @@ app.whenReady().then(async () => {
       console.log(`     ${(ms / 1000).toFixed(1).padStart(6)}s  ${(ms / total * 100).toFixed(0).padStart(3)}%  ${p}`);
     }
   }
+  /* 🔴 A GATE THAT QUIETLY COVERS LESS THAN IT USED TO IS HOW A SUITE STOPS BEING TRUSTED. The
+     pair suite is opt-in now (Sub's call — see the --pairs block at the top), and the ONE way that
+     becomes a false green is a run printing "all widget DOM tests passed" while 105 pair merges
+     went unchecked and nobody knew. So the default pass says what it did not do, and names the
+     exact command that does it — the same standard --only holds itself to just below. */
+  if (!RUN_PAIRS) {
+    console.log(`\n⚠ ${PAIRS_LABEL} was NOT run — it is a RELEASE step, not part of this gate.`);
+    console.log("   105 pairs / ~134s for 7 assertions, and a broken merge pair can only reach a");
+    console.log("   human through a released build. Before cutting one, run:");
+    console.log(`       ${PAIRS_CMD}`);
+  }
   // 🔴 A PARTIAL PASS MUST SAY SO IN AS MANY WORDS. The one way this feature turns into a false
   // green is somebody reading "all widget DOM tests passed" off a subset run and landing on it.
   if (ONLY) {
@@ -8546,7 +8629,12 @@ app.whenReady().then(async () => {
     console.log(`\nFAIL ${UNTAGGED.length} suite(s) carry no entry in SUITE_TAGS, so --only cannot`
       + ` reason about them (they were run anyway):\n   ` + [...new Set(UNTAGGED)].join(" · "));
   }
-  console.log(fails ? `\nFAILED (${fails})` : ONLY ? "\nall SELECTED widget DOM tests passed" : "\nall widget DOM tests passed");
+  // The verdict names what it covered. "all widget DOM tests passed" is only true of a run that
+  // actually included the pairs, so a default pass says so on the same line as the green.
+  const verdict = ONLY ? "all SELECTED widget DOM tests passed"
+    : RUN_PAIRS ? "all widget DOM tests passed, INCLUDING pair merges — release-ready"
+    : `all widget DOM tests passed (pair merges NOT run — ${PAIRS_CMD})`;
+  console.log(fails ? `\nFAILED (${fails})` : `\n${verdict}`);
   process.exitCode = fails ? 1 : 0;
   // 🔴 app.quit() is a GRACEFUL Electron shutdown and it EXITS 0, discarding
   // process.exitCode. Measured 2026-08-25: a run printing "FAILED (1)" returned exit 0, so
