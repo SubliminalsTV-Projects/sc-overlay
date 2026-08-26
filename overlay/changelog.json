@@ -1,4 +1,89 @@
 {
+  "0.1.46": {
+    "date": "2026-08-26T15:03:52Z",
+    "notes": [
+      {
+        "kind": "new",
+        "label": "Verse Finder: where can I buy this, and for how much",
+        "text": "Type the name of an item, a ship or a commodity and the widget tells you who sells it, what it costs, and how far away they are. Results are ordered by how close each shop is to where you are standing — not by price — because a shop two systems away being 40 aUEC cheaper is not an answer.\n\nEvery price says how old the reading is, because most of them are somebody's observation rather than a live feed. A ship shows its hire price and its sale price as two separate figures; merging them would print a range from a 28,000 aUEC rental to a 1,100,000 aUEC purchase. If nothing comes back, it says which kind of nothing — a name we do not know, or a name we know with nowhere selling it."
+      },
+      {
+        "kind": "new",
+        "label": "Commodity trading — and it is EXPERIMENTAL",
+        "text": "The Trade side of the Hauling widget reads your buys and sells out of the game log and turns them into three things: a Ledger of what you actually bought and sold and what it made, a route finder for what is worth running right now, and a Commodities funnel that walks you from what to buy, to where to buy it, to where to sell it.\n\nSame warning as Hauling last release, and it is not a formality: this is new, the game does not state every number it needs, and it will be wrong sometimes. Check it against a kiosk before you trust a figure. It only ever READS your log — it cannot buy, sell or touch anything in game."
+      },
+      {
+        "kind": "new",
+        "label": "Your receipts are prices, and so are everybody else's",
+        "text": "When you buy something at a shop, the app now reads the price off your own log and shows it beside the survey data, dated to the minute you were standing there. If you have log sharing turned on, other people's confirmations arrive the same way.\n\nWhat this actually fixes is staleness rather than accuracy. Shop prices barely move — the vast majority were never once seen to change in a month — but the public tables run a couple of months behind, because nobody has been back to look. A row reading \"7 aUEC, 25 days ago\" and a row reading \"7 aUEC, 4 hours ago\" are the same price and a completely different amount of confidence. One list, sorted by distance, with the freshest reading winning."
+      },
+      {
+        "kind": "new",
+        "label": "The app knows where you are",
+        "text": "Opening a kiosk, docking, or pulling up your inventory tells the app where you are standing, so anything that depends on distance — the Verse Finder's ordering, hauling route times, which shop is nearest — has something real to work from instead of a guess. Every reading says how old it is and how much to trust it, and when it does not know, it says so rather than picking the last place it saw."
+      },
+      {
+        "kind": "new",
+        "label": "Event Tracker: Siege of Orison, and events that update themselves",
+        "text": "Live events get their own tab, with the point tiers and what each one unlocks. The event data no longer ships baked into the app — it is fetched, so a corrected reward reaches you without waiting for a release.\n\nRewards nobody has confirmed yet are shown, marked, and never counted as fact: dim, italic, prefixed with a question mark and tagged UNCONFIRMED. Every rung has a \"Wrong?\" button. If you know what a tier actually gives, tell it and it reaches everyone else. The app will not tell you how many missions a tier is, because only four of the thirteen Orison contracts have a measured point value and inventing the other nine would be making it up."
+      },
+      {
+        "kind": "new",
+        "label": "It tells you when you are on a test server",
+        "text": "Running PTU used to be silent and confusing: blueprints simply never appeared, because test-server progress is deliberately kept out of your real collection. A badge now says so, and hovering explains that everything else still works normally. Missions, hauling, events and the picker all run on PTU exactly as they do on live — it is only blueprints that are held back."
+      },
+      {
+        "kind": "improved",
+        "label": "Shared logs go back a year, and the live one is no longer sent",
+        "text": "If you share logs, the app used to only offer sessions from the current game patch — about five weeks — while your logbackups folder goes back years. It now offers a year of finished sessions, dated from the log's own first line rather than the file's timestamp, so copying or restoring the folder cannot make an old session look like today's.\n\nThe live in-progress log is no longer uploaded at all. It was re-sent every twenty minutes as it grew, which filled the slots with successive copies of one session, and a finished session lands within the hour anyway."
+      },
+      {
+        "kind": "improved",
+        "label": "Twitch chat emotes go through the app",
+        "text": "The chat widget used to ask 7TV, BTTV and FrankerFaceZ for emotes directly. When one of them went down — which happened — every load put errors on the console for everyone, whether or not you use the widget. Those requests now go through the app itself, so an outage at somebody else's server costs you a few emotes and nothing else."
+      },
+      {
+        "kind": "improved",
+        "label": "Hauling picks up commodities",
+        "text": "A commodity run can go into the Route tab alongside your cargo contracts, planned as one trip rather than two. The board uses your ship's real hold rather than a number you have to type, and you can still override it. Origin picker trimmed to the places you actually named, and the price table says where its figures came from and how long ago."
+      },
+      {
+        "kind": "fixed",
+        "label": "A refused sale is no longer counted as profit",
+        "text": "The game logs a sale request the same way whether the server accepts it or refuses it. The app was booking both. One real session where a terminal errored twice and the sale was retried credited 435,408 aUEC of profit that never happened, at margins that should have been the tell.\n\nA sale is now held briefly and only counted if no refusal arrives. If you have been using the Ledger and the numbers look too good, the fix cannot repair a journal already written — delete it and let it rebuild."
+      },
+      {
+        "kind": "fixed",
+        "label": "PTU blueprints no longer leak into your collection",
+        "text": "Progress from a test server was correctly refused while the app was watching live — but not when it replayed an older session from your backups on startup. That path never checked which environment the log came from, so a PTU session read back as real progress and was synced to the site as real progress. One replay on one machine turned 0 contributions into 2 and 12,000 points that were never earned."
+      },
+      {
+        "kind": "fixed",
+        "label": "The Verse Finder was hiding shops outside your system",
+        "text": "Far-away shops sorted last, correctly — and then got cut off by the row limit before they were ever drawn, so an item sold across the verse looked like it was sold only where you happened to be standing. Each area now keeps its best row past the cap."
+      },
+      {
+        "kind": "fixed",
+        "label": "Sell prices are no longer invented",
+        "text": "A commodity sale states the money and the crate size, and never how full the crate was — so a per-SCU price worked out from it was a guess running about a fifth low. The Ledger keeps the money, which is real, and simply does not show a per-SCU figure it cannot know. Hand-mined gems sold from your inventory are the common case and were the worst affected."
+      },
+      {
+        "kind": "fixed",
+        "label": "aUEC per hour works again",
+        "text": "Contracts were being counted twice in the per-hour figures, and the number had quietly stopped meaning anything."
+      },
+      {
+        "kind": "fixed",
+        "label": "The mission giver stopped disappearing",
+        "text": "A contract that paid no reputation lost its whole faction section — including the name of who you were working for. Every Siege of Orison contract pays event points instead of reputation, so the entire event ran with its giver invisible."
+      },
+      {
+        "kind": "improved",
+        "label": "4.10 PTU data is bundled",
+        "text": "Missions, blueprints and items from changelist 12479687, so the app has something to read against if you go and play the test build. It switches back to the live pools on its own when you go back to live."
+      }
+    ]
+  },
   "0.1.45": {
     "date": "2026-08-19T13:21:03Z",
     "notes": [
