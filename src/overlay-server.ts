@@ -1150,7 +1150,8 @@ interface RepScanLast {
   ceiling?: number | null;
   before?: number;
   after?: number;
-  outcome?: "kept" | "raised" | "lowered";
+  estimated?: boolean;
+  outcome?: "raised" | "lowered" | "unchanged";
   /** False on a PTU scan: it was read and is being shown, and it was deliberately not stored. */
   envIsLive?: boolean;
 }
@@ -4560,15 +4561,16 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       out = { ok: false, refusal: "not-live", rank: v.rank, progress: v.progress,
               scope, giver, envIsLive: false };
     } else {
-      const applied = tracker.applyRepScan(giver, scope, v.rank!);
+      const applied = tracker.applyRepScan(giver, scope, v.rank!, v.progress);
       out = applied
         ? { ok: true, ...applied, progress: v.progress, envIsLive: true }
         : { ok: false, refusal: "unknown-scope" };
       if (applied) {
         console.log(
           `[rep-scan] ${giver} / ${scope}: page says rank ${applied.rank} ` +
-          `(band ${applied.floor}..${applied.ceiling ?? "max"}), stored ${applied.before} -> ` +
-          `${applied.after} (${applied.outcome})`,
+          `(band ${applied.floor}..${applied.ceiling ?? "max"}, bar ` +
+          `${Math.round((v.progress ?? 0) * 100)}%), stored ${applied.before} -> ${applied.after} ` +
+          `(${applied.outcome}${applied.estimated ? ", interpolated" : ", band floor"})`,
         );
         broadcastMissions();
       }

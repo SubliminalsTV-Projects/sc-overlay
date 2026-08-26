@@ -94,7 +94,8 @@
     "control:logviewcap": "node tools/control-logviewcap.cjs",
     "probe:keepayear": "tsx tools/probe-keepayear.ts",
     "control:keepayear": "node tools/control-keepayear.mjs",
-    "probe:reppage": "tsx tools/rep-probe.mts"
+    "probe:reppage": "tsx tools/rep-probe.mts",
+    "test:repscan": "tsx src/rep-scan-apply.test.ts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",

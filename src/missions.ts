@@ -2794,6 +2794,12 @@ export class MissionTracker extends EventEmitter {
     // reintroduce the same fault.
     this.repWitnessed.clear();
     this.repAccruedMissionIds.clear();
+    // 🔑 The SCANS go too, and for the same reason the two above do. "Verify from logs" rebuilds
+    // standing authoritatively from every backup on disk; a surviving scan would keep claiming
+    // authority over that rebuild (giverTrack prefers it to `inferredRank`) while describing a
+    // reading the rebuild has just superseded. A rebuild that cannot clear every source it
+    // outranks is not authoritative. Re-open the rep page and it is back in one tick.
+    this.repScanned.clear();
     for (const c of completions) {
       if (c.inWindow) {
         this.accrueForCompletion(c.missionId, c.title, c.missionId ? missionKeys.get(c.missionId) : null);
@@ -3189,17 +3195,30 @@ export class MissionTracker extends EventEmitter {
    * double-counts. The page is ground truth for the rank, so the page decides.
    *
    * 🔑 What the page states is a RANK, which is a BAND, not a number — rank 2 of the guild
-   * ladder means "somewhere in [1, 3000)". So "the scan wins" is implemented as *the scan's band
-   * is authoritative, and the stored value is moved into it*:
-   *   · stored value already inside the band -> KEPT. The scan does not contradict it, and the
-   *     witnessed total is the more precise of the two. Replacing it with the band floor would
-   *     destroy real information to no purpose and would make the bar jump backwards every time
-   *     the player opened their own rep page.
-   *   · stored value outside the band -> REPLACED by the floor, in either direction. This is the
-   *     whole feature: a total that says rank 4 when the page says rank 2 is wrong, and a total
-   *     of zero when the page says rank 2 is wrong the other way.
-   * Both cases are "the scan always wins" — the disagreement is always resolved the scan's way.
-   * The only thing not thrown away is precision the scan does not actually dispute.
+   * ladder means "somewhere in [1, 3000)". The card's progress bar narrows that: `progress` is
+   * how full it is, so the value taken is `floor + progress * (ceiling - floor)`.
+   *
+   * 🔴 THAT INTERPOLATION RESTS ON THE BAR BEING LINEAR ACROSS THE BAND, WHICH IS UNVERIFIED —
+   * and it is used anyway, because the alternative is worse in a way that is easy to miss. The
+   * estimate is inside the band BY CONSTRUCTION (progress is 0..1), so it can never land on a
+   * different rank however wrong the linearity assumption turns out to be: the error is bounded
+   * by one rank's width. Taking the floor instead is not the cautious choice — it is
+   * *guaranteed* to be wrong by up to a full band, every time, always in the same direction. A
+   * bounded estimate beats a certain understatement.
+   *   · Pixel resolution is not the limit: the bar measures ~170px on a 3440-wide frame, so one
+   *     pixel is 0.6% — about 14 rep across Battaglia's widest early band. Negligible beside the
+   *     linearity question.
+   *   · The top rank has no ceiling, so there is nothing to interpolate into and it takes the
+   *     floor. Same when the bar could not be measured.
+   * ⚠️ It is an ESTIMATE and the UI has to say so — see `estimated` in the result and
+   * `repFloorFromRank` on the track. 🔲 It is verifiable and nobody has done it yet: run one
+   * mission whose `reputationGained` we already know, scan before and after, and check the bar
+   * moved by the predicted fraction. That is the measurement that would turn this from an
+   * assumption into a fact, or replace it.
+   *
+   * The result is always taken — the scan wins outright, in both directions. That is the whole
+   * feature: a stored total that says rank 4 when the page says rank 2 is wrong, and a total of
+   * zero when the page says rank 2 is wrong the other way.
    *
    * ⚠️ `repAccruedMissionIds` is deliberately NOT cleared. It is the exactly-once guard for
    * completions, not a record of the total; clearing it would let every completion still in the
@@ -3208,7 +3227,7 @@ export class MissionTracker extends EventEmitter {
    * Returns what it did, so the caller can tell the player rather than silently adjusting a
    * number they were looking at.
    */
-  applyRepScan(giver: string, scope: string, rank: number): {
+  applyRepScan(giver: string, scope: string, rank: number, progress?: number | null): {
     applied: boolean;
     giver: string;
     scope: string;
@@ -3218,9 +3237,10 @@ export class MissionTracker extends EventEmitter {
     ceiling: number | null;
     before: number;
     after: number;
-    /** "kept" = the stored total was already inside the scanned rank's band and was more precise
-     *  than its floor; "raised"/"lowered" = it was outside and the scan moved it. */
-    outcome: "kept" | "raised" | "lowered";
+    /** True when `after` came from interpolating the progress bar across the band rather than
+     *  being the band's floor. The UI must present an estimated figure as one. */
+    estimated: boolean;
+    outcome: "raised" | "lowered" | "unchanged";
   } | null {
     const ladder = [...(this.repScopes[scope]?.ranks ?? [])].sort((a, b) => a.minRep - b.minRep);
     if (!ladder.length || rank < 0 || rank >= ladder.length) return null;
@@ -3230,8 +3250,20 @@ export class MissionTracker extends EventEmitter {
     const floor = Math.max(0, ladder[rank].minRep);
     const ceiling = rank + 1 < ladder.length ? Math.max(0, ladder[rank + 1].minRep) : null;
     const before = this.repWitnessed.get(giver)?.sum ?? 0;
-    const inside = before >= floor && (ceiling === null || before < ceiling);
-    const after = inside ? before : floor;
+    const usable = typeof progress === "number" && Number.isFinite(progress) && ceiling !== null
+      && ceiling > floor;
+    // Clamped rather than trusted: a bar measured at 1.02 through anti-aliasing must not push the
+    // value into the next rank, which is the one thing this is not allowed to do.
+    const p = usable ? Math.min(1, Math.max(0, progress as number)) : 0;
+    // 🔴 CAPPED ONE BELOW THE CEILING, and this is not a rounding nicety — it is the whole safety
+    // property. A bar measured at 100% (which happens on every rank the player has completed, and
+    // on a band as narrow as Applicant -> Probationary, which spans 0 -> 1) interpolates to
+    // EXACTLY the next rank's floor, and a value sitting on a floor reads back as that next rank.
+    // So the "an estimate can never change the rank" claim was false at precisely the reading it
+    // is most likely to meet. Its own test caught it.
+    const after = usable
+      ? Math.min(Math.round(floor + p * ((ceiling as number) - floor)), (ceiling as number) - 1)
+      : floor;
     this.repWitnessed.set(giver, { scope, sum: after });
     // Remembered so the bar can say where its floor came from, and so giverTrack can prefer this
     // over `inferredRank` — which is an INFERENCE from what work a giver offers, while this is
@@ -3240,7 +3272,8 @@ export class MissionTracker extends EventEmitter {
     this.saveState();
     return {
       applied: true, giver, scope, rank, floor, ceiling, before, after,
-      outcome: inside ? "kept" : after > before ? "raised" : "lowered",
+      estimated: usable,
+      outcome: after > before ? "raised" : after < before ? "lowered" : "unchanged",
     };
   }
 
