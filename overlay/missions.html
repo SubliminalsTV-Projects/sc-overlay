@@ -2229,7 +2229,18 @@
   const q0 = new URLSearchParams(location.search);
   if (!FIXTURES.some((f) => q0.has(f))) {
     const es = new EventSource("/missions/events");
-    es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch { /* malformed frame — skip it, the next one repaints */ } };
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        // ⚠️ Every other frame on this stream is a tracker VIEW and is rendered directly. The dev
+        // reload rides here too (the sidecar is a separate process and this document is the only
+        // thing already listening), so it carries a `kind` and is dispatched instead of rendered.
+        // Removing this branch feeds a reload instruction to the tracker renderer as if it were a
+        // view. See broadcastDevReload() in src/overlay-server.ts.
+        if (d && d.kind === "devreload") { window.__devReload?.(d.widget); return; }
+        render(d);
+      } catch { /* malformed frame — skip it, the next one repaints */ }
+    };
     es.onerror = () => { /* auto-reconnects */ };
   }
 </script>

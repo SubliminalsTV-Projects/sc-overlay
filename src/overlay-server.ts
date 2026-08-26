@@ -650,6 +650,23 @@ function broadcastMissions(): void {
 }
 tracker.on("change", broadcastMissions);
 
+/** Tell every open canvas to reload its widget iframes. Dev only — see POST /api/dev/reload.
+ *
+ *  🔑 IT RIDES THE MISSIONS SSE RATHER THAN ANY IPC, and that is the whole reason this feature is
+ *  cheap. The sidecar is a SEPARATE PROCESS from the shell, so "reload the overlay window" would
+ *  otherwise need a new sidecar->shell channel. It does not: `missions.html` IS the canvas and it
+ *  already holds an EventSource on this stream, so the instruction reaches the renderer that owns
+ *  the frames, and the renderer reloads them itself. Nothing goes near `resetWidgetLayout()`.
+ *
+ *  ⚠️ Every other frame on this stream is a tracker view, which the page renders directly — so
+ *  this one carries a `kind` and the page dispatches on it. Do not remove the discriminator on the
+ *  page side; without it a reload frame is fed to the tracker renderer as if it were a view. */
+function broadcastDevReload(widget: string | null): number {
+  const data = `data: ${JSON.stringify({ kind: "devreload", widget })}\n\n`;
+  for (const res of missionClients) res.write(data);
+  return missionClients.size;
+}
+
 // ── Mining / economy datasets (commodities prices + rock->ore composition) ───
 // Bundled, version-independent reference data for offline use (see MiningEconomyStore).
 // Served on demand via /api/commodities + /api/mining-composition; no UI consumes it yet.
@@ -4464,6 +4481,41 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     }
     res.writeHead(204, { "Cache-Control": "no-store" });
     res.end();
+    return;
+  }
+
+  // 🔴 DEV RELOAD. Two gates, for two different reasons — neither is caution for its own sake.
+  //
+  // **POST on purpose.** That puts it in the ONE mutating bucket at the top of `handleRequest`
+  // (this machine + an Origin check) instead of inventing a rule of its own. references/
+  // security.md is explicit that per-route gating is exactly what let the read paths get missed
+  // while the POSTs were correctly gated, so a new route that ACTS belongs in the existing bucket.
+  // The Origin half matters here specifically: the Web Page widget can load any site, and a page
+  // running in it is ON this machine, so it passes every loopback check.
+  //
+  // **SC_DEV on purpose**, so it does not exist in a packaged build at all. The packaged sidecar
+  // serves its OWN bundled `overlay/` out of `resources/`, so reloading an installed app can only
+  // ever redraw the same frozen files — the endpoint is USELESS there. Shipping a window-reload
+  // primitive to every user in exchange for nothing is a bad trade.
+  //
+  // ⚠️ 404 rather than 403, matching the sibling dev routes: do not confirm the route exists.
+  if (url?.startsWith("/api/dev/reload")) {
+    if (process.env.SC_DEV !== "1" || !fromThisMachine(req)) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "not available" }));
+      return;
+    }
+    if (req.method !== "POST") {
+      res.writeHead(405, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "POST only" }));
+      return;
+    }
+    const widget = new URL(req.url ?? "", "http://x").searchParams.get("widget") || null;
+    const canvases = broadcastDevReload(widget);
+    // `canvases: 0` is the useful answer, not an error: it means no overlay is listening, which is
+    // what a flight sees when the app is not running. Saying so beats a silent 204.
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ reloaded: true, widget, canvases }));
     return;
   }
 
