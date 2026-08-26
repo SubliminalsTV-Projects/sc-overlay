@@ -1,6 +1,6 @@
 {
   "schema": "sc-rep-scopes/1",
-  "source": "Star Citizen 4.9.0-LIVE.12248363 datacore (Game2.dcb)",
+  "source": "4.10.0-LIVE.12519617",
   "scopes": {
     "FactionReputation": {
       "displayName": "Standing",

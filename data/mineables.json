@@ -1,6 +1,6 @@
 {
  "schema": "sc-mineables/2",
- "source": "p4k datacore 4.9.0-LIVE.12344265",
+ "source": "4.10.0-LIVE.12519617",
  "note": "Generated from the p4k datacore (entities/mineable signature arrays). Supersedes the hand-typed table, whose 26 values were all confirmed correct against this source. `contains` lists what a shared signature can be — a read at that value cannot narrow it.",
  "maxCluster": 6,
  "gemMaxCluster": 1,
