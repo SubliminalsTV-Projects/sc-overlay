@@ -141,9 +141,39 @@ export interface FindRoutesOptions {
   maxAgeDays?: number | null;
   /** How many to return. */
   limit?: number;
+  /**
+   * Which question the ranking answers. Defaults to `hour`, which is what this finder has always
+   * done.
+   *
+   * 🔴 IT EXISTS BECAUSE ONE HARDCODED RANKING WAS BURYING THE BEST RUNS, and the cause is a
+   * correlation nobody had measured. `moveScu` is capped by the reported stock, profit is
+   * `margin x moveScu`, and `profitPerHour` follows — so a row's rank is proportional to a stock
+   * figure that is a median 2.4 days old for a quantity that moves in minutes. Measured on the live
+   * table: the top quartile by margin has a median shelf of 75 SCU against 738 for the bottom
+   * quartile, so the unreliability concentrates precisely on the best deals. Waste at a 291% margin
+   * with `stockScu: 1` ranks as one SCU of profit and is invisible.
+   *
+   * 🔑 THE FIGURES ARE NOT CHANGED — ONLY THE ORDER. Stock still caps `moveScu`, and it must:
+   * `capitalRequired` and `profit` have to describe a purchase the player can actually make, and
+   * un-capping them would advertise a 696 SCU run at a shelf holding one. What changes is that
+   * `margin` and `scu` rank on stock-INDEPENDENT figures, so a scarce row can be found on its
+   * merits and the player reads the stock caveat on the row itself.
+   *
+   * 🔑 `profit` is Sub's own gap: "if I could buy a whole load of a Hull C's cargo hold of bulk
+   * stock and make 10% margin, that might be more money" — per-hour normalises exactly that away.
+   *
+   * ⚠️ The dedupe below runs AFTER this sort and keeps the first row per key, so changing the
+   * ranking also changes which destination survives for each buy point. That is correct: the row
+   * kept is the best one under the ranking the caller asked for.
+   */
+  sort?: TradeSort;
   /** Epoch ms, injected so tests are not time-dependent. */
   now?: number;
 }
+
+/** `hour` = aUEC per hour (default). `profit` = the whole trip's take. `margin` = percentage.
+ *  `scu` = aUEC per SCU carried. The last two are independent of the stock reading. */
+export type TradeSort = "hour" | "profit" | "margin" | "scu";
 
 export interface CommodityQuoteSummary {
   /** Terminals quoting this side. */
@@ -376,7 +406,18 @@ export function findRoutes(
     }
   }
 
-  out.sort((a, b) => b.profitPerHour - a.profitPerHour);
+  /* 🔑 ONE COMPARATOR, CHOSEN BY THE CALLER — see `sort` on the options for why this stopped being
+     hardcoded. The tie-break falls through to profit per hour in every mode so two rows that draw
+     on the chosen measure still come out in a stable, sensible order rather than in table order. */
+  const rank = (r: TradeRoute): number => {
+    switch (opts.sort) {
+      case "profit": return r.profit;
+      case "margin": return r.marginPct;
+      case "scu": return r.marginPerScu;
+      default: return r.profitPerHour;
+    }
+  };
+  out.sort((a, b) => rank(b) - rank(a) || b.profitPerHour - a.profitPerHour);
 
   // 🔑 ONE ROW PER (commodity, buy terminal). Without this the list is 40 rows of Bexalite from
   // Bueno Ravine to forty different sell points, which is one decision wearing forty hats. The
@@ -389,13 +430,35 @@ export function findRoutes(
   // shape, only in which end of the run it applies to.
   const dedupeOnDestination = !!opts.fromTerminal;
   const seen = new Set<string>();
+  const perCommodity = new Map<string, number>();
   const deduped: TradeRoute[] = [];
   for (const r of out) {
     const k = r.commodity + "\u0000" + (dedupeOnDestination ? r.to.terminal : r.from.terminal);
     if (seen.has(k)) continue;
+    /* 🔴 AT MOST TWO PLACES TO BUY THE SAME THING, or one commodity eats the board. The key above
+       keeps one row per buy TERMINAL, which is right — where you buy changes the travel time — but
+       a commodity sold in twenty places then occupies twenty rows differing in nothing else.
+       Measured on the live table at a 696 SCU hold: the top 25 carried only 14 distinct commodities
+       ranked by profit-per-hour (Construction Materials five times), and ranked by MARGIN it
+       collapsed to seven, with Waste appearing NINETEEN times. That is the "the top 25 is really a
+       top 8" Sub reported; the margin ranking made it acute rather than causing it.
+       🔑 TWO, not one: the second row is the fallback when the first is out of stock or out of your
+       way, which is the decision this board exists to support. A third adds no decision.
+       ⚠️ NOT applied when a buy terminal is pinned. There the rows are DESTINATIONS for a single
+       commodity and the long list IS the answer — capping it would hide most of the safe drop-offs,
+       which is precisely the bug `dedupeOnDestination` exists to prevent. */
+    if (!dedupeOnDestination) {
+      const n = perCommodity.get(r.commodity) ?? 0;
+      if (n >= MAX_ROWS_PER_COMMODITY) continue;
+      perCommodity.set(r.commodity, n + 1);
+    }
     seen.add(k);
     deduped.push(r);
     if (deduped.length >= limit) break;
   }
   return deduped;
 }
+
+/** How many buy points for one commodity may share the board. See the dedupe loop for the
+ *  measurement behind it. */
+const MAX_ROWS_PER_COMMODITY = 2;

@@ -518,6 +518,12 @@ export function tradeRoutes(
       json(res, 400, { error: "capacity_required", ...provenance(s, deps) });
       return true;
     }
+    /* 🔑 VALIDATED AGAINST A FIXED SET, never passed through. An unrecognised value falls back to
+       the default rather than reaching the comparator, so a typo cannot silently produce table
+       order and read as "the ranking is broken". Resolved once, up here, because the ANSWER echoes
+       it — deriving it twice is how a control and the thing it controls drift apart. */
+    const sortKey = (["hour", "profit", "margin", "scu"] as const)
+      .find((k) => k === strParam(p, "sort")) ?? "hour";
     const routes = findRoutes(table.quotes, {
       capacityScu,
       budget: numParam(p, "budget"),
@@ -532,9 +538,13 @@ export function tradeRoutes(
       toTerminal: strParam(p, "toTerminal"),
       requireKnownStock: p.get("knownStock") === "1",
       maxAgeDays: numParam(p, "maxAgeDays"),
+      sort: sortKey,
       limit: numParam(p, "limit") ?? 30,
     });
-    json(res, 200, { routes, capacityScu, ship: shipName, ...provenance(s, deps) });
+    // 🔑 The sort is ECHOED. The widget lights its own control from the answer rather than from
+    // what it last clicked, so a value the server rejected can never leave the UI claiming a
+    // ranking the rows are not in.
+    json(res, 200, { routes, capacityScu, ship: shipName, sort: sortKey, ...provenance(s, deps) });
     return true;
   }
 

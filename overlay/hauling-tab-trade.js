@@ -107,7 +107,27 @@
   const TD_BUYAT_KEY = "sc-trade-buyat";
   const TD_SELLAT_KEY = "sc-trade-sellat";
   const TD_HOLD_KEY = "sc-trade-hold";
+  const TD_SORT_KEY = "sc-trade-sort";
   const TD_UNIT_KEY = "sc-trade-unit";
+  /**
+   * Which question the board's ORDER answers. "hour" is what it has always done.
+   *
+   * 🔴 IT WAS HARDCODED, AND THAT WAS BURYING THE BEST RUNS. Profit is `margin x moveScu`, moveScu
+   * is capped by a stock figure a median 2.4 days old, and the top quartile by margin has a median
+   * shelf of 75 SCU against 738 for bulk — so the least reliable number in the table was deciding
+   * the order of exactly the rows worth seeing. Waste at 291% with a reported stock of 1 ranks as
+   * one SCU of profit.
+   * 🔑 `margin` and `scu` rank on figures stock cannot touch, which is what makes a scarce row
+   * findable. The FIGURES still respect stock — see the note on `sort` in trade-finder.ts.
+   * 🔑 `profit` is the gap Sub named: a full Hull C of bulk at 10% can beat a small run at 300%,
+   * and per-hour normalises precisely that difference away.
+   */
+  let tdSort = (() => {
+    try {
+      const v = localStorage.getItem(TD_SORT_KEY);
+      return v === "profit" || v === "margin" || v === "scu" ? v : "hour";
+    } catch { return "hour"; }
+  })();
   /**
    * How much the player intends to buy, when that is not "as much as the ship holds".
    *
@@ -445,6 +465,7 @@
       else if (shipPick) p.set("ship", shipPick);
       else p.set("capacity", "64");
       tdSlotParams(p);
+      p.set("sort", tdSort);
       /* 🔑 A PINNED BUY NEEDS A LONGER LIST. With `fromTerminal` set the finder returns one row per
          DESTINATION rather than one per buy point, and that list IS the answer to "where can I take
          this" — capping it at 25 would silently hide drop-offs, which on a commodity like Neon (19
@@ -813,14 +834,61 @@
        and `maxAgeDays` beside it. Left alone deliberately: deleting a query parameter is a sidecar
        change, and this is a display decision. */
 
+    /* 🔴 THE RANKING IS A CONTROL NOW. It was one hardcoded `profitPerHour` comparator with no way
+       to ask anything else, and the pills beside it made that worse rather than better: Per run /
+       Per SCU look exactly like a sort and only re-render, so the numbers changed while the order
+       never moved. A control that appears to reorder a list and does not is worse than no control.
+       🔑 SORT FIRST, THEN THE DISPLAY PILLS, separated by a rule — because they are different kinds
+       of thing and sitting them together as six identical pills is what made the old pair readable
+       as a sort. The label says "sort" out loud for the same reason.
+       🔑 It re-FETCHES, unlike the display pills: the server owns the cap and the dedupe, and
+       re-sorting 25 rows on this side would rank the survivors of the OLD ranking. Same reason the
+       Verse Finder's sort re-asks. */
+    const sortLbl = document.createElement("span");
+    sortLbl.className = "lbl";
+    sortLbl.textContent = "sort";
+    bar.appendChild(sortLbl);
+    const setSort = (v) => {
+      if (tdSort === v) return;
+      tdSort = v;
+      try { localStorage.setItem(TD_SORT_KEY, v); } catch { /* private mode */ }
+      loadTrade();
+      render();
+    };
+    /* 🔑 LIT FROM THE SERVER'S ANSWER, not from what was last clicked. `/api/trade/routes` echoes
+       the sort it actually applied after validating it, so a value it rejected can never leave this
+       row claiming a ranking the rows in front of the player are not in. Falls back to the local
+       value only before the first response has landed. */
+    const activeSort = (tradeData && tradeData.sort) || tdSort;
+    tdBtn(bar, "per hour", activeSort === "hour",
+      "Best use of your time — what the run clears divided by how long it takes. The default.",
+      () => setSort("hour"));
+    tdBtn(bar, "profit", activeSort === "profit",
+      "The biggest single payday, however long it takes. A full hold of bulk at a small margin can"
+      + " beat a tiny run at a huge one — this is the order that shows it.",
+      () => setSort("profit"));
+    tdBtn(bar, "margin", activeSort === "margin",
+      "Best percentage, whatever the quantity. This one is independent of the reported stock, so a"
+      + " scarce commodity can still be found on its merits — check the shelf figure on the row.",
+      () => setSort("margin"));
+
     const sep4 = document.createElement("span"); sep4.className = "sep"; bar.appendChild(sep4);
     const setUnit = (u) => {
       tradeUnit = u;
       try { localStorage.setItem(TD_UNIT_KEY, u); } catch { /* private mode */ }
       render();   // a display choice; the data is unchanged, so no refetch
     };
-    tdBtn(bar, "Per run", tradeUnit === "run", "What the whole trip clears", () => setUnit("run"));
-    tdBtn(bar, "Per SCU", tradeUnit === "scu", "What one SCU is worth carrying", () => setUnit("scu"));
+    // 🔑 LABELLED "show", because these two change the FIGURE on each row and leave the order
+    // alone. Unlabelled and identical to the three beside them they read as three more sorts —
+    // which is exactly how a control that reorders nothing comes to look broken.
+    const showLbl = document.createElement("span");
+    showLbl.className = "lbl";
+    showLbl.textContent = "show";
+    bar.appendChild(showLbl);
+    tdBtn(bar, "Per run", tradeUnit === "run",
+      "What the whole trip clears. Changes the figure on each row, not the order.", () => setUnit("run"));
+    tdBtn(bar, "Per SCU", tradeUnit === "scu",
+      "What one SCU is worth carrying. Changes the figure on each row, not the order.", () => setUnit("scu"));
 
     /* 🔑 BACKHAUL IS A SHORTCUT INTO THE `sell at` SLOT, not a filter of its own. "I am already
        flying there" is exactly `toBody`, which is what that slot sets — so it writes into `tdSellAt`
