@@ -115,6 +115,45 @@ function loadChangelog(): Record<string, ChangelogEntry> {
 }
 const PORT = Number(process.env.PORT) || 8778;
 
+/** 🔴 THE SIDECAR MUST NOT OUTLIVE THE SHELL THAT SPAWNED IT.
+ *
+ *  An orphan keeps :8778 and nothing can reap or respawn it, so the next app to launch finds
+ *  nowhere to put its own service and gives up — reaching the user as "my background service
+ *  didn't start". That shipped as the 0.1.45 failure and recurred during the 0.1.46 install.
+ *
+ *  The shell already calls `server.kill()` on `before-quit`, and since the dev spawn stopped
+ *  going through `cmd.exe` that call reaches the right process. This watchdog covers the case
+ *  that handler CANNOT: before-quit never runs when the shell is killed rather than quitting —
+ *  a crash, Task Manager, or the elevated `taskkill /F` a stuck app gets. It is also why the
+ *  fix does not rest on tsx's process-tree behaviour, which is emergent and could change.
+ *
+ *  🔑 IT KEYS ON THE SHELL PROCESS, NOT ON HAVING A WINDOW. The overlay is a tray app that
+ *  deliberately prevents `window-all-closed`, so the shell outlives every hidden window and
+ *  toggled-off overlay. Sub's streaming PC talks to this sidecar to sync his stream theme to
+ *  the ship he is in; exiting because a window went away would drop that integration, which is
+ *  worse than the orphan this exists to prevent. Dying too eagerly is the expensive mistake here.
+ *
+ *  ⚠️ NO PARENT PID MEANS NO WATCHDOG, deliberately. A sidecar started by hand
+ *  (`npm run overlay`, a flight's own port, the widget suite's sandbox) has no shell to outlive
+ *  and must never exit on its own.
+ *
+ *  ⚠️ EPERM MEANS ALIVE. `process.kill(pid, 0)` throws EPERM for a process that exists but which
+ *  we may not signal — an elevated shell seen from a less-privileged sidecar. Treating that as
+ *  "gone" would kill a healthy sidecar; the safe direction of error is to linger. */
+const PARENT_PID = Number(process.env.SC_PARENT_PID) || 0;
+const PARENT_POLL_MS = 5000;
+if (PARENT_PID > 0) {
+  setInterval(() => {
+    try {
+      process.kill(PARENT_PID, 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "EPERM") return; // exists, just not signalable
+      console.error(`[server] parent ${PARENT_PID} is gone — exiting so :${PORT} is released`);
+      process.exit(0);
+    }
+  }, PARENT_POLL_MS).unref();
+}
+
 let config: Config = loadConfig();
 
 /** Scan common Star Citizen install locations for per-channel game.log files, newest
