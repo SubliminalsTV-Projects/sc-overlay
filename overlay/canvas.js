@@ -429,6 +429,42 @@
   const wEl = (w) => (w.local ? $("panel") : $("w-" + w.key));
   const frameEl = (w) => (w.local ? null : $("wf-" + w.key));
   const frameWin = (w) => { try { return frameEl(w)?.contentWindow || null; } catch { return null; } };
+
+  /** DEV RELOAD — reload widget iframes in place so a code change is visible without restarting.
+   *
+   *  Driven by `POST /api/dev/reload` on the sidecar, which pushes a `{kind:"devreload"}` frame
+   *  down the missions SSE that this document already holds open. Dev builds only.
+   *
+   *  🔴 IT MUST STAY NON-DESTRUCTIVE. The only other `webContents.reload()` in this app lives
+   *  inside `resetWidgetLayout()`, which WIPES the arrangement. A reload that could scramble Sub's
+   *  layout while showing him a change would be worse than the restart it replaces, so this
+   *  touches nothing but the frame's own document: no layout write, no persist, no registry pass.
+   *
+   *  🔴 RELEASE THE KEYBOARD GRAB FIRST, VIA THE REGISTRY'S OWN `onHide`. A widget in typing mode
+   *  holds a grab that makes the WHOLE canvas interactive on every display — reload its frame
+   *  without lowering that and the grab is stranded with no page left to lower it, so neither
+   *  clicks nor keys reach the game and nothing on screen can recover it. `onHide` is the exact
+   *  path hiding a widget already uses (`__<key>ExitTyping`), so this cannot drift from it.
+   *
+   *  ⚠️ WHAT A RELOAD COSTS, and it is inherent to re-running the page: chat scrollback, an
+   *  unsaved Journal note, and any live SSE/poll inside that frame are gone. Reload one widget by
+   *  key when you can rather than all of them.
+   *
+   *  ⚠️ WHAT THIS CANNOT REFRESH: `canvas.js` and `missions.html` themselves (this document), and
+   *  anything under `src/` — the sidecar's own code. Those still need an app restart. Only pages
+   *  the sidecar serves per-request are picked up here. */
+  function devReload(key) {
+    const targets = WIDGETS.filter((w) => !w.local && (!key || w.key.toLowerCase() === String(key).toLowerCase()));
+    let done = 0;
+    for (const w of targets) {
+      try { w.onHide?.(w); } catch { /* frame already gone; the grab cannot be held by it either */ }
+      const win = frameWin(w);
+      if (!win) continue; // hidden widgets have no loaded iframe — nothing stale to refresh
+      try { win.location.reload(); done++; } catch { /* cross-document timing; skip it */ }
+    }
+    return { asked: targets.length, reloaded: done };
+  }
+  window.__devReload = devReload;
   // A local widget's settings live in THIS document, reached directly rather than over the bridge.
   const wSettingsRoot = (w) => {
     if (w.local) return $("cogMenu");
