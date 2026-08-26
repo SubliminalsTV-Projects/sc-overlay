@@ -93,7 +93,8 @@
     "control:noisegate": "node tools/control-noisegate.cjs",
     "control:logviewcap": "node tools/control-logviewcap.cjs",
     "probe:keepayear": "tsx tools/probe-keepayear.ts",
-    "control:keepayear": "node tools/control-keepayear.mjs"
+    "control:keepayear": "node tools/control-keepayear.mjs",
+    "probe:reppage": "tsx tools/rep-probe.mts"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
