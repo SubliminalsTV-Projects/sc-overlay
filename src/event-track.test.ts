@@ -410,17 +410,30 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   const q = new MissionTracker({ dataDir: dir9, stateDir: st9 });
   q.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
   q.detectPatch("<2026> Environment: PTU");
-  seedOne(q, "2026-08-22T00:27:46.100Z", "2026-08-22T00:27:46.316Z");
+  // 🔑 EIGHT runs, deliberately, so the PTU total CROSSES THE 15% TIER (8 x 6,000 = 48,000 against
+  // a 43,200 threshold). One run reaches 2%, and at 2% "no tier reads as reached" is true no
+  // matter what the code does — a tautology that passed its own negative control while proving
+  // nothing. It is also what Sub actually saw: tier 15 reading `reached: true` off PTU data.
+  const PTU_RUNS = 8;
+  for (let i = 0; i < PTU_RUNS; i++) {
+    const t0 = `2026-08-22T00:${String(10 + i).padStart(2, "0")}:00.000Z`;
+    const t1 = `2026-08-22T00:${String(10 + i).padStart(2, "0")}:00.200Z`;
+    seedOne(q, t0, t1, `aaaaaaaa-0000-0000-0000-00000000000${i}`);
+  }
 
   // Positive first: the PTU run must be VISIBLE while on the PTU, or the rest of this block is
   // vouching for a build that simply stopped recording — which is the regression `5f512f7` fixed.
   const onPtu = q.eventProgress("orison-relief")!;
   check("PTU: the contribution is recorded AND counted while on the PTU",
-    onPtu.contributions.length === 1 && onPtu.points === 6000,
+    onPtu.contributions.length === PTU_RUNS && onPtu.points === 6000 * PTU_RUNS,
     `n=${onPtu.contributions.length} points=${onPtu.points}`);
   check("PTU: nothing is being excluded yet", onPtu.otherEnv === 0, String(onPtu.otherEnv));
   check("...and the contribution carries the environment it was earned in",
     onPtu.contributions[0]?.env === "PTU", String(onPtu.contributions[0]?.env));
+  // The setup assertion that makes the LIVE tier check falsifiable at all.
+  check("(setup) the PTU total really does cross the 15% tier",
+    onPtu.tiers.find((x) => x.pct === 15)?.reached === true,
+    `pct=${onPtu.pct} points=${onPtu.points}`);
 
   // Now patch to live. Same tracker, same state, one header line.
   q.detectPatch("<2026> Environment: PUB");
@@ -428,15 +441,15 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   check("🔴 LIVE: the PTU contribution does NOT count — Sub's bug",
     onLive.points === 0 && onLive.pct === 0, `points=${onLive.points} pct=${onLive.pct}`);
   check("🔴 LIVE: and no tier reads as reached", onLive.tiers.every((x) => !x.reached));
-  check("LIVE: the excluded one is REPORTED, not silently dropped",
-    onLive.otherEnv === 1, String(onLive.otherEnv));
+  check("LIVE: the excluded ones are REPORTED, not silently dropped",
+    onLive.otherEnv === PTU_RUNS, String(onLive.otherEnv));
   // It must still be on disk: a counter that is wrong for this server is still the true record
   // for the other one, and the player goes back to the PTU next patch.
   check("LIVE: it is EXCLUDED, not deleted — still there on the PTU",
     (() => { q.detectPatch("<2026> Environment: PTU");
              const back = q.eventProgress("orison-relief")!;
              q.detectPatch("<2026> Environment: PUB");
-             return back.points === 6000; })(), "switching back restores it");
+             return back.points === 6000 * PTU_RUNS; })(), "switching back restores it");
 
   // A live run on the same event counts normally, side by side with the PTU one on disk.
   q.detectPatch("<2026> Environment: PUB");
@@ -446,7 +459,7 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   check("LIVE: a genuine live run counts", mixed.points === 6000, String(mixed.points));
   check("...counting exactly ONE contribution, not both", mixed.contributions.length === 1,
     String(mixed.contributions.length));
-  check("...with the PTU one still held aside", mixed.otherEnv === 1, String(mixed.otherEnv));
+  check("...with the PTU ones still held aside", mixed.otherEnv === PTU_RUNS, String(mixed.otherEnv));
 }
 
 // ---- 10. A contribution recorded before the `env` field existed counts as LIVE ------------------
