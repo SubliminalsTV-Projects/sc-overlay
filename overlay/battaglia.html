@@ -190,6 +190,17 @@
     color: var(--cyan-text); background: rgba(var(--accent-rgb), 0.06);
     border: 1px solid var(--divider); border-radius: 4px; }
   .evwarn { color: var(--gold); }
+  /* The purge sits under the caveats, right-aligned and quiet at rest — it is a repair, not a
+     feature anyone should reach for by accident. Armed, it takes the alert colour. */
+  .evreset { margin-top: 8px; display: flex; justify-content: flex-end; }
+  /* Same treatment as .evfix, deliberately NOT the same class — see renderEvent. */
+  .evrst { flex: none; font-family: var(--sans); font-size: 9px; font-weight: 700;
+           letter-spacing: .04em; text-transform: uppercase; cursor: pointer;
+           color: var(--dim); background: transparent; padding: 2px 6px; border-radius: 3px;
+           border: 1px solid color-mix(in srgb, var(--dim) 45%, transparent); }
+  .evrst:hover { color: var(--red); border-color: var(--red); }
+  /* --red and --green are the only two tokens whose meaning holds in all 16 skins. */
+  .evrst.armed { color: var(--red); border-color: var(--red); }
   /* ── "You just crossed a tier — is this what you got?" ─────────────────────────────────
      🔑 It sits ABOVE the body rather than inside it, so switching view tabs cannot scroll the
      question away or replace it. Sub's brief: a pop-up, non-blocking, up for two minutes. */
@@ -855,10 +866,37 @@
       meta.push('<span class="evwarn">Point values are measured for ' + ev.contractsPriced + " of " +
         ev.contractsKnown + " contracts</span> in this event, so the app can't tell you how many missions a tier is.");
     }
+    // 🔴 SAY WHAT IS BEING HELD BACK, or the number drops with no explanation.
+    // Sub patched off 4.10 PTU onto 4.10 live and the widget still read 15% — progress earned
+    // entirely on the test server, because contributions were bucketed by the event's journal
+    // name with no environment dimension. They are scoped now; this is the other half of that
+    // fix. A player who tracked an event on the PTU and then patches to live watches the counter
+    // fall to zero, and "your points vanished" with nothing on screen is the same silent failure
+    // arriving from the opposite direction.
+    if (ev.otherEnv > 0) {
+      meta.push('<span class="evwarn">' + ev.otherEnv + " completion" + (ev.otherEnv === 1 ? "" : "s") +
+        " from a different game environment " + (ev.otherEnv === 1 ? "is" : "are") + " not counted here</span>" +
+        " — test-server progress is separate from live, and is kept rather than deleted.");
+    }
     meta.push("The game never reports your event points to the app. Check your in-game Journal for the real number.");
     const stale = feedCaveat();
     if (stale) meta.push(stale);
-    html.push('<div class="evmeta">' + meta.join("<br>") + "</div>");
+    // The purge. See MissionTracker.resetEventProgress for why it has to exist: the app can never
+    // observe a server-side wipe, so after a reset or a season restart this counter goes on
+    // showing a number that was true last month and nothing can tell it otherwise.
+    // 🔑 Two clicks, never one — it is unrecoverable. Nothing can rebuild a contribution: the
+    // startup replay only reaches 12 hours back, and "Verify from logs" cannot see a journal
+    // entry at all.
+    html.push('<div class="evmeta">' + meta.join("<br>") +
+      // 🔴 ITS OWN CLASS, NOT `.evfix`. The widget suite counts `#body .evfix` to assert every
+      // tier carries a correction button and then clicks them BY INDEX — so borrowing that class
+      // for a button that is not a per-tier control makes the count read 4 instead of 3 and sends
+      // the index-clicks to the wrong element. It did exactly that: seven assertions red, none of
+      // them about anything this change touches. `tools/widget-dom-test.cjs` is part of these
+      // pages' public surface; grep it before reusing a class name.
+      '<div class="evreset"><button type="button" class="evrst" id="evResetBtn" ' +
+      'title="Forget the progress this app has recorded for this event and start again from zero">' +
+      "Reset my progress</button></div></div>");
 
     // The ladder. This is the part Sub asked for: percent -> loot.
     //
@@ -901,13 +939,49 @@
   // Delegated, because renderEvent() builds the ladder as a string and replaces #body wholesale —
   // a listener bound to a button would be thrown away by the next 20-second poll.
   $("body").addEventListener("click", (e) => {
-    const b = e.target && e.target.closest ? e.target.closest(".evfix") : null;
+    const b = e.target && e.target.closest ? e.target.closest(".evfix, .evrst") : null;
     if (!b) return;
     const ev = events.find((x) => x.id === view);
+    if (b.classList.contains("evrst")) { if (ev) resetClick(b, ev); return; }
     const tier = Number(b.getAttribute("data-fixtier"));
     const t = ev && ev.tiers.find((x) => x.pct === tier);
     if (ev && t) rwOpenCorrection(ev, t);
   });
+
+  /**
+   * Reset, in two clicks. The first arms the button and states the consequence on its face; the
+   * second does it.
+   *
+   * 🔑 A CONFIRM ON THE BUTTON ITSELF rather than a modal. Everything else that raises a card here
+   * lives outside `#body` precisely because the 20-second poll rebuilds `#body` wholesale — but a
+   * one-shot confirm does not need to survive that. If the poll lands mid-decision the button
+   * simply reverts to its resting state, which is the safe outcome: an armed destructive control
+   * quietly disarming is right, and it cannot fire on its own.
+   */
+  let resetArmed = null;
+  function resetClick(btn, ev) {
+    if (resetArmed !== ev.id) {
+      resetArmed = ev.id;
+      btn.textContent = "Really reset? This cannot be undone";
+      btn.classList.add("armed");
+      // Disarm on its own, so a mis-click does not leave a live destructive control sitting there.
+      setTimeout(() => { if (resetArmed === ev.id) { resetArmed = null; try { btn.textContent = "Reset my progress"; btn.classList.remove("armed"); } catch { /* re-rendered */ } } }, 6000);
+      return;
+    }
+    resetArmed = null;
+    doReset(ev.id);
+  }
+
+  async function doReset(id) {
+    try {
+      await fetch("/api/events/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: id }),
+      });
+    } catch { /* nothing useful to say; the reload below shows whatever really happened */ }
+    load();
+  }
 
   $("modeBtn").addEventListener("click", () => { mode = mode === "rewards" ? "missions" : "rewards"; render(); });
   $("doneBtn").addEventListener("click", () => { showDone = !showDone; render(); });
