@@ -81,13 +81,40 @@ for (const m of missions) {
 // 40.7% → 56.2%, i.e. the classifier got BETTER on a bigger dataset rather than starting to
 // guess; the band check below is the real guard and it passes comfortably. The old numbers, for
 // anyone comparing: 2763 / 893 / 746 / 1124 / 127 / 159 / 1353.
-check("dataset size", missions.length, 4075);
-check("classified by generatorClass", byGenerator, 1264);
-check("classified by missionType", byType, 1027);
-check("needs the player to answer", unknown, 1784);
+//
+// ⚠️ REBASELINED AGAIN 2026-08-27 for 4.10 LIVE (`c01e789` landed 12519617; the counts above were
+// 4.9's 12344265). This time the move was accounted for mission-by-mission before a single number
+// was touched, because the whole point of these assertions is that a human looks:
+//
+//   4,075 -> 4,096 is NOT "+21 added". It is +30 ADDED and -9 REMOVED.
+//   NOT ONE mission present in both patches changed its classification — re-bucketed = 0 — so
+//   nothing was silently relabelled and the classifier itself did not move.
+//
+//   ship  260 -> 272 (+12)  exactly the 12 new FoxwellEnforcement_*_DefendShipNamed_* records
+//                           (Nyx/Pyro/Stanton x E/M/H, plus 3 _NearLocation), every one of them
+//                           generator `FoxwellEnforcement_DefendShip` -> ship. Same 12 are the
+//                           whole of the generatorClass +12: 1264 -> 1276.
+//   fps   136 -> 136 ( 0)   NOT suspicious, and this asymmetry was the thing worth checking.
+//                           None of the 30 new missions is FPS combat, so the correct delta is 0.
+//   type 1027 -> 1030 (+3)  a NET of +12 in / -9 out: CIG reshaped the Refueling family by ship
+//                           size (Hydrogen_1L_Rank2 -> Hydrogen_1M_1L_Rank2, Both_2S_1M -> ...),
+//                           79 -> 82 keys. Both sides classify none/missionType, hence...
+//   none 1895 -> 1898 (+3)  ...the same +12/-9 net here.
+//   unk  1784 -> 1790 (+6)  3x BattagliaStory, SOO2_Intro, TheCollector_SuperHeavyCombat, and one
+//                           new Eckhart bounty location (Greycat Lobby — a genuinely new record;
+//                           its two same-title siblings are both still present, so not a rename).
+//
+// 🔑 old + added - removed == new for ALL SIX counters, exactly, with no residue. That
+// reconciliation is what licenses editing these numbers; a leftover of even 1 would mean something
+// moved that the added/removed sets do not explain, and the right response then is to go and find
+// it rather than to write down what the run happened to print.
+check("dataset size", missions.length, 4096);
+check("classified by generatorClass", byGenerator, 1276);
+check("classified by missionType", byType, 1030);
+check("needs the player to answer", unknown, 1790);
 check("fps count", profile.fps, 136);
-check("ship count", profile.ship, 260);
-check("no-combat count", profile.none, 1895);
+check("ship count", profile.ship, 272);
+check("no-combat count", profile.none, 1898);
 check("every mission accounted for", byGenerator + byType + unknown, missions.length);
 
 // A wrong auto-label is worse than none, so guard the ceiling: if a future edit pushes coverage
