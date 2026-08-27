@@ -333,6 +333,23 @@ export interface EventContribution {
    *  measured. 🔑 Null is NOT zero — it is "we saw progress we cannot price", and the view
    *  reports the two separately so an unpriced run never silently reads as no progress. */
   points: number | null;
+  /**
+   * The log environment this contribution was earned in (`"PUB"`, `"PTU"`, …), taken from the
+   * header at record time. **Absent on anything recorded before 2026-08-27**, which is why every
+   * reader must go through `sameEnv()` rather than comparing this directly.
+   *
+   * 🔴 THIS IS THE FIELD THAT STOPS PTU PROGRESS INFLATING A LIVE COUNTER. The event registry is
+   * keyed by the event's journal NAME (`"Orison Relief"`) with no other dimension, so a PTU run
+   * and a live run of the same event were previously the same bucket and simply summed. Sub read
+   * 15% on live 4.10 that was earned entirely on 4.10 PTU (44,000 of 288,000, across 18
+   * contributions all dated 21–22 Aug).
+   *
+   * ⚠️ It is deliberately NOT a gate on recording. `5f512f7` removed that gate on purpose — an
+   * event runs on the PTU first and that is the whole reason to be there — so a PTU contribution
+   * is still recorded, still persisted, and still VISIBLE while the player is on the PTU. What
+   * changed is only which environment's contributions COUNT toward the number on screen.
+   */
+  env?: string | null;
 }
 
 /** The overlay-facing view of one event's track (the Event Tracker widget's tab). */
@@ -366,7 +383,18 @@ export interface EventProgress {
    */
   contractsPriced: number;
   contractsKnown: number;
+  /** Contributions counted toward `points` — i.e. only those earned in the environment currently
+   *  being read. See `EventContribution.env`. */
   contributions: EventContribution[];
+  /**
+   * How many stored contributions were NOT counted because they belong to another environment.
+   *
+   * 🔑 The UI needs this to explain a number that would otherwise drop without warning. A player
+   * who tracked an event on the PTU and then patches to live sees the counter go to zero, and
+   * "your points vanished with no explanation" is the same silent failure that made this bug hard
+   * to diagnose in the first place — arriving from the opposite direction. Say it instead.
+   */
+  otherEnv: number;
   tiers: {
     pct: number;
     points: number | null;
@@ -1273,6 +1301,25 @@ export class MissionTracker extends EventEmitter {
     return this.logEnv === null || this.logEnv === "PUB";
   }
 
+  /**
+   * Does a stored contribution belong to the environment currently being read?
+   *
+   * 🔑 Both sides normalise `null`/absent to `"PUB"`, which follows the app-wide rule that an
+   * UNKNOWN environment reads as LIVE (see `logEnv`). Two consequences worth stating out loud,
+   * because they are the whole retroactive story:
+   *  - A contribution recorded before the `env` field existed counts as LIVE. That is
+   *    deliberate — the alternative silently deletes real live progress from every existing
+   *    player to repair the minority who used the PTU, and we cannot tell those apart after the
+   *    fact without guessing. The purge control is the honest repair for that data.
+   *  - Compare the STRING, not `isLiveEnv`. `PTU` and `EPTU` are different servers with separate
+   *    progress; collapsing them to "not live" would let one inflate the other, which is the bug
+   *    being fixed wearing a different hat.
+   */
+  private sameEnv(env: string | null | undefined): boolean {
+    const norm = (e: string | null | undefined): string => (e ?? "PUB").toUpperCase();
+    return norm(env) === norm(this.logEnv);
+  }
+
   /** Guaranteed ITEM rewards ticked by hand (manual-only — the log never reports item
    *  awards). Deliberately NOT part of `observed`/`overrides`, so these never count
    *  toward the blueprint total nor sync to the site. */
@@ -1293,6 +1340,10 @@ export class MissionTracker extends EventEmitter {
    *  estimate is an accumulation of things we saw once and can never re-observe, exactly like
    *  repWitnessed. */
   private eventContributions = new Map<string, EventContribution[]>();
+  /** Persisted fields `loadState()` could not parse, held VERBATIM so `saveState()` writes them
+   *  back unchanged instead of replacing them with an empty default. See `loadState` — this is
+   *  what keeps a read failure from becoming permanent data loss. Normally empty. */
+  private unreadableState: Record<string, unknown> = {};
   /** Tier-crossing questions awaiting an answer. See src/event-rewards.ts. */
   private rewardPrompts: RewardPrompt[] = [];
   /** Highest tier already asked about, per event id. Persisted, and it is what stops the app
@@ -1998,7 +2049,9 @@ export class MissionTracker extends EventEmitter {
           // Read the percentage BEFORE the contribution lands, so the crossing is a real
           // transition rather than a comparison against a number that already includes it.
           const before = this.eventProgress(def.id)?.pct ?? null;
-          list.push({ key, title: claimed?.title ?? null, at, points });
+          // Stamp the environment we are reading. NOT a gate — the contribution is recorded on
+          // any server; `sameEnv()` decides later whether it counts toward the number shown.
+          list.push({ key, title: claimed?.title ?? null, at, points, env: this.logEnv });
           this.eventContributions.set(def.log, list);
           this.noteTierCrossings(def, before, Number.isFinite(atMs) ? atMs : Date.now(), at);
           this.saveState();
@@ -3582,7 +3635,12 @@ export class MissionTracker extends EventEmitter {
   eventProgress(id: string): EventProgress | null {
     const def = this.events.find((e) => e.id === id);
     if (!def) return null;
-    const contributions = this.eventContributions.get(def.log) ?? [];
+    const stored = this.eventContributions.get(def.log) ?? [];
+    // 🔴 ONLY THIS ENVIRONMENT'S CONTRIBUTIONS COUNT. Everything else about a contribution is
+    // preserved — it stays on disk and still shows while the player is back on that server — but
+    // a PTU run may not add to a live percentage. See `EventContribution.env` and `sameEnv`.
+    const contributions = stored.filter((c) => this.sameEnv(c.env));
+    const otherEnv = stored.length - contributions.length;
     let points = 0;
     let unpriced = 0;
     for (const c of contributions) {
@@ -3630,10 +3688,48 @@ export class MissionTracker extends EventEmitter {
       pct,
       unpriced,
       contributions: contributions.slice().sort((a, b) => b.at.localeCompare(a.at)),
+      otherEnv,
       tiers,
       ...this.eventContractCoverage(def),
       rewardsUnknown: rewards.length === 0,
     };
+  }
+
+  /**
+   * Forget everything witnessed for one event, so its counter starts again from zero.
+   *
+   * 🔴 THIS EXISTS BECAUSE THE APP CAN NEVER OBSERVE A SERVER-SIDE RESET, and no amount of
+   * environment-stamping fixes that. Event points ride CIG's server-side `ReputationService` and
+   * are never reported to the client — which is the entire reason this counter is accumulated
+   * from witnessed completions instead of read. So a character wipe, a season restart, or an
+   * event simply running again zeroes the player's REAL progress while the app has no signal at
+   * all that it happened, and goes on showing a number that was true last month.
+   *
+   * `env` handles the case we can detect; this handles the case we cannot. Both are needed.
+   *
+   * ⚠️ Destructive and unrecoverable by design — each contribution is a one-time observation of
+   * something the game never restates, exactly like `repWitnessed`. Nothing can rebuild it: the
+   * startup replay only reaches 12 hours back, and `verifyFromLogs` cannot see a journal entry at
+   * all (its prefilter does not match the line and it never calls `apply`). The caller is
+   * responsible for confirming with the player first.
+   *
+   * 🔑 Clears the tier bookkeeping too. Leaving `askedTiers` behind would mean the player
+   * re-earns 15%, crosses the tier for real, and is never asked about the reward because the app
+   * still believes it asked — the reset would silently disable the thing it was meant to restore.
+   *
+   * @returns the number of contributions discarded, so the caller can report it honestly.
+   */
+  resetEventProgress(id: string): number {
+    const def = this.events.find((e) => e.id === id);
+    if (!def) return 0;
+    const had = (this.eventContributions.get(def.log) ?? []).length;
+    this.eventContributions.delete(def.log);
+    this.askedTiers.delete(def.id);
+    this.rewardPrompts = this.rewardPrompts.filter((p) => p.eventId !== def.id);
+    this.saveState();
+    this.emit("change");
+    console.log(`[events] progress reset for "${def.label}" (${had} contribution(s) discarded)`);
+    return had;
   }
 
   // ── Self-filling event rewards (src/event-rewards.ts) ─────────────────────────────────────
@@ -4780,31 +4876,82 @@ export class MissionTracker extends EventEmitter {
 
   // ---- persistence ----
 
+  /**
+   * 🔴 ONE MALFORMED FIELD USED TO DESTROY EVERY FIELD BELOW IT, SILENTLY AND PERMANENTLY.
+   *
+   * This whole method was one `try` whose catch was an empty block commented "first run", so
+   * ANY throw part-way through abandoned the rest of the assignments — leaving them at their
+   * constructor defaults — and the next `saveState()` then wrote those defaults to disk. The
+   * data was not corrupted; it was *discarded on read* and then overwritten by a healthy-looking
+   * save. Nothing logged, nothing failed.
+   *
+   * Measured (flight `orisonfix`, 2026-08-27): `missionHistory` is assigned 12th of 15 via
+   * `dedupeHistory()`, which throws on a non-array or an array holding `null` (it does
+   * `[...rows].sort()` and then reads `r.at`). One bad history therefore took `missionHistory`,
+   * `eventContributions`, `rewardPrompts` AND `askedTiers` with it — four fields for one fault:
+   *
+   *     control: untouched good file                observed=2 hist=1 contrib=1 asked=1
+   *     missionHistory is a bare object (not array) observed=2 hist=0 contrib=0 asked=0
+   *     missionHistory holds a null entry           observed=2 hist=0 contrib=0 asked=0
+   *
+   * 🔑 TWO SEPARATE REPAIRS, and the second is the one that matters. Per-field isolation stops
+   * the blast radius; **preserving what we could not read** stops the data loss. A field we
+   * failed to parse is written back BYTE-FOR-BYTE by `saveState()` rather than replaced with an
+   * empty default, so a later build that can read it still finds it there. Overwriting a field
+   * you did not understand is how a read bug becomes a write bug.
+   *
+   * ⚠️ The distinction the old single `catch` could not make: an unreadable FILE really is a
+   * first run (return, defaults are correct); an unreadable FIELD inside a readable file is
+   * damage, and the safe response is to keep it, not to normalise it away.
+   */
   private loadState(): void {
+    let data: Persisted;
     try {
-      const data = JSON.parse(readFileSync(this.statePath, "utf8")) as Persisted;
-      this.observed = new Set(data.observed ?? []);
-      this.observedAt = new Map(Object.entries(data.observedAt ?? {}));
-      this.overrides = new Map(Object.entries(data.overrides ?? {}));
-      this.guaranteedOwned = new Set(data.guaranteedOwned ?? []);
-      this.fabOwned = new Set(data.fabOwned ?? []);
-      this.inferredRank = new Map(Object.entries(data.inferredRank ?? {}));
-      this.repWitnessed = new Map(Object.entries(data.repWitnessed ?? {}));
-      this.repAccruedMissionIds = new Set(data.repAccruedMissionIds ?? []);
-      this.repScanned = new Map(Object.entries(data.repScanned ?? {}));
-      this.completedTitles = new Map(Object.entries(data.completedTitles ?? {}));
-      this.completedKeys = new Map(Object.entries(data.completedKeys ?? {}));
-      // 🔴 REPAIR THE DOUBLE-COUNTED HISTORY ALREADY ON DISK. The insert-side dedupe below only
-      // stops NEW duplicates; every completion recorded before it existed was written twice (one
-      // entry per log signal, milliseconds apart) and is restored here verbatim. Without this the
-      // scoreboard stays wrong for every existing user forever, and the fix would look like it had
-      // not worked — which is exactly how it presented while being diagnosed.
-      this.missionHistory = dedupeHistory(data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
-      this.eventContributions = new Map(Object.entries(data.eventContributions ?? {}));
-      this.rewardPrompts = data.rewardPrompts ?? [];
-      this.askedTiers = new Map(Object.entries(data.askedTiers ?? {}));
+      data = JSON.parse(readFileSync(this.statePath, "utf8")) as Persisted;
     } catch {
-      /* first run */
+      return; // genuinely first run: no file, or one that is not JSON at all
+    }
+    const lost: string[] = [];
+    const load = (name: keyof Persisted, fn: () => void): void => {
+      try {
+        fn();
+      } catch {
+        // Hold the ORIGINAL value so saveState writes it straight back. Never a default.
+        lost.push(name);
+        this.unreadableState[name] = (data as unknown as Record<string, unknown>)[name];
+      }
+    };
+    load("observed", () => { this.observed = new Set(data.observed ?? []); });
+    load("observedAt", () => { this.observedAt = new Map(Object.entries(data.observedAt ?? {})); });
+    load("overrides", () => { this.overrides = new Map(Object.entries(data.overrides ?? {})); });
+    load("guaranteedOwned", () => { this.guaranteedOwned = new Set(data.guaranteedOwned ?? []); });
+    load("fabOwned", () => { this.fabOwned = new Set(data.fabOwned ?? []); });
+    load("inferredRank", () => { this.inferredRank = new Map(Object.entries(data.inferredRank ?? {})); });
+    load("repWitnessed", () => { this.repWitnessed = new Map(Object.entries(data.repWitnessed ?? {})); });
+    load("repAccruedMissionIds", () => { this.repAccruedMissionIds = new Set(data.repAccruedMissionIds ?? []); });
+    load("repScanned", () => { this.repScanned = new Map(Object.entries(data.repScanned ?? {})); });
+    load("completedTitles", () => { this.completedTitles = new Map(Object.entries(data.completedTitles ?? {})); });
+    load("completedKeys", () => { this.completedKeys = new Map(Object.entries(data.completedKeys ?? {})); });
+    // 🔴 REPAIR THE DOUBLE-COUNTED HISTORY ALREADY ON DISK. The insert-side dedupe below only
+    // stops NEW duplicates; every completion recorded before it existed was written twice (one
+    // entry per log signal, milliseconds apart) and is restored here verbatim. Without this the
+    // scoreboard stays wrong for every existing user forever, and the fix would look like it had
+    // not worked — which is exactly how it presented while being diagnosed.
+    load("missionHistory", () => {
+      this.missionHistory = dedupeHistory(data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
+    });
+    load("eventContributions", () => {
+      this.eventContributions = new Map(Object.entries(data.eventContributions ?? {}));
+    });
+    load("rewardPrompts", () => { this.rewardPrompts = data.rewardPrompts ?? []; });
+    load("askedTiers", () => { this.askedTiers = new Map(Object.entries(data.askedTiers ?? {})); });
+    if (lost.length) {
+      // Sidecar console => sidecar.log. A field quietly vanishing is exactly the failure this
+      // method used to have, so it has to be SAID — see the project rule on loud paths.
+      console.log(
+        `[state] ${lost.length} field(s) could not be read and are PRESERVED UNCHANGED on the next ` +
+        `save (not overwritten): ${lost.join(", ")}`,
+      );
     }
   }
 
@@ -4826,10 +4973,16 @@ export class MissionTracker extends EventEmitter {
       rewardPrompts: this.rewardPrompts,
       askedTiers: Object.fromEntries(this.askedTiers),
     };
+    // 🔴 ANYTHING loadState COULD NOT READ GOES BACK EXACTLY AS IT CAME. Spread LAST so it wins:
+    // every key above is a re-serialisation of in-memory state, which for an unreadable field is
+    // an empty default — writing that is precisely the data loss this exists to prevent. A build
+    // that can parse the field later will still find it. Normally this object is empty and the
+    // spread is a no-op.
+    const out: Persisted = { ...data, ...this.unreadableState };
     try {
       if (!existsSync(this.stateDir)) mkdirSync(this.stateDir, { recursive: true });
       const tmp = this.statePath + ".tmp";
-      writeFileSync(tmp, JSON.stringify(data, null, 2));
+      writeFileSync(tmp, JSON.stringify(out, null, 2));
       renameSync(tmp, this.statePath);
     } catch {
       /* non-fatal */
