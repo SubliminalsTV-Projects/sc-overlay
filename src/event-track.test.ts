@@ -47,7 +47,13 @@ const realEvents = JSON.stringify({
       // is exactly what happened on 2026-08-22, when confirming the 15% reward (S-38
       // "SecondWind" Pistol) turned the unknown-vs-empty assertion red. The mechanism being
       // tested is "empty rewards report as UNKNOWN, not as none", and it needs its own data.
-      ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 }, rewards: [] }
+      // 🔑 `liveStart: null` for the SAME reason `contracts` and `rewards` are pinned above — it
+      // is a live research artefact, and every fixture in this file is dated 19-22 Aug 2026,
+      // which is before the shipped cutoff of 26 Aug. Reading the real date here would exclude
+      // every fixture contribution and turn fourteen MECHANISM assertions red for a reason that
+      // has nothing to do with the mechanism. Block 12 declares its own cutoff to test the
+      // filter; block 14 asserts the shipped file really carries one.
+      ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 }, rewards: [], liveStart: null }
       : e),
 });
 writeFileSync(join(dir, "events.json"), realEvents);
@@ -105,7 +111,11 @@ const COMPLETE = 'Added notification "Contract Complete: Orison Relief: Medium S
 const JOURNAL = 'Added notification "Journal Entry Added: Orison Relief: " [43] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]';
 const JURISDICTION = 'Added notification "Journal Entry Added: Jurisdiction: Hurston Dynamics : " [9] to queue. New queue size: 1, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]';
 
-// The tracker only records LIVE-environment progress, same rule as blueprints.
+// ⚠️ This comment used to read "the tracker only records LIVE-environment progress, same rule as
+// blueprints". That has been false since `5f512f7` deliberately removed the environment gate on
+// event progress — block 6 below asserts the opposite outright. Corrected 2026-08-27; it was the
+// third copy of the same stale claim (the skill and a source comment carried it too), and it is
+// what sent a whole flight looking for a sync bug that did not exist.
 t.detectPatch("<2026> Environment: PUB");
 // A marker teaches the tracker which contract this missionId is.
 t.apply({
@@ -366,6 +376,310 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
     f.reportEventReward("no-such-event", 20, "nonsense", "typed") === null);
   check("...and neither refusal queued anything", f.unreportedRewardAnswers().length === 2,
     String(f.unreportedRewardAnswers().length));
+}
+
+// ---- 9. 🔴 A PTU CONTRIBUTION MAY NOT COUNT TOWARD A LIVE COUNTER ------------------------------
+//
+// Sub, just after patching off 4.10 PTU onto 4.10 live: "My Siege of Orison says 15% for me,
+// which is what I got in the PTU." Measured on his running app: 44,000/288,000 across 18
+// contributions ALL dated 21-22 Aug, with the app reading `logEnv PUB`. The registry is keyed by
+// the event's journal NAME with no other dimension, so the two runs were one bucket and summed.
+//
+// 🔴 THE POINT OF THIS BLOCK IS THAT BOTH HALVES HOLD AT ONCE, and asserting either alone would
+// pass on a build that is wrong in the other direction. Recording is NOT gated (block 6, and
+// `5f512f7` removed that gate on purpose so an event can be tracked on the PTU, which is where
+// events run first). Only COUNTING is scoped to the environment being read.
+{
+  const dir9 = mkdtempSync(join(tmpdir(), "ev-env-"));
+  writeFileSync(join(dir9, "events.json"), realEvents);
+  writeFileSync(join(dir9, "blueprints.latest.json"), JSON.stringify({
+    schema: "sc-blueprint-pools/2", version: `4.10.0-PTU.${CL}`, changelist: CL, missionCount: 1,
+    missions: { ORS_MA_HaulingMedium: m("Orison Relief: Medium Supply Haul", "TheBackpocket") },
+  }));
+  const MID = "c48baebd-b6da-4537-86f1-1355c5e2d488";
+  // 🔑 Each run gets its OWN missionId, because a runtime MissionId is a per-instance GUID and
+  // never repeats. Reusing one is not merely unrealistic: the first completion ends that mission,
+  // so a second completion on the same id resolves no contract key and the contribution lands
+  // UNPRICED — which reads as "the live run did not count" and blames the environment split for
+  // a fixture fault. (It did exactly that on the first run of this block.)
+  const seedOne = (tr: MissionTracker, cts: string, jts: string, mid = MID) => {
+    tr.apply({
+      kind: "marker", ts: cts, missionId: mid, contract: "ORS_MA_HaulingMedium_0",
+      contractKey: "ORS_MA_HaulingMedium", generator: "TheBackpocket",
+      contractDefId: "x", objectiveId: "pickup_x_0", markerEntityId: "1", pos: null,
+    } as never);
+    tr.apply(parseMissionEvent(ev(COMPLETE.replace(MID, mid), cts))!);
+    tr.apply(parseMissionEvent(ev(JOURNAL, jts))!);
+  };
+
+  const st9 = mkdtempSync(join(tmpdir(), "ev-env-st-"));
+  const q = new MissionTracker({ dataDir: dir9, stateDir: st9 });
+  q.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  q.detectPatch("<2026> Environment: PTU");
+  // 🔑 EIGHT runs, deliberately, so the PTU total CROSSES THE 15% TIER (8 x 6,000 = 48,000 against
+  // a 43,200 threshold). One run reaches 2%, and at 2% "no tier reads as reached" is true no
+  // matter what the code does — a tautology that passed its own negative control while proving
+  // nothing. It is also what Sub actually saw: tier 15 reading `reached: true` off PTU data.
+  const PTU_RUNS = 8;
+  for (let i = 0; i < PTU_RUNS; i++) {
+    const t0 = `2026-08-22T00:${String(10 + i).padStart(2, "0")}:00.000Z`;
+    const t1 = `2026-08-22T00:${String(10 + i).padStart(2, "0")}:00.200Z`;
+    seedOne(q, t0, t1, `aaaaaaaa-0000-0000-0000-00000000000${i}`);
+  }
+
+  // Positive first: the PTU run must be VISIBLE while on the PTU, or the rest of this block is
+  // vouching for a build that simply stopped recording — which is the regression `5f512f7` fixed.
+  const onPtu = q.eventProgress("orison-relief")!;
+  check("PTU: the contribution is recorded AND counted while on the PTU",
+    onPtu.contributions.length === PTU_RUNS && onPtu.points === 6000 * PTU_RUNS,
+    `n=${onPtu.contributions.length} points=${onPtu.points}`);
+  check("PTU: nothing is being excluded yet", onPtu.otherEnv === 0, String(onPtu.otherEnv));
+  check("...and the contribution carries the environment it was earned in",
+    onPtu.contributions[0]?.env === "PTU", String(onPtu.contributions[0]?.env));
+  // The setup assertion that makes the LIVE tier check falsifiable at all.
+  check("(setup) the PTU total really does cross the 15% tier",
+    onPtu.tiers.find((x) => x.pct === 15)?.reached === true,
+    `pct=${onPtu.pct} points=${onPtu.points}`);
+
+  // Now patch to live. Same tracker, same state, one header line.
+  q.detectPatch("<2026> Environment: PUB");
+  const onLive = q.eventProgress("orison-relief")!;
+  check("🔴 LIVE: the PTU contribution does NOT count — Sub's bug",
+    onLive.points === 0 && onLive.pct === 0, `points=${onLive.points} pct=${onLive.pct}`);
+  check("🔴 LIVE: and no tier reads as reached", onLive.tiers.every((x) => !x.reached));
+  check("LIVE: the excluded ones are REPORTED, not silently dropped",
+    onLive.otherEnv === PTU_RUNS, String(onLive.otherEnv));
+  // It must still be on disk: a counter that is wrong for this server is still the true record
+  // for the other one, and the player goes back to the PTU next patch.
+  check("LIVE: it is EXCLUDED, not deleted — still there on the PTU",
+    (() => { q.detectPatch("<2026> Environment: PTU");
+             const back = q.eventProgress("orison-relief")!;
+             q.detectPatch("<2026> Environment: PUB");
+             return back.points === 6000 * PTU_RUNS; })(), "switching back restores it");
+
+  // A live run on the same event counts normally, side by side with the PTU one on disk.
+  q.detectPatch("<2026> Environment: PUB");
+  seedOne(q, "2026-08-26T10:00:00.000Z", "2026-08-26T10:00:00.200Z",
+    "11111111-2222-3333-4444-555555555555");
+  const mixed = q.eventProgress("orison-relief")!;
+  check("LIVE: a genuine live run counts", mixed.points === 6000, String(mixed.points));
+  check("...counting exactly ONE contribution, not both", mixed.contributions.length === 1,
+    String(mixed.contributions.length));
+  check("...with the PTU ones still held aside", mixed.otherEnv === PTU_RUNS, String(mixed.otherEnv));
+}
+
+// ---- 10. A contribution recorded before the `env` field existed counts as LIVE ------------------
+//
+// The app-wide rule is that an UNKNOWN environment reads as LIVE (see `logEnv`), and the
+// alternative here is worse than the bug: treating legacy rows as "unknown, do not count" would
+// silently delete real live progress from every existing player in order to repair the minority
+// who used the PTU, and nothing on disk can tell those two apart after the fact. The purge
+// control in block 11 is the honest repair for legacy data.
+{
+  const dir10 = mkdtempSync(join(tmpdir(), "ev-legacy-"));
+  writeFileSync(join(dir10, "events.json"), realEvents);
+  const st10 = mkdtempSync(join(tmpdir(), "ev-legacy-st-"));
+  // A state file exactly as an older build wrote it: no `env` key on the contribution.
+  writeFileSync(join(st10, "collected.json"), JSON.stringify({
+    observed: [], eventContributions: { "Orison Relief": [
+      { key: "ORS_MA_HaulingMedium", title: null, at: "2026-08-01T00:00:00.000Z", points: 6000 },
+    ]},
+  }));
+  const l = new MissionTracker({ dataDir: dir10, stateDir: st10 });
+  l.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  l.detectPatch("<2026> Environment: PUB");
+  const legacy = l.eventProgress("orison-relief")!;
+  check("legacy contribution (no env) counts as LIVE", legacy.points === 6000, String(legacy.points));
+  check("...and is not reported as excluded", legacy.otherEnv === 0, String(legacy.otherEnv));
+  // The other side of the same rule: on a test server it is NOT this server's progress.
+  l.detectPatch("<2026> Environment: PTU");
+  const legacyPtu = l.eventProgress("orison-relief")!;
+  check("...and does NOT count on the PTU", legacyPtu.points === 0, String(legacyPtu.points));
+}
+
+// ---- 11. The purge -----------------------------------------------------------------------------
+//
+// Exists because the app can NEVER observe a server-side reset: event points ride CIG's
+// `ReputationService` and are never reported to the client, which is the whole reason this
+// counter is accumulated from witnessed completions. A wipe or a season restart zeroes the real
+// progress with no signal the app can read. `env` covers what we can detect; this covers what we
+// cannot.
+{
+  const dir11 = mkdtempSync(join(tmpdir(), "ev-reset-"));
+  writeFileSync(join(dir11, "events.json"), realEvents);
+  writeFileSync(join(dir11, "blueprints.latest.json"), JSON.stringify({
+    schema: "sc-blueprint-pools/2", version: `4.10.0-LIVE.${CL}`, changelist: CL, missionCount: 1,
+    missions: { ORS_MA_HaulingMedium: m("Orison Relief: Medium Supply Haul", "TheBackpocket") },
+  }));
+  const st11 = mkdtempSync(join(tmpdir(), "ev-reset-st-"));
+  const r = new MissionTracker({ dataDir: dir11, stateDir: st11 });
+  r.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  r.detectPatch("<2026> Environment: PUB");
+  r.apply({
+    kind: "marker", ts: "2026-08-26T10:00:00.000Z", missionId: "c48baebd-b6da-4537-86f1-1355c5e2d488",
+    contract: "ORS_MA_HaulingMedium_0", contractKey: "ORS_MA_HaulingMedium", generator: "TheBackpocket",
+    contractDefId: "x", objectiveId: "pickup_x_0", markerEntityId: "1", pos: null,
+  } as never);
+  r.apply(parseMissionEvent(ev(COMPLETE, "2026-08-26T10:00:00.000Z"))!);
+  r.apply(parseMissionEvent(ev(JOURNAL, "2026-08-26T10:00:00.200Z"))!);
+
+  // Positive first — sourced from the tracker BEFORE the reset, so "it is now zero" cannot pass
+  // for the boring reason that it was always zero.
+  const before = r.eventProgress("orison-relief")!;
+  check("(setup) there really is progress to purge", before.points === 6000 && before.contributions.length === 1,
+    `points=${before.points} n=${before.contributions.length}`);
+
+  const discarded = r.resetEventProgress("orison-relief");
+  check("the purge reports how much it discarded", discarded === 1, String(discarded));
+  const after = r.eventProgress("orison-relief")!;
+  check("🔴 progress is zero after the purge", after.points === 0 && after.contributions.length === 0,
+    `points=${after.points} n=${after.contributions.length}`);
+  check("...and nothing is merely hidden as another environment's", after.otherEnv === 0, String(after.otherEnv));
+  check("...and no tier reads as reached", after.tiers.every((x) => !x.reached));
+  // The event itself must survive — this forgets progress, not the definition.
+  check("the event still exists afterwards", after.label.length > 0 && after.total === 288000, String(after.total));
+
+  // It has to reach DISK, or the counter comes back on the next launch and the button looks broken.
+  const onDisk = JSON.parse(readFileSync(join(st11, "collected.json"), "utf8"));
+  check("🔴 the purge is persisted, not just in memory",
+    Object.keys(onDisk.eventContributions ?? {}).length === 0,
+    JSON.stringify(onDisk.eventContributions));
+  // 🔑 askedTiers must go too. Left behind, the player re-earns the tier for real and is never
+  // asked about the reward, because the app still believes it already asked — the reset would
+  // silently disable the very thing it was meant to restore.
+  check("...and the tier bookkeeping is cleared with it",
+    Object.keys(onDisk.askedTiers ?? {}).length === 0, JSON.stringify(onDisk.askedTiers));
+
+  check("an unknown event id purges nothing and does not throw",
+    r.resetEventProgress("no-such-event") === 0);
+}
+
+// ---- 12. 🔴 A CONTRIBUTION EARNED BEFORE THE EVENT'S LIVE RUN BEGAN DOES NOT COUNT ------------
+//
+// Sub, 2026-08-27: "I don't understand why you can't just ignore any entries from the dates prior
+// to when this patch was live." One date covers a PTU run before go-live, a wipe, a season restart
+// and a rerun — every case where an accumulated counter is carrying progress that is no longer
+// yours. Filtered at READ time, so nothing is deleted and a wrong cutoff is a data correction.
+//
+// The fixture declares its OWN `liveStart`, for the same reason this file pins `contracts` and
+// `rewards`: the shipped date is a live research artefact and a mechanism test must own its data.
+{
+  const START = "2026-08-26T06:53:00.000Z";
+  const dir12 = mkdtempSync(join(tmpdir(), "ev-start-"));
+  writeFileSync(join(dir12, "events.json"), JSON.stringify({
+    ...shipped,
+    events: shipped.events.map((e: { id: string }) =>
+      e.id === "orison-relief"
+        ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 }, rewards: [], liveStart: START }
+        : { ...e, liveStart: null }),
+  }));
+  const st12 = mkdtempSync(join(tmpdir(), "ev-start-st-"));
+  // Two LIVE contributions: one four days before the cutoff, one after it.
+  writeFileSync(join(st12, "collected.json"), JSON.stringify({
+    observed: [], eventContributions: { "Orison Relief": [
+      { key: "ORS_MA_HaulingMedium", title: null, at: "2026-08-22T00:27:46.316Z", points: 6000, env: "PUB" },
+      { key: "ORS_MA_HaulingMedium", title: null, at: "2026-08-27T10:00:00.000Z", points: 6000, env: "PUB" },
+    ]},
+  }));
+  const d = new MissionTracker({ dataDir: dir12, stateDir: st12 });
+  d.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  d.detectPatch("<2026> Environment: PUB");
+  const p = d.eventProgress("orison-relief")!;
+  check("🔴 a contribution from before the event's live start does NOT count",
+    p.points === 6000 && p.contributions.length === 1, `points=${p.points} n=${p.contributions.length}`);
+  check("...and the one after it DOES", p.contributions[0]?.at === "2026-08-27T10:00:00.000Z",
+    String(p.contributions[0]?.at));
+  check("...the excluded one is REPORTED, not silently dropped", p.beforeStart === 1, String(p.beforeStart));
+  check("...and the cutoff itself reaches the view so the UI can name the date",
+    p.liveStart === START, String(p.liveStart));
+  check("...and it is NOT miscounted as another environment's", p.otherEnv === 0, String(p.otherEnv));
+
+  // 🔴 THE CUTOFF BOUNDS THE LIVE COUNTER ONLY. On a test server the same records are that
+  // server's own accumulation — applying the live run's start there would show a PTU player zero
+  // for the very run they are doing, which is the constraint `5f512f7` exists to protect.
+  const st12b = mkdtempSync(join(tmpdir(), "ev-start-ptu-"));
+  writeFileSync(join(st12b, "collected.json"), JSON.stringify({
+    observed: [], eventContributions: { "Orison Relief": [
+      { key: "ORS_MA_HaulingMedium", title: null, at: "2026-08-22T00:27:46.316Z", points: 6000, env: "PTU" },
+    ]},
+  }));
+  const dp = new MissionTracker({ dataDir: dir12, stateDir: st12b });
+  dp.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  dp.detectPatch("<2026> Environment: PTU");
+  const pp = dp.eventProgress("orison-relief")!;
+  check("🔴 PTU: a pre-cutoff PTU run still counts WHILE ON the PTU",
+    pp.points === 6000 && pp.beforeStart === 0, `points=${pp.points} beforeStart=${pp.beforeStart}`);
+
+  // 🔴 THE DATE ALONE IS NOT ENOUGH — the case that keeps `sameEnv` load-bearing. Once a NEW
+  // PTU opens while the live event still runs, a PTU contribution is dated AFTER liveStart, and
+  // a date-only rule would count it toward the live total: Sub's original complaint, weeks later.
+  const st12c = mkdtempSync(join(tmpdir(), "ev-start-conc-"));
+  writeFileSync(join(st12c, "collected.json"), JSON.stringify({
+    observed: [], eventContributions: { "Orison Relief": [
+      { key: "ORS_MA_HaulingMedium", title: null, at: "2026-08-28T12:00:00.000Z", points: 6000, env: "PTU" },
+    ]},
+  }));
+  const dc = new MissionTracker({ dataDir: dir12, stateDir: st12c });
+  dc.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  dc.detectPatch("<2026> Environment: PUB");
+  const pc = dc.eventProgress("orison-relief")!;
+  check("🔴 LIVE: a CONCURRENT PTU run dated after the cutoff still does not count",
+    pc.points === 0 && pc.otherEnv === 1, `points=${pc.points} otherEnv=${pc.otherEnv}`);
+  check("...and it is attributed to the environment, not to the date", pc.beforeStart === 0, String(pc.beforeStart));
+}
+
+// ---- 13. An event with NO liveStart counts everything ------------------------------------------
+//
+// The judgement call, made deliberately: count everything (today's behaviour) rather than count
+// nothing. Every event predating this field has no cutoff, `return-of-xenothreat` included, and
+// silently rendering real progress as zero is the worse failure — the app cannot tell a stale
+// counter from a live one, but the player can, and only one of those states gives them anything
+// to go on. An absent cutoff is not evidence that progress is stale.
+{
+  const dir13 = mkdtempSync(join(tmpdir(), "ev-nostart-"));
+  writeFileSync(join(dir13, "events.json"), JSON.stringify({
+    ...shipped,
+    events: shipped.events.map((e: { id: string }) =>
+      e.id === "orison-relief"
+        ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 }, rewards: [], liveStart: null }
+        : e),
+  }));
+  const st13 = mkdtempSync(join(tmpdir(), "ev-nostart-st-"));
+  writeFileSync(join(st13, "collected.json"), JSON.stringify({
+    observed: [], eventContributions: { "Orison Relief": [
+      { key: "ORS_MA_HaulingMedium", title: null, at: "2020-01-01T00:00:00.000Z", points: 6000, env: "PUB" },
+    ]},
+  }));
+  const n = new MissionTracker({ dataDir: dir13, stateDir: st13 });
+  n.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  n.detectPatch("<2026> Environment: PUB");
+  const pn = n.eventProgress("orison-relief")!;
+  check("no liveStart => an ancient contribution still counts", pn.points === 6000, String(pn.points));
+  check("...and nothing is reported as excluded by date", pn.beforeStart === 0, String(pn.beforeStart));
+  check("...and the view says there is no cutoff", pn.liveStart === null, String(pn.liveStart));
+}
+
+// ---- 14. The SHIPPED registry actually carries the cutoff (and the status is right) ------------
+//
+// 🔑 Reads the REAL data/events.json on purpose. Everything above tests the mechanism against a
+// fixture; this asserts the file we ship is wired up, which is the half a fixture can never cover.
+// It is also what makes Sub's own 44,000 stop counting, so it is worth stating outright.
+{
+  const real = shipped.events.find((e: { id: string }) => e.id === "orison-relief");
+  check("shipped: Siege of Orison declares a liveStart", typeof real?.liveStart === "string", String(real?.liveStart));
+  check("...it parses as a real date", Number.isFinite(Date.parse(real?.liveStart ?? "")), String(real?.liveStart));
+  check("...it says where it came from", typeof real?.liveStartSource === "string" && real.liveStartSource.length > 20);
+  check("...and it is AFTER Sub's 4.10 PTU run (21-22 Aug), which is the whole point",
+    Date.parse(real?.liveStart ?? "") > Date.parse("2026-08-22T03:24:24.711Z"), String(real?.liveStart));
+  check("...and BEFORE now, so live progress is not being excluded",
+    Date.parse(real?.liveStart ?? "") < Date.now(), String(real?.liveStart));
+  check("shipped: the event is no longer marked 'upcoming' while 4.10 is live",
+    real?.status === "current", String(real?.status));
+  // The registry is fetched from subliminal.gg and adopted only when the remote `revision` is
+  // HIGHER. Shipping a new field without bumping this lets the site's older copy win and silently
+  // revert it — see src/event-feed.ts.
+  check("shipped: revision was bumped so the site's older copy cannot revert this",
+    Number(shipped.revision) >= 3, String(shipped.revision));
 }
 
 console.log(failed ? `\nFAILED (${failed})` : "\nevent-track tests passed");

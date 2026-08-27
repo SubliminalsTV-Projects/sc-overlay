@@ -4069,6 +4069,35 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
+  // Forget one event's witnessed progress. See MissionTracker.resetEventProgress for why this
+  // has to exist at all: the app can never observe a server-side wipe, so no amount of
+  // environment-stamping can keep the counter honest across a reset.
+  //
+  // 🔑 POST, so it lands in the single mutating bucket at the top of handleRequest (this machine
+  // + Origin) rather than needing a rule of its own — see references/security.md. It is
+  // deliberately NOT gated on SC_DEV: a released build is exactly where a player needs it.
+  if (url === "/api/events/reset" && req.method === "POST") {
+    const body = (await readBody(req)) as { event?: unknown };
+    const event = typeof body.event === "string" ? body.event.trim() : "";
+    if (!event) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "event is required" }));
+      return;
+    }
+    // Distinguish "no such event" from "an event that had nothing recorded" — 0 is a legitimate
+    // success here (resetting an already-empty event is a no-op, not a failure), so the two must
+    // not share a response or the widget cannot tell a typo from a clean slate.
+    if (!tracker.eventProgress(event)) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "unknown_event" }));
+      return;
+    }
+    const discarded = tracker.resetEventProgress(event);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, event, discarded }));
+    return;
+  }
+
   // Sell-price summary for an ore/commodity (low / average / high across every terminal that
   // buys it). Sourced from the BUNDLED commodity data - no UEX call, works offline.
   if (url === "/api/commodity-price" && req.method === "GET") {
