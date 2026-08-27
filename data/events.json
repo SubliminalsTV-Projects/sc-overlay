@@ -1,6 +1,6 @@
 {
   "schema": "sc-events/1",
-  "revision": 2,
+  "revision": 3,
   "revisionNote": "Ordering key for the phone-home feed (src/event-feed.ts). The app fetches https://subliminal.gg/sc/events.json on a timer and adopts it ONLY when its revision is strictly greater than the copy in effect, so a site copy that is older than the shipped one can never delete a discovery the build was cut for. Do not bump this by hand: `npm run sync:events` copies this file to the site repo and bumps it, which is what makes a correction reach players without an app release.",
   "note": "Hand-maintained dynamic-event registry. CHANGELIST-INDEPENDENT on purpose: an event's tiers, per-contract point values and rewards are discovered by PLAYING, not by extracting the p4k, so this file must survive dataset regeneration the same way the site's blueprints-extra.json does — whose model it mirrors. Everything unknown is left EMPTY rather than guessed; an invented number here becomes a wrong percentage on Sub's stream.",
   "howToFillIn": [
@@ -16,8 +16,10 @@
       "id": "orison-relief",
       "log": "Orison Relief",
       "label": "Siege of Orison",
-      "status": "upcoming",
+      "status": "current",
       "patch": "4.10",
+      "liveStart": "2026-08-26T06:53:00.000Z",
+      "liveStartSource": "The 4.10 LIVE build itself — changelist 12519617, built Wed 26 Aug 2026 01:53 CST. Deliberately the BUILD time rather than a go-live announcement: nothing can be earned on a build before it exists, so this is a floor that cannot exclude real live progress, and no more precision is claimed than we have. ⚠️ The CST/CDT offset makes it ±1h; that is immaterial here because the case it separates (Sub's 4.10 PTU run) is four days earlier. If the live event is ever RERUN or the server wipes, move this date — that is the whole mechanism.",
       "note": "Every Orison Relief contract you run adds to YOUR personal progress, not the server's. Check your in-game Journal → Orison Relief for your current %.",
       "contractPrefixes": [
         "ORS_"

@@ -105,8 +105,8 @@ control(
   "C1 count contributions from EVERY environment (Sub's shipped bug)",
   "event-track.test.ts",
   (s) => s.replace(
-    "const contributions = stored.filter((c) => this.sameEnv(c.env));",
-    "const contributions = stored.slice();",
+    "const contributions = stored.filter((c) => this.sameEnv(c.env) && afterStart(c));",
+    "const contributions = stored.filter((c) => afterStart(c));",
   ),
   ["LIVE: the PTU contribution does NOT count", "LIVE: and no tier reads as reached"],
 );
@@ -119,8 +119,8 @@ control(
   "C2 refuse PTU contributions entirely (the fix Sub explicitly did NOT want)",
   "event-track.test.ts",
   (s) => s.replace(
-    "const contributions = stored.filter((c) => this.sameEnv(c.env));",
-    "const contributions = stored.filter((c) => this.sameEnv(c.env) && this.isLiveEnv);",
+    "const contributions = stored.filter((c) => this.sameEnv(c.env) && afterStart(c));",
+    "const contributions = stored.filter((c) => this.sameEnv(c.env) && afterStart(c) && this.isLiveEnv);",
   ),
   ["PTU: the contribution is recorded AND counted while on the PTU"],
 );
@@ -184,9 +184,36 @@ control(
   ["the unreadable field is written back UNCHANGED, not emptied"],
 );
 
+// ── C7 ─────────────────────────────────────────────────────────────────────────────────────────
+// Ignore the cutoff entirely and sum every date, as the shipped build does. This is Sub's bug.
+control(
+  "C7 count contributions from before the event's live start",
+  "event-track.test.ts",
+  (s) => s.replace(
+    "const contributions = stored.filter((c) => this.sameEnv(c.env) && afterStart(c));",
+    "const contributions = stored.filter((c) => this.sameEnv(c.env));",
+  ),
+  ["a contribution from before the event's live start does NOT count"],
+);
+
+// ── C8 ─────────────────────────────────────────────────────────────────────────────────────────
+// Apply the cutoff on EVERY environment instead of the live one only. Subtle and plausible-looking
+// — and it makes a PTU player's widget read zero for the run they are currently doing, which is
+// the constraint `5f512f7` exists to protect. Its own control because C7 cannot see it: with the
+// filter present but unscoped, C7's assertions all stay green.
+control(
+  "C8 apply the live cutoff on the PTU too",
+  "event-track.test.ts",
+  (s) => s.replace(
+    "      if (cutoff == null || !this.isLiveEnv) return true;",
+    "      if (cutoff == null) return true;",
+  ),
+  ["PTU: a pre-cutoff PTU run still counts WHILE ON the PTU"],
+);
+
 console.log(
   failures
     ? `\n🔴 ${failures} control problem(s) — read the lines above; a control that stays green or reddens the wrong assertion is not coverage.`
-    : "\n✅ all 6 controls behaved: each re-injected regression reddened the assertion written to catch it.",
+    : "\n✅ all 8 controls behaved: each re-injected regression reddened the assertion written to catch it.",
 );
 process.exit(failures ? 1 : 0);

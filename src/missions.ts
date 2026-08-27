@@ -282,6 +282,35 @@ export interface EventDef {
   label: string;
   status?: "upcoming" | "current" | "past";
   patch?: string | null;
+  /**
+   * When this event's LIVE run began, ISO-8601. Contributions dated before it do not count.
+   *
+   * 🔴 SUB'S CALL, 2026-08-27, and it is better than what was built for him: *"I don't understand
+   * why you can't just ignore any entries from the dates prior to when this patch was live."*
+   * A single date covers every case that makes an accumulated counter wrong — a PTU run before
+   * go-live, a character wipe, a season restart, an event simply running again — because all of
+   * them have a moment before which prior progress is meaningless. `at` was already on every
+   * contribution, so it needs no schema change and no migration.
+   *
+   * 🔑 **FILTERED AT READ TIME, NEVER BY DELETING.** The records stay on disk, `eventProgress()`
+   * just stops counting them. So a cutoff that turns out to be wrong is a one-line data
+   * correction rather than data somebody has lost, and it needs no confirm step — which is
+   * precisely the objection it answers.
+   *
+   * ⚠️ **It bounds the LIVE counter only** — see `sameEnv`/`liveStart` handling in
+   * `eventProgress`. This is the start of the event's run on the live shard; a test server's
+   * progress is its own accumulation and is NOT cut off by it, or a PTU player would watch the
+   * widget show zero for the very run they are doing. That constraint is `5f512f7`'s and it
+   * still holds.
+   *
+   * 🔑 Absent/null means "count everything", which is the historical behaviour and is safe for
+   * every event that predates this field. See `eventProgress` for why that direction was chosen.
+   */
+  liveStart?: string | null;
+  /** Where `liveStart` came from, in words. Same convention as `totalSource`/`tiersSource`: the
+   *  registry records its own evidence so a later correction can be reasoned about rather than
+   *  guessed at. */
+  liveStartSource?: string;
   /** One-line note telling the player where to read their real % (their in-game Journal). */
   note?: string;
   /**
@@ -395,6 +424,18 @@ export interface EventProgress {
    * to diagnose in the first place — arriving from the opposite direction. Say it instead.
    */
   otherEnv: number;
+  /**
+   * How many stored contributions were not counted because they predate `liveStart` — i.e. they
+   * were earned before this run of the event began.
+   *
+   * 🔑 Reported separately from `otherEnv` because they are different facts and want different
+   * words. "You earned this on a test server" and "you earned this before this event started"
+   * lead a player to different conclusions, and a single "N ignored" leaves them guessing.
+   */
+  beforeStart: number;
+  /** The cutoff in force, so the widget can name the date rather than assert an unexplained
+   *  number. Null when the registry declares none, which means nothing was excluded by date. */
+  liveStart: string | null;
   tiers: {
     pct: number;
     points: number | null;
@@ -3636,11 +3677,43 @@ export class MissionTracker extends EventEmitter {
     const def = this.events.find((e) => e.id === id);
     if (!def) return null;
     const stored = this.eventContributions.get(def.log) ?? [];
-    // 🔴 ONLY THIS ENVIRONMENT'S CONTRIBUTIONS COUNT. Everything else about a contribution is
-    // preserved — it stays on disk and still shows while the player is back on that server — but
-    // a PTU run may not add to a live percentage. See `EventContribution.env` and `sameEnv`.
-    const contributions = stored.filter((c) => this.sameEnv(c.env));
-    const otherEnv = stored.length - contributions.length;
+    // 🔴 TWO FILTERS, EACH DOING A JOB THE OTHER CANNOT — and both filter at READ time, so
+    // nothing is ever deleted and a wrong rule is a one-line correction rather than lost data.
+    //
+    //  1. `liveStart` (Sub's call) — a contribution earned before this event's live run began is
+    //     not part of it. One date covers a PTU run before go-live, a wipe, a season restart and
+    //     a rerun, because each has a moment before which prior progress is meaningless.
+    //  2. `sameEnv` — a contribution earned on ANOTHER server right now is not part of this one.
+    //
+    // 🔑 THE DATE ALONE IS NOT ENOUGH, and the case is concrete rather than theoretical: PTU and
+    // LIVE run CONCURRENTLY. Once 4.11 PTU opens while the 4.10 live event is still running, a
+    // PTU contribution is dated AFTER `liveStart` and a date-only rule would count it toward the
+    // live total — Sub's original complaint, shifted a few weeks later. Neither is redundant.
+    //
+    // 🔑 AND THE CUTOFF APPLIES TO THE LIVE COUNTER ONLY. `liveStart` is the start of the LIVE
+    // run; a test server's progress is its own accumulation. Applying it everywhere would hide a
+    // PTU player's progress for the very run they are doing — the widget would read zero while
+    // they played — and keeping that visible is `5f512f7`'s standing constraint.
+    const startMs = def.liveStart ? Date.parse(def.liveStart) : NaN;
+    const cutoff = Number.isFinite(startMs) ? startMs : null;
+    const afterStart = (c: EventContribution): boolean => {
+      // No cutoff declared => count everything. Chosen deliberately over counting nothing: an
+      // event with no start date is every event that predates this field (and `return-of-
+      // xenothreat`), and silently rendering real progress as zero is a worse failure than
+      // carrying some stale progress — the app cannot tell the two apart, but the player can,
+      // and only one of those states gives them anything to go on.
+      if (cutoff == null || !this.isLiveEnv) return true;
+      const at = Date.parse(c.at);
+      // An unparseable stamp is NOT evidence the contribution is stale. Keep it, same direction
+      // as every other "we cannot tell" branch here.
+      return !Number.isFinite(at) || at >= cutoff;
+    };
+    const contributions = stored.filter((c) => this.sameEnv(c.env) && afterStart(c));
+    // Reported separately because they are different facts about the player's data, and a single
+    // "N ignored" would leave them guessing which. Counted over the SAME predicate each excludes
+    // on, so the two can overlap without either being overstated.
+    const otherEnv = stored.filter((c) => !this.sameEnv(c.env)).length;
+    const beforeStart = stored.filter((c) => this.sameEnv(c.env) && !afterStart(c)).length;
     let points = 0;
     let unpriced = 0;
     for (const c of contributions) {
@@ -3689,6 +3762,8 @@ export class MissionTracker extends EventEmitter {
       unpriced,
       contributions: contributions.slice().sort((a, b) => b.at.localeCompare(a.at)),
       otherEnv,
+      beforeStart,
+      liveStart: def.liveStart ?? null,
       tiers,
       ...this.eventContractCoverage(def),
       rewardsUnknown: rewards.length === 0,

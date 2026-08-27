@@ -873,6 +873,18 @@
     // fix. A player who tracked an event on the PTU and then patches to live watches the counter
     // fall to zero, and "your points vanished" with nothing on screen is the same silent failure
     // arriving from the opposite direction.
+    if (ev.beforeStart > 0) {
+      // Names the DATE rather than just a count. Sub noticed 15% because he was watching the
+      // number; a number that silently changes is the same problem in reverse, and "12 ignored"
+      // with no reason is barely better than no message at all.
+      const d = ev.liveStart ? new Date(ev.liveStart) : null;
+      const when = d && !isNaN(d.getTime())
+        ? d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+        : "this event started";
+      meta.push('<span class="evwarn">' + ev.beforeStart + " completion" + (ev.beforeStart === 1 ? "" : "s") +
+        " from before " + when + " " + (ev.beforeStart === 1 ? "is" : "are") + " not counted</span>" +
+        " — they were earned before this run of the event began. They are kept, not deleted.");
+    }
     if (ev.otherEnv > 0) {
       meta.push('<span class="evwarn">' + ev.otherEnv + " completion" + (ev.otherEnv === 1 ? "" : "s") +
         " from a different game environment " + (ev.otherEnv === 1 ? "is" : "are") + " not counted here</span>" +
