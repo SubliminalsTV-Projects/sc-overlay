@@ -50,6 +50,21 @@ function tracker(): MissionTracker {
   return t as unknown as MissionTracker;
 }
 
+// ── The guard that would have prevented all of this ──────────────────────────
+{
+  // 🔴 The exact call the first draft of this file made. It typechecks only from JS — `tsx` runs
+  // every suite here, so `tsc` was never going to catch it — and it silently resolved stateDir to
+  // the live %APPDATA% profile. It must now throw rather than quietly write somewhere real.
+  let threw = "";
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    new (MissionTracker as any)(dir);
+  } catch (e) { threw = String((e as Error).message); }
+  check("a positional path argument is REFUSED, not silently pointed at the live profile",
+    threw.includes("options object"), threw || "(did not throw)");
+  check("...and the message names the actual danger", threw.includes("APPDATA"), threw);
+}
+
 // ── The band, and interpolating inside it ────────────────────────────────────
 {
   const t = tracker();

@@ -1441,6 +1441,26 @@ export class MissionTracker extends EventEmitter {
 
   constructor(opts: MissionTrackerOptions) {
     super();
+    /**
+     * 🔴 A POSITIONAL ARGUMENT IS REFUSED, AND THIS GUARD IS NOT PARANOIA — it is here because
+     * `new MissionTracker(dir)` with a plain string cost a real player their reputation on
+     * 2026-08-26. A string has no `.stateDir`, so the fallback below resolves to
+     * `%APPDATA%/sc-blueprint-tracker` — the LIVE profile — and the caller, which believed it was
+     * working in a temp directory, loaded and rewrote it. It typechecks only from JavaScript, so
+     * `tsc` cannot catch it; every test in this repo runs through `tsx`, which is exactly where it
+     * is not caught.
+     *
+     * 🔑 The failure was silent in the worst way: it did not crash, it did not warn, and it
+     * produced a perfectly valid state file. Nothing distinguishes "wrote my scratch state" from
+     * "rewrote the player's" except the path, so the path is what gets checked.
+     */
+    if (typeof opts !== "object" || opts === null) {
+      throw new TypeError(
+        "MissionTracker takes an options object, not a path. " +
+        "A bare string silently resolves stateDir to the LIVE %APPDATA% profile — " +
+        "pass { dataDir, stateDir } explicitly.",
+      );
+    }
     this.dataDir = opts.dataDir;
     this.detail = new BlueprintDetailStore(opts.dataDir);
     this.phrasebook = new Phrasebook(opts.dataDir);

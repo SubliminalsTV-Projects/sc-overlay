@@ -670,15 +670,20 @@
 
   <div class="card">
     <div class="label">Screen reading (OCR)</div>
-    <div class="hint" style="margin-top:0">Uses Windows' built-in text recognition, only while Star Citizen is focused. These two are for you — nothing leaves your PC.</div>
+    <div class="hint" style="margin-top:0">Uses Windows' built-in text recognition, only while Star Citizen is focused. These are for you &mdash; nothing leaves your PC.</div>
     <div class="setrow">
       <label class="opt"><input type="checkbox" id="missionOcr" /> Detect the mission I'm tracking in-game</label>
       <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">Reads the tracked-mission panel so the overlay knows which mission you've actually selected — ground truth the game log can't give. No account needed.</span></span>
     </div>
     <div class="setrow">
       <label class="opt"><input type="checkbox" id="fabClaim" /> Offer to add blueprints the fabricator shows that I'm missing</label>
-      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">The game only writes a blueprint to your log the moment you receive it, and those logs get deleted over time — so anything you earned before installing the app can never be detected. The Fabrication Kiosk only lists blueprints you own, so when it shows one we have no record of, you get 30 seconds to add it. You confirm each one, so check the name matches what's on your screen.</span></span>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">The game only writes a blueprint to your log the moment you receive it, and those logs get deleted over time &mdash; so anything you earned before installing the app can never be detected. The Fabrication Kiosk only lists blueprints you own, so when it shows one we have no record of, you get 30 seconds to add it. You confirm each one, so check the name matches what's on your screen.</span></span>
     </div>
+    <div class="setrow">
+      <label class="opt"><input type="checkbox" id="repScan" /> Sync my reputation from the in-game REP page</label>
+      <span class="info" tabindex="0" role="button" aria-label="More info">i<span class="tip">The game never tells the app your reputation, so it is added up from missions the app watched you finish &mdash; which drifts low whenever the app was closed. Open mobiGlas &rarr; REP with this on and the app reads the rank you are actually at and corrects itself, in whichever direction it was wrong. Nothing leaves your PC. The page is read only while it is on screen; if it is scrolled so a rank is cut off, the app says so rather than guessing.</span></span>
+    </div>
+    <div class="hint" id="repScanState" hidden></div>
   </div>
 
   <div class="card">
@@ -923,6 +928,7 @@
     document.getElementById("syncEnabled").checked = !!cfg.syncEnabled;
     document.getElementById("fabCapture").checked = !!cfg.fabCapture;
     document.getElementById("fabClaim").checked = !!cfg.fabClaim;
+    document.getElementById("repScan").checked = !!cfg.repScan;
     document.getElementById("missionOcr").checked = !!cfg.missionOcr;
     document.getElementById("scFeedShowSeconds").value = String(cfg.scFeedShowSeconds ?? 12);
     document.getElementById("unlockAlertShowSeconds").value = String(cfg.unlockAlertShowSeconds ?? 8);
@@ -991,6 +997,7 @@
       syncEnabled: document.getElementById("syncEnabled").checked,
       fabCapture: document.getElementById("fabCapture").checked,
       fabClaim: document.getElementById("fabClaim").checked,
+      repScan: document.getElementById("repScan").checked,
       missionOcr: document.getElementById("missionOcr").checked,
       scFeedShowSeconds: showSecs("scFeedShowSeconds", 12),
       unlockAlertShowSeconds: showSecs("unlockAlertShowSeconds", 8),
@@ -1486,7 +1493,7 @@
   // Auto-save the plain checkboxes the instant they're toggled, so a change can never be lost by
   // closing/scrolling away without clicking Save. (Theme, hotkeys, hold-to-interact and the file
   // pickers already save on change; the sync token stays manual so a half-typed token isn't sent.)
-  ["syncEnabled", "shareLogs", "fabCapture", "fabClaim", "missionOcr", "hwAccel", "amdCompat", "revertThemeOnFoot"]
+  ["syncEnabled", "shareLogs", "fabCapture", "fabClaim", "missionOcr", "repScan", "hwAccel", "amdCompat", "revertThemeOnFoot"]
     .forEach((id) => { const el = document.getElementById(id); if (el) el.addEventListener("change", save); });
   // The sync field shows the truncated saved key; clear it on focus so a new token pastes
   // cleanly, and restore the preview on blur if nothing was typed.
@@ -1501,6 +1508,7 @@
       document.getElementById("missionOcr").checked = !!c.missionOcr;
       document.getElementById("fabCapture").checked = !!c.fabCapture;
       document.getElementById("fabClaim").checked = !!c.fabClaim;
+      document.getElementById("repScan").checked = !!c.repScan;
     } catch { /* ignore */ }
   });
   loadCfg();
@@ -1716,6 +1724,94 @@
       + "graphics process — not how busy your GPU is.";
     out.appendChild(note);
   });
+</script>
+<script>
+// ── "Sync my reputation from the in-game REP page": what the last scan did ────────────────
+//
+// 🔑 A screen reader that is armed and a screen reader that is WORKING look identical from a
+// checkbox, and that is the exact bug the payout scanner's dashboard was built to fix ("I'm kind
+// of going in blind"). This is the cheap version of the same idea: one line under the switch that
+// says what the last read of the page actually did, including when it declined.
+//
+// Reads `prefs.repScanLast` off /api/missions — the same field the sidecar sets in one place, so
+// "it synced" and "it refused, here is why" can never be reported by two things that disagree.
+(function () {
+  var el = document.getElementById("repScanState");
+  var box = document.getElementById("repScan");
+  if (!el || !box) return;
+  var timer = null;
+
+  // Spelled out rather than shown as a code. Each one is a thing the player can act on.
+  var WHY = {
+    "cards-incomplete": "the rank list is scrolled — bring every rank into view and it will read",
+    "scope-ambiguous": "could not tell which reputation track this page is showing",
+    "no-scope": "this faction's track isn't in the app's data yet",
+    "no-giver": "read the page, but this faction isn't one the app tracks missions for",
+    "not-live": "read your page, but this is the PTU — nothing was saved",
+    "bars-unreadable": "could not read the progress bars on this page",
+    "no-rank-reached": "no rank on this page is filled in yet",
+    "rank-not-contiguous": "the progress bars didn't make sense — nothing was saved",
+    "reader-failed": "something went wrong reading the page",
+  };
+
+  function ago(ms) {
+    var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 60) return s + "s ago";
+    if (s < 3600) return Math.round(s / 60) + "m ago";
+    return Math.round(s / 3600) + "h ago";
+  }
+
+  function paint(last) {
+    if (!last) {
+      el.textContent = "Waiting — open mobiGlas → REP in game and it will read the page.";
+      return;
+    }
+    if (last.ok) {
+      var moved = last.before === last.after
+        ? "already matched"
+        : (last.outcome === "raised" ? "corrected up" : "corrected down")
+          + " from " + last.before.toLocaleString() + " to " + last.after.toLocaleString();
+      el.textContent = "Last read " + ago(last.at) + ": " + (last.giver || "that faction")
+        + " — " + moved + (last.estimated ? " (estimated from the progress bar)" : "") + ".";
+      return;
+    }
+    // 🔑 The PTU case is NOT an error and must not read like one: the page was understood
+    // perfectly and the refusal is deliberate. It gets the rank it read, so the player can see
+    // the feature working even where it will not write anything.
+    if (last.refusal === "not-live") {
+      el.textContent = "Last read " + ago(last.at) + ": read your page correctly, but this is the "
+        + "PTU — test-server reputation is never saved over your live standing.";
+      return;
+    }
+    el.textContent = "Last read " + ago(last.at) + ": not saved — "
+      + (WHY[last.refusal] || last.refusal) + ".";
+  }
+
+  // 🔴 THE POLL DECIDES WHETHER TO SHOW ITSELF — it does not wait to be told the mode is on.
+  // The first version armed off `box.checked` behind a setTimeout(…, 0), which is not "after the
+  // page has loaded its config": load() is async, so the timeout fires while the box is still
+  // unchecked and the line never appears at all. Same shape as the canvas's widget-visibility
+  // race — anything that depends on WHEN somebody else sets state should ask instead, and the
+  // server's own `prefs.repScan` is the answer that cannot be early.
+  async function poll() {
+    try {
+      var j = await (await fetch("/api/missions")).json();
+      var p = (j && j.prefs) || {};
+      el.hidden = !p.repScan;
+      if (p.repScan) paint(p.repScanLast);
+    } catch (e) { /* the sidecar is restarting; the next tick picks it up */ }
+  }
+  function start() { if (!timer) { poll(); timer = setInterval(poll, 3000); } }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+  // Ticking the box shows the line on the next tick anyway; this just makes it feel immediate.
+  box.addEventListener("change", poll);
+  start();
+  // Polling a page nobody is looking at is the idle-repaint mistake in another costume.
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) stop(); else start();
+  });
+})();
 </script>
 </body>
 </html>
