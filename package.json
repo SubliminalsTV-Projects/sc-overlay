@@ -97,6 +97,7 @@
     "probe:reppage": "tsx tools/rep-probe.mts",
     "test:repscan": "tsx src/rep-scan-apply.test.ts",
     "test:staterecovery": "tsx src/state-recovery.test.ts",
+    "test:quartermaster": "tsx src/quartermaster.test.ts",
     "control:orisonfix": "node tools/control-orisonfix.mjs"
   },
   "dependencies": {

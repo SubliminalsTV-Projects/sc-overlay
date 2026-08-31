@@ -1,943 +1,968 @@
 {
-  "0.1.46": {
-    "date": "2026-08-26T15:03:52Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "Verse Finder: where can I buy this, and for how much",
-        "text": "Type the name of an item, a ship or a commodity and the widget tells you who sells it, what it costs, and how far away they are. Results are ordered by how close each shop is to where you are standing — not by price — because a shop two systems away being 40 aUEC cheaper is not an answer.\n\nEvery price says how old the reading is, because most of them are somebody's observation rather than a live feed. A ship shows its hire price and its sale price as two separate figures; merging them would print a range from a 28,000 aUEC rental to a 1,100,000 aUEC purchase. If nothing comes back, it says which kind of nothing — a name we do not know, or a name we know with nowhere selling it."
-      },
-      {
-        "kind": "new",
-        "label": "Commodity trading — and it is EXPERIMENTAL",
-        "text": "The Trade side of the Hauling widget reads your buys and sells out of the game log and turns them into three things: a Ledger of what you actually bought and sold and what it made, a route finder for what is worth running right now, and a Commodities funnel that walks you from what to buy, to where to buy it, to where to sell it.\n\nSame warning as Hauling last release, and it is not a formality: this is new, the game does not state every number it needs, and it will be wrong sometimes. Check it against a kiosk before you trust a figure. It only ever READS your log — it cannot buy, sell or touch anything in game."
-      },
-      {
-        "kind": "new",
-        "label": "Your receipts are prices, and so are everybody else's",
-        "text": "When you buy something at a shop, the app now reads the price off your own log and shows it beside the survey data, dated to the minute you were standing there. If you have log sharing turned on, other people's confirmations arrive the same way.\n\nWhat this actually fixes is staleness rather than accuracy. Shop prices barely move — the vast majority were never once seen to change in a month — but the public tables run a couple of months behind, because nobody has been back to look. A row reading \"7 aUEC, 25 days ago\" and a row reading \"7 aUEC, 4 hours ago\" are the same price and a completely different amount of confidence. One list, sorted by distance, with the freshest reading winning."
-      },
-      {
-        "kind": "new",
-        "label": "The app knows where you are",
-        "text": "Opening a kiosk, docking, or pulling up your inventory tells the app where you are standing, so anything that depends on distance — the Verse Finder's ordering, hauling route times, which shop is nearest — has something real to work from instead of a guess. Every reading says how old it is and how much to trust it, and when it does not know, it says so rather than picking the last place it saw."
-      },
-      {
-        "kind": "new",
-        "label": "Event Tracker: Siege of Orison, and events that update themselves",
-        "text": "Live events get their own tab, with the point tiers and what each one unlocks. The event data no longer ships baked into the app — it is fetched, so a corrected reward reaches you without waiting for a release.\n\nRewards nobody has confirmed yet are shown, marked, and never counted as fact: dim, italic, prefixed with a question mark and tagged UNCONFIRMED. Every rung has a \"Wrong?\" button. If you know what a tier actually gives, tell it and it reaches everyone else. The app will not tell you how many missions a tier is, because only four of the thirteen Orison contracts have a measured point value and inventing the other nine would be making it up."
-      },
-      {
-        "kind": "new",
-        "label": "It tells you when you are on a test server",
-        "text": "Running PTU used to be silent and confusing: blueprints simply never appeared, because test-server progress is deliberately kept out of your real collection. A badge now says so, and hovering explains that everything else still works normally. Missions, hauling, events and the picker all run on PTU exactly as they do on live — it is only blueprints that are held back."
-      },
-      {
-        "kind": "improved",
-        "label": "Shared logs go back a year, and the live one is no longer sent",
-        "text": "If you share logs, the app used to only offer sessions from the current game patch — about five weeks — while your logbackups folder goes back years. It now offers a year of finished sessions, dated from the log's own first line rather than the file's timestamp, so copying or restoring the folder cannot make an old session look like today's.\n\nThe live in-progress log is no longer uploaded at all. It was re-sent every twenty minutes as it grew, which filled the slots with successive copies of one session, and a finished session lands within the hour anyway."
-      },
-      {
-        "kind": "improved",
-        "label": "Twitch chat emotes go through the app",
-        "text": "The chat widget used to ask 7TV, BTTV and FrankerFaceZ for emotes directly. When one of them went down — which happened — every load put errors on the console for everyone, whether or not you use the widget. Those requests now go through the app itself, so an outage at somebody else's server costs you a few emotes and nothing else."
-      },
-      {
-        "kind": "improved",
-        "label": "Hauling picks up commodities",
-        "text": "A commodity run can go into the Route tab alongside your cargo contracts, planned as one trip rather than two. The board uses your ship's real hold rather than a number you have to type, and you can still override it. Origin picker trimmed to the places you actually named, and the price table says where its figures came from and how long ago."
-      },
-      {
-        "kind": "fixed",
-        "label": "A refused sale is no longer counted as profit",
-        "text": "The game logs a sale request the same way whether the server accepts it or refuses it. The app was booking both. One real session where a terminal errored twice and the sale was retried credited 435,408 aUEC of profit that never happened, at margins that should have been the tell.\n\nA sale is now held briefly and only counted if no refusal arrives. If you have been using the Ledger and the numbers look too good, the fix cannot repair a journal already written — delete it and let it rebuild."
-      },
-      {
-        "kind": "fixed",
-        "label": "PTU blueprints no longer leak into your collection",
-        "text": "Progress from a test server was correctly refused while the app was watching live — but not when it replayed an older session from your backups on startup. That path never checked which environment the log came from, so a PTU session read back as real progress and was synced to the site as real progress. One replay on one machine turned 0 contributions into 2 and 12,000 points that were never earned."
-      },
-      {
-        "kind": "fixed",
-        "label": "The Verse Finder was hiding shops outside your system",
-        "text": "Far-away shops sorted last, correctly — and then got cut off by the row limit before they were ever drawn, so an item sold across the verse looked like it was sold only where you happened to be standing. Each area now keeps its best row past the cap."
-      },
-      {
-        "kind": "fixed",
-        "label": "Sell prices are no longer invented",
-        "text": "A commodity sale states the money and the crate size, and never how full the crate was — so a per-SCU price worked out from it was a guess running about a fifth low. The Ledger keeps the money, which is real, and simply does not show a per-SCU figure it cannot know. Hand-mined gems sold from your inventory are the common case and were the worst affected."
-      },
-      {
-        "kind": "fixed",
-        "label": "aUEC per hour works again",
-        "text": "Contracts were being counted twice in the per-hour figures, and the number had quietly stopped meaning anything."
-      },
-      {
-        "kind": "fixed",
-        "label": "The mission giver stopped disappearing",
-        "text": "A contract that paid no reputation lost its whole faction section — including the name of who you were working for. Every Siege of Orison contract pays event points instead of reputation, so the entire event ran with its giver invisible."
-      },
-      {
-        "kind": "improved",
-        "label": "4.10 PTU data is bundled",
-        "text": "Missions, blueprints and items from changelist 12479687, so the app has something to read against if you go and play the test build. It switches back to the live pools on its own when you go back to live."
-      }
-    ]
-  },
-  "0.1.45": {
-    "date": "2026-08-19T13:21:03Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "Hauling: a whole widget for cargo runs — and it is EXPERIMENTAL",
-        "text": "Accept some cargo contracts and the Hauling widget works out what to fly, in what order, and what to load first. It reads your board off the game log: which contracts you have, how much each moves, where every pickup and drop-off is, and what is already in your hold. Three tabs — Rank (what is worth taking), Route (where to go, in order) and Stow (what to load first, and how to recognise it at the freight elevator).\n\nIt is marked EXPERIMENTAL on purpose. It is new, it is the most ambitious thing in the app, and it will get things wrong — especially any figure the game never states out loud. Check it against your mobiGlas before you trust it, and tell Sub what it got wrong. It only ever READS your log: it cannot touch your contracts or your cargo."
-      },
-      {
-        "kind": "new",
-        "label": "It knows how long the flying actually takes",
-        "text": "Every per-hour figure now counts the travel, not just the loading. The times came from measuring real runs out of the logs rather than guessing: about six minutes between a station and a surface outpost on the same body, about seven to another planet, and roughly three minutes for a jump-gate crossing whichever hole you take.\n\nThat one change reordered the board. A contract with fat boxes and few stops can be worth far more an hour than a fiddly one that looks better per box, and until now the app could not see the difference — it priced flying at nothing."
-      },
-      {
-        "kind": "new",
-        "label": "Rank leads, and it ranks by what an hour pays",
-        "text": "Rank is the first tab, because it is the one you read BEFORE you have a board. Contracts are ordered by reputation or aUEC per HOUR, with the per-box figure kept underneath — per box is what the work feels like in your hands, per hour is the only number you can hold against an evening. Click any row to open that contract on subliminal.gg."
-      },
-      {
-        "kind": "new",
-        "label": "It will not recommend a contract your ship cannot carry",
-        "text": "A container cannot be split, so a hold that takes 4 SCU can never accept an 8 SCU box no matter how much room is free. The board now checks each contract's real box size against your ship's cargo grid and hides the ones that cannot fit at all. If it does not know what you are flying it says so and asks, rather than guessing."
-      },
-      {
-        "kind": "new",
-        "label": "Chat: your tab now names the server you are actually on",
-        "text": "The middle chat tab used to say \"US East 1B\" — which is every shard in that region, not the people you could actually meet. It now reads your real shard, like \"US East 1B 140\", and the region-wide room is gone. Alongside it, the DGS tab is the players on the same game server as you right now, and Global is everyone using the app whether they are in game or not."
-      },
-      {
-        "kind": "fixed",
-        "label": "Your earnings rate stops counting the time you were away",
-        "text": "Leave the app open overnight and the per-hour figures used to collapse, because the clock ran wall-to-wall from your first contract. It now counts only time with a contract open and no long idle gap, and there is a reset on the earnings bar if you want to start the measurement again from now."
-      },
-      {
-        "kind": "fixed",
-        "label": "Dragging one widget no longer lights up all the others",
-        "text": "Dragging a widget revealed every other widget's drag bar as a drop target. That is still true while you are arranging — stacking widgets is what those bars are for — but notification widgets like SC Feed and Unlock Alerts are left alone, since hiding one behind another defeats the point of a notification."
-      }
-    ]
-  },
-  "0.1.44": {
-    "date": "2026-08-16T05:46:00Z",
-    "notes": [
-      {
-        "kind": "new",
-        "text": "There is a magnifying glass in the top right of the Mission & BP Tracker. Type part of a contract's name, pick it out of the results, and you get the same brief the panel shows for a mission you are actually running — the pool, what it pays, who gives it, how long it takes. You do not have to have accepted it, and you do not have to alt-tab to the website to look something up mid-session. Press Escape or the ✕ to close it and hand the keyboard back to the game.",
-        "label": "Look up any contract without leaving the game"
-      },
-      {
-        "kind": "new",
-        "text": "The tracker used to sit empty until you accepted something. Now, when you are between contracts, it shows you the blueprint pools you are closest to finishing — with what each one pays, how long a run takes, and the aUEC per hour that works out to — plus where you stand with your mission givers and the blueprints and missions you saw most recently. Standing is written as the number of contracts to your next rank rather than a raw reputation figure, because \"5,300 rep to Prestige 2\" does not tell you whether that is an evening or a month, and \"about 27 contracts\" does. The mission picker has an Idle option now too, so you can get back to this screen once you have accepted something.",
-        "label": "The tracker has something to show you between contracts"
-      },
-      {
-        "kind": "new",
-        "text": "The Event Tracker keeps the reward ladder exactly as it was and adds, underneath it, the quickest way to actually reach your next rank. Three contracts ranked by reputation per hour, each with its run length, what it pays, and how many runs and how much total time it would take to close the gap you are on. It is scoped to the next rank rather than the whole track on purpose — the best rep per hour in the abstract is trivia, but \"this one, seven runs, about an hour and ten\" is a plan. The spread is usually much wider than people expect: on one real track the top row was four times the rate of the bottom one.",
-        "label": "The fastest route to your next rank, worked out for you"
-      },
-      {
-        "kind": "new",
-        "text": "Mission info now carries how long a contract actually takes to run, how hard it is, whether it can be retried if you fail it, and how long after finishing before you are allowed to take it again. That last one is the wait most people care about and it is not the number the game shows you — a contract can run 12 minutes and still lock you out for 45 after you hand it in. The completion card picked up the run length too. This comes from the same per-contract dataset the website has been using for weeks, trimmed down to only what the app draws so it costs 0.38 MB rather than the full 5.95 MB.",
-        "label": "How long a contract takes, how hard it is, and when you can retake it"
-      },
-      {
-        "kind": "new",
-        "text": "Every widget can have a hotkey now, not just the four that happened to have one. There are no defaults and there deliberately never will be — eleven preset key combinations would collide with each other, with Star Citizen, and with whatever you have already bound. Every row starts out reading \"None — click to set\", so nothing changes until you decide it should. Any hotkeys you had set before still work exactly as they did.",
-        "label": "A hotkey for any widget you want one for"
-      },
-      {
-        "kind": "improved",
-        "text": "The after-action card used to print whatever payout figure it had, so a calculated estimate looked exactly like a reward the game actually handed you. Now the figure is labelled with where it came from, ranked the same way the website ranks it: a payout logged live reads \"aUEC\", one reported by other players reads \"reported\", one straight out of the game files reads \"payout\", and a modelled guess reads \"~N estimated\". Estimates are also no longer added into your earnings totals — roughly 2,000 contracts have modelled payouts, and counting those as money made the totals fiction.",
-        "label": "The report card says where a payout figure came from"
-      },
-      {
-        "kind": "improved",
-        "text": "The circled i beside a figure used to only respond to hovering, which meant clicking it — the obvious thing to do — appeared to do nothing at all. It now opens on a click as well. Hovering still works exactly as before.",
-        "label": "The info buttons open when you click them"
-      },
-      {
-        "kind": "improved",
-        "text": "Restarting the app used to destroy the log covering whatever just went wrong, which is unfortunate given that restarting is the first thing anyone tries. One previous log is now kept. On top of that, errors in the overlay's own interface are recorded where before they vanished silently, and Copy diagnostics now carries that recent history and the tail of the log along with it — so one paste in Discord has what we need instead of three rounds of questions. Sync and Twitch tokens are stripped out by value before anything is copied. There is an Open logs folder button next to it.",
-        "label": "When something goes wrong, one paste now tells us what"
-      },
-      {
-        "kind": "improved",
-        "text": "The row of facts on a mission is in a deliberate order now rather than whatever order the code happened to build them in. One consequence worth mentioning: Reputation and Rank moved out of the faction group and into the main row, so that group now shows the faction and your standing bar only.",
-        "label": "The mission facts are in a sensible order"
-      },
-      {
-        "kind": "fixed",
-        "text": "If Star Citizen was not running in English, or you use one of the community language packs, the app was recording few or none of your blueprints — and nothing on screen said so. Your pools just stayed dark while you ground them out. The game writes its notifications in whatever language you play in, so the app was reading text it did not recognise: a German client resolved 0 of 475 pool blueprints, and one pack renamed things in a way that missed all 166 of its entries. Pack users had it worst, recording no blueprint receipts at all. The app now reads your game's own language file and translates back to the names it knows, which works for every language and every pack, including ones that do not exist yet. It only ever reads that file. Measured after the fix: German 475 of 475, and all three packs at 100%.",
-        "label": "Blueprints were never recorded if you did not play in English"
-      },
-      {
-        "kind": "fixed",
-        "text": "Accepting certain contracts made your standing with that faction disappear from the panel entirely, which looked like the app had lost your reputation. It had not — the standing was tracked correctly the whole time. Some contracts pay into a reputation track the app does not rank, and rather than falling back to your overall standing with that giver it showed nothing at all. This is not rare: 384 of 4,075 contracts pay only unranked tracks, and for Headhunters it is 88 of them, which is most of their board.",
-        "label": "Your standing no longer vanishes on certain contracts"
-      },
-      {
-        "kind": "fixed",
-        "text": "Hiding the Twitch Chat or Web Page widget while you were typing in it left the overlay holding the keyboard with nothing on screen to explain it — the overlay would eat clicks on every monitor until you restarted. Both widgets now release the keyboard when they are hidden, the way the notepad and chat already did.",
-        "label": "Hiding a widget mid-typing no longer eats your clicks"
-      },
-      {
-        "kind": "fixed",
-        "text": "If your language file could not identify a blueprint, the pool simply stayed dark, which reads as the app being broken rather than as a name it does not know. The tracker now says so, and shows the exact text the game wrote so you can see why. Where a modified language file is involved there is a Recalibrate button that re-reads it and goes back over blueprints already recorded under names it could not place, so it fixes the pool you are looking at rather than only future receipts. Settings has a card showing which language file is in use and how many names it resolved.",
-        "label": "The tracker tells you when it cannot identify a blueprint"
-      }
-    ]
-  },
-  "0.1.43": {
-    "date": "2026-08-14T07:32:45Z",
-    "notes": [
-      {
-        "kind": "fixed",
-        "text": "If you installed the app rather than running it from source, the better of the two text-reading engines never started at all — so the Mining Scanner read nothing, and the contract scanners had no engine behind them. The engine's files were sealed inside the app package where it could not open them. Everyone who installed the app has had this since the feature shipped, which is why \"the scanner does nothing\" was never reproducible for us. It now loads from a place it can actually reach, and if it ever fails again the app says so out loud instead of going quiet. Found and traced by StrifeCo, who dug out the underlying error himself — thank you.",
-        "label": "The Mining Scanner and contract scanners actually work now"
-      },
-      {
-        "kind": "fixed",
-        "text": "If a drag ended anywhere outside the thing you were dragging — releasing the mouse off the edge of a calibration box, or alt-tabbing mid-drag — the overlay could get stuck holding the mouse. While stuck it swallowed every click AND every keypress on every monitor, so the game got nothing. That is why tapping your interact key to get out appeared to do nothing: Star Citizen never received the key. Releasing now registers wherever it happens, and there is a backstop that force-releases a stuck grab after 30 seconds, because previously nothing could recover it but restarting the app.",
-        "label": "The overlay can no longer get stuck eating your clicks and keys"
-      },
-      {
-        "kind": "new",
-        "text": "Missions now show what they pay. For the roughly half of contracts where the game works the reward out when you accept — the number genuinely is not in the game files — the app shows a calculated estimate marked with a tilde, like ~39,750. Hover the circled i beside any figure and it tells you exactly where that number came from: straight from the game files, reported by players who ran it, or estimated. An estimate is right about three in four times and can miss in either direction, so it is always marked as one and a single real report replaces it.",
-        "label": "What a contract pays — and how much to trust the number"
-      },
-      {
-        "kind": "new",
-        "text": "Point the app at your mobiGlas contract board and it reads the offers list — every contract, its payout and its fees — and contributes those numbers so everyone gets better payout data. Turn it on in Settings, then drag the box over the offers list to line it up. It runs only while you have it armed, and there is a live page showing what it read so you can see it working rather than trusting a counter.",
-        "label": "Contract board scanner"
-      },
-      {
-        "kind": "new",
-        "text": "The mission panel now leads with what the contract actually is: what it pays, the faction behind it, the rank it wants, whether it is illegal, how hard players found it and whether anyone soloed it. It reads as chips rather than a wall of label-and-value rows, difficulty is a meter you can read at a glance, and reputation is split so \"+200 / +50\" finally says Reputation +200 and Affinity +50. Anything sourced from players carries a dashed outline, so you can always tell what came from the game and what came from us.",
-        "label": "Mission info, rebuilt"
-      },
-      {
-        "kind": "fixed",
-        "text": "Two contracts with the same name can draw from completely different blueprint pools, and the tracker used to merge them — so it could show you a pool of 18 with 4 still to win when the one you were actually running was finished and could never drop again. It now separates them using where the contract sends you and which region it routes through, and when it genuinely cannot tell it says so instead of guessing. The panel also now names the pools you cannot get from where you are.",
-        "label": "Same-name contracts no longer show you a pool that does not exist"
-      },
-      {
-        "kind": "fixed",
-        "text": "If you launched the app while already playing, anything the game logged in the moment between the app's first read and the watcher starting was processed by neither — and a missed accept means the tracker never learns the contract properly, then guesses it from the title on screen and shows a merged, permanently incomplete pool. The handover is now exact to the byte. This one was invisible and got blamed on whatever had changed most recently.",
-        "label": "Missions accepted as the app starts are no longer missed"
-      },
-      {
-        "kind": "new",
-        "text": "Every contract you finish is now recorded, so your completion count is a real total rather than whatever could be scraped back out of your logs. Past completions still in your logs are folded in once, automatically.",
-        "label": "Your finished contracts are counted properly"
-      },
-      {
-        "kind": "improved",
-        "text": "Each widget now has separate sliders for how visible its panel is and how visible its text is, so you can fade a panel almost away and still read what is on it — which one slider could never do. There is a Full on hover switch per widget too. The sliders no longer lag behind your mouse or drag each other around.",
-        "label": "Fade the panel and the text separately"
-      },
-      {
-        "kind": "improved",
-        "text": "A single small animation was quietly redrawing the tracker sixty times a second even when nothing was happening, which on an always-on-top window means the desktop recomposites over your game every frame, forever. It now redraws about three times a second and only when there is something to say. If you turned GPU acceleration off because the overlay cost you frames, it is worth trying again.",
-        "label": "The overlay stops repainting when nothing is happening"
-      },
-      {
-        "kind": "improved",
-        "text": "The Mining Scanner's rock table is now generated from the game's own data rather than typed by hand, it knows whether you are planet-side or in space and stops calling harvestable plants debris, and it will not announce a number that cannot be a real contact. Loot Split now pulls a finished refinery job straight into a split, sums same-ore imports, and autocompletes ore names so nobody has to spell Hephaestanite.",
-        "label": "Mining Scanner and Loot Split"
-      },
-      {
-        "kind": "improved",
-        "text": "Chat gains reports and pins, a per-channel settings cog, a friends rail and party listings you can advertise and apply to. Moderation is now something you can actually read rather than a silent filter, and it will never trip over a mission word. You can also hide where you are — and hiding means the app does not send it, not that somebody else agrees not to show it.",
-        "label": "Chat: pins, reports, party listings and moderation"
-      },
-      {
-        "kind": "improved",
-        "text": "The mission's name is now the picker — click it to choose which contract to follow — with the owned count and tracking mode beside it. Fonts and colour emoji ship with the app instead of being fetched from Google every time a widget loads, which also fixes o7 showing as a box. Settings puts setup first and sends two options home to the widgets they belong to. The bundled game data is current with the live patch.",
-        "label": "Smaller things"
-      }
-    ]
-  },
-  "0.1.42": {
-    "date": "2026-08-10T02:38:21Z",
-    "notes": [
-      {
-        "kind": "fixed",
-        "label": "Security: update as soon as you can",
-        "text": "This release closes two holes in the app's local service that anything on your network could reach. The worse one let a request walk out of the overlay's own folder and read files from your disk — including the file holding your subliminal.gg sync token. The second let an unauthenticated request rewrite your settings, which could be chained to point chat at somebody else's server and hand them that token. Both are fixed: the service now refuses any request from another machine for anything that carries credentials or changes a setting, and refuses page-initiated requests from a website open in the Web Page widget. Widget pages still serve to OBS on a second PC, so browser sources are unaffected. Found and reported by a viewer during a stream — thank you."
-      },
-      {
-        "kind": "new",
-        "label": "Chat: your own rooms, private ones, and direct messages",
-        "text": "Create a room and say what it is FOR — Org Operations, Mining, Salvage, Bounty Hunting, twelve activities in all — and the room browser groups by that, so you can see what people are actually doing rather than a flat list of names. Rooms can be private: a private room is not listed anywhere, and you let people in with a six-character join code or by inviting their RSI handle. And you can now message a player directly: right-click any name, in the chat or in the member list, and pick Send a direct message. Conversations wait for you if you were offline. You can delete a room you made, which removes it for everyone in it."
-      },
-      {
-        "kind": "new",
-        "label": "Chat: Nearby replaces the Shard channel",
-        "text": "There are now two location channels instead of three. Your region channel (US East 1B, EU West 1A and so on) is everyone on that exact server. Nearby is the Dynamic Game Server actually running the area you are in — the people who could genuinely be around you. The old Shard channel sat between the two and reported far more people than were anywhere near you, so it is gone. Nearby is worked out from your game log and follows you as server meshing hands you between DGSs."
-      },
-      {
-        "kind": "improved",
-        "label": "Chat: scrollback survives, and the channel list calms down",
-        "text": "Conversations are no longer lost when the chat service restarts — history, your rooms and your invites all persist now. The left rail splits into the channels you are IN and a Browse rooms list you can roll up, every group collapses with a click, and you can hide rooms from the browser you are not interested in. Links you share are labelled BP, ITEM or MISSION so a blueprint and a wiki lookup no longer look identical, the slash-command menu now appears mid-sentence instead of only at the start of a message, and a new /build command shares an erkul loadout under a name you choose. Direct messages carry a standing note that they are private from other players but not encrypted."
-      },
-      {
-        "kind": "fixed",
-        "label": "One blueprint no longer shows as two on the mission report",
-        "text": "If you ran contracts back to back, a blueprint awarded by the mission you finished earlier could appear on the NEXT mission's report as well — one unlock, two pictures. The report now refuses to reach back past the previous completion, so each card shows only what that contract actually paid out. Where two missions finish so close together that the log genuinely cannot say which one paid, the card now shows nothing rather than guessing."
-      },
-      {
-        "kind": "fixed",
-        "label": "The mission report waits while you answer it",
-        "text": "Picking an answer and then alt-tabbing into the game could leave you coming back to a card that had already closed, with the remaining questions unanswerable. The card now only counts down while you are away from it — pointer off it and the overlay not focused — so you can go and fly and come back to finish."
-      },
-      {
-        "kind": "fixed",
-        "label": "The Mining Scanner stopped calling out numbers that are not rocks",
-        "text": "It could announce a reading while you were flying nowhere near a rock, triggered by an ordinary number on your flight HUD. The game only ever draws 165 legal signature values, so anything that is not one of them cannot be a contact — those are now refused outright instead of being talked into a call-out by the scan marker beside them. The number still appears in the scan box, dimmed and struck through, so you can see what was read and thrown away."
-      },
-      {
-        "kind": "improved",
-        "label": "Missions now say whether they are Verified",
-        "text": "Mission pages on subliminal.gg show whether a contract is Verified or Unverified, the same way the mobiGlas Contract Manager does, and the blueprint tracker can filter by it. 704 of the 4,075 contracts in the current patch are unverified."
-      }
-    ]
-  },
-  "0.1.41": {
-    "date": "2026-08-08T23:18:09Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "Player chat — Global, your server, your shard",
-        "text": "The overlay now has an in-game chat with three channels that manage themselves: Global (everyone running SC Overlay), your server region (US East 1B, EU West 1A, and so on), and your shard — the actual instance you are flying in, meaning everyone in that channel can genuinely meet you in the verse. The app reads which shard you land on from the game's own log and moves you between channels automatically as you play. Turn it on from the hub or the tray: it's the new Chat widget. Chat is for verified RSI accounts only — connect your subliminal.gg account and verify your handle on your profile, and you're in. That rule is what keeps the place moderated: everyone chatting is accountable for their handle."
-      },
-      {
-        "kind": "improved",
-        "label": "A much smaller, much lighter app",
-        "text": "This update is a full optimization pass with no visible change: the download is 40 MB smaller (135 MB, down from 175 MB), the app on disk shrank by about a quarter, and the background service that does the tracking now uses about a quarter of the memory it used to — roughly 350 MB less while the app is running. The screen-watcher that notices when the game is focused no longer needs its own helper process either."
-      },
-      {
-        "kind": "fixed",
-        "label": "Opening the tray menu during an update download quit the app",
-        "text": "If you right-clicked the tray icon to watch an update download, the app could close on the spot — the menu was being rebuilt underneath its own open popup once a second. The download itself was always fine and resumed on relaunch, which made it look stranger than it was. The tray tooltip still shows live progress on hover; the menu simply leaves itself alone until the download finishes."
-      },
-      {
-        "kind": "fixed",
-        "label": "Unlock Alerts offered to claim blueprints you already had",
-        "text": "Every ordinary \"Blueprint Received\" toast was carrying an \"Add to my collection\" button and a countdown that belonged only to fabricator claims. The prompt now appears only when there is actually something to claim."
-      }
-    ]
-  },
-  "0.1.40": {
-    "date": "2026-08-08T20:46:47Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "The scan readout, where you can see it",
-        "text": "The number the scanner read now shows in two places — to the left of the scan box and above it — instead of one spot underneath, and it is about twice the size. The box is wide and the signature can sit anywhere along it, so a single readout was often nowhere near what you were looking at. Both copies always show the same number, and each one moves itself out of the way if it would run off the edge of your screen."
-      },
-      {
-        "kind": "improved",
-        "label": "The mining scanner is around eight times faster",
-        "text": "A scan used to take about four and a half seconds to come back, and often longer, because every check read your entire screen and ran text recognition over all of it before it even looked at the number. Now, once it has found a signature, it looks only at the small patch of screen where that number actually sits. A reading comes back in a little over half a second. Picking up a brand-new rock is quicker too."
-      },
-      {
-        "kind": "improved",
-        "label": "It reads the number correctly now",
-        "text": "The scanner used two different text engines, and the one doing most of the work was the one getting it wrong — in testing it did not read a single mining signature correctly, producing things like 2006 where the screen clearly showed 2,000. The better engine is in charge now, and a nonsense value from the other one is thrown away instead of being announced."
-      },
-      {
-        "kind": "improved",
-        "label": "The scan marker is found on any ship",
-        "text": "Confirming that you are really scanning means spotting the small map-pin drawn next to the number. That check used to depend on the pin's colour — but the pin is drawn in your ship's HUD colour, which changes with the manufacturer, and on some ships it is nearly white. It no longer looks at colour at all. It looks for a small solid bright mark of roughly the right shape, which holds true whatever your HUD looks like."
-      },
-      {
-        "kind": "improved",
-        "label": "Signatures that could be two things now say so",
-        "text": "A couple of readings are genuinely ambiguous. 16,000 is either a five-rock Savrilium cluster or eight panels of salvage, and 18,000 is either Bexalite or nine panels. The scanner used to pick a side and sound certain about it. Now it leads with the likelier answer and admits the doubt: \"Probably debris. Could be Bexalite. Your call.\" If it is a rock you have targeted it still leads with the rock — \"That might be Savrilium. I'm not certain. Worth flying over.\""
-      },
-      {
-        "kind": "fixed",
-        "label": "A finished mission would not go away",
-        "text": "Complete a contract and the tracker could keep showing it as unfinished, sometimes for the rest of your session. It was re-reading the mission title still sitting on your screen after the contract ended and registering it all over again as a new one."
-      },
-      {
-        "kind": "fixed",
-        "label": "The wrong blueprint list",
-        "text": "Several different contracts share a name. When the tracker could not tell which one you were on it merged all of their reward lists together — so a mission with eight blueprints you already owned showed as \"14 of 18\", including four you could never get from it. It now uses the exact contract the game reports."
-      },
-      {
-        "kind": "fixed",
-        "label": "Missions coming back from hours ago",
-        "text": "A contract you finished earlier could reappear as though it were live, even after you had gone back out to the menu and returned. Leaving the game now properly clears the missions from that session."
-      },
-      {
-        "kind": "fixed",
-        "label": "Half of all mining scans were failing silently",
-        "text": "Every check wrote a screenshot to the same temporary file, which collided with the previous check still reading it. Around half of them failed outright and produced nothing at all — no reading, no call-out, and no error to explain it. That is most of what \"it just sits there\" was."
-      },
-      {
-        "kind": "fixed",
-        "label": "Saving settings no longer does unnecessary work",
-        "text": "Changing anything — even a widget's text size — used to re-fetch every loadout URL, restart the game-log watcher mid-session, and re-upload your whole collection to the site. It now only does the work the change actually needs. Thanks to Rytharr for finding this one."
-      },
-      {
-        "kind": "fixed",
-        "label": "Better recovery from misread digits",
-        "text": "The scanner could already correct a single 6 mistaken for an 8. It now handles two in the same number, recovering about ten more real misreadings without introducing any new ambiguity. Thanks to Rytharr for the fix and the measurements behind it."
-      }
-    ]
-  },
-  "0.1.39": {
-    "date": "2026-08-05T21:06:56Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "Canvas alignment & scale",
-        "text": "If your monitors run at different Windows scaling levels and the overlay still does not sit where it should, you can now move and resize the whole canvas by hand. It is in Settings under Canvas alignment & scale, and on the overlay itself in arrange mode. Turn on arrange mode and the dashed outline shows where the app thinks your main monitor is — size and move it until that outline matches your real monitor edges. Most people will never need it: it defaults to no adjustment, and the scaling bug it exists for is fixed below."
-      },
-      {
-        "kind": "new",
-        "label": "A widget's settings close themselves",
-        "text": "Open a widget's cog and walk away, and the settings popover now closes after fifteen seconds. Clicking anywhere on the widget keeps it open. Left up it was a permanently clickable box sitting over the game, and it also held the Web Page widget out of sight for as long as it was open."
-      },
-      {
-        "kind": "new",
-        "label": "Pop-up duration",
-        "text": "How long an SC Feed story and an Unlock Alert card stay on screen before they fade is now yours to set, in Settings under Pop-up duration. Anywhere from 3 to 60 seconds. A fixed timer is either too quick to read or too slow to get out of the way, and which one depends entirely on whether you are in a fight."
-      },
-      {
-        "kind": "new",
-        "label": "Shared logs include finished sessions",
-        "text": "If you have log sharing switched on, the app now also shares your rotated session logs, not just the one from the session you are in. Star Citizen writes a fresh log every launch, so a mission you finished yesterday was structurally out of reach — which is why some of you sent logs that genuinely contained none of your completions. Still opt-in, still scrubbed of your handle, account, IP and chat before anything leaves your PC, and filtered to the current patch."
-      },
-      {
-        "kind": "new",
-        "label": "Journal hotkey",
-        "text": "The Journal can be opened with a hotkey, Alt+F3 by default. It was the only placeable widget with no way in except the tray or the hub."
-      },
-      {
-        "kind": "improved",
-        "label": "Patch notes are labelled and grouped",
-        "text": "These notes now carry a heading each and are grouped into New, Improved and Fixed. Previously every line was an unlabelled paragraph, so finding the one that mattered to you meant reading all of them."
-      },
-      {
-        "kind": "improved",
-        "label": "Faster mining call-outs",
-        "text": "The scanner polls quickly whenever a signature is on screen, instead of watching for particular words in the scanning HUD. That HUD element can be restyled or turned off, and a shift in head position can carry it out of frame — while the signature number itself sits in the same place in every ship. Scanning in a Vulture felt sluggish for exactly that reason."
-      },
-      {
-        "kind": "improved",
-        "label": "Settings sections that match what you came for",
-        "text": "The Performance & fixes section had become a drawer holding seven unrelated things. It is now Canvas alignment & scale, Graphics & performance and Recover, and the explanation of why hotkeys do not reach the game sits with the hotkeys themselves."
-      },
-      {
-        "kind": "improved",
-        "label": "The hub's reset column says Reset",
-        "text": "The circular arrow beside each widget in the hub now has Reset written above it. On its own it reads as a refresh button, and refreshing a widget is a sensible-sounding thing that does not exist — it recentres the widget on your screen."
-      },
-      {
-        "kind": "fixed",
-        "label": "The overlay vanished at higher Windows scaling",
-        "text": "At 175% scaling and above on your main monitor, the overlay could land far enough down and right to be completely off screen, and below that it could sit offset from your monitors. The app worked out the size of your desktop by adding up rectangles that Windows reports in different units per display, so on a mixed-scaling desktop the answer described no real screen at all and Windows put the window somewhere of its own choosing. It now measures in real pixels and converts once. If your monitors all run at the same scaling you were never affected."
-      },
-      {
-        "kind": "fixed",
-        "label": "Verify from logs could crash the background service",
-        "text": "On a large logbackups folder, Verify from logs read every file into memory at once and ran the background service out of it. The button reported that verifying failed, and the overlay flashed a banner saying it was not tracking anything while the service restarted — the same cause behind both. It now reads a slice at a time, and on the folder that used to kill it, finishes in about three seconds."
-      },
-      {
-        "kind": "fixed",
-        "label": "Reputation that would not count",
-        "text": "For some players, completed contracts credited no reputation at all — a standing sat at zero no matter how much you ground. The game can label a contract with its reward in the title, and the app was reading that label as part of the mission's name, so it never matched a mission it knew. Not everyone's game writes those labels, which is why this hit some people and not others. Several smaller accuracy problems in how completions are counted are fixed alongside it. Run Verify from logs after updating: your standing is rebuilt from your own logs, and the rebuilt figure is the accurate one."
-      },
-      {
-        "kind": "fixed",
-        "label": "The blueprint count did not match the website",
-        "text": "The tracker's total counted only two of the four ways it knows you own something, so it read lower than your collection on subliminal.gg and looked like sync was broken. Both numbers now come from the same set."
-      },
-      {
-        "kind": "fixed",
-        "label": "Debris was never called out",
-        "text": "With debris call-outs switched on, a debris signature could still go unannounced. The scanner confirms a reading by finding the marker drawn beside the number, and it was looking for one fixed colour — but that marker is drawn in your ship's HUD colour, so it only ever matched on the ship it was measured from. It now matches the marker against the colour of the number beside it, whatever that colour is. An exact debris value is also treated as proof on its own."
-      },
-      {
-        "kind": "fixed",
-        "label": "The overlay could come up with no widgets",
-        "text": "The overlay sometimes started completely empty, and the only way out was mashing the overlay hotkey until it caught. Two separate causes: the page could fail to load and never try again, and the list of which widgets to show could arrive before there was anything to show it to."
-      },
-      {
-        "kind": "fixed",
-        "label": "Hiding a grouped widget kicked it out of the group",
-        "text": "Hiding a stacked widget by hotkey, tray or hub detached it from its stack, and it came back as a lone window behind where it used to be. Only the widget's own ✕ detaches now. A group could also end up displaying a hidden member, which painted nothing and left no tabs to click."
-      },
-      {
-        "kind": "fixed",
-        "label": "No drop highlight on the Mission & BP Tracker",
-        "text": "Dragging a widget onto the tracker to stack them showed no GROUP HERE marker, so there was nothing to tell you the drop would land. It was the one widget the highlight had never applied to."
-      },
-      {
-        "kind": "fixed",
-        "label": "Fabricator items with a size or grade tag",
-        "text": "Items the fabricator lists with a size or grade in front of the name would not capture — the app was comparing the whole line, tag included, against its item names and never finding a match."
-      },
-      {
-        "kind": "fixed",
-        "label": "The app called itself SC Blueprint Tracker",
-        "text": "The Start-menu and desktop shortcut still said SC Blueprint Tracker. Everything else had been renamed some releases ago; the installer had one leftover. A fresh install gets the right name — an update in place may leave the old shortcut beside the new one."
-      }
-    ]
-  },
-  "0.1.38": {
-    "date": "2026-08-03T15:02:24Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "Background service alerts",
-        "text": "The app tells you when its background service stops. That service does all the actual work — reading your game log, tracking missions and blueprints, syncing — while the overlay is only the display, so until now it could die and leave a HUD that looked perfectly normal and tracked nothing. You now get a banner that says it is reconnecting, and if it gives up, a button to try again."
-      },
-      {
-        "kind": "new",
-        "label": "Scan area opacity",
-        "text": "An opacity slider for the mining scan read area, in the Mining Scanner's cog beside the toggle that shows the box. Turn it most of the way down if you would rather not see the outline over the game. Hovering the box brings it back to full, so its Hide, Reset and drag controls are always reachable."
-      },
-      {
-        "kind": "improved",
-        "label": "Settings reorganised",
-        "text": "Diagnostics now sits with the performance and fixes tools instead of in a catch-all More section, promos have their own place so they stop reading as settings, and the theme list is in an order."
-      },
-      {
-        "kind": "improved",
-        "label": "Every widget works as an OBS source",
-        "text": "The browser-sources list went from 2 widgets to 9. Every widget except the Web Page and Settings panels could always be used this way — only two of them said so."
-      },
-      {
-        "kind": "improved",
-        "label": "Wider patch notes",
-        "text": "The patch notes card is wider, and no longer sized against the whole multi-monitor canvas."
-      },
-      {
-        "kind": "fixed",
-        "label": "Updates could serve the old version",
-        "text": "If an old copy of the background service was still holding the port when the new one started, the new app silently attached to it and showed you the old version's data and patch notes, with nothing anywhere saying so. Each launch now checks that the service answering is genuinely its own."
-      },
-      {
-        "kind": "fixed",
-        "label": "Clicks blocked on other monitors",
-        "text": "With the overlay focused, clicks on your other monitors did nothing and windows underneath looked frozen. The overlay canvas spans every display — that is what lets you drag a widget onto a second monitor — so making it interactive while focused made it interactive everywhere. Clicks pass through again outside of widgets."
-      },
-      {
-        "kind": "fixed",
-        "label": "The Web Page widget's settings cog",
-        "text": "It appeared to do nothing. It was opening behind the website, which is painted above everything else on the canvas. The site now stands aside while the cog is open."
-      },
-      {
-        "kind": "fixed",
-        "label": "The account connection check",
-        "text": "The check on your subliminal.gg token verified nothing. It asked an endpoint that answers everyone, so any token came back Connected, including a mistyped or expired one. Both the setup wizard and the diagnostics report were built on that answer."
-      },
-      {
-        "kind": "fixed",
-        "label": "Setup wizard sizing",
-        "text": "The wizard came up a different size depending on which monitor your mouse was on, and could be zoomed and cramped at the same time. It now opens on your primary display, at the same scale as the rest of the app."
-      },
-      {
-        "kind": "fixed",
-        "label": "A typed game log path could be lost",
-        "text": "A game log path typed by hand was lost if you closed Settings without touching anything else. Every other setting on the page saves itself; that one did not — and it is the setting the app cannot work without."
-      },
-      {
-        "kind": "fixed",
-        "label": "The setup wizard's website links",
-        "text": "They now land you on the step they are describing, rather than on the blueprint catalogue."
-      }
-    ]
-  },
-  "0.1.37": {
-    "date": "2026-08-02T03:37:33Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "Mission after-action report",
-        "text": "About 40 seconds after you finish a mission, the tracker asks a few quick questions about what it actually involved — how hard it was, whether you needed a crew. Your answers go to subliminal.gg and build a picture of each mission that the game files alone cannot give: the game knows what a mission awards, not what it is like to run."
-      },
-      {
-        "kind": "new",
-        "label": "First-run setup wizard",
-        "text": "If you install the app without going through the website first, it now walks you through finding your game log, connecting your account, and reviewing your settings. It skips anything already done, so nothing is asked twice. Reachable any time from the tray, under Run setup again."
-      },
-      {
-        "kind": "new",
-        "label": "The overlay appears in Alt-Tab",
-        "text": "Switch to it and you get your real mouse cursor back across the whole overlay, which makes reaching the cog and the smaller widgets much easier than guessing where the pointer went. Switch back and clicks go straight to the game again."
-      },
-      {
-        "kind": "new",
-        "label": "Fabricator ownership prompts",
-        "text": "Opt-in prompts to tick blueprints the fabricator shows you already own but the app has no record of. Off by default."
-      },
-      {
-        "kind": "improved",
-        "label": "Settings is now a panel on the overlay",
-        "text": "It opens where the rest of the app lives, and you can place, resize and skin it like any other widget instead of it being a separate window over the game. Open it from the cog or the tray, the same as before."
-      },
-      {
-        "kind": "improved",
-        "label": "The scan read area shows itself",
-        "text": "Open the Mining Scanner and the outline is simply there, rather than waiting to be found in a settings menu. A Hide button on the box itself turns it off if you would rather not see it."
-      },
-      {
-        "kind": "improved",
-        "label": "The Mining Scanner rests when closed",
-        "text": "It stops reading the screen while the widget is closed. Previously the opt-in alone kept it scanning every few seconds whether or not the widget was open. Auto-show still works — that is the one case where it is closed on purpose and needs the read to open itself."
-      },
-      {
-        "kind": "improved",
-        "label": "Diagnostics says where settings are saved",
-        "text": "The report now includes where your settings are saved, and whether saving actually worked."
-      },
-      {
-        "kind": "fixed",
-        "label": "The SC Feed card that never cleared",
-        "text": "The card that appeared at launch and never went away now behaves like any other notification and clears itself. While it was up it could also swallow clicks meant for the game."
-      },
-      {
-        "kind": "fixed",
-        "label": "Widgets turned on during arrange mode",
-        "text": "Turning a widget on while in arrange mode left it out of arrange, with no drag handles, until you left and re-entered."
-      },
-      {
-        "kind": "fixed",
-        "label": "The app icon on its windows",
-        "text": "The app icon now shows on its windows instead of the default Electron one."
-      }
-    ]
-  },
-  "0.1.36": {
-    "date": "2026-07-30T05:33:31Z",
-    "notes": [
-      {
-        "kind": "fixed",
-        "label": "The terminal window on your desktop",
-        "text": "0.1.35 left a terminal window sitting on your desktop. The overlay runs a small background service, and on Windows a service like that gets given a console window unless the app explicitly says not to — 0.1.35 stopped hiding it. Nothing was wrong with the service itself; it just became visible. It is hidden again."
-      }
-    ]
-  },
-  "0.1.35": {
-    "date": "2026-07-30T04:41:57Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "New widget: Unlock Alerts",
-        "text": "The \"Blueprint Received\" pop used to be stuck to the bottom of the tracker panel, which is the one place you never look mid-mission. It is now its own widget you drag wherever you actually watch, it shows the item's picture, and several unlocks at once queue up instead of stepping on each other."
-      },
-      {
-        "kind": "new",
-        "label": "Send Twitch chat from the overlay",
-        "text": "Sign in with Twitch in the chat widget (a short code on twitch.tv, no password typed into the app) and the send bar appears. Reading chat still needs no account at all."
-      },
-      {
-        "kind": "new",
-        "label": "Show the scan read area",
-        "text": "New in the Mining Scanner's settings. It draws a box over the part of the screen the app reads for a signature, and you can DRAG it (or its corner) to move and resize that area, with a Reset if you want the default back. Useful if your HUD sits somewhere unusual, or Star Citizen is on a different monitor than the app expects."
-      },
-      {
-        "kind": "new",
-        "label": "The scan box shows what it read",
-        "text": "That box now also prints the number it just read, centred underneath it, so you can hold it up against the real signature on your screen. A number with a line through it is one the app read but did not act on. It also disappears when you close the Mining Scanner, instead of being left on your screen."
-      },
-      {
-        "kind": "new",
-        "label": "Hotkeys can be cleared",
-        "text": "You can REMOVE a hotkey now, not just change it. Each row in Settings → Hotkeys has an ✕; clearing one leaves that action with no key at all and it stays cleared. (Clearing the hold-to-interact key also turns that mode off, since without the key nothing on the overlay would be clickable.)"
-      },
-      {
-        "kind": "new",
-        "label": "Copy diagnostics",
-        "text": "New in Settings. If something is not working, it copies a short report (is the background service answering, is your game.log being found and read, which dataset is loaded, which opt-ins are on, are you running as admin) that you can paste into a bug report. No passwords or tokens in it."
-      },
-      {
-        "kind": "improved",
-        "label": "The Web Page widget shows any site",
-        "text": "Sites that refuse to be embedded — the RSI site above all, plus UEX, erkul and starcitizen.tools — used to come up as a blank box. They work. Sign-ins work too, in their own cookie jar, kept separate from your normal browser."
-      },
-      {
-        "kind": "improved",
-        "label": "Real fabricator photos on unlocks",
-        "text": "Blueprint unlocks show the real fabricator photo instead of a grey 3D model. The old picture was shared between items that use the same game model, so three different Scraper Modules all looked identical — it could not even tell you which one you had unlocked."
-      },
-      {
-        "kind": "improved",
-        "label": "The scanner stops guessing",
-        "text": "Debris comes in whole salvage panels, so a debris signature is always a multiple of 2,000 — that, rather than \"it wasn't in my rock list\", is now what makes it debris. A signature that is neither ore nor a panel count gets an honest \"I don't know what that is, but it's not ore\" (five ways, at random) instead of a wrong \"Debris\", and a number too big for the game to have shown is thrown out as a misread."
-      },
-      {
-        "kind": "improved",
-        "label": "Signatures that could be either",
-        "text": "When a signature could be either — 16,000 is five Savrilium rocks AND eight debris panels — it says so instead of picking one. You get \"Debris, or Savrilium\", or \"This could be Savrilium\" if it's a rock you've targeted, and it always speaks up: either way you have to fly over and look."
-      },
-      {
-        "kind": "improved",
-        "label": "Sixes and eights that read as each other",
-        "text": "A signature is only ever one of about 165 possible numbers, so a misread usually lands on a value that cannot exist — and there is normally exactly one real number a single wrong digit away. When there is, the app uses it, so a rock the scanner used to shrug at gets named. When two rocks are both possible it says nothing rather than guess at one, and it never \"corrects\" a number that was already valid."
-      },
-      {
-        "kind": "improved",
-        "label": "Clearer widget names",
-        "text": "Mission & BP Tracker, Mining Scanner, Journal, Loot Split, Event Tracker and Infographic Viewer. Your layout, hotkeys and settings are untouched — only the labels changed."
-      },
-      {
-        "kind": "improved",
-        "label": "The settings cog packs itself away",
-        "text": "If you summon it and go back to flying, it packs itself away after 30 seconds of the game having focus — it was holding the overlay in a clickable state the whole time it stayed open."
-      },
-      {
-        "kind": "improved",
-        "label": "What your next rank unlocks",
-        "text": "The tracker panel now tells you what your next rank actually unlocks. Battaglia hands out ships at certain ranks — the Golem, Prospector and MOLE — and the standing bar used to be a bare number with no reason to care about it."
-      },
-      {
-        "kind": "improved",
-        "label": "The background service recovers from crashes",
-        "text": "If the overlay's background service ever crashes it now writes down why and restarts itself, instead of leaving the app looking fine while nothing works."
-      },
-      {
-        "kind": "fixed",
-        "label": "Phantom Debris call-outs",
-        "text": "Far fewer phantom \"Debris\" call-outs while mining. Three things were making noise: the app announced anything it read even when you were not scanning, ordinary HUD lettering could be misread as a number, and a scan from ages ago was re-announced every time the widget reloaded. It now checks the frame for the marker beside a real signature, ignores stale scans, and there is a \"Call out debris & unknown\" switch in the Mining Scanner settings if you only care about ore."
-      },
-      {
-        "kind": "fixed",
-        "label": "Patch notes ran off the screen",
-        "text": "On a multi-monitor setup the patch notes window sized itself against every monitor put together, so with a tall second display it could grow past the top and bottom of the screen it was centred on and take the ✕ and \"Got it\" with it. It is capped now, and the notes scroll inside it."
-      },
-      {
-        "kind": "fixed",
-        "label": "Duplicate reputation rows",
-        "text": "Missions that list two reputation awards against the same standing no longer show as two confusing identical rows. You get the one that counts, with the extra disclosed rather than silently dropped."
-      },
-      {
-        "kind": "fixed",
-        "label": "SC Feed alert settings",
-        "text": "The SC Feed widget's alert settings (the ♪ button) open again."
-      },
-      {
-        "kind": "fixed",
-        "label": "The tilt slider",
-        "text": "It works on every widget that has one."
-      },
-      {
-        "kind": "fixed",
-        "label": "The Mining Scanner's skin",
-        "text": "It wears your ship's skin properly, and lost its slab of empty glass."
-      },
-      {
-        "kind": "fixed",
-        "label": "The Web Page widget's bar",
-        "text": "It slides out on hover like every other widget."
-      },
-      {
-        "kind": "fixed",
-        "label": "Dragging while the game recentres your mouse",
-        "text": "Dragging a widget no longer gets yanked off course by Star Citizen recentring your mouse."
-      }
-    ]
-  },
-  "0.1.34": {
-    "date": "2026-07-26T00:58:33Z",
-    "notes": [
-      {
-        "kind": "new",
-        "label": "The overlay is now a widget canvas",
-        "text": "Nine widgets you place, size and stack anywhere on screen: the Blueprint tracker, Mining Assistant, Notepad, Twitch Chat, SC Feed news, Party Split, a Battaglia grind tracker, any Web Page, and your Binding Chart. Drag one widget onto another's bar to GROUP them into a tabbed stack, and pop a tab back out whenever you like."
-      },
-      {
-        "kind": "improved",
-        "label": "One bar on every widget",
-        "text": "Every widget has the same hover bar now: move, reset, its own settings, and close — plus a text-size control (70–200%) so anything stays readable from 1080p to 4K."
-      },
-      {
-        "kind": "improved",
-        "label": "Reset brings a widget back",
-        "text": "Reset puts a widget back in the MIDDLE of your screen, and the settings cog has a reset button for each widget — so a widget dragged off the edge of your monitor is always recoverable."
-      },
-      {
-        "kind": "improved",
-        "label": "Hold-to-interact only while in game",
-        "text": "Hold-to-interact only applies while Star Citizen is in front. If you're on the desktop the overlay just works like a normal window, so your interact key no longer types into Discord or your browser."
-      },
-      {
-        "kind": "improved",
-        "label": "A closed widget really closes",
-        "text": "It stops polling, drops its connections and frees its memory instead of quietly running in the background. The Mining Assistant also stays properly silent when it's off screen or tabbed behind another widget."
-      },
-      {
-        "kind": "improved",
-        "label": "Lighter on your machine",
-        "text": "The screen-reading loop no longer launches a Windows helper process every three seconds, and the overlay does less work while your cursor is nowhere near it."
-      },
-      {
-        "kind": "fixed",
-        "label": "Dragging near another widget",
-        "text": "A widget used to freeze when you dragged it near another one and then jump to catch up — the neighbouring widget was swallowing the mouse. It tracks your cursor properly now, and every widget's bar comes out while you drag so you can see where a stack will land."
-      },
-      {
-        "kind": "fixed",
-        "label": "Grouping the Battaglia tracker",
-        "text": "Grouping it with the mission tracker no longer hides the tab bar."
-      },
-      {
-        "kind": "fixed",
-        "label": "The Twitch Chat and Notepad bars",
-        "text": "They retract again once you move away."
-      },
-      {
-        "kind": "fixed",
-        "label": "The Blueprint panel's settings menu",
-        "text": "It opens beside its cog instead of off the top of the panel."
-      }
-    ]
-  },
-  "0.1.33": {
-    "date": "2026-07-22T06:45:00Z",
-    "notes": [
-      "New Notepad widget — jot notes right on the overlay. Make as many titled notes as you like; they autosave, and you can drag the box bigger and bump the text size to suit any monitor. Turn it on from the settings cog's widget list or the tray. To type while you're in the game, click \"Type\" — it grabs the keyboard and frees up your interact key so you're not alt-tabbing.",
-      "New \"Blueprint Received\" pop — the moment you collect any blueprint it flashes the item and name, no matter which mission you're tracking. Handy when you've got several of the same mission on the go and the receipt used to land on one you weren't looking at.",
-      "The idle screen (when nothing's tracked) now shows your reputation and aUEC per hour — both what you earned in the last hour and your current grind pace. aUEC shows \"—\" for missions the game doesn't report a payout for (most of them right now).",
-      "\"Guaranteed rewards\" are now \"Physical Rewards\" — the actual items/ships a mission hands over (the game never tells the app when you get these). Tick one off once it's in your hangar and it tucks away under a \"Received\" list, so you can keep track of what you've collected.",
-      "New \"Patch notes\" button in the settings cog — pop this What's New card back up any time.",
-      "Fixed the What's New card opening half on one monitor and half on the other — it now centers on your main display.",
-      "Fixed Quantum Drive names (like the XL-1) not being recognized at the Fabrication Kiosk, so their images can be captured and contributed now.",
-      "Fixed dark, low-contrast items (black visors, dark-finish armor) getting clipped in captured item images."
-    ]
-  },
-  "0.1.32": {
-    "date": "2026-07-22T02:00:23Z",
-    "notes": [
-      "Much sharper item reading at the Fabrication Kiosk — a new, more accurate text reader handles the stylized kiosk fonts (item names, \"Tier\", ship-component names) that the old one sometimes mangled.",
-      "The overlay now reads only the monitor your game is on, and only the part of the screen it needs — so multi-monitor setups no longer accidentally read the wrong display.",
-      "What's New tidy-up: each version now shows its release date and time (UTC), older versions are collapsed by default so the card stays short, the close button can never end up off-screen, and it no longer hides itself after one look unless you tick \"Don't show this again\"."
-    ]
-  },
-  "0.1.31": {
-    "date": "2026-07-22T00:05:45Z",
-    "notes": [
-      "The fabricator reader can no longer get stuck — if a scan or upload ever hangs, it recovers on its own instead of sitting on \"Reading the fabricator…\" until you restart the app.",
-      "Captured item images upload reliably now: a failed upload retries by itself, and on startup the app re-checks and sends up any captures that never made it to the site — no more \"it said it saved but never showed up.\"",
-      "Clearer scanning status — the overlay names the item it's reading, and tells you the truth about uploads: \"shared\" only once the picture is actually on the site, \"upload failed — retrying\" otherwise (no more misleading \"saved\").",
-      "The What's New card now shows the last several versions, so if you've been away for a bit you can catch up on everything you missed — not just the newest patch."
-    ]
-  },
-  "0.1.30": {
-    "date": "2026-07-21T22:06:42Z",
-    "notes": [
-      "New Consolidated Outland skin — hop in a Nomad and the overlay picks up its frosty ice-cyan HUD. Grey's now shows its logo in the folder-tab too.",
-      "Updated for the latest patch with fuller crafting recipes, mining and commodity data, and a much larger set of mission payouts.",
-      "The mission-complete card shows the mission's payout again — read from the game data now that the game stopped logging the award.",
-      "Streamers: the overlay broadcasts the manufacturer of the ship you're flying, so your other stream overlays can re-color to match it live. Plus a new \"switch back to Mobiglas when I leave my ship\" option.",
-      "Fixed the binding-chart PNG picker in Settings rendering as a tiny box with no room for the filename.",
-      "Fixed ship components (quantum drives, shields and the like) not scanning at the Fabrication Kiosk on 4K/high-scale displays — the reader now tolerates OCR glitches in the kiosk text, and when it truly can't read an item it tells you instead of sitting silently on \"Watching Star Citizen…\".",
-      "Manufacturer skins now stay pinned for active Twitch subscribers — connect the tracker to subliminal.gg and link your Twitch, and your chosen skin sticks instead of reverting after the preview.",
-      "Multi-monitor: in Arrange mode you can now drag a widget onto a second display — it crosses seamlessly and stays there, and the Arrange controls always stay on your primary monitor."
-    ]
-  },
-  "0.1.29": {
-    "date": "2026-07-21T05:13:22Z",
-    "notes": [
-      "Manufacturer skins! The overlay now automatically matches the ship you're flying — Drake, Aegis, Crusader, RSI, MISC, Origin and more. Free on 'Auto'; subscribers can pin one manufacturer to use it regardless of ship.",
-      "Each skin shows its manufacturer logo in a folder-tab on the panel, with brand-specific corner details, dividers, and a reputation bar tinted to match the theme.",
-      "Smarter blueprint image capture: items that render as a dark schematic (like quantum drives) are now captured instead of skipped, and same-name size variants (e.g. the mining lasers) resolve to the right one.",
-      "Fixed same-named blueprints (like the three Cinch Scraper Modules) so they all share the item image instead of only one showing a picture."
-    ]
-  },
-  "0.1.28": {
-    "date": "2026-07-20T21:54:16Z",
-    "notes": [
-      "New name: this is now SC Overlay. It's grown well past just blueprints — mining, loadouts, and more — so the name caught up. Your settings and your whole collection carry over untouched.",
-      "The Mining Assistant is now part of the main overlay instead of its own separate window. That fixes the annoying stuff: clicking one widget while another's open just works now, and nothing steals a click you meant for the game.",
-      "A much cleaner Settings page. Everything's sorted into categories with the opt-in features up top, each setting is a single line with an ⓘ you can hover for the details, and changes save the moment you make them — no more hunting for a Save button.",
-      "New: put a widget on a second monitor or your phone. Settings now gives you copy-ready links for the Blueprint and Mining widgets (and OBS browser-source URLs), including one that works from your phone on the same Wi-Fi.",
-      "The mining scanner now ignores tiny signatures under 2,000, so it stops calling out every little scrap of debris.",
-      "New: partner promos in Settings — deals from the brands that support the channel, at no extra cost to you."
-    ]
-  },
-  "0.1.27": {
-    "date": "2026-07-19T04:13:10Z",
-    "notes": [
-      "New: the overlay is now an “overlay app” — the Blueprint tracker and Mining Assistant float freely on your screen. Drag them anywhere, resize each from its corner, and give each its own angle so a left and a right widget can lean in toward you.",
-      "New: an Arrange mode that moves everything at once. Grab a widget's ⠿ handle (or press Ctrl+Alt+M) and the whole screen shows it's in edit mode — drag, resize, then hit Done. Your layout is saved and survives updates.",
-      "New: a settings menu that appears top-right whenever you're working with the overlay — widget on/off, theme, and a way into everything. It fades away when you're done so it's not in your face while you fly.",
-      "The Mining Assistant now matches your ship's theme too — hop in a Drake and it goes gunmetal-and-orange right alongside the tracker.",
-      "Widgets now sit flat by default with a slight inward tilt; set each one's exact angle in its ⚙. And these patch notes now pop up in the middle of the screen on launch."
-    ]
-  },
-  "0.1.26": {
-    "date": "2026-07-18T18:38:13Z",
-    "notes": [
-      "Fixed: “Restart as administrator” now actually relaunches the app elevated. It was closing the tracker and never reopening it, leaving stray processes you had to kill by hand — that's sorted."
-    ]
-  },
-  "0.1.25": {
-    "date": "2026-07-18T09:40:53Z",
-    "notes": [
-      "New: the Mining Assistant — a second overlay window (tray → Mining Assistant, or press Shift+F3) that names rocks from the mining scanner's signature, counts down your refinery jobs and alarms when they finish, and calls out your target rocks in the HAL voice. It matches the main overlay's look and stays click-through until you hover it, so you won't nudge it mid-flight.",
-      "Fixed: your hotkeys now work while Star Citizen is focused, not just when you alt-tab to the desktop. If they still don't fire in-game, open Settings → In-Game Hotkeys and hit “Restart as administrator”.",
-      "Fixed: opening an overlay (like the binding chart) can no longer bury the Settings window — Settings now always stays on top.",
-      "Fixed: two features can no longer grab the same hotkey by accident."
-    ]
-  },
-  "0.1.24": {
-    "date": "2026-07-18T03:38:27Z",
-    "notes": [
-      "New: a reputation bar in Mission Info shows your current standing with each mission giver (e.g. Sr. Contractor) and how close you are to the next rank — worked out from the missions you've completed since the last wipe. Hit “Verify from logs” in the ⚙ to fill it in from your play history.",
-      "Fixed: your tracked missions no longer disappear when you relaunch or Alt-F4 back into the game — they were getting wiped on every login.",
-      "Fixed: blueprint pools no longer show duplicate entries. On newer game builds the tracker could fall back to an older, stale copy of the mission data.",
-      "The opt-in mission-name scanner now reads mining, scanning and most other mission types, not only “Go to” missions."
-    ]
-  },
-  "0.1.23": {
-    "date": "2026-07-17T14:27:39Z",
-    "notes": [
-      "Fixed: missions that don't place a map marker — mining, ore scanning and friends — used to show nothing at all. They now resolve their blueprint pool and appear in the mission picker like everything else.",
-      "New: your rank with each mission giver, worked out from the highest-rank mission you've been offered. Hit “Verify from logs” in the ⚙ to backfill it from your play history.",
-      "The guaranteed rewards and the random blueprint pool are now clearly separated — the pool says “1 random blueprint per completion”, because that's what it is.",
-      "Guaranteed item rewards now have their own tick box, so you can check off the ones you've picked up (kept separate from your blueprint count).",
-      "The owned count moved up next to the mission name — the ⚙ and move handle were sitting on top of it.",
-      "A long blueprint pool no longer pushes the panel sideways into a horizontal scrollbar.",
-      "The header now reads “Active Mission” instead of a second “Blueprint Pool”."
-    ]
-  },
-  "0.1.22": {
-    "date": "2026-07-09T21:02:23Z",
-    "notes": [
-      "New: the overlay diamond glows purple when SubliminalsTV is live on Twitch — hover it and click to jump into the stream.",
-      "In the Fabricator, the diamond glows gold so you can tell the tracker sees the kiosk.",
-      "Both opt-in screen-reading features (pinned-mission scan + item-image capture) now appear in Settings and the overlay ⚙, and stay in sync.",
-      "Open the full Settings window straight from the overlay ⚙.",
-      "Pasting a sync token now turns syncing on automatically — no more forgetting the checkbox.",
-      "New: a settings ⚙ on the overlay — the odds view (base / your real odds) and “Verify from logs” now live in there, and you can hide the category filter bar, for a cleaner HUD.",
-      "Cleaner footer: your Collected count is now big and clear, with the tracker version and game build stacked neatly beside it.",
-      "The overlay now shows what the item-image scanner is doing — a quick toast when it reads your pinned mission or captures a fabricator item, plus a live status in the ⚙ menu.",
-      "New: toggle mission-name scanning on/off from the overlay ⚙ menu (reads the mission you have pinned in-game — off by default).",
-      "Fixed: the pinned-mission reader now recognizes missions whose names are cut off on-screen or contain quotes (e.g. Terrorist Shigemori \"Jester\" Amsden…).",
-      "Mission Info (faction / type / reputation) now opens by default.",
-      "Settings tidied up for the blueprint tracker."
-    ]
-  },
-  "0.1.21": {
-    "date": "2026-07-08T19:04:32Z",
-    "notes": [
-      "Mission-Complete card now shows the actual item render for each blueprint you unlock — one big image for a single drop, a grid for more.",
-      "New: opt-in log sharing (Settings) — help improve mission & blueprint detection. Your handle, account, IP and chat are stripped before anything is sent. Off by default.",
-      "Recent lists can now show relative time (\"2h ago\") or the exact date & clock — toggle in Settings.",
-      "Settings window restyled to match subliminal.gg.",
-      "The tracker's source code is now public on GitHub."
-    ]
-  }
+ "0.1.47": {
+  "date": "2026-08-31T21:30:00Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "Quartermaster: what it costs to run the ship",
+    "text": "A widget for the captain of a ship with a hangar — Idris, Polaris, Carrack, 890 Jump, Ironclad Assault. Track the stock the hangar dispenses (fuel, ammunition, missiles, repair materials), the station bills for the ship itself, and the squadron flying off your deck. Press Start when the operation begins and Stop when it ends, and you get a cost report: supplies, repairs, rearm, refuel, what was consumed from stock and what it would cost to replace, and any ships lost — with a Copy button that pastes it into Discord in one piece."
+   },
+   {
+    "kind": "new",
+    "label": "Squadron ships, filtered by what your hangar actually takes",
+    "text": "Add a member and the list only offers ships that fit the hangar of the ship you are quartering — an Idris and a Polaris take snubs and light fighters, a Carrack or an 890 Jump only snubs. That table is hand-curated, not computed: the game's own data has no hull dimensions, so a guessed fit would be a lie. It ships as a file you can edit (data/qm-ships.json) when the game changes."
+   },
+   {
+    "kind": "new",
+    "label": "Optional: kiosk buys land as one-click chips",
+    "text": "Turn on capture in the widget's settings and hydrogen, quantum fuel and ship ammunition bought at commodity kiosks appear as chips with the price you actually paid — one click adds them to stock, marked 'logged' so the report can say which figures were read off the log and which were typed. Auto mode adds them unasked. Station services (repair, rearm, refuel bills) are not in the game log, so those are always typed — the widget never invents a number it did not see."
+   },
+   {
+    "kind": "improved",
+    "label": "Every number can be corrected",
+    "text": "The Ledger tab shows every record with a delete beside it. Stock and spent are computed from that ledger, so deleting a fat-fingered entry fixes the numbers everywhere, including in an operation that already ended. Consume refuses to take more than is in stock rather than clamping — a silent clamp is how a spreadsheet lies."
+   }
+  ]
+ },
+ "0.1.46": {
+  "date": "2026-08-26T15:03:52Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "Verse Finder: where can I buy this, and for how much",
+    "text": "Type the name of an item, a ship or a commodity and the widget tells you who sells it, what it costs, and how far away they are. Results are ordered by how close each shop is to where you are standing — not by price — because a shop two systems away being 40 aUEC cheaper is not an answer.\n\nEvery price says how old the reading is, because most of them are somebody's observation rather than a live feed. A ship shows its hire price and its sale price as two separate figures; merging them would print a range from a 28,000 aUEC rental to a 1,100,000 aUEC purchase. If nothing comes back, it says which kind of nothing — a name we do not know, or a name we know with nowhere selling it."
+   },
+   {
+    "kind": "new",
+    "label": "Commodity trading — and it is EXPERIMENTAL",
+    "text": "The Trade side of the Hauling widget reads your buys and sells out of the game log and turns them into three things: a Ledger of what you actually bought and sold and what it made, a route finder for what is worth running right now, and a Commodities funnel that walks you from what to buy, to where to buy it, to where to sell it.\n\nSame warning as Hauling last release, and it is not a formality: this is new, the game does not state every number it needs, and it will be wrong sometimes. Check it against a kiosk before you trust a figure. It only ever READS your log — it cannot buy, sell or touch anything in game."
+   },
+   {
+    "kind": "new",
+    "label": "Your receipts are prices, and so are everybody else's",
+    "text": "When you buy something at a shop, the app now reads the price off your own log and shows it beside the survey data, dated to the minute you were standing there. If you have log sharing turned on, other people's confirmations arrive the same way.\n\nWhat this actually fixes is staleness rather than accuracy. Shop prices barely move — the vast majority were never once seen to change in a month — but the public tables run a couple of months behind, because nobody has been back to look. A row reading \"7 aUEC, 25 days ago\" and a row reading \"7 aUEC, 4 hours ago\" are the same price and a completely different amount of confidence. One list, sorted by distance, with the freshest reading winning."
+   },
+   {
+    "kind": "new",
+    "label": "The app knows where you are",
+    "text": "Opening a kiosk, docking, or pulling up your inventory tells the app where you are standing, so anything that depends on distance — the Verse Finder's ordering, hauling route times, which shop is nearest — has something real to work from instead of a guess. Every reading says how old it is and how much to trust it, and when it does not know, it says so rather than picking the last place it saw."
+   },
+   {
+    "kind": "new",
+    "label": "Event Tracker: Siege of Orison, and events that update themselves",
+    "text": "Live events get their own tab, with the point tiers and what each one unlocks. The event data no longer ships baked into the app — it is fetched, so a corrected reward reaches you without waiting for a release.\n\nRewards nobody has confirmed yet are shown, marked, and never counted as fact: dim, italic, prefixed with a question mark and tagged UNCONFIRMED. Every rung has a \"Wrong?\" button. If you know what a tier actually gives, tell it and it reaches everyone else. The app will not tell you how many missions a tier is, because only four of the thirteen Orison contracts have a measured point value and inventing the other nine would be making it up."
+   },
+   {
+    "kind": "new",
+    "label": "It tells you when you are on a test server",
+    "text": "Running PTU used to be silent and confusing: blueprints simply never appeared, because test-server progress is deliberately kept out of your real collection. A badge now says so, and hovering explains that everything else still works normally. Missions, hauling, events and the picker all run on PTU exactly as they do on live — it is only blueprints that are held back."
+   },
+   {
+    "kind": "improved",
+    "label": "Shared logs go back a year, and the live one is no longer sent",
+    "text": "If you share logs, the app used to only offer sessions from the current game patch — about five weeks — while your logbackups folder goes back years. It now offers a year of finished sessions, dated from the log's own first line rather than the file's timestamp, so copying or restoring the folder cannot make an old session look like today's.\n\nThe live in-progress log is no longer uploaded at all. It was re-sent every twenty minutes as it grew, which filled the slots with successive copies of one session, and a finished session lands within the hour anyway."
+   },
+   {
+    "kind": "improved",
+    "label": "Twitch chat emotes go through the app",
+    "text": "The chat widget used to ask 7TV, BTTV and FrankerFaceZ for emotes directly. When one of them went down — which happened — every load put errors on the console for everyone, whether or not you use the widget. Those requests now go through the app itself, so an outage at somebody else's server costs you a few emotes and nothing else."
+   },
+   {
+    "kind": "improved",
+    "label": "Hauling picks up commodities",
+    "text": "A commodity run can go into the Route tab alongside your cargo contracts, planned as one trip rather than two. The board uses your ship's real hold rather than a number you have to type, and you can still override it. Origin picker trimmed to the places you actually named, and the price table says where its figures came from and how long ago."
+   },
+   {
+    "kind": "fixed",
+    "label": "A refused sale is no longer counted as profit",
+    "text": "The game logs a sale request the same way whether the server accepts it or refuses it. The app was booking both. One real session where a terminal errored twice and the sale was retried credited 435,408 aUEC of profit that never happened, at margins that should have been the tell.\n\nA sale is now held briefly and only counted if no refusal arrives. If you have been using the Ledger and the numbers look too good, the fix cannot repair a journal already written — delete it and let it rebuild."
+   },
+   {
+    "kind": "fixed",
+    "label": "PTU blueprints no longer leak into your collection",
+    "text": "Progress from a test server was correctly refused while the app was watching live — but not when it replayed an older session from your backups on startup. That path never checked which environment the log came from, so a PTU session read back as real progress and was synced to the site as real progress. One replay on one machine turned 0 contributions into 2 and 12,000 points that were never earned."
+   },
+   {
+    "kind": "fixed",
+    "label": "The Verse Finder was hiding shops outside your system",
+    "text": "Far-away shops sorted last, correctly — and then got cut off by the row limit before they were ever drawn, so an item sold across the verse looked like it was sold only where you happened to be standing. Each area now keeps its best row past the cap."
+   },
+   {
+    "kind": "fixed",
+    "label": "Sell prices are no longer invented",
+    "text": "A commodity sale states the money and the crate size, and never how full the crate was — so a per-SCU price worked out from it was a guess running about a fifth low. The Ledger keeps the money, which is real, and simply does not show a per-SCU figure it cannot know. Hand-mined gems sold from your inventory are the common case and were the worst affected."
+   },
+   {
+    "kind": "fixed",
+    "label": "aUEC per hour works again",
+    "text": "Contracts were being counted twice in the per-hour figures, and the number had quietly stopped meaning anything."
+   },
+   {
+    "kind": "fixed",
+    "label": "The mission giver stopped disappearing",
+    "text": "A contract that paid no reputation lost its whole faction section — including the name of who you were working for. Every Siege of Orison contract pays event points instead of reputation, so the entire event ran with its giver invisible."
+   },
+   {
+    "kind": "improved",
+    "label": "4.10 PTU data is bundled",
+    "text": "Missions, blueprints and items from changelist 12479687, so the app has something to read against if you go and play the test build. It switches back to the live pools on its own when you go back to live."
+   }
+  ]
+ },
+ "0.1.45": {
+  "date": "2026-08-19T13:21:03Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "Hauling: a whole widget for cargo runs — and it is EXPERIMENTAL",
+    "text": "Accept some cargo contracts and the Hauling widget works out what to fly, in what order, and what to load first. It reads your board off the game log: which contracts you have, how much each moves, where every pickup and drop-off is, and what is already in your hold. Three tabs — Rank (what is worth taking), Route (where to go, in order) and Stow (what to load first, and how to recognise it at the freight elevator).\n\nIt is marked EXPERIMENTAL on purpose. It is new, it is the most ambitious thing in the app, and it will get things wrong — especially any figure the game never states out loud. Check it against your mobiGlas before you trust it, and tell Sub what it got wrong. It only ever READS your log: it cannot touch your contracts or your cargo."
+   },
+   {
+    "kind": "new",
+    "label": "It knows how long the flying actually takes",
+    "text": "Every per-hour figure now counts the travel, not just the loading. The times came from measuring real runs out of the logs rather than guessing: about six minutes between a station and a surface outpost on the same body, about seven to another planet, and roughly three minutes for a jump-gate crossing whichever hole you take.\n\nThat one change reordered the board. A contract with fat boxes and few stops can be worth far more an hour than a fiddly one that looks better per box, and until now the app could not see the difference — it priced flying at nothing."
+   },
+   {
+    "kind": "new",
+    "label": "Rank leads, and it ranks by what an hour pays",
+    "text": "Rank is the first tab, because it is the one you read BEFORE you have a board. Contracts are ordered by reputation or aUEC per HOUR, with the per-box figure kept underneath — per box is what the work feels like in your hands, per hour is the only number you can hold against an evening. Click any row to open that contract on subliminal.gg."
+   },
+   {
+    "kind": "new",
+    "label": "It will not recommend a contract your ship cannot carry",
+    "text": "A container cannot be split, so a hold that takes 4 SCU can never accept an 8 SCU box no matter how much room is free. The board now checks each contract's real box size against your ship's cargo grid and hides the ones that cannot fit at all. If it does not know what you are flying it says so and asks, rather than guessing."
+   },
+   {
+    "kind": "new",
+    "label": "Chat: your tab now names the server you are actually on",
+    "text": "The middle chat tab used to say \"US East 1B\" — which is every shard in that region, not the people you could actually meet. It now reads your real shard, like \"US East 1B 140\", and the region-wide room is gone. Alongside it, the DGS tab is the players on the same game server as you right now, and Global is everyone using the app whether they are in game or not."
+   },
+   {
+    "kind": "fixed",
+    "label": "Your earnings rate stops counting the time you were away",
+    "text": "Leave the app open overnight and the per-hour figures used to collapse, because the clock ran wall-to-wall from your first contract. It now counts only time with a contract open and no long idle gap, and there is a reset on the earnings bar if you want to start the measurement again from now."
+   },
+   {
+    "kind": "fixed",
+    "label": "Dragging one widget no longer lights up all the others",
+    "text": "Dragging a widget revealed every other widget's drag bar as a drop target. That is still true while you are arranging — stacking widgets is what those bars are for — but notification widgets like SC Feed and Unlock Alerts are left alone, since hiding one behind another defeats the point of a notification."
+   }
+  ]
+ },
+ "0.1.44": {
+  "date": "2026-08-16T05:46:00Z",
+  "notes": [
+   {
+    "kind": "new",
+    "text": "There is a magnifying glass in the top right of the Mission & BP Tracker. Type part of a contract's name, pick it out of the results, and you get the same brief the panel shows for a mission you are actually running — the pool, what it pays, who gives it, how long it takes. You do not have to have accepted it, and you do not have to alt-tab to the website to look something up mid-session. Press Escape or the ✕ to close it and hand the keyboard back to the game.",
+    "label": "Look up any contract without leaving the game"
+   },
+   {
+    "kind": "new",
+    "text": "The tracker used to sit empty until you accepted something. Now, when you are between contracts, it shows you the blueprint pools you are closest to finishing — with what each one pays, how long a run takes, and the aUEC per hour that works out to — plus where you stand with your mission givers and the blueprints and missions you saw most recently. Standing is written as the number of contracts to your next rank rather than a raw reputation figure, because \"5,300 rep to Prestige 2\" does not tell you whether that is an evening or a month, and \"about 27 contracts\" does. The mission picker has an Idle option now too, so you can get back to this screen once you have accepted something.",
+    "label": "The tracker has something to show you between contracts"
+   },
+   {
+    "kind": "new",
+    "text": "The Event Tracker keeps the reward ladder exactly as it was and adds, underneath it, the quickest way to actually reach your next rank. Three contracts ranked by reputation per hour, each with its run length, what it pays, and how many runs and how much total time it would take to close the gap you are on. It is scoped to the next rank rather than the whole track on purpose — the best rep per hour in the abstract is trivia, but \"this one, seven runs, about an hour and ten\" is a plan. The spread is usually much wider than people expect: on one real track the top row was four times the rate of the bottom one.",
+    "label": "The fastest route to your next rank, worked out for you"
+   },
+   {
+    "kind": "new",
+    "text": "Mission info now carries how long a contract actually takes to run, how hard it is, whether it can be retried if you fail it, and how long after finishing before you are allowed to take it again. That last one is the wait most people care about and it is not the number the game shows you — a contract can run 12 minutes and still lock you out for 45 after you hand it in. The completion card picked up the run length too. This comes from the same per-contract dataset the website has been using for weeks, trimmed down to only what the app draws so it costs 0.38 MB rather than the full 5.95 MB.",
+    "label": "How long a contract takes, how hard it is, and when you can retake it"
+   },
+   {
+    "kind": "new",
+    "text": "Every widget can have a hotkey now, not just the four that happened to have one. There are no defaults and there deliberately never will be — eleven preset key combinations would collide with each other, with Star Citizen, and with whatever you have already bound. Every row starts out reading \"None — click to set\", so nothing changes until you decide it should. Any hotkeys you had set before still work exactly as they did.",
+    "label": "A hotkey for any widget you want one for"
+   },
+   {
+    "kind": "improved",
+    "text": "The after-action card used to print whatever payout figure it had, so a calculated estimate looked exactly like a reward the game actually handed you. Now the figure is labelled with where it came from, ranked the same way the website ranks it: a payout logged live reads \"aUEC\", one reported by other players reads \"reported\", one straight out of the game files reads \"payout\", and a modelled guess reads \"~N estimated\". Estimates are also no longer added into your earnings totals — roughly 2,000 contracts have modelled payouts, and counting those as money made the totals fiction.",
+    "label": "The report card says where a payout figure came from"
+   },
+   {
+    "kind": "improved",
+    "text": "The circled i beside a figure used to only respond to hovering, which meant clicking it — the obvious thing to do — appeared to do nothing at all. It now opens on a click as well. Hovering still works exactly as before.",
+    "label": "The info buttons open when you click them"
+   },
+   {
+    "kind": "improved",
+    "text": "Restarting the app used to destroy the log covering whatever just went wrong, which is unfortunate given that restarting is the first thing anyone tries. One previous log is now kept. On top of that, errors in the overlay's own interface are recorded where before they vanished silently, and Copy diagnostics now carries that recent history and the tail of the log along with it — so one paste in Discord has what we need instead of three rounds of questions. Sync and Twitch tokens are stripped out by value before anything is copied. There is an Open logs folder button next to it.",
+    "label": "When something goes wrong, one paste now tells us what"
+   },
+   {
+    "kind": "improved",
+    "text": "The row of facts on a mission is in a deliberate order now rather than whatever order the code happened to build them in. One consequence worth mentioning: Reputation and Rank moved out of the faction group and into the main row, so that group now shows the faction and your standing bar only.",
+    "label": "The mission facts are in a sensible order"
+   },
+   {
+    "kind": "fixed",
+    "text": "If Star Citizen was not running in English, or you use one of the community language packs, the app was recording few or none of your blueprints — and nothing on screen said so. Your pools just stayed dark while you ground them out. The game writes its notifications in whatever language you play in, so the app was reading text it did not recognise: a German client resolved 0 of 475 pool blueprints, and one pack renamed things in a way that missed all 166 of its entries. Pack users had it worst, recording no blueprint receipts at all. The app now reads your game's own language file and translates back to the names it knows, which works for every language and every pack, including ones that do not exist yet. It only ever reads that file. Measured after the fix: German 475 of 475, and all three packs at 100%.",
+    "label": "Blueprints were never recorded if you did not play in English"
+   },
+   {
+    "kind": "fixed",
+    "text": "Accepting certain contracts made your standing with that faction disappear from the panel entirely, which looked like the app had lost your reputation. It had not — the standing was tracked correctly the whole time. Some contracts pay into a reputation track the app does not rank, and rather than falling back to your overall standing with that giver it showed nothing at all. This is not rare: 384 of 4,075 contracts pay only unranked tracks, and for Headhunters it is 88 of them, which is most of their board.",
+    "label": "Your standing no longer vanishes on certain contracts"
+   },
+   {
+    "kind": "fixed",
+    "text": "Hiding the Twitch Chat or Web Page widget while you were typing in it left the overlay holding the keyboard with nothing on screen to explain it — the overlay would eat clicks on every monitor until you restarted. Both widgets now release the keyboard when they are hidden, the way the notepad and chat already did.",
+    "label": "Hiding a widget mid-typing no longer eats your clicks"
+   },
+   {
+    "kind": "fixed",
+    "text": "If your language file could not identify a blueprint, the pool simply stayed dark, which reads as the app being broken rather than as a name it does not know. The tracker now says so, and shows the exact text the game wrote so you can see why. Where a modified language file is involved there is a Recalibrate button that re-reads it and goes back over blueprints already recorded under names it could not place, so it fixes the pool you are looking at rather than only future receipts. Settings has a card showing which language file is in use and how many names it resolved.",
+    "label": "The tracker tells you when it cannot identify a blueprint"
+   }
+  ]
+ },
+ "0.1.43": {
+  "date": "2026-08-14T07:32:45Z",
+  "notes": [
+   {
+    "kind": "fixed",
+    "text": "If you installed the app rather than running it from source, the better of the two text-reading engines never started at all — so the Mining Scanner read nothing, and the contract scanners had no engine behind them. The engine's files were sealed inside the app package where it could not open them. Everyone who installed the app has had this since the feature shipped, which is why \"the scanner does nothing\" was never reproducible for us. It now loads from a place it can actually reach, and if it ever fails again the app says so out loud instead of going quiet. Found and traced by StrifeCo, who dug out the underlying error himself — thank you.",
+    "label": "The Mining Scanner and contract scanners actually work now"
+   },
+   {
+    "kind": "fixed",
+    "text": "If a drag ended anywhere outside the thing you were dragging — releasing the mouse off the edge of a calibration box, or alt-tabbing mid-drag — the overlay could get stuck holding the mouse. While stuck it swallowed every click AND every keypress on every monitor, so the game got nothing. That is why tapping your interact key to get out appeared to do nothing: Star Citizen never received the key. Releasing now registers wherever it happens, and there is a backstop that force-releases a stuck grab after 30 seconds, because previously nothing could recover it but restarting the app.",
+    "label": "The overlay can no longer get stuck eating your clicks and keys"
+   },
+   {
+    "kind": "new",
+    "text": "Missions now show what they pay. For the roughly half of contracts where the game works the reward out when you accept — the number genuinely is not in the game files — the app shows a calculated estimate marked with a tilde, like ~39,750. Hover the circled i beside any figure and it tells you exactly where that number came from: straight from the game files, reported by players who ran it, or estimated. An estimate is right about three in four times and can miss in either direction, so it is always marked as one and a single real report replaces it.",
+    "label": "What a contract pays — and how much to trust the number"
+   },
+   {
+    "kind": "new",
+    "text": "Point the app at your mobiGlas contract board and it reads the offers list — every contract, its payout and its fees — and contributes those numbers so everyone gets better payout data. Turn it on in Settings, then drag the box over the offers list to line it up. It runs only while you have it armed, and there is a live page showing what it read so you can see it working rather than trusting a counter.",
+    "label": "Contract board scanner"
+   },
+   {
+    "kind": "new",
+    "text": "The mission panel now leads with what the contract actually is: what it pays, the faction behind it, the rank it wants, whether it is illegal, how hard players found it and whether anyone soloed it. It reads as chips rather than a wall of label-and-value rows, difficulty is a meter you can read at a glance, and reputation is split so \"+200 / +50\" finally says Reputation +200 and Affinity +50. Anything sourced from players carries a dashed outline, so you can always tell what came from the game and what came from us.",
+    "label": "Mission info, rebuilt"
+   },
+   {
+    "kind": "fixed",
+    "text": "Two contracts with the same name can draw from completely different blueprint pools, and the tracker used to merge them — so it could show you a pool of 18 with 4 still to win when the one you were actually running was finished and could never drop again. It now separates them using where the contract sends you and which region it routes through, and when it genuinely cannot tell it says so instead of guessing. The panel also now names the pools you cannot get from where you are.",
+    "label": "Same-name contracts no longer show you a pool that does not exist"
+   },
+   {
+    "kind": "fixed",
+    "text": "If you launched the app while already playing, anything the game logged in the moment between the app's first read and the watcher starting was processed by neither — and a missed accept means the tracker never learns the contract properly, then guesses it from the title on screen and shows a merged, permanently incomplete pool. The handover is now exact to the byte. This one was invisible and got blamed on whatever had changed most recently.",
+    "label": "Missions accepted as the app starts are no longer missed"
+   },
+   {
+    "kind": "new",
+    "text": "Every contract you finish is now recorded, so your completion count is a real total rather than whatever could be scraped back out of your logs. Past completions still in your logs are folded in once, automatically.",
+    "label": "Your finished contracts are counted properly"
+   },
+   {
+    "kind": "improved",
+    "text": "Each widget now has separate sliders for how visible its panel is and how visible its text is, so you can fade a panel almost away and still read what is on it — which one slider could never do. There is a Full on hover switch per widget too. The sliders no longer lag behind your mouse or drag each other around.",
+    "label": "Fade the panel and the text separately"
+   },
+   {
+    "kind": "improved",
+    "text": "A single small animation was quietly redrawing the tracker sixty times a second even when nothing was happening, which on an always-on-top window means the desktop recomposites over your game every frame, forever. It now redraws about three times a second and only when there is something to say. If you turned GPU acceleration off because the overlay cost you frames, it is worth trying again.",
+    "label": "The overlay stops repainting when nothing is happening"
+   },
+   {
+    "kind": "improved",
+    "text": "The Mining Scanner's rock table is now generated from the game's own data rather than typed by hand, it knows whether you are planet-side or in space and stops calling harvestable plants debris, and it will not announce a number that cannot be a real contact. Loot Split now pulls a finished refinery job straight into a split, sums same-ore imports, and autocompletes ore names so nobody has to spell Hephaestanite.",
+    "label": "Mining Scanner and Loot Split"
+   },
+   {
+    "kind": "improved",
+    "text": "Chat gains reports and pins, a per-channel settings cog, a friends rail and party listings you can advertise and apply to. Moderation is now something you can actually read rather than a silent filter, and it will never trip over a mission word. You can also hide where you are — and hiding means the app does not send it, not that somebody else agrees not to show it.",
+    "label": "Chat: pins, reports, party listings and moderation"
+   },
+   {
+    "kind": "improved",
+    "text": "The mission's name is now the picker — click it to choose which contract to follow — with the owned count and tracking mode beside it. Fonts and colour emoji ship with the app instead of being fetched from Google every time a widget loads, which also fixes o7 showing as a box. Settings puts setup first and sends two options home to the widgets they belong to. The bundled game data is current with the live patch.",
+    "label": "Smaller things"
+   }
+  ]
+ },
+ "0.1.42": {
+  "date": "2026-08-10T02:38:21Z",
+  "notes": [
+   {
+    "kind": "fixed",
+    "label": "Security: update as soon as you can",
+    "text": "This release closes two holes in the app's local service that anything on your network could reach. The worse one let a request walk out of the overlay's own folder and read files from your disk — including the file holding your subliminal.gg sync token. The second let an unauthenticated request rewrite your settings, which could be chained to point chat at somebody else's server and hand them that token. Both are fixed: the service now refuses any request from another machine for anything that carries credentials or changes a setting, and refuses page-initiated requests from a website open in the Web Page widget. Widget pages still serve to OBS on a second PC, so browser sources are unaffected. Found and reported by a viewer during a stream — thank you."
+   },
+   {
+    "kind": "new",
+    "label": "Chat: your own rooms, private ones, and direct messages",
+    "text": "Create a room and say what it is FOR — Org Operations, Mining, Salvage, Bounty Hunting, twelve activities in all — and the room browser groups by that, so you can see what people are actually doing rather than a flat list of names. Rooms can be private: a private room is not listed anywhere, and you let people in with a six-character join code or by inviting their RSI handle. And you can now message a player directly: right-click any name, in the chat or in the member list, and pick Send a direct message. Conversations wait for you if you were offline. You can delete a room you made, which removes it for everyone in it."
+   },
+   {
+    "kind": "new",
+    "label": "Chat: Nearby replaces the Shard channel",
+    "text": "There are now two location channels instead of three. Your region channel (US East 1B, EU West 1A and so on) is everyone on that exact server. Nearby is the Dynamic Game Server actually running the area you are in — the people who could genuinely be around you. The old Shard channel sat between the two and reported far more people than were anywhere near you, so it is gone. Nearby is worked out from your game log and follows you as server meshing hands you between DGSs."
+   },
+   {
+    "kind": "improved",
+    "label": "Chat: scrollback survives, and the channel list calms down",
+    "text": "Conversations are no longer lost when the chat service restarts — history, your rooms and your invites all persist now. The left rail splits into the channels you are IN and a Browse rooms list you can roll up, every group collapses with a click, and you can hide rooms from the browser you are not interested in. Links you share are labelled BP, ITEM or MISSION so a blueprint and a wiki lookup no longer look identical, the slash-command menu now appears mid-sentence instead of only at the start of a message, and a new /build command shares an erkul loadout under a name you choose. Direct messages carry a standing note that they are private from other players but not encrypted."
+   },
+   {
+    "kind": "fixed",
+    "label": "One blueprint no longer shows as two on the mission report",
+    "text": "If you ran contracts back to back, a blueprint awarded by the mission you finished earlier could appear on the NEXT mission's report as well — one unlock, two pictures. The report now refuses to reach back past the previous completion, so each card shows only what that contract actually paid out. Where two missions finish so close together that the log genuinely cannot say which one paid, the card now shows nothing rather than guessing."
+   },
+   {
+    "kind": "fixed",
+    "label": "The mission report waits while you answer it",
+    "text": "Picking an answer and then alt-tabbing into the game could leave you coming back to a card that had already closed, with the remaining questions unanswerable. The card now only counts down while you are away from it — pointer off it and the overlay not focused — so you can go and fly and come back to finish."
+   },
+   {
+    "kind": "fixed",
+    "label": "The Mining Scanner stopped calling out numbers that are not rocks",
+    "text": "It could announce a reading while you were flying nowhere near a rock, triggered by an ordinary number on your flight HUD. The game only ever draws 165 legal signature values, so anything that is not one of them cannot be a contact — those are now refused outright instead of being talked into a call-out by the scan marker beside them. The number still appears in the scan box, dimmed and struck through, so you can see what was read and thrown away."
+   },
+   {
+    "kind": "improved",
+    "label": "Missions now say whether they are Verified",
+    "text": "Mission pages on subliminal.gg show whether a contract is Verified or Unverified, the same way the mobiGlas Contract Manager does, and the blueprint tracker can filter by it. 704 of the 4,075 contracts in the current patch are unverified."
+   }
+  ]
+ },
+ "0.1.41": {
+  "date": "2026-08-08T23:18:09Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "Player chat — Global, your server, your shard",
+    "text": "The overlay now has an in-game chat with three channels that manage themselves: Global (everyone running SC Overlay), your server region (US East 1B, EU West 1A, and so on), and your shard — the actual instance you are flying in, meaning everyone in that channel can genuinely meet you in the verse. The app reads which shard you land on from the game's own log and moves you between channels automatically as you play. Turn it on from the hub or the tray: it's the new Chat widget. Chat is for verified RSI accounts only — connect your subliminal.gg account and verify your handle on your profile, and you're in. That rule is what keeps the place moderated: everyone chatting is accountable for their handle."
+   },
+   {
+    "kind": "improved",
+    "label": "A much smaller, much lighter app",
+    "text": "This update is a full optimization pass with no visible change: the download is 40 MB smaller (135 MB, down from 175 MB), the app on disk shrank by about a quarter, and the background service that does the tracking now uses about a quarter of the memory it used to — roughly 350 MB less while the app is running. The screen-watcher that notices when the game is focused no longer needs its own helper process either."
+   },
+   {
+    "kind": "fixed",
+    "label": "Opening the tray menu during an update download quit the app",
+    "text": "If you right-clicked the tray icon to watch an update download, the app could close on the spot — the menu was being rebuilt underneath its own open popup once a second. The download itself was always fine and resumed on relaunch, which made it look stranger than it was. The tray tooltip still shows live progress on hover; the menu simply leaves itself alone until the download finishes."
+   },
+   {
+    "kind": "fixed",
+    "label": "Unlock Alerts offered to claim blueprints you already had",
+    "text": "Every ordinary \"Blueprint Received\" toast was carrying an \"Add to my collection\" button and a countdown that belonged only to fabricator claims. The prompt now appears only when there is actually something to claim."
+   }
+  ]
+ },
+ "0.1.40": {
+  "date": "2026-08-08T20:46:47Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "The scan readout, where you can see it",
+    "text": "The number the scanner read now shows in two places — to the left of the scan box and above it — instead of one spot underneath, and it is about twice the size. The box is wide and the signature can sit anywhere along it, so a single readout was often nowhere near what you were looking at. Both copies always show the same number, and each one moves itself out of the way if it would run off the edge of your screen."
+   },
+   {
+    "kind": "improved",
+    "label": "The mining scanner is around eight times faster",
+    "text": "A scan used to take about four and a half seconds to come back, and often longer, because every check read your entire screen and ran text recognition over all of it before it even looked at the number. Now, once it has found a signature, it looks only at the small patch of screen where that number actually sits. A reading comes back in a little over half a second. Picking up a brand-new rock is quicker too."
+   },
+   {
+    "kind": "improved",
+    "label": "It reads the number correctly now",
+    "text": "The scanner used two different text engines, and the one doing most of the work was the one getting it wrong — in testing it did not read a single mining signature correctly, producing things like 2006 where the screen clearly showed 2,000. The better engine is in charge now, and a nonsense value from the other one is thrown away instead of being announced."
+   },
+   {
+    "kind": "improved",
+    "label": "The scan marker is found on any ship",
+    "text": "Confirming that you are really scanning means spotting the small map-pin drawn next to the number. That check used to depend on the pin's colour — but the pin is drawn in your ship's HUD colour, which changes with the manufacturer, and on some ships it is nearly white. It no longer looks at colour at all. It looks for a small solid bright mark of roughly the right shape, which holds true whatever your HUD looks like."
+   },
+   {
+    "kind": "improved",
+    "label": "Signatures that could be two things now say so",
+    "text": "A couple of readings are genuinely ambiguous. 16,000 is either a five-rock Savrilium cluster or eight panels of salvage, and 18,000 is either Bexalite or nine panels. The scanner used to pick a side and sound certain about it. Now it leads with the likelier answer and admits the doubt: \"Probably debris. Could be Bexalite. Your call.\" If it is a rock you have targeted it still leads with the rock — \"That might be Savrilium. I'm not certain. Worth flying over.\""
+   },
+   {
+    "kind": "fixed",
+    "label": "A finished mission would not go away",
+    "text": "Complete a contract and the tracker could keep showing it as unfinished, sometimes for the rest of your session. It was re-reading the mission title still sitting on your screen after the contract ended and registering it all over again as a new one."
+   },
+   {
+    "kind": "fixed",
+    "label": "The wrong blueprint list",
+    "text": "Several different contracts share a name. When the tracker could not tell which one you were on it merged all of their reward lists together — so a mission with eight blueprints you already owned showed as \"14 of 18\", including four you could never get from it. It now uses the exact contract the game reports."
+   },
+   {
+    "kind": "fixed",
+    "label": "Missions coming back from hours ago",
+    "text": "A contract you finished earlier could reappear as though it were live, even after you had gone back out to the menu and returned. Leaving the game now properly clears the missions from that session."
+   },
+   {
+    "kind": "fixed",
+    "label": "Half of all mining scans were failing silently",
+    "text": "Every check wrote a screenshot to the same temporary file, which collided with the previous check still reading it. Around half of them failed outright and produced nothing at all — no reading, no call-out, and no error to explain it. That is most of what \"it just sits there\" was."
+   },
+   {
+    "kind": "fixed",
+    "label": "Saving settings no longer does unnecessary work",
+    "text": "Changing anything — even a widget's text size — used to re-fetch every loadout URL, restart the game-log watcher mid-session, and re-upload your whole collection to the site. It now only does the work the change actually needs. Thanks to Rytharr for finding this one."
+   },
+   {
+    "kind": "fixed",
+    "label": "Better recovery from misread digits",
+    "text": "The scanner could already correct a single 6 mistaken for an 8. It now handles two in the same number, recovering about ten more real misreadings without introducing any new ambiguity. Thanks to Rytharr for the fix and the measurements behind it."
+   }
+  ]
+ },
+ "0.1.39": {
+  "date": "2026-08-05T21:06:56Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "Canvas alignment & scale",
+    "text": "If your monitors run at different Windows scaling levels and the overlay still does not sit where it should, you can now move and resize the whole canvas by hand. It is in Settings under Canvas alignment & scale, and on the overlay itself in arrange mode. Turn on arrange mode and the dashed outline shows where the app thinks your main monitor is — size and move it until that outline matches your real monitor edges. Most people will never need it: it defaults to no adjustment, and the scaling bug it exists for is fixed below."
+   },
+   {
+    "kind": "new",
+    "label": "A widget's settings close themselves",
+    "text": "Open a widget's cog and walk away, and the settings popover now closes after fifteen seconds. Clicking anywhere on the widget keeps it open. Left up it was a permanently clickable box sitting over the game, and it also held the Web Page widget out of sight for as long as it was open."
+   },
+   {
+    "kind": "new",
+    "label": "Pop-up duration",
+    "text": "How long an SC Feed story and an Unlock Alert card stay on screen before they fade is now yours to set, in Settings under Pop-up duration. Anywhere from 3 to 60 seconds. A fixed timer is either too quick to read or too slow to get out of the way, and which one depends entirely on whether you are in a fight."
+   },
+   {
+    "kind": "new",
+    "label": "Shared logs include finished sessions",
+    "text": "If you have log sharing switched on, the app now also shares your rotated session logs, not just the one from the session you are in. Star Citizen writes a fresh log every launch, so a mission you finished yesterday was structurally out of reach — which is why some of you sent logs that genuinely contained none of your completions. Still opt-in, still scrubbed of your handle, account, IP and chat before anything leaves your PC, and filtered to the current patch."
+   },
+   {
+    "kind": "new",
+    "label": "Journal hotkey",
+    "text": "The Journal can be opened with a hotkey, Alt+F3 by default. It was the only placeable widget with no way in except the tray or the hub."
+   },
+   {
+    "kind": "improved",
+    "label": "Patch notes are labelled and grouped",
+    "text": "These notes now carry a heading each and are grouped into New, Improved and Fixed. Previously every line was an unlabelled paragraph, so finding the one that mattered to you meant reading all of them."
+   },
+   {
+    "kind": "improved",
+    "label": "Faster mining call-outs",
+    "text": "The scanner polls quickly whenever a signature is on screen, instead of watching for particular words in the scanning HUD. That HUD element can be restyled or turned off, and a shift in head position can carry it out of frame — while the signature number itself sits in the same place in every ship. Scanning in a Vulture felt sluggish for exactly that reason."
+   },
+   {
+    "kind": "improved",
+    "label": "Settings sections that match what you came for",
+    "text": "The Performance & fixes section had become a drawer holding seven unrelated things. It is now Canvas alignment & scale, Graphics & performance and Recover, and the explanation of why hotkeys do not reach the game sits with the hotkeys themselves."
+   },
+   {
+    "kind": "improved",
+    "label": "The hub's reset column says Reset",
+    "text": "The circular arrow beside each widget in the hub now has Reset written above it. On its own it reads as a refresh button, and refreshing a widget is a sensible-sounding thing that does not exist — it recentres the widget on your screen."
+   },
+   {
+    "kind": "fixed",
+    "label": "The overlay vanished at higher Windows scaling",
+    "text": "At 175% scaling and above on your main monitor, the overlay could land far enough down and right to be completely off screen, and below that it could sit offset from your monitors. The app worked out the size of your desktop by adding up rectangles that Windows reports in different units per display, so on a mixed-scaling desktop the answer described no real screen at all and Windows put the window somewhere of its own choosing. It now measures in real pixels and converts once. If your monitors all run at the same scaling you were never affected."
+   },
+   {
+    "kind": "fixed",
+    "label": "Verify from logs could crash the background service",
+    "text": "On a large logbackups folder, Verify from logs read every file into memory at once and ran the background service out of it. The button reported that verifying failed, and the overlay flashed a banner saying it was not tracking anything while the service restarted — the same cause behind both. It now reads a slice at a time, and on the folder that used to kill it, finishes in about three seconds."
+   },
+   {
+    "kind": "fixed",
+    "label": "Reputation that would not count",
+    "text": "For some players, completed contracts credited no reputation at all — a standing sat at zero no matter how much you ground. The game can label a contract with its reward in the title, and the app was reading that label as part of the mission's name, so it never matched a mission it knew. Not everyone's game writes those labels, which is why this hit some people and not others. Several smaller accuracy problems in how completions are counted are fixed alongside it. Run Verify from logs after updating: your standing is rebuilt from your own logs, and the rebuilt figure is the accurate one."
+   },
+   {
+    "kind": "fixed",
+    "label": "The blueprint count did not match the website",
+    "text": "The tracker's total counted only two of the four ways it knows you own something, so it read lower than your collection on subliminal.gg and looked like sync was broken. Both numbers now come from the same set."
+   },
+   {
+    "kind": "fixed",
+    "label": "Debris was never called out",
+    "text": "With debris call-outs switched on, a debris signature could still go unannounced. The scanner confirms a reading by finding the marker drawn beside the number, and it was looking for one fixed colour — but that marker is drawn in your ship's HUD colour, so it only ever matched on the ship it was measured from. It now matches the marker against the colour of the number beside it, whatever that colour is. An exact debris value is also treated as proof on its own."
+   },
+   {
+    "kind": "fixed",
+    "label": "The overlay could come up with no widgets",
+    "text": "The overlay sometimes started completely empty, and the only way out was mashing the overlay hotkey until it caught. Two separate causes: the page could fail to load and never try again, and the list of which widgets to show could arrive before there was anything to show it to."
+   },
+   {
+    "kind": "fixed",
+    "label": "Hiding a grouped widget kicked it out of the group",
+    "text": "Hiding a stacked widget by hotkey, tray or hub detached it from its stack, and it came back as a lone window behind where it used to be. Only the widget's own ✕ detaches now. A group could also end up displaying a hidden member, which painted nothing and left no tabs to click."
+   },
+   {
+    "kind": "fixed",
+    "label": "No drop highlight on the Mission & BP Tracker",
+    "text": "Dragging a widget onto the tracker to stack them showed no GROUP HERE marker, so there was nothing to tell you the drop would land. It was the one widget the highlight had never applied to."
+   },
+   {
+    "kind": "fixed",
+    "label": "Fabricator items with a size or grade tag",
+    "text": "Items the fabricator lists with a size or grade in front of the name would not capture — the app was comparing the whole line, tag included, against its item names and never finding a match."
+   },
+   {
+    "kind": "fixed",
+    "label": "The app called itself SC Blueprint Tracker",
+    "text": "The Start-menu and desktop shortcut still said SC Blueprint Tracker. Everything else had been renamed some releases ago; the installer had one leftover. A fresh install gets the right name — an update in place may leave the old shortcut beside the new one."
+   }
+  ]
+ },
+ "0.1.38": {
+  "date": "2026-08-03T15:02:24Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "Background service alerts",
+    "text": "The app tells you when its background service stops. That service does all the actual work — reading your game log, tracking missions and blueprints, syncing — while the overlay is only the display, so until now it could die and leave a HUD that looked perfectly normal and tracked nothing. You now get a banner that says it is reconnecting, and if it gives up, a button to try again."
+   },
+   {
+    "kind": "new",
+    "label": "Scan area opacity",
+    "text": "An opacity slider for the mining scan read area, in the Mining Scanner's cog beside the toggle that shows the box. Turn it most of the way down if you would rather not see the outline over the game. Hovering the box brings it back to full, so its Hide, Reset and drag controls are always reachable."
+   },
+   {
+    "kind": "improved",
+    "label": "Settings reorganised",
+    "text": "Diagnostics now sits with the performance and fixes tools instead of in a catch-all More section, promos have their own place so they stop reading as settings, and the theme list is in an order."
+   },
+   {
+    "kind": "improved",
+    "label": "Every widget works as an OBS source",
+    "text": "The browser-sources list went from 2 widgets to 9. Every widget except the Web Page and Settings panels could always be used this way — only two of them said so."
+   },
+   {
+    "kind": "improved",
+    "label": "Wider patch notes",
+    "text": "The patch notes card is wider, and no longer sized against the whole multi-monitor canvas."
+   },
+   {
+    "kind": "fixed",
+    "label": "Updates could serve the old version",
+    "text": "If an old copy of the background service was still holding the port when the new one started, the new app silently attached to it and showed you the old version's data and patch notes, with nothing anywhere saying so. Each launch now checks that the service answering is genuinely its own."
+   },
+   {
+    "kind": "fixed",
+    "label": "Clicks blocked on other monitors",
+    "text": "With the overlay focused, clicks on your other monitors did nothing and windows underneath looked frozen. The overlay canvas spans every display — that is what lets you drag a widget onto a second monitor — so making it interactive while focused made it interactive everywhere. Clicks pass through again outside of widgets."
+   },
+   {
+    "kind": "fixed",
+    "label": "The Web Page widget's settings cog",
+    "text": "It appeared to do nothing. It was opening behind the website, which is painted above everything else on the canvas. The site now stands aside while the cog is open."
+   },
+   {
+    "kind": "fixed",
+    "label": "The account connection check",
+    "text": "The check on your subliminal.gg token verified nothing. It asked an endpoint that answers everyone, so any token came back Connected, including a mistyped or expired one. Both the setup wizard and the diagnostics report were built on that answer."
+   },
+   {
+    "kind": "fixed",
+    "label": "Setup wizard sizing",
+    "text": "The wizard came up a different size depending on which monitor your mouse was on, and could be zoomed and cramped at the same time. It now opens on your primary display, at the same scale as the rest of the app."
+   },
+   {
+    "kind": "fixed",
+    "label": "A typed game log path could be lost",
+    "text": "A game log path typed by hand was lost if you closed Settings without touching anything else. Every other setting on the page saves itself; that one did not — and it is the setting the app cannot work without."
+   },
+   {
+    "kind": "fixed",
+    "label": "The setup wizard's website links",
+    "text": "They now land you on the step they are describing, rather than on the blueprint catalogue."
+   }
+  ]
+ },
+ "0.1.37": {
+  "date": "2026-08-02T03:37:33Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "Mission after-action report",
+    "text": "About 40 seconds after you finish a mission, the tracker asks a few quick questions about what it actually involved — how hard it was, whether you needed a crew. Your answers go to subliminal.gg and build a picture of each mission that the game files alone cannot give: the game knows what a mission awards, not what it is like to run."
+   },
+   {
+    "kind": "new",
+    "label": "First-run setup wizard",
+    "text": "If you install the app without going through the website first, it now walks you through finding your game log, connecting your account, and reviewing your settings. It skips anything already done, so nothing is asked twice. Reachable any time from the tray, under Run setup again."
+   },
+   {
+    "kind": "new",
+    "label": "The overlay appears in Alt-Tab",
+    "text": "Switch to it and you get your real mouse cursor back across the whole overlay, which makes reaching the cog and the smaller widgets much easier than guessing where the pointer went. Switch back and clicks go straight to the game again."
+   },
+   {
+    "kind": "new",
+    "label": "Fabricator ownership prompts",
+    "text": "Opt-in prompts to tick blueprints the fabricator shows you already own but the app has no record of. Off by default."
+   },
+   {
+    "kind": "improved",
+    "label": "Settings is now a panel on the overlay",
+    "text": "It opens where the rest of the app lives, and you can place, resize and skin it like any other widget instead of it being a separate window over the game. Open it from the cog or the tray, the same as before."
+   },
+   {
+    "kind": "improved",
+    "label": "The scan read area shows itself",
+    "text": "Open the Mining Scanner and the outline is simply there, rather than waiting to be found in a settings menu. A Hide button on the box itself turns it off if you would rather not see it."
+   },
+   {
+    "kind": "improved",
+    "label": "The Mining Scanner rests when closed",
+    "text": "It stops reading the screen while the widget is closed. Previously the opt-in alone kept it scanning every few seconds whether or not the widget was open. Auto-show still works — that is the one case where it is closed on purpose and needs the read to open itself."
+   },
+   {
+    "kind": "improved",
+    "label": "Diagnostics says where settings are saved",
+    "text": "The report now includes where your settings are saved, and whether saving actually worked."
+   },
+   {
+    "kind": "fixed",
+    "label": "The SC Feed card that never cleared",
+    "text": "The card that appeared at launch and never went away now behaves like any other notification and clears itself. While it was up it could also swallow clicks meant for the game."
+   },
+   {
+    "kind": "fixed",
+    "label": "Widgets turned on during arrange mode",
+    "text": "Turning a widget on while in arrange mode left it out of arrange, with no drag handles, until you left and re-entered."
+   },
+   {
+    "kind": "fixed",
+    "label": "The app icon on its windows",
+    "text": "The app icon now shows on its windows instead of the default Electron one."
+   }
+  ]
+ },
+ "0.1.36": {
+  "date": "2026-07-30T05:33:31Z",
+  "notes": [
+   {
+    "kind": "fixed",
+    "label": "The terminal window on your desktop",
+    "text": "0.1.35 left a terminal window sitting on your desktop. The overlay runs a small background service, and on Windows a service like that gets given a console window unless the app explicitly says not to — 0.1.35 stopped hiding it. Nothing was wrong with the service itself; it just became visible. It is hidden again."
+   }
+  ]
+ },
+ "0.1.35": {
+  "date": "2026-07-30T04:41:57Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "New widget: Unlock Alerts",
+    "text": "The \"Blueprint Received\" pop used to be stuck to the bottom of the tracker panel, which is the one place you never look mid-mission. It is now its own widget you drag wherever you actually watch, it shows the item's picture, and several unlocks at once queue up instead of stepping on each other."
+   },
+   {
+    "kind": "new",
+    "label": "Send Twitch chat from the overlay",
+    "text": "Sign in with Twitch in the chat widget (a short code on twitch.tv, no password typed into the app) and the send bar appears. Reading chat still needs no account at all."
+   },
+   {
+    "kind": "new",
+    "label": "Show the scan read area",
+    "text": "New in the Mining Scanner's settings. It draws a box over the part of the screen the app reads for a signature, and you can DRAG it (or its corner) to move and resize that area, with a Reset if you want the default back. Useful if your HUD sits somewhere unusual, or Star Citizen is on a different monitor than the app expects."
+   },
+   {
+    "kind": "new",
+    "label": "The scan box shows what it read",
+    "text": "That box now also prints the number it just read, centred underneath it, so you can hold it up against the real signature on your screen. A number with a line through it is one the app read but did not act on. It also disappears when you close the Mining Scanner, instead of being left on your screen."
+   },
+   {
+    "kind": "new",
+    "label": "Hotkeys can be cleared",
+    "text": "You can REMOVE a hotkey now, not just change it. Each row in Settings → Hotkeys has an ✕; clearing one leaves that action with no key at all and it stays cleared. (Clearing the hold-to-interact key also turns that mode off, since without the key nothing on the overlay would be clickable.)"
+   },
+   {
+    "kind": "new",
+    "label": "Copy diagnostics",
+    "text": "New in Settings. If something is not working, it copies a short report (is the background service answering, is your game.log being found and read, which dataset is loaded, which opt-ins are on, are you running as admin) that you can paste into a bug report. No passwords or tokens in it."
+   },
+   {
+    "kind": "improved",
+    "label": "The Web Page widget shows any site",
+    "text": "Sites that refuse to be embedded — the RSI site above all, plus UEX, erkul and starcitizen.tools — used to come up as a blank box. They work. Sign-ins work too, in their own cookie jar, kept separate from your normal browser."
+   },
+   {
+    "kind": "improved",
+    "label": "Real fabricator photos on unlocks",
+    "text": "Blueprint unlocks show the real fabricator photo instead of a grey 3D model. The old picture was shared between items that use the same game model, so three different Scraper Modules all looked identical — it could not even tell you which one you had unlocked."
+   },
+   {
+    "kind": "improved",
+    "label": "The scanner stops guessing",
+    "text": "Debris comes in whole salvage panels, so a debris signature is always a multiple of 2,000 — that, rather than \"it wasn't in my rock list\", is now what makes it debris. A signature that is neither ore nor a panel count gets an honest \"I don't know what that is, but it's not ore\" (five ways, at random) instead of a wrong \"Debris\", and a number too big for the game to have shown is thrown out as a misread."
+   },
+   {
+    "kind": "improved",
+    "label": "Signatures that could be either",
+    "text": "When a signature could be either — 16,000 is five Savrilium rocks AND eight debris panels — it says so instead of picking one. You get \"Debris, or Savrilium\", or \"This could be Savrilium\" if it's a rock you've targeted, and it always speaks up: either way you have to fly over and look."
+   },
+   {
+    "kind": "improved",
+    "label": "Sixes and eights that read as each other",
+    "text": "A signature is only ever one of about 165 possible numbers, so a misread usually lands on a value that cannot exist — and there is normally exactly one real number a single wrong digit away. When there is, the app uses it, so a rock the scanner used to shrug at gets named. When two rocks are both possible it says nothing rather than guess at one, and it never \"corrects\" a number that was already valid."
+   },
+   {
+    "kind": "improved",
+    "label": "Clearer widget names",
+    "text": "Mission & BP Tracker, Mining Scanner, Journal, Loot Split, Event Tracker and Infographic Viewer. Your layout, hotkeys and settings are untouched — only the labels changed."
+   },
+   {
+    "kind": "improved",
+    "label": "The settings cog packs itself away",
+    "text": "If you summon it and go back to flying, it packs itself away after 30 seconds of the game having focus — it was holding the overlay in a clickable state the whole time it stayed open."
+   },
+   {
+    "kind": "improved",
+    "label": "What your next rank unlocks",
+    "text": "The tracker panel now tells you what your next rank actually unlocks. Battaglia hands out ships at certain ranks — the Golem, Prospector and MOLE — and the standing bar used to be a bare number with no reason to care about it."
+   },
+   {
+    "kind": "improved",
+    "label": "The background service recovers from crashes",
+    "text": "If the overlay's background service ever crashes it now writes down why and restarts itself, instead of leaving the app looking fine while nothing works."
+   },
+   {
+    "kind": "fixed",
+    "label": "Phantom Debris call-outs",
+    "text": "Far fewer phantom \"Debris\" call-outs while mining. Three things were making noise: the app announced anything it read even when you were not scanning, ordinary HUD lettering could be misread as a number, and a scan from ages ago was re-announced every time the widget reloaded. It now checks the frame for the marker beside a real signature, ignores stale scans, and there is a \"Call out debris & unknown\" switch in the Mining Scanner settings if you only care about ore."
+   },
+   {
+    "kind": "fixed",
+    "label": "Patch notes ran off the screen",
+    "text": "On a multi-monitor setup the patch notes window sized itself against every monitor put together, so with a tall second display it could grow past the top and bottom of the screen it was centred on and take the ✕ and \"Got it\" with it. It is capped now, and the notes scroll inside it."
+   },
+   {
+    "kind": "fixed",
+    "label": "Duplicate reputation rows",
+    "text": "Missions that list two reputation awards against the same standing no longer show as two confusing identical rows. You get the one that counts, with the extra disclosed rather than silently dropped."
+   },
+   {
+    "kind": "fixed",
+    "label": "SC Feed alert settings",
+    "text": "The SC Feed widget's alert settings (the ♪ button) open again."
+   },
+   {
+    "kind": "fixed",
+    "label": "The tilt slider",
+    "text": "It works on every widget that has one."
+   },
+   {
+    "kind": "fixed",
+    "label": "The Mining Scanner's skin",
+    "text": "It wears your ship's skin properly, and lost its slab of empty glass."
+   },
+   {
+    "kind": "fixed",
+    "label": "The Web Page widget's bar",
+    "text": "It slides out on hover like every other widget."
+   },
+   {
+    "kind": "fixed",
+    "label": "Dragging while the game recentres your mouse",
+    "text": "Dragging a widget no longer gets yanked off course by Star Citizen recentring your mouse."
+   }
+  ]
+ },
+ "0.1.34": {
+  "date": "2026-07-26T00:58:33Z",
+  "notes": [
+   {
+    "kind": "new",
+    "label": "The overlay is now a widget canvas",
+    "text": "Nine widgets you place, size and stack anywhere on screen: the Blueprint tracker, Mining Assistant, Notepad, Twitch Chat, SC Feed news, Party Split, a Battaglia grind tracker, any Web Page, and your Binding Chart. Drag one widget onto another's bar to GROUP them into a tabbed stack, and pop a tab back out whenever you like."
+   },
+   {
+    "kind": "improved",
+    "label": "One bar on every widget",
+    "text": "Every widget has the same hover bar now: move, reset, its own settings, and close — plus a text-size control (70–200%) so anything stays readable from 1080p to 4K."
+   },
+   {
+    "kind": "improved",
+    "label": "Reset brings a widget back",
+    "text": "Reset puts a widget back in the MIDDLE of your screen, and the settings cog has a reset button for each widget — so a widget dragged off the edge of your monitor is always recoverable."
+   },
+   {
+    "kind": "improved",
+    "label": "Hold-to-interact only while in game",
+    "text": "Hold-to-interact only applies while Star Citizen is in front. If you're on the desktop the overlay just works like a normal window, so your interact key no longer types into Discord or your browser."
+   },
+   {
+    "kind": "improved",
+    "label": "A closed widget really closes",
+    "text": "It stops polling, drops its connections and frees its memory instead of quietly running in the background. The Mining Assistant also stays properly silent when it's off screen or tabbed behind another widget."
+   },
+   {
+    "kind": "improved",
+    "label": "Lighter on your machine",
+    "text": "The screen-reading loop no longer launches a Windows helper process every three seconds, and the overlay does less work while your cursor is nowhere near it."
+   },
+   {
+    "kind": "fixed",
+    "label": "Dragging near another widget",
+    "text": "A widget used to freeze when you dragged it near another one and then jump to catch up — the neighbouring widget was swallowing the mouse. It tracks your cursor properly now, and every widget's bar comes out while you drag so you can see where a stack will land."
+   },
+   {
+    "kind": "fixed",
+    "label": "Grouping the Battaglia tracker",
+    "text": "Grouping it with the mission tracker no longer hides the tab bar."
+   },
+   {
+    "kind": "fixed",
+    "label": "The Twitch Chat and Notepad bars",
+    "text": "They retract again once you move away."
+   },
+   {
+    "kind": "fixed",
+    "label": "The Blueprint panel's settings menu",
+    "text": "It opens beside its cog instead of off the top of the panel."
+   }
+  ]
+ },
+ "0.1.33": {
+  "date": "2026-07-22T06:45:00Z",
+  "notes": [
+   "New Notepad widget — jot notes right on the overlay. Make as many titled notes as you like; they autosave, and you can drag the box bigger and bump the text size to suit any monitor. Turn it on from the settings cog's widget list or the tray. To type while you're in the game, click \"Type\" — it grabs the keyboard and frees up your interact key so you're not alt-tabbing.",
+   "New \"Blueprint Received\" pop — the moment you collect any blueprint it flashes the item and name, no matter which mission you're tracking. Handy when you've got several of the same mission on the go and the receipt used to land on one you weren't looking at.",
+   "The idle screen (when nothing's tracked) now shows your reputation and aUEC per hour — both what you earned in the last hour and your current grind pace. aUEC shows \"—\" for missions the game doesn't report a payout for (most of them right now).",
+   "\"Guaranteed rewards\" are now \"Physical Rewards\" — the actual items/ships a mission hands over (the game never tells the app when you get these). Tick one off once it's in your hangar and it tucks away under a \"Received\" list, so you can keep track of what you've collected.",
+   "New \"Patch notes\" button in the settings cog — pop this What's New card back up any time.",
+   "Fixed the What's New card opening half on one monitor and half on the other — it now centers on your main display.",
+   "Fixed Quantum Drive names (like the XL-1) not being recognized at the Fabrication Kiosk, so their images can be captured and contributed now.",
+   "Fixed dark, low-contrast items (black visors, dark-finish armor) getting clipped in captured item images."
+  ]
+ },
+ "0.1.32": {
+  "date": "2026-07-22T02:00:23Z",
+  "notes": [
+   "Much sharper item reading at the Fabrication Kiosk — a new, more accurate text reader handles the stylized kiosk fonts (item names, \"Tier\", ship-component names) that the old one sometimes mangled.",
+   "The overlay now reads only the monitor your game is on, and only the part of the screen it needs — so multi-monitor setups no longer accidentally read the wrong display.",
+   "What's New tidy-up: each version now shows its release date and time (UTC), older versions are collapsed by default so the card stays short, the close button can never end up off-screen, and it no longer hides itself after one look unless you tick \"Don't show this again\"."
+  ]
+ },
+ "0.1.31": {
+  "date": "2026-07-22T00:05:45Z",
+  "notes": [
+   "The fabricator reader can no longer get stuck — if a scan or upload ever hangs, it recovers on its own instead of sitting on \"Reading the fabricator…\" until you restart the app.",
+   "Captured item images upload reliably now: a failed upload retries by itself, and on startup the app re-checks and sends up any captures that never made it to the site — no more \"it said it saved but never showed up.\"",
+   "Clearer scanning status — the overlay names the item it's reading, and tells you the truth about uploads: \"shared\" only once the picture is actually on the site, \"upload failed — retrying\" otherwise (no more misleading \"saved\").",
+   "The What's New card now shows the last several versions, so if you've been away for a bit you can catch up on everything you missed — not just the newest patch."
+  ]
+ },
+ "0.1.30": {
+  "date": "2026-07-21T22:06:42Z",
+  "notes": [
+   "New Consolidated Outland skin — hop in a Nomad and the overlay picks up its frosty ice-cyan HUD. Grey's now shows its logo in the folder-tab too.",
+   "Updated for the latest patch with fuller crafting recipes, mining and commodity data, and a much larger set of mission payouts.",
+   "The mission-complete card shows the mission's payout again — read from the game data now that the game stopped logging the award.",
+   "Streamers: the overlay broadcasts the manufacturer of the ship you're flying, so your other stream overlays can re-color to match it live. Plus a new \"switch back to Mobiglas when I leave my ship\" option.",
+   "Fixed the binding-chart PNG picker in Settings rendering as a tiny box with no room for the filename.",
+   "Fixed ship components (quantum drives, shields and the like) not scanning at the Fabrication Kiosk on 4K/high-scale displays — the reader now tolerates OCR glitches in the kiosk text, and when it truly can't read an item it tells you instead of sitting silently on \"Watching Star Citizen…\".",
+   "Manufacturer skins now stay pinned for active Twitch subscribers — connect the tracker to subliminal.gg and link your Twitch, and your chosen skin sticks instead of reverting after the preview.",
+   "Multi-monitor: in Arrange mode you can now drag a widget onto a second display — it crosses seamlessly and stays there, and the Arrange controls always stay on your primary monitor."
+  ]
+ },
+ "0.1.29": {
+  "date": "2026-07-21T05:13:22Z",
+  "notes": [
+   "Manufacturer skins! The overlay now automatically matches the ship you're flying — Drake, Aegis, Crusader, RSI, MISC, Origin and more. Free on 'Auto'; subscribers can pin one manufacturer to use it regardless of ship.",
+   "Each skin shows its manufacturer logo in a folder-tab on the panel, with brand-specific corner details, dividers, and a reputation bar tinted to match the theme.",
+   "Smarter blueprint image capture: items that render as a dark schematic (like quantum drives) are now captured instead of skipped, and same-name size variants (e.g. the mining lasers) resolve to the right one.",
+   "Fixed same-named blueprints (like the three Cinch Scraper Modules) so they all share the item image instead of only one showing a picture."
+  ]
+ },
+ "0.1.28": {
+  "date": "2026-07-20T21:54:16Z",
+  "notes": [
+   "New name: this is now SC Overlay. It's grown well past just blueprints — mining, loadouts, and more — so the name caught up. Your settings and your whole collection carry over untouched.",
+   "The Mining Assistant is now part of the main overlay instead of its own separate window. That fixes the annoying stuff: clicking one widget while another's open just works now, and nothing steals a click you meant for the game.",
+   "A much cleaner Settings page. Everything's sorted into categories with the opt-in features up top, each setting is a single line with an ⓘ you can hover for the details, and changes save the moment you make them — no more hunting for a Save button.",
+   "New: put a widget on a second monitor or your phone. Settings now gives you copy-ready links for the Blueprint and Mining widgets (and OBS browser-source URLs), including one that works from your phone on the same Wi-Fi.",
+   "The mining scanner now ignores tiny signatures under 2,000, so it stops calling out every little scrap of debris.",
+   "New: partner promos in Settings — deals from the brands that support the channel, at no extra cost to you."
+  ]
+ },
+ "0.1.27": {
+  "date": "2026-07-19T04:13:10Z",
+  "notes": [
+   "New: the overlay is now an “overlay app” — the Blueprint tracker and Mining Assistant float freely on your screen. Drag them anywhere, resize each from its corner, and give each its own angle so a left and a right widget can lean in toward you.",
+   "New: an Arrange mode that moves everything at once. Grab a widget's ⠿ handle (or press Ctrl+Alt+M) and the whole screen shows it's in edit mode — drag, resize, then hit Done. Your layout is saved and survives updates.",
+   "New: a settings menu that appears top-right whenever you're working with the overlay — widget on/off, theme, and a way into everything. It fades away when you're done so it's not in your face while you fly.",
+   "The Mining Assistant now matches your ship's theme too — hop in a Drake and it goes gunmetal-and-orange right alongside the tracker.",
+   "Widgets now sit flat by default with a slight inward tilt; set each one's exact angle in its ⚙. And these patch notes now pop up in the middle of the screen on launch."
+  ]
+ },
+ "0.1.26": {
+  "date": "2026-07-18T18:38:13Z",
+  "notes": [
+   "Fixed: “Restart as administrator” now actually relaunches the app elevated. It was closing the tracker and never reopening it, leaving stray processes you had to kill by hand — that's sorted."
+  ]
+ },
+ "0.1.25": {
+  "date": "2026-07-18T09:40:53Z",
+  "notes": [
+   "New: the Mining Assistant — a second overlay window (tray → Mining Assistant, or press Shift+F3) that names rocks from the mining scanner's signature, counts down your refinery jobs and alarms when they finish, and calls out your target rocks in the HAL voice. It matches the main overlay's look and stays click-through until you hover it, so you won't nudge it mid-flight.",
+   "Fixed: your hotkeys now work while Star Citizen is focused, not just when you alt-tab to the desktop. If they still don't fire in-game, open Settings → In-Game Hotkeys and hit “Restart as administrator”.",
+   "Fixed: opening an overlay (like the binding chart) can no longer bury the Settings window — Settings now always stays on top.",
+   "Fixed: two features can no longer grab the same hotkey by accident."
+  ]
+ },
+ "0.1.24": {
+  "date": "2026-07-18T03:38:27Z",
+  "notes": [
+   "New: a reputation bar in Mission Info shows your current standing with each mission giver (e.g. Sr. Contractor) and how close you are to the next rank — worked out from the missions you've completed since the last wipe. Hit “Verify from logs” in the ⚙ to fill it in from your play history.",
+   "Fixed: your tracked missions no longer disappear when you relaunch or Alt-F4 back into the game — they were getting wiped on every login.",
+   "Fixed: blueprint pools no longer show duplicate entries. On newer game builds the tracker could fall back to an older, stale copy of the mission data.",
+   "The opt-in mission-name scanner now reads mining, scanning and most other mission types, not only “Go to” missions."
+  ]
+ },
+ "0.1.23": {
+  "date": "2026-07-17T14:27:39Z",
+  "notes": [
+   "Fixed: missions that don't place a map marker — mining, ore scanning and friends — used to show nothing at all. They now resolve their blueprint pool and appear in the mission picker like everything else.",
+   "New: your rank with each mission giver, worked out from the highest-rank mission you've been offered. Hit “Verify from logs” in the ⚙ to backfill it from your play history.",
+   "The guaranteed rewards and the random blueprint pool are now clearly separated — the pool says “1 random blueprint per completion”, because that's what it is.",
+   "Guaranteed item rewards now have their own tick box, so you can check off the ones you've picked up (kept separate from your blueprint count).",
+   "The owned count moved up next to the mission name — the ⚙ and move handle were sitting on top of it.",
+   "A long blueprint pool no longer pushes the panel sideways into a horizontal scrollbar.",
+   "The header now reads “Active Mission” instead of a second “Blueprint Pool”."
+  ]
+ },
+ "0.1.22": {
+  "date": "2026-07-09T21:02:23Z",
+  "notes": [
+   "New: the overlay diamond glows purple when SubliminalsTV is live on Twitch — hover it and click to jump into the stream.",
+   "In the Fabricator, the diamond glows gold so you can tell the tracker sees the kiosk.",
+   "Both opt-in screen-reading features (pinned-mission scan + item-image capture) now appear in Settings and the overlay ⚙, and stay in sync.",
+   "Open the full Settings window straight from the overlay ⚙.",
+   "Pasting a sync token now turns syncing on automatically — no more forgetting the checkbox.",
+   "New: a settings ⚙ on the overlay — the odds view (base / your real odds) and “Verify from logs” now live in there, and you can hide the category filter bar, for a cleaner HUD.",
+   "Cleaner footer: your Collected count is now big and clear, with the tracker version and game build stacked neatly beside it.",
+   "The overlay now shows what the item-image scanner is doing — a quick toast when it reads your pinned mission or captures a fabricator item, plus a live status in the ⚙ menu.",
+   "New: toggle mission-name scanning on/off from the overlay ⚙ menu (reads the mission you have pinned in-game — off by default).",
+   "Fixed: the pinned-mission reader now recognizes missions whose names are cut off on-screen or contain quotes (e.g. Terrorist Shigemori \"Jester\" Amsden…).",
+   "Mission Info (faction / type / reputation) now opens by default.",
+   "Settings tidied up for the blueprint tracker."
+  ]
+ },
+ "0.1.21": {
+  "date": "2026-07-08T19:04:32Z",
+  "notes": [
+   "Mission-Complete card now shows the actual item render for each blueprint you unlock — one big image for a single drop, a grid for more.",
+   "New: opt-in log sharing (Settings) — help improve mission & blueprint detection. Your handle, account, IP and chat are stripped before anything is sent. Off by default.",
+   "Recent lists can now show relative time (\"2h ago\") or the exact date & clock — toggle in Settings.",
+   "Settings window restyled to match subliminal.gg.",
+   "The tracker's source code is now public on GitHub."
+  ]
+ }
 }

@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quartermaster</title>
+  <div id="wsettings" class="wsettings">
+    <div class="ws-sec">Capture</div>
+    <div class="ws-row" id="captureRow">
+      <div class="ws-note">Watch kiosk purchases of fuel, ship ammunition and your tracked stock while an operation runs.</div>
+      <select id="captureSel" class="sel">
+        <option value="off">Off — everything typed by hand</option>
+        <option value="chips">Chips — ask before adding</option>
+        <option value="auto">Auto — add unasked</option>
+      </select>
+    </div>
+    <div class="ws-sec">Reports</div>
+    <div class="ws-row">
+      <button id="folderBtn" class="hbtn" type="button" title="Open the folder holding the saved operation reports">↗ Folder</button>
+    </div>
+  </div>
+
+<script>/* AMD compatibility: apply the lite skin BEFORE first paint (no flash) when the shell asks for it. */
+  if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
+  { const q = new URLSearchParams(location.search); const r = document.documentElement;
+    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
+    const b = q.get("bg"); if (b && /^[0-9a-f]{3,8}$/i.test(b)) { r.style.setProperty("--wbg", "#" + b); r.dataset.bg = ""; } }</script>
+<link rel="stylesheet" href="/widget-theme.css" />
+<style>
+  /* Quartermaster — the capital-ship captain's stock, squad and cost ledger. The log
+     cannot see station services or what lands in a hangar, so this is manual-first the
+     way the Loot Split is: the only log assist is an opt-in chip for kiosk buys of
+     fuel/ammunition (see the capture setting). All data over HTTP; renders standalone. */
+  * { box-sizing: border-box; }
+  * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb), 0.28) transparent; }
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
+  #panel { display: flex; flex-direction: column; width: 380px; height: 560px; margin: 20px auto;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden; position: relative; }
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  body.embedded { overflow: visible; background: transparent; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+
+  .head { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+    border-bottom: 1px solid var(--divider); position: relative; z-index: 4; min-height: 40px; }
+  .dia { width: 7px; height: 7px; flex: none; background: var(--cyan-bright); transform: rotate(45deg);
+    box-shadow: 0 0 8px var(--cyan); }
+  .h-title { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cyan-bright); }
+  .hbtn { font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.14); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+  .hbtn:hover { background: rgba(var(--accent-rgb), 0.24); border-color: var(--cyan); }
+  .hbtn.sm { padding: 4px 7px; font-size: 10px; }
+  .hbtn.live { color: var(--gold); border-color: var(--gold); }
+  .hbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .sel { font-family: var(--sans); font-size: 11px; color: var(--cyan-bright);
+    background: rgba(0, 0, 0, 0.25); border: 1px solid var(--divider); border-radius: 6px;
+    padding: 4px 6px; cursor: pointer; max-width: 130px; outline: none; }
+  .sel:focus { border-color: var(--cyan); }
+  .ws-row .sel { width: 100%; max-width: none; }
+  .ws-note { font-size: 10.5px; color: var(--cyan-dim); line-height: 1.4; margin-bottom: 6px; }
+
+  /* The op banner sits under the header: while running it is the one thing always visible. */
+  #opbar { flex: none; display: none; align-items: center; gap: 8px; padding: 6px 12px;
+    border-bottom: 1px solid var(--divider); background: rgba(var(--accent-rgb), 0.1);
+    font-size: 11px; color: var(--gold); }
+  #opbar.on { display: flex; }
+  #opbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold);
+    animation: qmpulse 2.2s ease-in-out infinite; }
+  @keyframes qmpulse { 50% { opacity: 0.35; } }
+
+  .tabs { flex: none; display: flex; gap: 2px; padding: 6px 12px 0; border-bottom: 1px solid var(--divider); }
+  .tab { flex: 1; text-align: center; font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--faint); padding: 6px 0 7px; cursor: pointer;
+    border-bottom: 2px solid transparent; }
+  .tab:hover { color: var(--cyan-text); }
+  .tab.on { color: var(--cyan-bright); border-bottom-color: var(--cyan); }
+
+  .body { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; }
+  .pane { display: none; padding: 10px 12px; }
+  .pane.on { display: block; }
+
+  /* Capture chips — the log's one assist, party-nudge style. */
+  .chip { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 7px 9px;
+    border: 1px solid var(--gold); border-radius: 8px; background: rgba(var(--accent-rgb), 0.12);
+    font-size: 11px; }
+  .chip .cwhat { flex: 1; min-width: 0; }
+  .chip .cwhat b { color: var(--cyan-bright); }
+  .chip .cwhat .csub { font-size: 9.5px; color: var(--cyan-dim); }
+  .chip .cbtn { flex: none; font-size: 10px; font-weight: 700; padding: 4px 8px; cursor: pointer;
+    border-radius: 5px; border: 1px solid var(--border); background: rgba(var(--accent-rgb), 0.18);
+    color: var(--cyan-bright); }
+  .chip .cbtn:hover { border-color: var(--cyan); }
+  .chip .cx { flex: none; background: transparent; border: 0; color: var(--faint); cursor: pointer;
+    font-size: 11px; padding: 2px 3px; border-radius: 4px; }
+  .chip .cx:hover { color: var(--red); background: rgba(255, 132, 120, 0.12); }
+
+  .lhead { display: flex; align-items: center; gap: 6px; padding: 2px 0 8px; }
+  .lhead .lbl { flex: 1; font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--faint); }
+
+  table.qtab { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  table.qtab th { text-align: left; font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--faint); padding: 3px 6px 5px 0;
+    border-bottom: 1px solid var(--divider); }
+  table.qtab td { padding: 6px 6px 6px 0; border-bottom: 1px solid rgba(69, 208, 224, 0.08); vertical-align: middle; }
+  table.qtab td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
+  table.qtab td.act { text-align: right; white-space: nowrap; }
+  table.qtab .b { color: var(--cyan-bright); font-weight: 600; }
+  table.qtab .dim { color: var(--faint); }
+  .tbtn { font-size: 10px; font-weight: 600; padding: 3px 7px; margin-left: 4px; cursor: pointer;
+    border-radius: 5px; border: 1px solid var(--border); background: rgba(var(--accent-rgb), 0.14);
+    color: var(--cyan-bright); }
+  .tbtn:hover { border-color: var(--cyan); background: rgba(var(--accent-rgb), 0.24); }
+  .tbtn.warn:hover { border-color: var(--red); color: var(--red); }
+
+  .empty { color: var(--cyan-dim); font-size: 11px; line-height: 1.5; padding: 14px 4px; }
+  .empty b { color: var(--cyan-text); }
+
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 10px; }
+
+  .foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-top: 1px solid var(--divider); font-size: 10.5px; color: var(--cyan-dim); }
+  .foot .err { color: var(--red); font-size: 10.5px; flex: 1; line-height: 1.3; }
+  .foot .ok { color: var(--cyan-bright); flex: 1; line-height: 1.3; }
+
+  /* Modals: inside the panel, over everything, the party-picker containment trick. */
+  #modal { position: absolute; inset: 0; z-index: 30; display: none;
+    background: rgba(4, 8, 12, 0.72); backdrop-filter: blur(2px); }
+  #modal.on { display: flex; align-items: center; justify-content: center; }
+  .mcard { width: calc(100% - 32px); max-width: 330px; max-height: calc(100% - 28px); overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--panel-solid);
+    padding: 14px 16px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55); }
+  .mtitle { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--cyan-bright); margin-bottom: 10px; }
+  .mrow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .mrow label { flex: none; width: 68px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--faint); }
+  .mrow input, .mrow select, .mrow textarea { font-family: var(--sans); font-size: 11.5px;
+    color: var(--cyan-bright); background: rgba(0, 0, 0, 0.3); border: 1px solid var(--divider);
+    border-radius: 5px; padding: 5px 8px; outline: none; flex: 1; min-width: 0; }
+  .mrow input:focus, .mrow select:focus, .mrow textarea:focus { border-color: var(--cyan); }
+  .mrow textarea { resize: vertical; min-height: 42px; }
+  .mhint { font-size: 10px; color: var(--cyan-dim); line-height: 1.4; margin: -2px 0 10px 76px; }
+  .merr { font-size: 10.5px; color: var(--red); min-height: 14px; margin: 2px 0 6px 76px; }
+  .mbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+  .mbtns .spacer { flex: 1; }
+  .cancel { color: var(--faint); background: transparent; border: 1px solid var(--divider); }
+  .danger { border-color: rgba(255, 132, 120, 0.55); color: var(--red); }
+  .danger:hover { border-color: var(--red); background: rgba(255, 132, 120, 0.14); }
+
+  /* Report view: a pane like the others, but rendered from the report JSON. */
+  .rep { font-size: 11px; line-height: 1.55; }
+  .rep h3 { margin: 4px 0 2px; font-size: 12px; color: var(--cyan-bright); letter-spacing: 0.06em; }
+  .rep .sub { color: var(--faint); font-size: 10px; margin-bottom: 8px; }
+  .rep table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+  .rep td { padding: 3px 0; border-bottom: 1px solid rgba(69, 208, 224, 0.08); }
+  .rep td.num, .rep th.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
+  .rep .tot td { border-bottom: 0; font-weight: 700; color: var(--gold); }
+  .rep .warn { color: var(--cyan-dim); font-size: 10px; font-style: italic; }
+  .rep pre { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); white-space: pre-wrap;
+    border: 1px solid var(--divider); border-radius: 7px; padding: 8px 10px; background: rgba(0, 0, 0, 0.25); }
+  .rep .copied { color: var(--cyan-bright); }
+</style>
+</head>
+<body>
+  <div id="panel" class="wpanel">
+    <div class="head">
+      <span class="dia"></span>
+      <span class="h-title">Quartermaster</span>
+      <span style="flex:1"></span>
+      <select id="shipSel" class="sel" title="Which capital ship you are quartering"></select>
+      <button id="newShipBtn" class="hbtn sm" type="button" title="Register another capital ship">+ Ship</button>
+      <button id="opBtn" class="hbtn sm" type="button" title="Start or stop an operation — records between start and stop become its cost report">▶ Op</button>
+      <button id="reportBtn" class="hbtn sm" type="button" title="Cost report for the current or last operation">Report</button>
+    </div>
+
+    <div id="opbar"><span class="dot"></span><span id="opName"></span><span style="flex:1"></span><span id="opElapsed" class="dim" style="font-family:var(--mono)"></span></div>
+
+    <div class="tabs">
+      <div class="tab on" data-pane="stock">Stock</div>
+      <div class="tab" data-pane="squad">Squad</div>
+      <div class="tab" data-pane="ledger">Ledger</div>
+    </div>
+
+    <div class="body">
+      <div class="pane on" id="pane-stock">
+        <div id="chips"></div>
+        <div class="lhead">
+          <span class="lbl">Stock on board</span>
+          <button id="addItemBtn" class="hbtn sm" type="button" title="Add a stock item: fuel, ammunition, missiles, repair materials">+ Item</button>
+        </div>
+        <div id="stockWrap"></div>
+        <div class="lhead" style="margin-top:12px">
+          <span class="lbl">Ship services (aUEC)</span>
+        </div>
+        <div class="acts">
+          <button class="hbtn sm" data-svc="repair" type="button" title="A repair bill for this ship">Repair</button>
+          <button class="hbtn sm" data-svc="rearm" type="button" title="A rearm bill for this ship">Rearm</button>
+          <button class="hbtn sm" data-svc="refuel" type="button" title="A refuel bill for this ship">Refuel</button>
+        </div>
+        <div class="mhint" style="margin:8px 0 0 0">Station services for the ship itself. Stock handed to squadron ships is Consume on the item's row.</div>
+      </div>
+
+      <div class="pane" id="pane-squad">
+        <div class="lhead">
+          <span class="lbl">Squadron off this hangar</span>
+          <button id="addSquadBtn" class="hbtn sm" type="button" title="Add a ship operating from this hangar">+ Member</button>
+        </div>
+        <div id="squadHint" class="mhint" style="margin:0 0 8px 0"></div>
+        <div id="squadWrap"></div>
+      </div>
+
+      <div class="pane" id="pane-ledger">
+        <div class="lhead"><span class="lbl">Every record, newest first</span></div>
+        <div id="ledgerWrap"></div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="err" id="footErr"></span>
+      <span class="ok" id="footOk"></span>
+      <span id="footShip" class="dim"></span>
+    </div>
+
+    <div id="modal"><div class="mcard" id="mcard"></div></div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const EMBEDDED = new URLSearchParams(location.search).has("embedded");
+  if (EMBEDDED) document.body.classList.add("embedded");
+  const host = () => (EMBEDDED && window.parent) ? window.parent.__quartermasterHost : null;
+
+  const POLL_MS = 5000;
+  const fmt = (n) => n == null ? "—" : Math.round(n).toLocaleString();
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  let view = { ships: [], squad: [], items: [], records: [], ops: [], currentOp: null, chips: [], capture: "off" };
+  let shipDefs = { carriers: [], squadShips: [] };   // the curated dataset
+  let shipId = "";           // the selected capital ship
+  let tab = "stock";
+  let flashTimer = null;
+
+  function currentShip() { return view.ships.find((s) => s.id === shipId) || null; }
+
+  function flash(msg, err) {
+    if (flashTimer) clearTimeout(flashTimer);
+    $("footErr").textContent = err ? "" : "";
+    $("footOk").textContent = err ? "" : msg;
+    if (err) { $("footErr").textContent = msg; $("footOk").textContent = ""; }
+    flashTimer = setTimeout(() => { $("footErr").textContent = ""; $("footOk").textContent = ""; }, 5000);
+  }
+
+  // ── server calls ──────────────────────────────────────────────────────────
+  async function poll() {
+    try {
+      const v = await (await fetch("/api/quartermaster", { cache: "no-store" })).json();
+      view = v;
+      if (!shipId && v.ships.length) {
+        shipId = v.ships[0].id;
+        try { shipId = localStorage.getItem("qm.ship") || shipId; } catch { /* default */ }
+        if (!v.ships.some((s) => s.id === shipId)) shipId = v.ships[0].id;
+      }
+      render();
+    } catch { /* sidecar restarting: keep the last view */ }
+  }
+
+  async function loadShipDefs() {
+    try { shipDefs = await (await fetch("/api/quartermaster/ships", { cache: "no-store" })).json(); }
+    catch { shipDefs = { carriers: [], squadShips: [] }; /* free text still works */ }
+  }
+
+  async function act(action, body) {
+    const r = await fetch("/api/quartermaster/action", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...body }),
+    });
+    const j = await r.json().catch(() => ({ error: "bad response" }));
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    if (j.view) view = j.view;
+    render();
+    return j.result;
+  }
+
+  // ── rendering ─────────────────────────────────────────────────────────────
+  function render() {
+    renderHeader();
+    renderChips();
+    renderStock();
+    renderSquad();
+    renderLedger();
+  }
+
+  function renderHeader() {
+    const sel = $("shipSel");
+    const prev = shipId;
+    sel.innerHTML = "";
+    for (const s of view.ships) {
+      const o = document.createElement("option");
+      o.value = s.id; o.textContent = s.name + " · " + s.type;
+      sel.appendChild(o);
+    }
+    if (!view.ships.length) {
+      const o = document.createElement("option");
+      o.value = ""; o.textContent = "No ship yet";
+      sel.appendChild(o);
+    }
+    shipId = view.ships.some((s) => s.id === prev) ? prev : (view.ships[0]?.id || "");
+    try { localStorage.setItem("qm.ship", shipId); } catch { /* best-effort */ }
+    sel.value = shipId;
+
+    const op = view.currentOp;
+    $("opBtn").textContent = op ? "■ Stop" : "▶ Op";
+    $("opBtn").classList.toggle("live", !!op);
+    $("opbar").classList.toggle("on", !!op);
+    if (op) {
+      $("opName").textContent = op.name;
+      const mins = Math.max(0, Math.round((Date.now() - Date.parse(op.startedAt)) / 60000));
+      $("opElapsed").textContent = mins >= 60 ? Math.floor(mins / 60) + "h " + (mins % 60) + "m" : mins + "m";
+    }
+    const ship = currentShip();
+    $("footShip").textContent = ship ? ship.type : "";
+  }
+
+  function renderChips() {
+    const wrap = $("chips");
+    wrap.innerHTML = "";
+    for (const c of view.chips) {
+      const el = document.createElement("div");
+      el.className = "chip";
+      const what = document.createElement("div");
+      what.className = "cwhat";
+      what.innerHTML = "<b>" + esc(c.itemName) + "</b> — " + fmt(c.qty) + " " + esc(c.unit) +
+        " @ " + fmt(c.unitPrice) + " = <b>" + fmt(c.total) + " aUEC</b>" +
+        (c.shopName ? '<div class="csub">seen at ' + esc(c.shopName) + "</div>" : "");
+      const add = document.createElement("button");
+      add.className = "cbtn"; add.textContent = "Add to stock";
+      add.onclick = async () => { try { await act("chip-add", { chipId: c.id }); flash("Added " + c.itemName); } catch (e) { flash(e.message, true); } };
+      const x = document.createElement("button");
+      x.className = "cx"; x.textContent = "✕"; x.title = "Not stock — dismiss";
+      x.onclick = async () => { try { await act("chip-dismiss", { chipId: c.id }); } catch (e) { flash(e.message, true); } };
+      el.append(what, add, x);
+      wrap.appendChild(el);
+    }
+  }
+
+  function stockRows() { return view.items.filter((r) => r.item.shipId === shipId); }
+
+  function renderStock() {
+    const wrap = $("stockWrap");
+    const rows = stockRows();
+    if (!shipId) {
+      wrap.innerHTML = '<div class="empty">Register your ship with <b>+ Ship</b> — callsign and type — then add stock items under it.</div>';
+      document.querySelectorAll('[data-svc]').forEach((b) => (b.disabled = true));
+      return;
+    }
+    document.querySelectorAll('[data-svc]').forEach((b) => (b.disabled = false));
+    if (!rows.length) {
+      wrap.innerHTML = '<div class="empty">No stock items yet. <b>+ Item</b> adds fuel, ammunition, missiles, repair materials — whatever this hangar dispenses.</div>';
+      return;
+    }
+    let html = '<table class="qtab"><tr><th>Item</th><th class="num" style="text-align:right">In stock</th><th class="num" style="text-align:right">Spent (op)</th><th class="act"></th></tr>';
+    for (const r of rows) {
+      html += "<tr><td><span class='b'>" + esc(r.item.name) + "</span> <span class='dim'>" + esc(r.item.unit) + "</span></td>" +
+        "<td class='num'>" + fmt(r.inStock) + "</td>" +
+        "<td class='num'>" + (view.currentOp ? fmt(r.spent) : "—") + "</td>" +
+        "<td class='act'><button class='tbtn' data-supply='" + r.item.id + "'>Supply</button>" +
+        "<button class='tbtn' data-consume='" + r.item.id + "'>Consume</button></td></tr>";
+    }
+    html += "</table>";
+    wrap.innerHTML = html;
+    wrap.querySelectorAll("[data-supply]").forEach((b) => b.onclick = () => openSupply(b.dataset.supply));
+    wrap.querySelectorAll("[data-consume]").forEach((b) => b.onclick = () => openConsume(b.dataset.consume));
+  }
+
+  function hangarSizes() {
+    const ship = currentShip();
+    if (!ship) return null;
+    const c = shipDefs.carriers.find((x) => x.name === ship.type);
+    return c ? c.hangar : null;
+  }
+
+  function renderSquad() {
+    const wrap = $("squadWrap");
+    const hint = $("squadHint");
+    const sizes = hangarSizes();
+    hint.textContent = sizes
+      ? "This hangar takes: " + sizes.join(", ") + ". The + Member list is filtered to those."
+      : "No hangar sizes known for " + (currentShip()?.type || "this type") + " — the member list is unfiltered. (data/qm-ships.json is hand-edited.)";
+    const squad = view.squad;
+    if (!squad.length) {
+      wrap.innerHTML = '<div class="empty">No squadron ships. <b>+ Member</b> registers each ship operating off this hangar, with its fit and value — so a loss can be reported.</div>';
+      return;
+    }
+    let html = '<table class="qtab"><tr><th>Ship</th><th class="num" style="text-align:right">Value</th><th class="act"></th></tr>';
+    for (const s of squad) {
+      html += "<tr><td><span class='b'>" + esc(s.name) + "</span> <span class='dim'>" + esc(s.type) + (s.fit ? " · " + esc(s.fit) : "") + "</span></td>" +
+        "<td class='num'>" + (s.value != null ? fmt(s.value) : "—") + "</td>" +
+        "<td class='act'><button class='tbtn' data-mg='" + s.id + "'>Manage</button>" +
+        "<button class='tbtn warn' data-lost='" + s.id + "'>Destroyed</button>" +
+        "<button class='tbtn warn' data-rm='" + s.id + "'>Remove</button></td></tr>";
+    }
+    html += "</table>";
+    wrap.innerHTML = html;
+    wrap.querySelectorAll("[data-mg]").forEach((b) => b.onclick = () => openSquad(b.dataset.mg, true));
+    wrap.querySelectorAll("[data-lost]").forEach((b) => b.onclick = () => openDestroy(b.dataset.lost));
+    wrap.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => {
+      try { await act("squad-remove", { squadId: b.dataset.rm }); } catch (e) { flash(e.message, true); }
+    });
+  }
+
+  function recLabel(r) {
+    const item = view.items.find((i) => i.item.id === r.itemId);
+    switch (r.kind) {
+      case "supply": return "Supply · " + (item?.item.name ?? "?") + " " + (r.qty ?? "?") + (item?.item.unit ? " " + item.item.unit : "") + (r.location ? " @ " + r.location : "");
+      case "consume": return "Consume · " + (item?.item.name ?? "?") + " " + (r.qty ?? "?") + (r.notes ? " — " + r.notes : "");
+      case "loss": return "Lost · " + (r.notes ?? "squad ship");
+      default: return r.kind[0].toUpperCase() + r.kind.slice(1) + (r.notes ? " · " + r.notes : "");
+    }
+  }
+
+  function renderLedger() {
+    const wrap = $("ledgerWrap");
+    const rows = view.records.filter((r) => r.shipId === shipId);
+    if (!rows.length) {
+      wrap.innerHTML = '<div class="empty">Every record lands here — supplies, consumes, services, losses — with a delete beside it, because a wrong number corrected is worth more than a tidy list.</div>';
+      return;
+    }
+    let html = '<table class="qtab">';
+    for (const r of rows) {
+      const opName = r.opId ? (view.ops.find((o) => o.id === r.opId)?.name ?? "") : "";
+      html += "<tr><td><span class='b'>" + esc(recLabel(r)) + "</span>" +
+        (r.cost != null ? " <span class='dim'>" + fmt(r.cost) + " aUEC</span>" : "") +
+        (r.source === "logged" ? " <span class='dim'>(logged)</span>" : "") +
+        "<div class='dim' style='font-size:9px'>" + new Date(r.at).toLocaleString() + (opName ? " · " + esc(opName) : "") + "</div></td>" +
+        "<td class='act'><button class='tbtn warn' data-del='" + r.id + "'>✕</button></td></tr>";
+    }
+    html += "</table>";
+    wrap.innerHTML = html;
+    wrap.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+      try { await act("delete-record", { recordId: b.dataset.del }); flash("Record deleted"); } catch (e) { flash(e.message, true); }
+    });
+  }
+
+  // ── the modal ──────────────────────────────────────────────────────────────
+  function closeModal() { $("modal").classList.remove("on"); $("mcard").innerHTML = ""; }
+  function modalOpen(html, wire) {
+    $("mcard").innerHTML = html;
+    $("modal").classList.add("on");
+    wire && wire($("mcard"));
+    const first = $("mcard").querySelector("input,select,textarea");
+    if (first) first.focus();
+  }
+  $("modal").addEventListener("pointerdown", (e) => { if (e.target === $("modal")) closeModal(); });
+
+  const mTitle = (t) => '<div class="mtitle">' + esc(t) + "</div>";
+  const mErr = () => '<div class="merr" id="mErr"></div>';
+  const mBtns = (okLabel, okClass, danger) =>
+    '<div class="mbtns"><span class="spacer"></span><button class="hbtn sm cancel" id="mCancel" type="button">Cancel</button>' +
+    '<button class="hbtn sm ' + (okClass || "") + (danger ? " danger" : "") + '" id="mOk" type="button">' + esc(okLabel) + "</button></div>";
+  function wireBasic(root, onOk) {
+    root.querySelector("#mCancel").onclick = closeModal;
+    root.querySelector("#mOk").onclick = async () => {
+      const err = root.querySelector("#mErr");
+      try { err.textContent = ""; await onOk(root); } catch (e) {
+        if (e && e.message && /required|no such|only |already|full|kind must/.test(e.message)) err.textContent = e.message;
+        else if (e && e.message) { err.textContent = e.message; }
+      }
+    };
+    root.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") { e.preventDefault(); root.querySelector("#mOk").click(); }
+      if (e.key === "Escape") closeModal();
+    });
+  }
+
+  // New ship: callsign + carrier type from the curated list (free text still allowed).
+  function openNewShip() {
+    const opts = shipDefs.carriers.map((c) => '<option value="' + esc(c.name) + '">' + esc(c.name) + "</option>").join("") +
+      '<option value="">(other — type it below)</option>';
+    modalOpen(mTitle("New ship") +
+      '<div class="mrow"><label>Callsign</label><input id="fName" maxlength="40" placeholder="Hammerfall"></div>' +
+      '<div class="mrow"><label>Type</label><select id="fType">' + opts + '</select></div>' +
+      '<div class="mrow" id="otherRow" style="display:none"><label>Other type</label><input id="fTypeOther" maxlength="40" placeholder="Capital ship type"></div>' +
+      mErr() + mBtns("Register"),
+      (root) => {
+        const sel = root.querySelector("#fType");
+        sel.onchange = () => { root.querySelector("#otherRow").style.display = sel.value ? "none" : "flex"; };
+        wireBasic(root, async () => {
+          const type = sel.value || root.querySelector("#fTypeOther").value.trim();
+          const res = await act("ship", { name: root.querySelector("#fName").value.trim(), type });
+          shipId = res.id;
+          closeModal();
+          flash("Ship registered");
+          render();
+        });
+      });
+  }
+
+  // Add stock item.
+  function openAddItem() {
+    if (!shipId) { flash("Register a ship first", true); return; }
+    modalOpen(mTitle("Stock item") +
+      '<div class="mrow"><label>Name</label><input id="fName" maxlength="60" placeholder="Hydrogen Fuel, Ship Ammunition - Size 3, ..."></div>' +
+      '<div class="mrow"><label>Unit</label><select id="fUnit"><option>SCU</option><option>units</option><option>boxes</option></select></div>' +
+      '<div class="mhint">Fuel and ammunition from kiosks are SCU. Missiles, medpens and repair materials are usually units.</div>' +
+      mErr() + mBtns("Add"),
+      (root) => {
+        wireBasic(root, async () => {
+          await act("item", { shipId, name: root.querySelector("#fName").value.trim(), unit: root.querySelector("#fUnit").value });
+          closeModal();
+        });
+      });
+  }
+
+  // Supply: qty, location, cost calculated from the last known price, editable.
+  function openSupply(itemId) {
+    const row = view.items.find((r) => r.item.id === itemId);
+    if (!row) return;
+    const known = row.lastUnitPrice;
+    modalOpen(mTitle("Supply · " + row.item.name) +
+      '<div class="mrow"><label>Amount</label><input id="fQty" type="number" min="0" step="any" placeholder="' + esc(row.item.unit) + '"></div>' +
+      '<div class="mrow"><label>Unit price</label><input id="fPrice" type="number" min="0" step="any" placeholder="' +
+        (known != null ? String(known) : "unknown") + ' aUEC/' + esc(row.item.unit) + '"></div>' +
+      '<div class="mhint">Cost: <b id="fCost">—</b>' + (known != null ? " (prefilled from the last price you paid)" : " (no price known yet — this is starting stock)") + "</div>" +
+      '<div class="mrow"><label>Location</label><input id="fLoc" maxlength="60" placeholder="Port Tressler, ..."></div>' +
+      mErr() + mBtns("Record"),
+      (root) => {
+        const qty = root.querySelector("#fQty"), price = root.querySelector("#fPrice"), cost = root.querySelector("#fCost");
+        const upd = () => {
+          const q = Number(qty.value), p = price.value === "" ? null : Number(price.value);
+          cost.textContent = (q && p) ? fmt(q * p) + " aUEC" : "—";
+        };
+        qty.oninput = upd; price.oninput = upd;
+        if (known != null) price.value = String(known);
+        wireBasic(root, async () => {
+          await act("supply", { shipId, itemId, qty: qty.value, unitPrice: price.value === "" ? null : price.value, location: root.querySelector("#fLoc").value });
+          closeModal();
+          flash("Supplied");
+        });
+      });
+  }
+
+  // Consume: qty + notes. The store refuses past-stock; that sentence shows here.
+  function openConsume(itemId) {
+    const row = view.items.find((r) => r.item.id === itemId);
+    if (!row) return;
+    modalOpen(mTitle("Consume · " + row.item.name) +
+      '<div class="mrow"><label>Amount</label><input id="fQty" type="number" min="0" step="any" placeholder="' + esc(row.item.unit) + ' of ' + fmt(row.inStock) + ' in stock"></div>' +
+      '<div class="mhint">Stock handed out of this hangar: refuelling a squadron ship, rearming missiles, repair materials spent.</div>' +
+      '<div class="mrow"><label>Notes</label><textarea id="fNotes" maxlength="200" placeholder="Refuelled Red Two, rearm before the jump, ..."></textarea></div>' +
+      mErr() + mBtns("Record"),
+      (root) => {
+        wireBasic(root, async () => {
+          await act("consume", { shipId, itemId, qty: root.querySelector("#fQty").value, notes: root.querySelector("#fNotes").value });
+          closeModal();
+          flash("Consumed");
+        });
+      });
+  }
+
+  // Repair / rearm / refuel: aUEC for the capital ship's own services.
+  document.querySelectorAll("[data-svc]").forEach((b) => b.addEventListener("click", () => {
+    const kind = b.dataset.svc;
+    modalOpen(mTitle(kind[0].toUpperCase() + kind.slice(1) + " · this ship") +
+      '<div class="mrow"><label>Cost</label><input id="fCost" type="number" min="0" step="any" placeholder="aUEC"></div>' +
+      '<div class="mhint">The station bill for this ship. Stock handed to squadron ships is Consume on the Stock tab.</div>' +
+      '<div class="mrow"><label>Notes</label><textarea id="fNotes" maxlength="200"></textarea></div>' +
+      mErr() + mBtns("Record"),
+      (root) => {
+        wireBasic(root, async () => {
+          await act("service", { kind, shipId, cost: root.querySelector("#fCost").value, notes: root.querySelector("#fNotes").value });
+          closeModal();
+          flash(kind[0].toUpperCase() + kind.slice(1) + " recorded");
+        });
+      });
+  }));
+
+  // Squad member: filtered by hangar sizes, free text callsign.
+  function openAddSquad() {
+    if (!shipId) { flash("Register a ship first", true); return; }
+    const sizes = hangarSizes();
+    const list = shipDefs.squadShips.filter((s) => !sizes || sizes.includes(s.size));
+    const opts = list.map((s) => '<option value="' + esc(s.name) + '">' + esc(s.name) + " (" + esc(s.size) + ")</option>").join("") +
+      '<option value="">(other — type it)</option>';
+    modalOpen(mTitle("Squadron ship") +
+      '<div class="mrow"><label>Callsign</label><input id="fName" maxlength="40" placeholder="Red Two"></div>' +
+      '<div class="mrow"><label>Type</label><select id="fType">' + opts + '</select></div>' +
+      '<div class="mrow" id="otherRow" style="display:none"><label>Other type</label><input id="fTypeOther" maxlength="40"></div>' +
+      '<div class="mrow"><label>Fit</label><input id="fFit" maxlength="80" placeholder="2x S3 missiles, ..."></div>' +
+      '<div class="mrow"><label>Value</label><input id="fVal" type="number" min="0" step="any" placeholder="Ship + fit, aUEC"></div>' +
+      '<div class="mhint">Value is the loss figure reported if the ship is destroyed — snapshot at the time.</div>' +
+      mErr() + mBtns("Add member"),
+      (root) => {
+        const sel = root.querySelector("#fType");
+        sel.onchange = () => { root.querySelector("#otherRow").style.display = sel.value ? "none" : "flex"; };
+        wireBasic(root, async () => {
+          await act("squad", { name: root.querySelector("#fName").value.trim(), type: sel.value || root.querySelector("#fTypeOther").value.trim(),
+            fit: root.querySelector("#fFit").value, value: root.querySelector("#fVal").value === "" ? null : root.querySelector("#fVal").value });
+          closeModal();
+        });
+      });
+  }
+
+  // Manage / edit squad member.
+  function openSquad(squadId) {
+    const s = view.squad.find((x) => x.id === squadId);
+    if (!s) return;
+    const sizes = hangarSizes();
+    const opts = shipDefs.squadShips.filter((x) => !sizes || sizes.includes(x.size)).map((x) =>
+      '<option value="' + esc(x.name) + '"' + (x.name === s.type ? " selected" : "") + ">" + esc(x.name) + "</option>").join("");
+    modalOpen(mTitle("Manage · " + s.name) +
+      '<div class="mrow"><label>Callsign</label><input id="fName" maxlength="40" value="' + esc(s.name) + '"></div>' +
+      '<div class="mrow"><label>Type</label><input id="fType" maxlength="40" value="' + esc(s.type) + '"></div>' +
+      '<div class="mrow"><label>Fit</label><input id="fFit" maxlength="80" value="' + esc(s.fit) + '"></div>' +
+      '<div class="mrow"><label>Value</label><input id="fVal" type="number" min="0" step="any" value="' + (s.value != null ? s.value : "") + '"></div>' +
+      mErr() + mBtns("Save"),
+      (root) => {
+        wireBasic(root, async () => {
+          await act("squad-update", { squadId, name: root.querySelector("#fName").value, type: root.querySelector("#fType").value,
+            fit: root.querySelector("#fFit").value, value: root.querySelector("#fVal").value === "" ? null : root.querySelector("#fVal").value });
+          closeModal();
+        });
+      });
+  }
+
+  // Destroyed: explicit confirm; writes the loss with the value snapshot.
+  function openDestroy(squadId) {
+    const s = view.squad.find((x) => x.id === squadId);
+    if (!s) return;
+    modalOpen(mTitle("Destroyed · " + s.name) +
+      '<div class="mhint">Records the loss of <b>' + esc(s.name) + "</b> (" + esc(s.type) + ") valued at <b>" +
+      (s.value != null ? fmt(s.value) + " aUEC" : "no value entered") + "</b> and removes it from the squadron. " +
+      "This is what the operation report's loss line carries.</div>" +
+      mErr() + mBtns("Confirm destroyed", "", true),
+      (root) => {
+        wireBasic(root, async () => {
+          await act("destroy", { squadId, shipId });
+          closeModal();
+          flash("Loss recorded");
+        });
+      });
+  }
+
+  // Start / stop an operation.
+  $("opBtn").addEventListener("click", async () => {
+    if (view.currentOp) {
+      try {
+        const op = await act("op-stop", {});
+        flash("Operation ended — see Report");
+        await showReport(op.id);
+      } catch (e) { flash(e.message, true); }
+      return;
+    }
+    if (!shipId) { flash("Register a ship first", true); return; }
+    const def = "Operation " + new Date().toLocaleString("en-US", { month: "short", day: "numeric" });
+    modalOpen(mTitle("Start an operation") +
+      '<div class="mrow"><label>Name</label><input id="fName" maxlength="80" value="' + esc(def) + '"></div>' +
+      '<div class="mhint">Every record from now until Stop is stamped with this operation, and the cost report is built from exactly those records. Ops survive an app restart.</div>' +
+      mErr() + mBtns("Start"),
+      (root) => {
+        wireBasic(root, async () => {
+          await act("op-start", { shipId, name: root.querySelector("#fName").value });
+          closeModal();
+          flash("Operation running");
+        });
+      });
+  });
+
+  // ── the report ─────────────────────────────────────────────────────────────
+  async function showReport(opId) {
+    try {
+      const r = await (await fetch("/api/quartermaster/report" + (opId ? "?id=" + encodeURIComponent(opId) : ""), { cache: "no-store" })).json();
+      if (!r.report) { flash("Nothing to report yet", true); return; }
+      const rep = r.report;
+      const ship = view.ships.find((s) => s.id === rep.op.shipId);
+      let html = '<div class="rep"><h3>' + esc(rep.op.name) + "</h3>" +
+        '<div class="sub">' + esc(ship ? ship.name + " · " + ship.type : "") + " · " +
+        new Date(rep.op.startedAt).toLocaleString() + (rep.op.endedAt ? " → " + new Date(rep.op.endedAt).toLocaleString() : " (running)") + "</div>";
+      html += "<table>";
+      html += "<tr><td>Supplies purchased</td><td class='num'>" + fmt(rep.supplyTotal) + " aUEC</td></tr>";
+      if (rep.repairTotal) html += "<tr><td>Repairs</td><td class='num'>" + fmt(rep.repairTotal) + " aUEC</td></tr>";
+      if (rep.rearmTotal) html += "<tr><td>Rearm</td><td class='num'>" + fmt(rep.rearmTotal) + " aUEC</td></tr>";
+      if (rep.refuelTotal) html += "<tr><td>Refuel</td><td class='num'>" + fmt(rep.refuelTotal) + " aUEC</td></tr>";
+      for (const c of rep.consumedQty) {
+        html += "<tr><td>Consumed · " + esc(c.item) + " (" + fmt(c.qty) + " " + esc(c.unit) + ")</td><td class='num'>" +
+          (c.replacementCost != null ? fmt(c.replacementCost) + " aUEC" : "<span class='warn'>unpriced</span>") + "</td></tr>";
+      }
+      for (const l of rep.losses) {
+        html += "<tr><td>Lost · " + esc(l.ship) + "</td><td class='num'>" +
+          (l.value != null ? fmt(l.value) + " aUEC" : "<span class='warn'>unvalued</span>") + "</td></tr>";
+      }
+      html += "<tr class='tot'><td>Grand total</td><td class='num'>" + fmt(rep.grandTotal) + " aUEC</td></tr></table>";
+      if (rep.unpricedCount > 0) html += "<div class='warn' style='margin-top:6px'>" + (rep.unpricedCount + rep.unpricedConsumed) + " figure(s) unpriced and excluded from the totals.</div>";
+      html += "<div style='display:flex;gap:8px;margin-top:10px'>" +
+        '<button class="hbtn sm" id="copyBtn">Copy report</button>' +
+        '<button class="hbtn sm" id="txtBtn">View text</button></div>';
+      html += '<div id="repTxt" style="display:none;margin-top:8px"><pre>' + esc(r.text) + "</pre></div>";
+      html += "</div>";
+      modalOpen(html, (root) => {
+        root.querySelector("#txtBtn").onclick = () => {
+          const t = root.querySelector("#repTxt");
+          t.style.display = t.style.display === "none" ? "block" : "none";
+        };
+        root.querySelector("#copyBtn").onclick = async () => {
+          // 🔑 The overlay runs without a secure-context clipboard in some shells, so try all
+          // three and SAY what happened — the chat widget's rule, verbatim.
+          const text = r.text;
+          let done = false;
+          try { await navigator.clipboard.writeText(text); done = true; } catch { /* try legacy */ }
+          if (!done) {
+            try {
+              const ta = document.createElement("textarea");
+              ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+              document.body.appendChild(ta); ta.select();
+              done = document.execCommand("copy");
+              ta.remove();
+            } catch { /* both failed */ }
+          }
+          const b = root.querySelector("#copyBtn");
+          b.textContent = done ? "Copied" : "Copy failed — select in View text";
+          b.classList.toggle("copied", done);
+          setTimeout(() => { b.textContent = "Copy report"; b.classList.remove("copied"); }, 2600);
+        };
+        const closeBtn = root.querySelector(".cancel");
+        if (closeBtn) closeBtn.onclick = closeModal;
+        root.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+      });
+    } catch (e) { flash(e.message, true); }
+  }
+  $("reportBtn").addEventListener("click", () => showReport(null));
+
+  // ── header wiring ──────────────────────────────────────────────────────────
+  $("shipSel").addEventListener("change", () => { shipId = $("shipSel").value; render(); });
+  $("newShipBtn").addEventListener("click", openNewShip);
+  $("addItemBtn").addEventListener("click", openAddItem);
+  $("addSquadBtn").addEventListener("click", openAddSquad);
+  document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
+    tab = t.dataset.pane;
+    document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
+    document.querySelectorAll(".pane").forEach((p) => p.classList.toggle("on", p.id === "pane-" + tab));
+  }));
+
+  // ── settings sheet: capture mode + folder ─────────────────────────────────
+  $("captureSel").value = view.capture;
+  poll().then(() => { $("captureSel").value = view.capture; });
+  $("captureSel").addEventListener("change", async () => {
+    const mode = $("captureSel").value;
+    try {
+      await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ qmCapture: mode }) });
+      flash("Capture: " + mode);
+    } catch { flash("Could not save the capture setting", true); }
+  });
+  $("folderBtn").addEventListener("click", () => { try { host()?.openOpsFolder?.(); } catch { /* not embedded */ } });
+
+  // Typing mode — the shell's keyboard grab so inputs work over a focused game.
+  let typing = false;
+  function setTyping(on) {
+    typing = !!on;
+    if (typing) { if (host()) host().editStart(); }
+    else { if (host()) host().editEnd(); const a = document.activeElement; if (a && a.blur) a.blur(); }
+  }
+  window.__quartermasterFocus = () => { if (typing) { const el = document.querySelector("#modal.on input,#modal.on select") || document.querySelector(".mcard input"); if (el) el.focus(); } };
+  window.__quartermasterExitTyping = () => { if (typing) setTyping(false); };
+  // Inputs inside the modal take the keyboard grab for as long as they are focused.
+  document.addEventListener("focusin", (e) => {
+    if (e.target.matches?.("input,select,textarea")) { if (!typing) setTyping(true); }
+  });
+  document.addEventListener("focusout", () => {
+    setTimeout(() => { if (typing && !document.activeElement?.matches?.("input,select,textarea")) setTyping(false); }, 120);
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && typing) { e.preventDefault(); setTyping(false); } });
+
+  document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
+
+  (async () => {
+    await loadShipDefs();
+    await poll();
+    setInterval(poll, POLL_MS);
+  })();
+  try { host()?.ready?.(); } catch { /* not embedded */ }
+  window.__widgetSettings = () => $("wsettings").classList.add("open");
+  window.__widgetSettingsRoot = () => $("wsettings");
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#wsettings")) $("wsettings").classList.remove("open");
+  });
+</script>
+</body>
+</html>

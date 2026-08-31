@@ -1,0 +1,35 @@
+{
+  "schema": "sc-qm-ships/1",
+  "changelist": "12519617",
+  "note": "Curated by hand, not computed. Ships with hangar services (rearm/resupply/repair of other ships) and the size classes their hangars accept. ships.json carries cargo grids only - no hull dimensions and no pure fighters (a Gladius has no cargo grid, so it is absent from that dataset entirely), so 'fits in this hangar' cannot be derived; it is stated here and edited by hand when the game changes. Ships without hangar services are left out on purpose.",
+  "carriers": [
+    { "name": "Aegis Idris", "hangar": ["snub", "light"] },
+    { "name": "RSI Polaris", "hangar": ["snub", "light"] },
+    { "name": "Anvil Carrack", "hangar": ["snub"] },
+    { "name": "Origin 890 Jump", "hangar": ["snub"] },
+    { "name": "Drake Ironclad Assault", "hangar": ["snub", "light"] }
+  ],
+  "squadShips": [
+    { "name": "Anvil C8 Pisces", "size": "snub" },
+    { "name": "Anvil C8X Pisces Expedition", "size": "snub" },
+    { "name": "Argo MPUV-1T", "size": "snub" },
+    { "name": "Consolidated Outland Mustang Alpha", "size": "light" },
+    { "name": "Esperia Khartu-Al", "size": "light" },
+    { "name": "MISC Reliant Kore", "size": "light" },
+    { "name": "Origin 100i", "size": "light" },
+    { "name": "Origin 125a", "size": "light" },
+    { "name": "Origin 135c", "size": "light" },
+    { "name": "Origin 325a", "size": "light" },
+    { "name": "RSI Aurora MR", "size": "light" },
+    { "name": "Aegis Gladius", "size": "light" },
+    { "name": "Anvil Arrow", "size": "light" },
+    { "name": "Anvil F7A Hornet", "size": "light" },
+    { "name": "Anvil F7C Hornet Mk II", "size": "light" },
+    { "name": "Drake Buccaneer", "size": "light" },
+    { "name": "Aegis Vanguard Sentinel", "size": "light" },
+    { "name": "Aegis Vanguard Warden", "size": "light" },
+    { "name": "Vanduul Blade", "size": "light" },
+    { "name": "Vanduul Glaive", "size": "light" },
+    { "name": "Aegis Talon (Shrike)", "size": "light" }
+  ]
+}

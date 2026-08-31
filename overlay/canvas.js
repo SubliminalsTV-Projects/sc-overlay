@@ -289,6 +289,21 @@
       onHide: (w) => { try { frameWin(w)?.__partyExitTyping?.(); } catch { /* iframe gone */ } },
     },
     {
+      // Quartermaster — the capital-ship captain's widget: stock, squadron, and the cost of
+      // running an operation. Manual-first (the log cannot see station services or a hangar),
+      // with an opt-in chip for kiosk buys of tracked stock. Three tabs inside one panel, so
+      // it defaults a little larger than a single-column widget; the report is a modal.
+      key: "quartermaster", page: "quartermaster.html", title: "Quartermaster",
+      def: { x: 900, y: 120 }, size: { w: 400, h: 580, minW: 320, maxW: 1200, minH: 300, maxH: 1200 },
+      focusFn: "__quartermasterFocus",
+      host: () => ({
+        // Reveal the operation-report folder: the .txt twins are meant to be pasted into
+        // Discord and read days later, outside the app.
+        openOpsFolder: () => window.overlayApi?.openDataFolder?.("quartermaster-ops"),
+      }),
+      onHide: (w) => { try { frameWin(w)?.__quartermasterExitTyping?.(); } catch { /* iframe gone */ } },
+    },
+    {
       key: "battaglia", page: "battaglia.html", title: "Event Tracker",
       def: { x: 40, y: 560 }, size: { w: 360, h: 470, minW: 300, maxW: 760, minH: 240, maxH: 900 },
       // The tier-reward card has a free-text field, so this widget now takes the shared
@@ -2272,7 +2287,7 @@
         $("hubTheme").value = c.theme || "mobiglas";
       }).catch(() => { /* fall back to whatever's in the inputs */ });
       $("wgBlueprint").checked = WBY.blueprint.s.visible !== false;
-      window.overlayApi.widgetStates?.().then((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgLogView").checked = !!s.logView; $("wgVerseFinder").checked = !!s.verseFinder; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
+      window.overlayApi.widgetStates?.().then((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgQuartermaster").checked = !!s.quartermaster; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgLogView").checked = !!s.logView; $("wgVerseFinder").checked = !!s.verseFinder; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
       syncModal(); window.overlayApi.hover?.(true);
     }
     gc.addEventListener("click", (e) => { e.stopPropagation(); armGameHide(); setHub(!hub.classList.contains("open")); });
@@ -2346,6 +2361,7 @@
     $("wgScFeed").addEventListener("change", () => window.overlayApi.setScFeed($("wgScFeed").checked));
     $("wgUnlockAlert").addEventListener("change", () => window.overlayApi.setUnlockAlert($("wgUnlockAlert").checked));
     $("wgParty").addEventListener("change", () => window.overlayApi.setParty($("wgParty").checked));
+    $("wgQuartermaster").addEventListener("change", () => window.overlayApi.setQuartermaster($("wgQuartermaster").checked));
     $("wgBattaglia").addEventListener("change", () => window.overlayApi.setBattaglia($("wgBattaglia").checked));
     $("wgHauling").addEventListener("change", () => window.overlayApi.setHauling($("wgHauling").checked));
     $("wgLogView").addEventListener("change", () => window.overlayApi.setLogView($("wgLogView").checked));
@@ -2354,7 +2370,7 @@
     $("wgWebView").addEventListener("change", () => window.overlayApi.setWebView($("wgWebView").checked));
     $("wgBindingChart").addEventListener("change", () => window.overlayApi.setBindingChart($("wgBindingChart").checked));
     // Stay in sync if a widget is toggled elsewhere (tray) while the hub is open.
-    window.overlayApi.onWidgetStates?.((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgLogView").checked = !!s.logView; $("wgVerseFinder").checked = !!s.verseFinder; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
+    window.overlayApi.onWidgetStates?.((s) => { if (s) { $("wgMining").checked = !!s.mining; $("wgNotepad").checked = !!s.notepad; $("wgTwitchChat").checked = !!s.twitchChat; $("wgScFeed").checked = !!s.scFeed; $("wgUnlockAlert").checked = !!s.unlockAlert; $("wgParty").checked = !!s.party; $("wgQuartermaster").checked = !!s.quartermaster; $("wgBattaglia").checked = !!s.battaglia; $("wgHauling").checked = !!s.hauling; $("wgLogView").checked = !!s.logView; $("wgVerseFinder").checked = !!s.verseFinder; $("wgChat").checked = !!s.chat; $("wgWebView").checked = !!s.webView; $("wgBindingChart").checked = !!s.bindingChart; } });
     // Global appearance — persisted config (also broadcasts to OBS sources).
     $("hubTheme").addEventListener("change", () => setPref({ theme: $("hubTheme").value }));
     // Layout

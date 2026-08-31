@@ -28,7 +28,7 @@ const PORT = process.env.OVERLAY_PORT || 8778;
 // (see SKILL.md), and the completion report now writes real crowdsourced answers — so a stray
 // synthetic click on a question would file a rating no human ever gave. The page refuses to POST
 // feedback when this flag is present.
-const URL = `http://localhost:${PORT}/missions.html?canvas=1&harness=1&party&mining&notepad`;
+const URL = `http://localhost:${PORT}/missions.html?canvas=1&harness=1&party&quartermaster&mining&notepad`;
 
 /* ── `--only <widget>[,<widget>]` — run the suites a change can actually have broken ────────────
  *
@@ -135,8 +135,8 @@ const PAGE_KEYS = {
   "logview.html": "logView", "battaglia.html": "battaglia", "versefinder.html": "verseFinder",
   "unlockalert.html": "unlockAlert", "mining.html": "mining", "chat.html": "chat",
   "hauling.html": "hauling", "twitchchat.html": "twitchChat", "scfeed.html": "scFeed",
-  "notepad.html": "notepad", "party.html": "party", "webview.html": "webView",
-  "bindingwidget.html": "bindingChart",
+  "notepad.html": "notepad", "party.html": "party", "quartermaster.html": "quartermaster",
+  "webview.html": "webView", "bindingwidget.html": "bindingChart",
 };
 
 /** Suites that loop the whole registry. They HOST every widget, so a page that no longer fits its

@@ -10,6 +10,7 @@ import { parseMissionEvent } from "./missions-parser.js";
 import { debrisStepWording, type Place } from "./location.js";
 import { PlayerLocation } from "./player-location.js";
 import { PartyTracker, ownHandleFromLog } from "./party.js";
+import { Quartermaster } from "./quartermaster.js";
 import { MissionTracker } from "./missions.js";
 import { collectLogPaths } from "./log-paths.js";
 import { MiningTracker } from "./mining.js";
@@ -755,6 +756,27 @@ const tradeDeps = {
     console.log(`[hauling] buy filled from the log: ${filled.commodity} ${filled.scu} SCU at ${filled.shopName ?? "an unnamed shop"}`);
     if (haulingClients.size) haulingSend({ kind: "state", view: hauling.view() });
   },
+  // 🔑 THE QUARTERMASTER CAPTURE HOOK — same funnel, one more listener. Runs only for
+  // CONFIRMED BUYS (a refused transaction is not stock) whose volume and price the log
+  // actually stated; anything less is not recorded, per the same rule that keeps refused
+  // prices out of the price pool. Only fuel/ammunition-shaped commodities or ones already
+  // joined to a stock item by uuid ever become chips — see notePurchase's own guard.
+  onQmPurchase: (p: CommodityPurchase) => {
+    if (p.kind !== "buy" || p.confirmed !== true || !p.resourceGuid) return;
+    if (!p.volume.known || !p.unitPrice.known) return;
+    const c = economy.commodities()[p.resourceGuid] as { name?: string | null } | undefined;
+    const r = quartermaster.notePurchase({
+      commodityUuid: p.resourceGuid,
+      itemName: c?.name ?? "",
+      qty: p.volume.scu,
+      unit: "SCU",
+      unitPrice: p.unitPrice.perScu,
+      total: p.total ?? Math.round(p.unitPrice.perScu * p.volume.scu),
+      shopName: p.shopName,
+    });
+    if (r.added) console.log(`[quartermaster] chip queued: ${c?.name ?? p.resourceGuid} ${p.volume.scu} SCU at ${p.shopName ?? "an unnamed shop"}`);
+    else if (r.committed) console.log(`[quartermaster] auto-committed: ${c?.name ?? p.resourceGuid} ${p.volume.scu} SCU`);
+  },
 };
 // Observed prices — what the player actually paid, as opposed to what UEX's survey says. Stood up
 // before any seed runs, because the seed is where a purchase from before this launch is found.
@@ -1108,6 +1130,11 @@ function haulingClimb(giver: string, standing: number, repPerHour: number | null
 // Party roster + reward split. The log can only COUNT party members (and name them late,
 // on despawn), so the roster is manual — see src/party.ts for the full finding.
 const party = new PartyTracker(join(userDir, "party.json"), join(userDir, "party-sessions"));
+
+// Quartermaster — capital-ship stock, squad roster and operation cost reports. All
+// manual entry plus an opt-in capture hook for kiosk buys of tracked stock (fuel,
+// ship ammunition). See src/quartermaster.ts for the ledger-derived-stock design.
+const quartermaster = new Quartermaster(join(userDir, "quartermaster.json"), join(userDir, "quartermaster-ops"), config.qmCapture);
 
 const mining = new MiningTracker({ dataDir, stateDir: userDir });
 
@@ -3846,6 +3873,11 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       config.scFeedVolume = Math.max(0, Math.min(1, body.scFeedVolume));
     if (typeof body.scFeedTone === "string") config.scFeedTone = body.scFeedTone;
     if (typeof body.partyOpen === "boolean") config.partyOpen = body.partyOpen;
+    if (typeof body.quartermasterOpen === "boolean") config.quartermasterOpen = body.quartermasterOpen;
+    if (body.qmCapture === "off" || body.qmCapture === "chips" || body.qmCapture === "auto") {
+      config.qmCapture = body.qmCapture;
+      quartermaster.setCapture(config.qmCapture);
+    }
     if (typeof body.battagliaOpen === "boolean") config.battagliaOpen = body.battagliaOpen;
     if (typeof body.haulingOpen === "boolean") config.haulingOpen = body.haulingOpen;
     if (typeof body.logViewOpen === "boolean") config.logViewOpen = body.logViewOpen;
@@ -4881,6 +4913,99 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     party.setMembers(body?.members);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(party.view()));
+    return;
+  }
+
+  // ── Quartermaster ─────────────────────────────────────────────────────────
+  // The curated carrier + squad-ship dataset for the two dropdowns. Read from disk per
+  // request so a hand-edit (the intended way to change it — see the file's note) shows up
+  // on the next poll without a restart.
+  if (url === "/api/quartermaster/ships" && req.method === "GET") {
+    let parsed: unknown = null;
+    try { parsed = JSON.parse(readFileSync(join(dataDir, "qm-ships.json"), "utf8")); }
+    catch { /* fall through to the empty answer — a missing dataset is not worth a 500 */ }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(parsed ?? { carriers: [], squadShips: [] }));
+    return;
+  }
+  if (url === "/api/quartermaster" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(quartermaster.view()));
+    return;
+  }
+  // Mutations all return the fresh view so the widget updates in one round trip. Errors are
+  // the store's own refusal sentences (consume-past-stock, "an operation is already
+  // running", ...) and reach the widget verbatim — the honest answer, never a silent clamp.
+  const qmAction = (name: string): ((body: Record<string, unknown>) => unknown) | null => {
+    switch (name) {
+      case "ship": return (b) => quartermaster.addShip(String(b.name ?? ""), String(b.type ?? ""));
+      case "remove-ship": return (b) => quartermaster.removeShip(String(b.shipId ?? ""));
+      case "item": return (b) => quartermaster.addItem(String(b.shipId ?? ""), String(b.name ?? ""), String(b.unit ?? "SCU"), b.commodityUuid ? String(b.commodityUuid) : undefined);
+      case "remove-item": return (b) => quartermaster.removeItem(String(b.itemId ?? ""));
+      case "supply": return (b) => quartermaster.addSupply(b);
+      case "consume": return (b) => quartermaster.addConsume(b);
+      case "service": return (b) => {
+        const kind = String(b.kind ?? "");
+        if (kind !== "repair" && kind !== "rearm" && kind !== "refuel") throw new Error("kind must be repair, rearm or refuel");
+        return quartermaster.addService(kind, b);
+      };
+      case "delete-record": return (b) => quartermaster.deleteRecord(String(b.recordId ?? ""));
+      case "squad": return (b) => quartermaster.addSquadShip(b);
+      case "squad-update": return (b) => quartermaster.updateSquadShip(String(b.squadId ?? ""), b);
+      case "squad-remove": return (b) => quartermaster.removeSquadShip(String(b.squadId ?? ""));
+      case "destroy": return (b) => quartermaster.destroySquadShip(String(b.squadId ?? ""), String(b.shipId ?? ""));
+      case "op-start": return (b) => quartermaster.startOp(String(b.shipId ?? ""), String(b.name ?? ""));
+      case "op-stop": return (b) => quartermaster.stopOp();
+      case "chip-add": return (b) => quartermaster.commitChip(String(b.chipId ?? ""));
+      case "chip-dismiss": return (b) => quartermaster.dismissChip(String(b.chipId ?? ""));
+      default: return null;
+    }
+  };
+  if (url === "/api/quartermaster/action" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    const act = qmAction(String(body?.action ?? ""));
+    if (!act) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "unknown_action" }));
+      return;
+    }
+    try {
+      const result = act(body ?? {});
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result, view: quartermaster.view() }));
+    } catch (e) {
+      // A refusal is a 400 with the store's own sentence, not a 500: the caller did
+      // something the state says no to, and the sentence says what.
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: (e as Error).message }));
+    }
+    return;
+  }
+  // Report: the current operation by default, any past one by id. Also written to the
+  // ops folder (.json + .txt + index) so it survives without the app.
+  if (url === "/api/quartermaster/report" && req.method === "GET") {
+    const id = new URL(req.url ?? "/", "http://x").searchParams.get("id");
+    const v = quartermaster.view();
+    const opId = id || v.currentOp?.id || v.ops[0]?.id;
+    if (!opId) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ report: null }));
+      return;
+    }
+    try {
+      const rep = quartermaster.buildReport(opId);
+      await quartermaster.writeReport(rep);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ report: rep, text: quartermaster.renderReportText(rep) }));
+    } catch (e) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: (e as Error).message }));
+    }
+    return;
+  }
+  if (url === "/api/quartermaster/ops" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ops: quartermaster.view().ops, folder: quartermaster.opsFolder() }));
     return;
   }
 

@@ -125,6 +125,7 @@ let scFeedVisible = false; // is the in-canvas SC Feed notifier armed (it only S
 // people already had.
 let unlockAlertVisible = true;
 let partyVisible = false; // is the in-canvas Party split widget currently shown
+let quartermasterVisible = false; // is the in-canvas Quartermaster widget currently shown
 let battagliaVisible = false; // is the in-canvas Battaglia grind tracker currently shown
 let haulingVisible = false; // is the in-canvas Hauling optimiser currently shown
 let logViewVisible = false; // is the in-canvas Log View (raw game.log tail) currently shown
@@ -746,6 +747,7 @@ function createOverlay() {
     sendScFeedVisible({ on: scFeedVisible, initial: true });
     sendUnlockAlertVisible({ on: unlockAlertVisible, initial: true });
     sendPartyVisible({ on: partyVisible, initial: true });
+    sendQuartermasterVisible({ on: quartermasterVisible, initial: true });
     sendBattagliaVisible({ on: battagliaVisible, initial: true });
     sendHaulingVisible({ on: haulingVisible, initial: true });
     sendLogViewVisible({ on: logViewVisible, initial: true });
@@ -973,7 +975,7 @@ function sendMiningVisible(state) {
 }
 // Push widget on/off state to the in-overlay hub checkboxes (kept in sync with the tray).
 function pushWidgetStates() {
-  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, hauling: haulingVisible, logView: logViewVisible, verseFinder: verseFinderVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }); }
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:widget-states", { mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, quartermaster: quartermasterVisible, battaglia: battagliaVisible, hauling: haulingVisible, logView: logViewVisible, verseFinder: verseFinderVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }); }
   catch { /* renderer gone */ }
 }
 // The Notepad widget is a plain in-canvas iframe (no auto-show / SSE), so its visibility is a
@@ -1050,6 +1052,20 @@ function setPartyVisible(on) {
   refreshTray();
 }
 function toggleParty() { setPartyVisible(!partyVisible); }
+// Quartermaster widget — same shell-owned visibility as the Party split. Its capture
+// setting (qmCapture) lives in sidecar config; this only remembers open/closed.
+function sendQuartermasterVisible(state) {
+  try { if (overlay && !overlay.isDestroyed()) overlay.webContents.send("overlay:quartermaster-visible", state); }
+  catch { /* renderer gone */ }
+}
+function setQuartermasterVisible(on) {
+  quartermasterVisible = !!on;
+  sendQuartermasterVisible({ on: quartermasterVisible });
+  postConfig({ quartermasterOpen: quartermasterVisible }); // remember open/closed for next launch
+  pushWidgetStates();
+  refreshTray();
+}
+function toggleQuartermaster() { setQuartermasterVisible(!quartermasterVisible); }
 // Social Chat widget — plain in-canvas iframe, same shell-owned visibility as the Notepad.
 // chatOpen doubles as the SIDECAR's connection gate: closed widget = no chat socket at all,
 // so this postConfig is also what connects/disconnects chat (see chatConfigure, overlay-server).
@@ -1307,6 +1323,7 @@ const WIDGET_TOGGLES = {
   scFeed: () => toggleScFeed(),
   unlockAlert: () => toggleUnlockAlert(),
   party: () => toggleParty(),
+  quartermaster: () => toggleQuartermaster(),
   battaglia: () => toggleBattaglia(),
   hauling: () => toggleHauling(),
   logView: () => toggleLogView(),
@@ -1806,6 +1823,7 @@ function refreshTray() {
       { label: "SC Feed", type: "checkbox", checked: scFeedVisible, click: toggleScFeed },
       { label: "Unlock Alerts", type: "checkbox", checked: unlockAlertVisible, click: toggleUnlockAlert },
       { label: "Loot Split", type: "checkbox", checked: partyVisible, click: toggleParty },
+      { label: "Quartermaster", type: "checkbox", checked: quartermasterVisible, click: toggleQuartermaster },
       { label: "Event Tracker", type: "checkbox", checked: battagliaVisible, click: toggleBattaglia },
       { label: "Hauling", type: "checkbox", checked: haulingVisible, click: toggleHauling },
       { label: "Log", type: "checkbox", checked: logViewVisible, click: toggleLogView },
@@ -1973,6 +1991,7 @@ if (!app.requestSingleInstanceLock()) {
       scFeedVisible = c.scFeedOpen === true;
       unlockAlertVisible = c.unlockAlertOpen !== false; // default ON — it replaced an existing toast
       partyVisible = c.partyOpen === true;
+      quartermasterVisible = c.quartermasterOpen === true;
       battagliaVisible = c.battagliaOpen === true;
       haulingVisible = c.haulingOpen === true;
       logViewVisible = c.logViewOpen === true;
@@ -2275,7 +2294,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     return { x: canvasOffset.x, y: canvasOffset.y, scale: canvasScale };
   });
-  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, battaglia: battagliaVisible, hauling: haulingVisible, logView: logViewVisible, verseFinder: verseFinderVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }));
+  ipcMain.handle("app:widget-states", () => ({ mining: miningVisible, notepad: notepadVisible, twitchChat: twitchChatVisible, scFeed: scFeedVisible, unlockAlert: unlockAlertVisible, party: partyVisible, quartermaster: quartermasterVisible, battaglia: battagliaVisible, hauling: haulingVisible, logView: logViewVisible, verseFinder: verseFinderVisible, chat: chatVisible, webView: webViewVisible, bindingChart: bindingChartVisible, config: configWidgetVisible }));
   ipcMain.on("app:set-mining", (_e, on) => {
     if (on) { miningAutoSuppress = 0; setMiningVisible(true); }
     else setMiningVisible(false, { manual: true });
@@ -2285,6 +2304,7 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("app:set-scfeed", (_e, on) => setScFeedVisible(!!on));
   ipcMain.on("app:set-unlockalert", (_e, on) => setUnlockAlertVisible(!!on));
   ipcMain.on("app:set-party", (_e, on) => setPartyVisible(!!on));
+  ipcMain.on("app:set-quartermaster", (_e, on) => setQuartermasterVisible(!!on));
   ipcMain.on("app:set-battaglia", (_e, on) => setBattagliaVisible(!!on));
   ipcMain.on("app:set-hauling", (_e, on) => setHaulingVisible(!!on));
   ipcMain.on("app:set-logview", (_e, on) => setLogViewVisible(!!on));
@@ -2335,7 +2355,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   ipcMain.on("app:open-data-folder", (_e, which) => {
     // "logs" is the data-dir root — that is where sidecar.log and sidecar-prev.log live.
-    const dirs = { "party-sessions": "party-sessions", "fab-captures": "fab-captures", "logs": "" };
+    const dirs = { "party-sessions": "party-sessions", "quartermaster-ops": "quartermaster-ops", "fab-captures": "fab-captures", "logs": "" };
     const sub = dirs[String(which)];
     if (sub === undefined) return;
     const dir = path.join(process.env.APPDATA || process.env.HOME || ".", "sc-blueprint-tracker", sub);

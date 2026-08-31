@@ -148,6 +148,13 @@ export interface Config {
   scFeedTone: string;
   /** Remembers whether the Party widget was left open, so it's restored on launch. */
   partyOpen: boolean;
+  /** Remembers whether the Quartermaster widget was left open, so it's restored on launch. */
+  quartermasterOpen: boolean;
+  /** Quartermaster auto-capture: "off" (default), "chips" (one-click confirm), or "auto"
+   *  (kiosk buys of tracked stock commit unasked). A standing preference, deliberately
+   *  unlike payoutScan: nothing here costs anything to keep armed — the funnel already
+   *  runs for the trade journal. */
+  qmCapture: "off" | "chips" | "auto";
   /** Remembers whether the Battaglia grind widget was left open, so it's restored on launch. */
   battagliaOpen: boolean;
   /** Remembers whether the Hauling widget was left open, so it's restored on launch. */
@@ -398,6 +405,8 @@ export const DEFAULTS: Config = {
   scFeedVolume: 0.6,
   scFeedTone: "",
   partyOpen: false,
+  quartermasterOpen: false,
+  qmCapture: "off",
   battagliaOpen: false,
   haulingOpen: false,
   logViewOpen: false,

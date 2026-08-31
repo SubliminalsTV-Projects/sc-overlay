@@ -105,6 +105,13 @@ export interface TradeDeps {
    * thing is a documented way to get a 100x error, so the consumer decides — this does not filter.
    */
   onPurchase?: (p: CommodityPurchase) => void;
+
+  /** A second purchase listener, for the Quartermaster's capture hook. Separate from
+   *  `onPurchase` so the hauling buys and the stock chips can never grow into one
+   *  tangled consumer that returns early and silently skips the other — the exact
+   *  half-applied-rule failure this hook exists to prevent. Same guarantees: called
+   *  for sells as well as buys, in its own try, after the journal. */
+  onQmPurchase?: (p: CommodityPurchase) => void;
 }
 
 let store: TradePriceStore | null = null;
@@ -157,6 +164,11 @@ export function tradeLogLine(line: string, deps: TradeDeps): CommodityPurchase[]
     // are a nicety beside a record of what the player spent.
     try { deps.onPurchase?.(p); } catch (e) {
       console.log(`[trade] purchase listener threw: ${(e as Error).message}`);
+    }
+    // Own try, same rule: a chip the Quartermaster chokes on must never cost the
+    // journal its row — and vice versa, above.
+    try { deps.onQmPurchase?.(p); } catch (e) {
+      console.log(`[trade] quartermaster listener threw: ${(e as Error).message}`);
     }
   }
   if (changed) j.save();
