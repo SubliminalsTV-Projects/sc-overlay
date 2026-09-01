@@ -11,6 +11,7 @@ const SAVED = {
   blueprint: { x: 100, y: 100, w: 380, h: 560, visible: false },
   mining: { x: 300, y: 200, scale: null, angle: null },
   party: { x: 900, y: 600, w: 340, h: 400 },
+  quartermaster: { x: 640, y: 80, w: 400, h: 580 },
   notepad: { x: 500, y: 100, w: 320, h: 380 },
   __groups: { list: [
     { id: "gsaved", x: 250, y: 150, w: 500, h: 420, members: ["mining", "party"], active: "party" },
@@ -31,7 +32,7 @@ const real = {
   // not just callable.
   widgetStates: async () => ({
     mining: true, notepad: true, twitchChat: false, scFeed: false,
-    party: true, battaglia: false, webView: false, bindingChart: false,
+    party: true, quartermaster: true, battaglia: false, webView: false, bindingChart: false,
   }),
   // The rects the page says are clickable. Captured rather than dropped, because "is this chrome
   // in the region list" is otherwise UNTESTABLE from inside the page: the RSEL string is

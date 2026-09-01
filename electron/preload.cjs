@@ -86,6 +86,9 @@ contextBridge.exposeInMainWorld("overlayApi", {
   // Party split widget: shell-owned visibility; its name fields reuse the keyboard-grab above.
   setParty: (on) => ipcRenderer.send("app:set-party", !!on),
   onPartyVisible: (cb) => ipcRenderer.on("overlay:party-visible", (_e, s) => cb(s)),
+  // Quartermaster: shell-owned visibility; its input fields reuse the keyboard-grab above.
+  setQuartermaster: (on) => ipcRenderer.send("app:set-quartermaster", !!on),
+  onQuartermasterVisible: (cb) => ipcRenderer.on("overlay:quartermaster-visible", (_e, s) => cb(s)),
   // Battaglia grind tracker: shell-owned visibility, same as the widgets above.
   setBattaglia: (on) => ipcRenderer.send("app:set-battaglia", !!on),
   onBattagliaVisible: (cb) => ipcRenderer.on("overlay:battaglia-visible", (_e, s) => cb(s)),

@@ -182,6 +182,17 @@ export interface VerseDeps {
 let store: ItemShopStore | null = null;
 let timer: NodeJS.Timeout | null = null;
 
+/** The ONE shop table, for read-only borrowers outside this file (Quartermaster's
+ *  station/price lookups). Same rule as the trade table's `tradeTable()`: there is one
+ *  store and one refresh clock, and every consumer reads through it — a second store
+ *  would quote different prices for the same component in the same second. Read at
+ *  request time, never cached by the caller: a background refresh swaps the table.
+ *  Returns null until the first verseRoutes() call has constructed the store; callers
+ *  must treat that as "no shop data", never as an error. */
+export function verseItemShops(): ItemShopTable | null {
+  return store ? store.current() : null;
+}
+
 function ensure(deps: VerseDeps): ItemShopStore {
   if (store) return store;
   store = new ItemShopStore({
