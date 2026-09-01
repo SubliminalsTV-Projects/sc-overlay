@@ -11,6 +11,7 @@ import { debrisStepWording, type Place } from "./location.js";
 import { PlayerLocation } from "./player-location.js";
 import { PartyTracker, ownHandleFromLog } from "./party.js";
 import { Quartermaster } from "./quartermaster.js";
+import { quartermasterRoutes } from "./quartermaster-routes.js";
 import { MissionTracker } from "./missions.js";
 import { collectLogPaths } from "./log-paths.js";
 import { MiningTracker } from "./mining.js";
@@ -35,7 +36,7 @@ import { initPriceFeed, observedPrices, priceFeedLine } from "./price-feed.js";
 // The COMMUNITY half of the same idea: everybody else's receipts, fetched from the site. The
 // app only ever READS this — nothing uploads from a player's machine in this slice.
 import { PricePoolStore } from "./price-pool.js";
-import { verseRoutes, locationTokenLabel } from "./verse-routes.js";
+import { verseRoutes, verseItemShops, locationTokenLabel } from "./verse-routes.js";
 import { largestBoxScu } from "./cargo-boxes.js";
 import {
   buildContracts, climbToNextRung, rankContracts, regimeFor, rungAt, HAULING_LADDER,
@@ -1135,6 +1136,14 @@ const party = new PartyTracker(join(userDir, "party.json"), join(userDir, "party
 // manual entry plus an opt-in capture hook for kiosk buys of tracked stock (fuel,
 // ship ammunition). See src/quartermaster.ts for the ledger-derived-stock design.
 const quartermaster = new Quartermaster(join(userDir, "quartermaster.json"), join(userDir, "quartermaster-ops"), config.qmCapture);
+
+/** The shop table before verse-routes has constructed its store (or in a build with no
+ *  bundle): empty, and every QM helper degrades to "no suggestions/no price" rather
+ *  than throwing — the same honest empty the Verse Finder serves. */
+const EMPTY_SHOP_TABLE: import("./item-shops.js").ItemShopTable = {
+  items: [], terminals: [], source: "bundled", fetchedAt: null, droppedOffline: 0,
+  catalogueOnly: 0, unpriced: [], lastError: null,
+};
 
 const mining = new MiningTracker({ dataDir, stateDir: userDir });
 
@@ -4933,6 +4942,15 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.end(JSON.stringify(quartermaster.view()));
     return;
   }
+  // Helper routes (autocomplete, stations, station price, SP Viewer fit fetch) live in
+  // their own file for the same reason trade and verse do — one hook, no second copy.
+  // The shops table is read at request time (a background refresh may swap it) and the
+  // commodity quotes are the SAME borrow the Verse Finder takes, never a second store.
+  if (quartermasterRoutes(url, req, res, {
+    shops: () => verseItemShops() ?? EMPTY_SHOP_TABLE,
+    trade: () => tradeTable(tradeDeps),
+    commodities: () => economy.commodities(),
+  })) return;
   // Mutations all return the fresh view so the widget updates in one round trip. Errors are
   // the store's own refusal sentences (consume-past-stock, "an operation is already
   // running", ...) and reach the widget verbatim — the honest answer, never a silent clamp.

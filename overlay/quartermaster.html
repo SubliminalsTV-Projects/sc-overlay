@@ -152,6 +152,29 @@
   /* Report view: a pane like the others, but rendered from the report JSON. */
   .rep { font-size: 11px; line-height: 1.55; }
   .rep h3 { margin: 4px 0 2px; font-size: 12px; color: var(--cyan-bright); letter-spacing: 0.06em; }
+
+  /* Item-name autocomplete — same containment rules as party's picker: inside the
+     modal card, over the fields, dismissed by pointerdown anywhere else. */
+  .acmenu { position: absolute; z-index: 21; max-height: 190px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 7px; background: var(--panel-solid);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5); }
+  .acmenu .acitem { display: flex; align-items: baseline; gap: 7px; padding: 5px 9px;
+    font-size: 11.5px; color: var(--cyan-text); cursor: pointer; }
+  .acmenu .acitem:hover, .acmenu .acitem.on { background: rgba(var(--accent-rgb), 0.18); color: var(--cyan-bright); }
+  .acmenu .acitem .dim { color: var(--faint); font-size: 9.5px; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acmenu .acitem .acp { font-family: var(--mono); font-size: 10px; color: var(--gold); }
+
+  /* Fit link results inside the squad modals. */
+  #fitBox { margin: -2px 0 8px 76px; font-size: 10.5px; color: var(--cyan-text); line-height: 1.45;
+    padding: 6px 9px; border: 1px solid var(--divider); border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25); max-height: 130px; overflow-y: auto; }
+  #fitBox.busy { color: var(--faint); font-style: italic; }
+  #fitBox .fit-list { margin-top: 4px; }
+  #fitBox .fit-list div { display: flex; gap: 8px; }
+  #fitBox .fit-list .dim { margin-left: auto; font-family: var(--mono); color: var(--faint); }
+  .fitlnk { color: var(--gold); cursor: pointer; font-size: 10px; margin-left: 5px; }
+  .fitlnk:hover { text-decoration: underline; }
   .rep .sub { color: var(--faint); font-size: 10px; margin-bottom: 8px; }
   .rep table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
   .rep td { padding: 3px 0; border-bottom: 1px solid rgba(69, 208, 224, 0.08); }
@@ -395,7 +418,8 @@
     }
     let html = '<table class="qtab"><tr><th>Ship</th><th class="num" style="text-align:right">Value</th><th class="act"></th></tr>';
     for (const s of squad) {
-      html += "<tr><td><span class='b'>" + esc(s.name) + "</span> <span class='dim'>" + esc(s.type) + (s.fit ? " · " + esc(s.fit) : "") + "</span></td>" +
+      html += "<tr><td><span class='b'>" + esc(s.name) + "</span> <span class='dim'>" + esc(s.type) + (s.fit ? " · " + esc(s.fit) : "") + "</span>" +
+        (s.fitUrl ? "<span class='fitlnk' data-fitlink='" + esc(s.fitUrl) + "' title='Open this fit at SP Viewer'>⚙ fit</span>" : "") + "</td>" +
         "<td class='num'>" + (s.value != null ? fmt(s.value) : "—") + "</td>" +
         "<td class='act'><button class='tbtn' data-mg='" + s.id + "'>Manage</button>" +
         "<button class='tbtn warn' data-lost='" + s.id + "'>Destroyed</button>" +
@@ -403,7 +427,11 @@
     }
     html += "</table>";
     wrap.innerHTML = html;
-    wrap.querySelectorAll("[data-mg]").forEach((b) => b.onclick = () => openSquad(b.dataset.mg, true));
+    wrap.querySelectorAll("[data-mg]").forEach((b) => b.onclick = () => openSquad(b.dataset.mg));
+    wrap.querySelectorAll("[data-fitlink]").forEach((b) => b.onclick = () => {
+      const u = b.dataset.fitlink;
+      try { host()?.openUrl?.(u); } catch { window.open(u, "_blank", "noopener"); }
+    });
     wrap.querySelectorAll("[data-lost]").forEach((b) => b.onclick = () => openDestroy(b.dataset.lost));
     wrap.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => {
       try { await act("squad-remove", { squadId: b.dataset.rm }); } catch (e) { flash(e.message, true); }
@@ -497,23 +525,167 @@
       });
   }
 
+  // ── item-name autocomplete (party.html's picker pattern) ─────────────────
+  // 🔑 A SUGGESTION LIST, NEVER A WHITELIST — free text still posts exactly as typed.
+  // Sourced from the sidecar (commodities + priced + unpriced item names) because the
+  // page must render standalone; it never downloads the price tables itself.
+  let acMenu = null;
+  let acSeq = 0;
+  let acPick = null; // (hit) => void — set by whichever modal owns the menu
+  function closeAc() {
+    acMenu?.remove();
+    acMenu = null;
+  }
+  function openAc(input, hits) {
+    closeAc();
+    if (!hits.length) return;
+    const menu = document.createElement("div");
+    menu.className = "acmenu";
+    for (const h of hits) {
+      const el = document.createElement("div");
+      el.className = "acitem";
+      el.innerHTML = "<b>" + esc(h.name) + "</b> <span class='dim'>" + esc(h.category) + "</span>" +
+        (h.price != null ? " <span class='acp'>" + fmt(h.price) + " aUEC</span>" : "");
+      // mousedown, not click: the input's blur would tear the menu down first (party's rule).
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        closeAc();
+        if (acPick) acPick(h);
+      });
+      menu.appendChild(el);
+    }
+    const host = $("mcard");
+    const row = input.closest(".mrow");
+    menu.style.top = (row.offsetTop + row.offsetHeight) + "px";
+    menu.style.left = "16px";
+    menu.style.right = "16px";
+    host.appendChild(menu);
+    acMenu = menu;
+  }
+  function wireAc(input, pick) {
+    acPick = pick;
+    let timer = null;
+    const seq = ++acSeq;
+    input.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const q = input.value.trim();
+        if (!q) { closeAc(); return; }
+        try {
+          const r = await fetch("/api/quartermaster/item-names?q=" + encodeURIComponent(q) + "&limit=10", { cache: "no-store" });
+          const j = await r.json();
+          if (seq !== acSeq) return; // stale response — a newer keystroke owns the menu now
+          openAc(input, j.hits || []);
+        } catch { /* sidecar restarting: typing still works, just without suggestions */ }
+      }, 160);
+    });
+    input.addEventListener("blur", () => setTimeout(closeAc, 120));
+    $("modal").addEventListener("pointerdown", (e) => { if (acMenu && !e.target.closest(".acmenu")) closeAc(); }, { once: true });
+  }
+
+  // ── fit link section (shared by Add member + Manage) ─────────────────────
+  // The Build button opens SP Viewer with the ship key; their share button copies the
+  // fit link to the clipboard; paste it here and the sidecar prices hull + components.
+  function spvClassOf(typeName) {
+    const s = shipDefs.squadShips.find((x) => x.name === typeName);
+    return s?.spvClass || null;
+  }
+  async function loadFit(urlField, box, onPriced) {
+    const url = urlField.value.trim();
+    box.textContent = "Fetching fit from SP Viewer…";
+    box.classList.add("busy");
+    try {
+      const r = await fetch("/api/quartermaster/fit", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const j = await r.json();
+      box.classList.remove("busy");
+      if (!r.ok) { box.textContent = "✗ " + (j.error || "could not fetch that fit"); return null; }
+      const fit = j.fit;
+      let html = "<b>" + fmt(fit.total) + " aUEC</b> — hull " +
+        (fit.hullPrice != null ? fmt(fit.hullPrice) : "unpriced") + " + " + fit.items.length + " component(s)";
+      if (fit.unpricedCount) html += " <span class='dim'>(" + fit.unpricedCount + " unpriced, not counted)</span>";
+      html += "<div class='fit-list'>" + fit.items.map((i) =>
+        "<div>" + esc(i.name) + " <span class='dim'>" + (i.price != null ? fmt(i.price) + " aUEC" : "unpriced") + "</span></div>").join("") + "</div>";
+      box.innerHTML = html;
+      if (onPriced) onPriced(fit);
+      return fit;
+    } catch (e) {
+      box.classList.remove("busy");
+      box.textContent = "✗ could not reach the sidecar for that fit";
+      return null;
+    }
+  }
+  function fitSection(existing) {
+    // existing: the squad ship being managed, or null when adding.
+    return '<div class="mrow"><label>Fit link</label><input id="fFitUrl" maxlength="300" placeholder="Paste an SP Viewer fit link">' +
+      '<button id="fFitBuild" class="tbtn" type="button" title="Open SP Viewer to build or share this ship\'s fit — their Share button copies the link to paste here">Build ↗</button></div>' +
+      '<div id="fitBox"' + (existing?.fitUrl ? "" : ' style="display:none"') + "></div>";
+  }
+  function wireFit(root, typeName, existing, onPriced) {
+    const urlField = root.querySelector("#fFitUrl");
+    const box = root.querySelector("#fitBox");
+    const buildBtn = root.querySelector("#fFitBuild");
+    if (existing?.fitUrl) {
+      urlField.value = existing.fitUrl;
+      if (existing.fitItems?.length) {
+        let html = "<b>" + (existing.fitHullPrice != null ? "hull " + fmt(existing.fitHullPrice) + " + " : "") +
+          existing.fitItems.length + " component(s)</b><div class='fit-list'>" +
+          existing.fitItems.map((i) => "<div>" + esc(i.name) + " <span class='dim'>" + (i.price != null ? fmt(i.price) + " aUEC" : "unpriced") + "</span></div>").join("") + "</div>";
+        box.innerHTML = html;
+      }
+    }
+    buildBtn.addEventListener("click", () => {
+      const cls = spvClassOf(typeName());
+      if (!cls) { flash("No SP Viewer key for that type — you can still paste a link", true); return; }
+      const u = "https://www.spviewer.eu/performance?ship=" + cls;
+      try { host()?.openUrl?.(u); } catch { window.open(u, "_blank", "noopener"); }
+      box.style.display = "block";
+      box.innerHTML = "Build the fit there, press their <b>Share</b> button (it copies the link), then paste it into Fit link and press <b>Load</b>.";
+    });
+    urlField.addEventListener("input", () => { box.style.display = "block"; });
+    urlField.addEventListener("change", () => {
+      if (!urlField.value.trim()) return;
+      void loadFit(urlField, box, onPriced);
+    });
+  }
+
   // Add stock item.
   function openAddItem() {
     if (!shipId) { flash("Register a ship first", true); return; }
     modalOpen(mTitle("Stock item") +
-      '<div class="mrow"><label>Name</label><input id="fName" maxlength="60" placeholder="Hydrogen Fuel, Ship Ammunition - Size 3, ..."></div>' +
+      '<div class="mrow"><label>Name</label><input id="fName" maxlength="60" placeholder="Hydrogen Fuel, Ship Ammunition - Size 3, ..." autocomplete="off"></div>' +
       '<div class="mrow"><label>Unit</label><select id="fUnit"><option>SCU</option><option>units</option><option>boxes</option></select></div>' +
-      '<div class="mhint">Fuel and ammunition from kiosks are SCU. Missiles, medpens and repair materials are usually units.</div>' +
+      '<div class="mhint">Suggestions come from the game&#39;s own item and commodity tables. Fuel and ammunition from kiosks are SCU; missiles, medpens and repair materials are usually units.</div>' +
       mErr() + mBtns("Add"),
       (root) => {
+        let picked = null; // the chosen suggestion, carrying the uuid the capture hook joins on
+        wireAc(root.querySelector("#fName"), (h) => {
+          picked = h;
+          root.querySelector("#fName").value = h.name;
+          root.querySelector("#fUnit").value = h.unit;
+        });
         wireBasic(root, async () => {
-          await act("item", { shipId, name: root.querySelector("#fName").value.trim(), unit: root.querySelector("#fUnit").value });
+          await act("item", { shipId, name: root.querySelector("#fName").value.trim(), unit: root.querySelector("#fUnit").value,
+            commodityUuid: picked?.commodityUuid || undefined });
           closeModal();
         });
       });
   }
 
-  // Supply: qty, location, cost calculated from the last known price, editable.
+  // Supply: qty, location (a station, when we know the station list), and a unit price
+  // that pre-fills from that station's cheapest quote — editable, always.
+  let placesCache = null;
+  async function loadPlaces() {
+    if (placesCache) return placesCache;
+    try {
+      const r = await fetch("/api/quartermaster/places", { cache: "no-store" });
+      const j = await r.json();
+      placesCache = j.places || [];
+    } catch { placesCache = []; }
+    return placesCache;
+  }
   function openSupply(itemId) {
     const row = view.items.find((r) => r.item.id === itemId);
     if (!row) return;
@@ -522,19 +694,48 @@
       '<div class="mrow"><label>Amount</label><input id="fQty" type="number" min="0" step="any" placeholder="' + esc(row.item.unit) + '"></div>' +
       '<div class="mrow"><label>Unit price</label><input id="fPrice" type="number" min="0" step="any" placeholder="' +
         (known != null ? String(known) : "unknown") + ' aUEC/' + esc(row.item.unit) + '"></div>' +
-      '<div class="mhint">Cost: <b id="fCost">—</b>' + (known != null ? " (prefilled from the last price you paid)" : " (no price known yet — this is starting stock)") + "</div>" +
-      '<div class="mrow"><label>Location</label><input id="fLoc" maxlength="60" placeholder="Port Tressler, ..."></div>' +
+      '<div class="mhint" id="fPriceHint">' + (known != null ? "Prefilled from the last price you paid." : "Pick a location to look up its price, or type one.") + "</div>" +
+      '<div class="mrow"><label>Location</label><select id="fLoc"><option value="">None</option><option value="__loading">Loading stations…</option></select></div>' +
+      '<div class="mhint">Cost: <b id="fCost">—</b></div>' +
       mErr() + mBtns("Record"),
       (root) => {
         const qty = root.querySelector("#fQty"), price = root.querySelector("#fPrice"), cost = root.querySelector("#fCost");
+        const loc = root.querySelector("#fLoc"), hint = root.querySelector("#fPriceHint");
         const upd = () => {
           const q = Number(qty.value), p = price.value === "" ? null : Number(price.value);
           cost.textContent = (q && p) ? fmt(q * p) + " aUEC" : "—";
         };
         qty.oninput = upd; price.oninput = upd;
         if (known != null) price.value = String(known);
+        // Station list, then the station's cheapest quote when item + station are known.
+        void (async () => {
+          const places = await loadPlaces();
+          if (!root.isConnected) return; // modal closed while loading
+          loc.innerHTML = '<option value="">None</option>' + places.map((p) =>
+            '<option value="' + esc(p.name) + '">' + esc(p.name) + (p.system ? " · " + esc(p.system) : "") + (p.kiosk ? " ⛽" : "") + "</option>").join("");
+        })();
+        const lookup = async () => {
+          const station = loc.value;
+          if (!station) return;
+          try {
+            const qs = new URLSearchParams({ station, itemName: row.item.name });
+            if (row.item.commodityUuid) { qs.set("commodityUuid", row.item.commodityUuid); qs.set("commodityName", row.item.name); }
+            const r = await fetch("/api/quartermaster/price?" + qs, { cache: "no-store" });
+            const j = await r.json();
+            if (!root.isConnected || loc.value !== station) return;
+            if (j.quote) {
+              price.value = String(j.quote.price);
+              const when = j.quote.asOf ? " (UEX report, " + new Date(j.quote.asOf).toLocaleDateString() + ")" : "";
+              hint.textContent = "From " + j.quote.terminal + when + " — cheapest at that station. Edit if you paid differently.";
+              upd();
+            } else {
+              hint.textContent = "Nothing at " + station + " is known to sell " + row.item.name + " — type the price you paid.";
+            }
+          } catch { /* lookup is a convenience; typing the price is always the answer */ }
+        };
+        loc.addEventListener("change", lookup);
         wireBasic(root, async () => {
-          await act("supply", { shipId, itemId, qty: qty.value, unitPrice: price.value === "" ? null : price.value, location: root.querySelector("#fLoc").value });
+          await act("supply", { shipId, itemId, qty: qty.value, unitPrice: price.value === "" ? null : price.value, location: loc.value || null });
           closeModal();
           flash("Supplied");
         });
@@ -576,7 +777,7 @@
       });
   }));
 
-  // Squad member: filtered by hangar sizes, free text callsign.
+  // Squad member: filtered by hangar sizes, free text callsign, optional SP Viewer fit.
   function openAddSquad() {
     if (!shipId) { flash("Register a ship first", true); return; }
     const sizes = hangarSizes();
@@ -587,16 +788,24 @@
       '<div class="mrow"><label>Callsign</label><input id="fName" maxlength="40" placeholder="Red Two"></div>' +
       '<div class="mrow"><label>Type</label><select id="fType">' + opts + '</select></div>' +
       '<div class="mrow" id="otherRow" style="display:none"><label>Other type</label><input id="fTypeOther" maxlength="40"></div>' +
-      '<div class="mrow"><label>Fit</label><input id="fFit" maxlength="80" placeholder="2x S3 missiles, ..."></div>' +
+      fitSection(null) +
+      '<div class="mrow"><label>Fit</label><input id="fFit" maxlength="80" placeholder="2x S3 missiles, ... (or leave it to the link above)"></div>' +
       '<div class="mrow"><label>Value</label><input id="fVal" type="number" min="0" step="any" placeholder="Ship + fit, aUEC"></div>' +
-      '<div class="mhint">Value is the loss figure reported if the ship is destroyed — snapshot at the time.</div>' +
+      '<div class="mhint">A linked fit fills Value with hull + components (still editable). Value is the loss figure if the ship is destroyed.</div>' +
       mErr() + mBtns("Add member"),
       (root) => {
         const sel = root.querySelector("#fType");
         sel.onchange = () => { root.querySelector("#otherRow").style.display = sel.value ? "none" : "flex"; };
+        let fit = null;
+        wireFit(root, () => sel.value || root.querySelector("#fTypeOther").value, null, (f) => {
+          fit = f;
+          if (f.total > 0) root.querySelector("#fVal").value = String(f.total);
+        });
         wireBasic(root, async () => {
           await act("squad", { name: root.querySelector("#fName").value.trim(), type: sel.value || root.querySelector("#fTypeOther").value.trim(),
-            fit: root.querySelector("#fFit").value, value: root.querySelector("#fVal").value === "" ? null : root.querySelector("#fVal").value });
+            fit: root.querySelector("#fFit").value, value: root.querySelector("#fVal").value === "" ? null : root.querySelector("#fVal").value,
+            fitUrl: root.querySelector("#fFitUrl").value.trim() || null,
+            fitItems: fit ? fit.items : [], fitHullPrice: fit ? fit.hullPrice : null });
           closeModal();
         });
       });
@@ -612,13 +821,22 @@
     modalOpen(mTitle("Manage · " + s.name) +
       '<div class="mrow"><label>Callsign</label><input id="fName" maxlength="40" value="' + esc(s.name) + '"></div>' +
       '<div class="mrow"><label>Type</label><input id="fType" maxlength="40" value="' + esc(s.type) + '"></div>' +
+      fitSection(s) +
       '<div class="mrow"><label>Fit</label><input id="fFit" maxlength="80" value="' + esc(s.fit) + '"></div>' +
       '<div class="mrow"><label>Value</label><input id="fVal" type="number" min="0" step="any" value="' + (s.value != null ? s.value : "") + '"></div>' +
+      '<div class="mhint">Reload a linked fit to re-price it against current prices; Value stays whatever you last saved.</div>' +
       mErr() + mBtns("Save"),
       (root) => {
+        let fit = { items: s.fitItems || [], hullPrice: s.fitHullPrice ?? null };
+        wireFit(root, () => root.querySelector("#fType").value, s, (f) => {
+          fit = f;
+          if (f.total > 0) root.querySelector("#fVal").value = String(f.total);
+        });
         wireBasic(root, async () => {
           await act("squad-update", { squadId, name: root.querySelector("#fName").value, type: root.querySelector("#fType").value,
-            fit: root.querySelector("#fFit").value, value: root.querySelector("#fVal").value === "" ? null : root.querySelector("#fVal").value });
+            fit: root.querySelector("#fFit").value, value: root.querySelector("#fVal").value === "" ? null : root.querySelector("#fVal").value,
+            fitUrl: root.querySelector("#fFitUrl").value.trim() || null,
+            fitItems: fit.items, fitHullPrice: fit.hullPrice });
           closeModal();
         });
       });

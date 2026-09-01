@@ -243,6 +243,28 @@ console.log("\ncorrupt state");
 console.log("\ncaps");
 
 {
+  const { qm, dir } = fresh();
+  const ship = qm.addShip("Hammerfall", "Aegis Idris");
+  const sq = qm.addSquadShip({ name: "Red Two", type: "Aegis Gladius", fit: "2x S3", value: 1200000,
+    fitUrl: "https://www.spviewer.eu/performance?ship=aegs_gladius&loadout=Ab3xY9",
+    fitItems: [{ name: "'Arrow' I Missile", price: 240 }, { name: "Mystery Gun", price: null }],
+    fitHullPrice: 1200000 });
+  qm.updateSquadShip(sq.id, { value: 1250000 });
+  let v = qm.view();
+  const s = v.squad[0];
+  check("fit link + components persist on the squad ship", !!s.fitUrl?.includes("loadout=Ab3xY9") && s.fitItems.length === 2, JSON.stringify(s.fitItems));
+  check("fit hull price persists", s.fitHullPrice === 1200000);
+  check("updating value does not wipe the fit fields", s.fitItems.length === 2);
+  check("value update sticks", s.value === 1250000);
+  // Reload the SAME file after the debounced save lands.
+  await new Promise((r) => setTimeout(r, 600));
+  const qm2 = new Quartermaster(join(dir, "quartermaster.json"), join(dir, "quartermaster-ops"), "chips");
+  const reloaded = qm2.view().squad.find((x) => x.name === "Red Two");
+  check("fit fields survive a restart", reloaded?.fitUrl === s.fitUrl && reloaded?.fitItems.length === 2 && reloaded?.fitHullPrice === 1200000,
+    JSON.stringify(reloaded?.fitItems));
+}
+
+{
   const { qm } = fresh();
   let threwAt = -1;
   for (let i = 0; i < 60; i++) {

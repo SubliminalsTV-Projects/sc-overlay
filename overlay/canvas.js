@@ -300,6 +300,9 @@
         // Reveal the operation-report folder: the .txt twins are meant to be pasted into
         // Discord and read days later, outside the app.
         openOpsFolder: () => window.overlayApi?.openDataFolder?.("quartermaster-ops"),
+        // Every widget that links OUT needs openUrl re-exposed — the base bridge does not
+        // carry it (chat's rule). Used by the fit-link buttons to open SP Viewer.
+        openUrl: (u) => window.overlayApi?.openUrl?.(u),
       }),
       onHide: (w) => { try { frameWin(w)?.__quartermasterExitTyping?.(); } catch { /* iframe gone */ } },
     },

@@ -1,6 +1,6 @@
 {
   "name": "sc-log-watcher",
-  "version": "0.1.46",
+  "version": "0.1.47",
   "description": "SubliminalsTV SC Overlay - game.log watcher + widget canvas for Star Citizen.",
   "type": "module",
   "main": "electron/main.cjs",
@@ -97,13 +97,15 @@
     "probe:reppage": "tsx tools/rep-probe.mts",
     "test:repscan": "tsx src/rep-scan-apply.test.ts",
     "test:staterecovery": "tsx src/state-recovery.test.ts",
-    "test:quartermaster": "tsx src/quartermaster.test.ts",
+    "test:quartermaster": "tsx src/quartermaster.test.ts && tsx src/quartermaster-routes.test.ts",
+    "probe:qmfit": "tsx tools/qm-fit-probe.mts",
     "control:orisonfix": "node tools/control-orisonfix.mjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
     "electron-updater": "^6.3.9",
     "koffi": "^3.1.4",
+    "lz-string": "^1.5.0",
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
@@ -162,5 +164,8 @@
         "url": "https://subliminal.gg/api/updates/blueprint-tracker"
       }
     ]
+  },
+  "optionalDependencies": {
+    "@koromix/koffi-win32-x64": "^3.1.4"
   }
 }

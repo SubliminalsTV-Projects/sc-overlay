@@ -45,14 +45,30 @@ export interface QmShip {
   type: string;
 }
 
+export interface QmFitItem {
+  /** Component name exactly as SP Viewer's payload carried it (joined to our tables by name). */
+  name: string;
+  /** Cheapest non-rental shop price at the time the fit was priced, or null when nothing sells it. */
+  price: number | null;
+}
+
 export interface QmSquadShip {
   id: string;
   name: string;
   type: string;
   /** Free text: "2x S3 missiles, 1x NV-4" etc. */
   fit: string;
-  /** Ship + fit value in aUEC, manual entry. Snapshoted as the loss value when destroyed. */
+  /** Ship + fit value in aUEC. Prefilled from a linked SP Viewer fit (hull + components) but
+   *  always editable — and the DESTROY snapshot reads this field, whatever it last was. */
   value: number | null;
+  /** A shared SP Viewer loadout link (performance?ship=...&loadout=...), when the fit came
+   *  from there. Null for hand-typed fits. Additive field: older files simply lack it. */
+  fitUrl: string | null;
+  /** What the linked fit priced out to, kept so Manage can re-show the breakdown without
+   *  re-fetching. Empty when no fit was ever linked. */
+  fitItems: QmFitItem[];
+  /** The hull price from the UEX dealer table at link time, for the breakdown's context. */
+  fitHullPrice: number | null;
 }
 
 export interface QmItem {
@@ -198,6 +214,16 @@ function setCaptureMode(mode: unknown): QmCaptureMode {
   return mode === "auto" ? "auto" : mode === "chips" ? "chips" : "off";
 }
 
+/** Fit components posted by the widget (already priced by the sidecar). Never trusted blind:
+ *  names capped, prices non-negative or null. */
+function sanitizeFitItems(raw: unknown): QmFitItem[] {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((f): f is Record<string, unknown> => !!f && typeof f === "object")
+    .map((f) => ({ name: str(f.name, 60), price: num(f.price) }))
+    .filter((f) => f.name)
+    .slice(0, 40);
+}
+
 function sanitizeShips(raw: unknown): QmShip[] {
   return (Array.isArray(raw) ? raw : [])
     .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
@@ -215,6 +241,15 @@ function sanitizeSquad(raw: unknown): QmSquadShip[] {
       type: str(s.type, 40),
       fit: str(s.fit, 80),
       value: num(s.value),
+      // Additive (backfill-on-read, no version bump): older files lack all three fit fields
+      // and read as "no fit linked", which is exactly the truth for them.
+      fitUrl: str(s.fitUrl, 300) || null,
+      fitItems: (Array.isArray(s.fitItems) ? s.fitItems : [])
+        .filter((f): f is Record<string, unknown> => !!f && typeof f === "object")
+        .map((f) => ({ name: str(f.name, 60), price: num(f.price) }))
+        .filter((f) => f.name)
+        .slice(0, 40),
+      fitHullPrice: num(s.fitHullPrice),
     }))
     .filter((s) => s.name)
     .slice(0, MAX_SQUAD);
@@ -397,6 +432,9 @@ export class Quartermaster {
     const ship: QmSquadShip = {
       id: id("sq"), name: str(b.name, 40), type: str(b.type, 40),
       fit: str(b.fit, 80), value: num(b.value),
+      fitUrl: str(b.fitUrl, 300) || null,
+      fitItems: sanitizeFitItems(b.fitItems),
+      fitHullPrice: num(b.fitHullPrice),
     };
     if (!ship.name) throw new Error("name required");
     this.squad.push(ship);
@@ -412,6 +450,9 @@ export class Quartermaster {
     s.type = str(b.type, 40) || s.type;
     s.fit = str(b.fit, 80);
     if ("value" in b) s.value = num(b.value);
+    if ("fitUrl" in b) s.fitUrl = str(b.fitUrl, 300) || null;
+    if ("fitItems" in b) s.fitItems = sanitizeFitItems(b.fitItems);
+    if ("fitHullPrice" in b) s.fitHullPrice = num(b.fitHullPrice);
     this.save();
     return s;
   }
