@@ -93,6 +93,148 @@ modules:
     build-commands:
       - mkdir -p /app/archverse/app /app/archverse/bin /app/bin
       - cp -a payload/app/. /app/archverse/app/
+      # Native Alpha 22 spawns its Node-mode sidecar through process.execPath. Under Zypak the GUI
+      # process path is not the contract we want to reuse for a child process; the Flatpak already
+      # ships and verifies a dedicated Node-mode wrapper. Rewrite only the installed Flatpak copy,
+      # leaving the verified native Alpha 22 payload byte-for-byte unchanged before this build step.
+      # Add temporary Flatpak-only startup probes at the same time. They identify whether Chromium
+      # reaches main.cjs, which top-level module loads finish, the single-instance gate,
+      # app.whenReady(), port reclaim, and startServer(). They do not alter the native package and
+      # can be removed after the liveness fault is found.
+      - |
+        python3 - <<'PY'
+        from pathlib import Path
+        p = Path('/app/archverse/app/electron/main.cjs')
+        s = p.read_text()
+
+        def replace_once(old, new, label):
+            global s
+            count = s.count(old)
+            if count != 1:
+                raise SystemExit(f'expected exactly one {label}, found {count}')
+            s = s.replace(old, new, 1)
+
+        replace_once(
+            'server = spawn(process.execPath, [serverJs], {',
+            '''const sidecarRuntime = process.env.SC_TRACKER_NODE_BIN || process.execPath;
+            if (process.env.SC_TRACKER_FLATPAK === "1") console.log(`[flatpak] sidecar runtime: ${sidecarRuntime}`);
+            server = spawn(sidecarRuntime, [serverJs], {''',
+            'sidecar spawn target')
+
+        s = '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error(`[flatpak-main] main.cjs entered file=${__filename} exec=${process.execPath}`);\n''' + s
+
+        replace_once(
+            'app.setName("SC Blueprint Tracker"); // Keep existing KDE WM class and userData path for seamless upgrades.',
+            '''app.setName("SC Blueprint Tracker"); // Keep existing KDE WM class and userData path for seamless upgrades.
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] after app.setName");''',
+            'app.setName checkpoint')
+
+        replace_once(
+            'const hotkeys = require("./hotkeys.cjs");',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before hotkeys require");
+        const hotkeys = require("./hotkeys.cjs");
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] after hotkeys require");''',
+            'hotkeys require')
+
+        replace_once(
+            'const { startFabCapture } = require("./capture.cjs");',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before capture require");
+        const { startFabCapture } = require("./capture.cjs");
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] after capture require");''',
+            'capture require')
+
+        replace_once(
+            'const { OverlayWindowManager } = require("./window-manager.cjs");',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before window-manager require");
+        const { OverlayWindowManager } = require("./window-manager.cjs");
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] after window-manager require");''',
+            'window-manager require')
+
+        replace_once(
+            'const { BrowserWidgetController, DEFAULT_BROWSER_URL } = require("./browser-widget.cjs");',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before browser-widget require");
+        const { BrowserWidgetController, DEFAULT_BROWSER_URL } = require("./browser-widget.cjs");
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] after browser-widget require");''',
+            'browser-widget require')
+
+        replace_once(
+            'const { startEvdevHoldKey } = require("./linux/evdev-hold-key.cjs");',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before evdev-hold-key require");
+        const { startEvdevHoldKey } = require("./linux/evdev-hold-key.cjs");
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] after evdev-hold-key require");''',
+            'evdev-hold-key require')
+
+        replace_once(
+            'const overlayWindows = new OverlayWindowManager({ BrowserWindow, screen, app, env: process.env, logger: console });',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before OverlayWindowManager constructor");
+        const overlayWindows = new OverlayWindowManager({ BrowserWindow, screen, app, env: process.env, logger: console });
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] after OverlayWindowManager constructor");''',
+            'OverlayWindowManager constructor')
+
+        replace_once(
+            'if (!app.requestSingleInstanceLock()) {',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before single-instance lock");
+        if (!app.requestSingleInstanceLock()) {''',
+            'single-instance gate')
+
+        replace_once(
+            '  app.whenReady().then(async () => {',
+            '''  if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] registering app.whenReady");
+          app.whenReady().then(async () => {
+            if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] app ready");''',
+            'app.whenReady registration')
+
+        replace_once(
+            '    await reclaimStalePort();\n    startServer();',
+            '''    if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before reclaimStalePort");
+            await reclaimStalePort();
+            if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-main] before startServer");
+            startServer();''',
+            'initial sidecar startup block')
+
+        p.write_text(s)
+
+        # Run #8 proved Electron's own import succeeds but uiohook-napi's native addon blocks
+        # synchronously during require(). hotkeys.cjs already has a deliberate try/catch fallback
+        # to Electron globalShortcut when the low-level hook is unavailable. Make only the installed
+        # Flatpak copy take that existing fallback path instead of entering the blocking native addon.
+        # Native Alpha 22 remains unchanged and is checksum-verified before this Flatpak rewrite.
+        hp = Path('/app/archverse/app/electron/hotkeys.cjs')
+        h = hp.read_text()
+
+        def hreplace_once(old, new, label):
+            global h
+            count = h.count(old)
+            if count != 1:
+                raise SystemExit(f'expected exactly one hotkeys {label}, found {count}')
+            h = h.replace(old, new, 1)
+
+        hreplace_once(
+            'const { globalShortcut } = require("electron");',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-hotkeys] before electron require");
+        const { globalShortcut } = require("electron");
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-hotkeys] after electron require");''',
+            'electron require')
+
+        hreplace_once(
+            '  const m = require("uiohook-napi");',
+            '''  if (process.env.SC_TRACKER_FLATPAK === "1") {
+            console.error("[flatpak-hotkeys] skipping blocking uiohook-napi load; using existing fallback backend");
+            throw new Error("uiohook-napi disabled inside Flatpak sandbox");
+          }
+          const m = require("uiohook-napi");''',
+            'uiohook require')
+
+        hp.write_text(h)
+        PY
+      - grep -Fq 'const sidecarRuntime = process.env.SC_TRACKER_NODE_BIN || process.execPath;' /app/archverse/app/electron/main.cjs
+      - grep -Fq '[flatpak-main] main.cjs entered' /app/archverse/app/electron/main.cjs
+      - grep -Fq '[flatpak-main] before hotkeys require' /app/archverse/app/electron/main.cjs
+      - grep -Fq '[flatpak-main] after OverlayWindowManager constructor' /app/archverse/app/electron/main.cjs
+      - grep -Fq '[flatpak-main] app ready' /app/archverse/app/electron/main.cjs
+      - grep -Fq '[flatpak-main] before startServer' /app/archverse/app/electron/main.cjs
+      - grep -Fq '[flatpak-hotkeys] before electron require' /app/archverse/app/electron/hotkeys.cjs
+      - grep -Fq '[flatpak-hotkeys] skipping blocking uiohook-napi load' /app/archverse/app/electron/hotkeys.cjs
       - cp -a payload/bin/. /app/archverse/bin/
       - chmod 0755 /app/archverse/bin/sc-blueprint-tracker
       - install -Dm644 payload/LICENSE.md /app/archverse/LICENSE.md

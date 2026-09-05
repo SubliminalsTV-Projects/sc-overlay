@@ -1,6 +1,6 @@
---- /mnt/data/upstream22-src/build/server/server.mjs	2026-08-13 01:45:37.000000000 +0000
-+++ /mnt/data/alpha22-flatpak-work/ArchVerse-Overlay-0.1.42-r31-alpha.22/app/server/server.mjs	2026-08-12 20:30:00.000000000 +0000
-@@ -5270,7 +5270,7 @@
+--- a/build/server/server.mjs
++++ b/build/server/server.mjs
+@@ -5554,7 +5554,7 @@
    return parsed;
  }
  var PORT = Number(process.env.PORT) || 8778;
@@ -9,18 +9,14 @@
  var configPath = join11(userDir, "config.json");
  var seedConfigPath = join11(overlayDir, "config.json");
  var dataDir = join11(userDir, "data");
-@@ -6304,6 +6304,14 @@
- }
- async function getOcrHealth(maxAgeMs = 6e4) {
-   if (!screenReadingOn()) return null;
-+  // Upstream's health probe tests Windows OCR through PowerShell. ArchVerse Linux does not use
-+  // that engine: capture.cjs runs its isolated RapidOCR worker and posts pre-computed lines into
-+  // this sidecar. Treating a missing powershell.exe as an OCR failure on Linux would show a
-+  // permanent false warning even while Resource Scanner/Fabricator/payout OCR is healthy.
+@@ -6600,1 +6600,9 @@
+-  ocrHealth = await ocrSelfTest();
++  // ARCHVERSE_043_LINUX_OCR_HEALTH: upstream's RapidOCR failure check has already run above.
++  // Skip only the Windows.Media.Ocr/PowerShell probe; the Flatpak uses RapidOCR in Electron,
++  // and CI starts that exact packaged engine before accepting the artifact.
 +  if (process.platform !== "win32") {
 +    return { ok: true, matched: true, skipped: true, lines: 0, text: "", ranAt: new Date().toISOString(), ms: 0,
-+      reason: null, engine: "ArchVerse Linux RapidOCR (Electron capture)" };
++      reason: null, engine: "ArchVerse Linux RapidOCR (Electron capture)",
++      signal: { spawnError: null, exitedBeforeReady: false, lastExitCode: null, everReady: true } };
 +  }
-   if (ocrHealth && Date.now() - ocrHealthAt < maxAgeMs) return ocrHealth;
-   ocrHealth = await ocrSelfTest();
-   ocrHealthAt = Date.now();
++  ocrHealth = await ocrSelfTest();
