@@ -66,6 +66,19 @@ const CONTROLS = [
     reddens: ["...with an EMPTY tried, which is what says it was a data gap and not a bad read"],
     staysGreen: ["...while the same frame with the real giver map reads fine and DID weigh ladders"],
   },
+  {
+    // Sub's own bug: the heading resolves to the 35-mission `Covalex` instead of the 925-mission
+    // `Covalex Independent Contractors` that actually awards Hauling.
+    name: "C5 the COVALEX heading alias removed",
+    suite: PAGE,
+    file: "src/rep-page.ts",
+    from: '  "COVALEX": "Covalex Independent Contractors",',
+    to: "  // CONTROL: alias removed",
+    reddens: ["a COVALEX heading is attributed to the canonical giver, not the 35-mission one"],
+    // Sourced from the shipped DATASET, not from the alias table, so it vouches that the split
+    // this alias exists for is real whether or not the alias is present.
+    staysGreen: ["the dataset really does split Covalex into two givers"],
+  },
 ];
 
 let bad = 0;

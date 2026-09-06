@@ -228,6 +228,42 @@ function stacksAt(lines: OcrLine[], startIdx: number, ordered: OcrLine[]): OcrLi
 }
 
 /**
+ * 🔴 WHAT THE GAME CALLS A FACTION vs WHAT OUR DATASET CALLS ITS MISSION GIVER.
+ *
+ * The REP page's heading is the FACTION. `repWitnessed` is keyed by GIVER. Those are usually the
+ * same string and occasionally are not, and when they are not the page is unreadable in a way no
+ * amount of care in the reader can fix — the join simply has no edge.
+ *
+ * Keys are `normRep` form (what a heading normalises to); values are the dataset giver spelling to
+ * attribute the scan to. Sub's call, 2026-09-06, taken over merging the givers outright: this
+ * changes only where a SCAN writes, and leaves the tracker's separate mission tracks alone.
+ *
+ * 🔴 EVERY ENTRY IS A MEASUREMENT, NOT A GUESS, AND THERE IS NO PREFIX RULE HERE ON PURPOSE.
+ * A "heading is a prefix of a giver" heuristic is the same shape as the substring matches that
+ * have burned this repo repeatedly (`region A` matching `Regional`; `Atlas` matching
+ * "GreyCAT LASer"). There are only TWO prefix pairs in the whole 12519617 dataset and both were
+ * inspected by hand, so an explicit table costs nothing and cannot over-reach. `rep-page.test.ts`
+ * asserts the pair count against the shipped dataset, so a patch that introduces a third one
+ * fails loudly instead of being silently mishandled.
+ *
+ * ⚠️ An alias OVERRIDES a heading that would otherwise resolve — "COVALEX" is itself a dataset
+ * giver, it is simply the wrong one — so the target must exist or the alias silently does nothing.
+ * Asserted.
+ */
+export const REP_HEADING_ALIASES: Record<string, string> = {
+  // Measured from Sub's own live sidecar.log, 2026-09-06:
+  //   refused: no-scope (heading "COVALEX" / section "HAULING" -> giver "Covalex")
+  //            [no candidate ladders were even considered (the giver awards none of them)]
+  // The dataset splits Covalex in two: `Covalex` (35 missions, Courier only) and
+  // `Covalex Independent Contractors` (925 missions, Hauling + Standing + Courier). The game shows
+  // ONE faction. The big one is also the key his 8,950 Hauling rep is already stored under, so
+  // attributing the scan there is what makes the re-baseline land where the tracker reads it.
+  // ⚠️ Deliberately NOT aliasing Civilian Defense Force / CIVILIAN DEFENSE FORCE INITIATIVE, the
+  // other prefix pair: both award Emergency, the heading already resolves, and it scans fine today.
+  "COVALEX": "Covalex Independent Contractors",
+};
+
+/**
  * Read a REP page out of a full-frame OCR result.
  *
  * `scopes` is `data/rep-scopes.json`'s `scopes` map. `giverScopes`, when supplied, maps a
@@ -251,9 +287,15 @@ export function readRepPage(
 
   // Which givers could this heading be? Case-insensitive, because the game sets the page in
   // capitals — which also collapses the dataset's two spellings of Citizens f/For Prosperity.
-  const giverMatches = giverScopes
-    ? Object.keys(giverScopes).filter((g) => normRep(g) === factionKey)
-    : [];
+  // An alias is consulted FIRST and wins outright — see REP_HEADING_ALIASES. It only applies when
+  // its target is really in the map, so a stale entry degrades to the ordinary match rather than
+  // resolving the page to a giver that no longer exists.
+  const alias = REP_HEADING_ALIASES[factionKey];
+  const giverMatches = !giverScopes
+    ? []
+    : alias && giverScopes[alias]
+      ? [alias]
+      : Object.keys(giverScopes).filter((g) => normRep(g) === factionKey);
   const giver = giverMatches.length === 1 ? giverMatches[0] : null;
   const giverScopeSet = giver ? new Set(giverScopes![giver]) : null;
 

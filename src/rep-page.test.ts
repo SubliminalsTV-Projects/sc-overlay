@@ -15,6 +15,7 @@
 import { readFileSync } from "node:fs";
 import {
   readRepPage, repReadPayload, repRankFromBars, repFloorForRank, barSearchBox, normRep,
+  REP_HEADING_ALIASES,
   type RepScopes, type RepBarRead,
 } from "./rep-page.js";
 import type { OcrLine, OcrResult } from "./screen-read.js";
@@ -397,6 +398,84 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
     blank.ok === false && blank.refusal === "no-heading"
       && blank.faction === null && blank.section === null && Array.isArray(blank.tried),
     `[${blank.refusal} / ${blank.faction} / ${blank.section}]`);
+}
+
+// ── Heading aliases: what the GAME calls a faction vs what our dataset calls its giver ───────
+{
+  // 🔴 Measured on Sub's own live log: the REP page heading is "COVALEX" with a "HAULING"
+  // section, and the dataset splits Covalex into `Covalex` (35 missions, Courier only) and
+  // `Covalex Independent Contractors` (925, Hauling + Standing + Courier). The heading matched the
+  // small one, which awards no Hauling, so a page he was staring at refused `no-scope` forever.
+  const ds = JSON.parse(readFileSync("data/blueprints.latest.json", "utf8"))
+    .missions as Record<string, { giver?: string; reputationGained?: { scope?: string }[] }>;
+  const real: Record<string, Set<string>> = {};
+  const missionCount: Record<string, number> = {};
+  for (const m of Object.values(ds)) {
+    if (!m.giver) continue;
+    (real[m.giver] ??= new Set());
+    missionCount[m.giver] = (missionCount[m.giver] ?? 0) + 1;
+    for (const r of m.reputationGained ?? []) if (r.scope && SCOPES[r.scope]) real[m.giver].add(r.scope);
+  }
+  const realGivers = Object.fromEntries(Object.entries(real).map(([g, s]) => [g, [...s]]));
+
+  // POSITIVE FIRST: the split this alias exists for is really in the shipped dataset. If CIG or a
+  // regeneration ever merges the two spellings, everything below passes for free.
+  check("the dataset really does split Covalex into two givers",
+    !!realGivers["Covalex"] && !!realGivers["Covalex Independent Contractors"],
+    `[Covalex ${missionCount["Covalex"]}m, CIC ${missionCount["Covalex Independent Contractors"]}m]`);
+  check("...and only the big one awards Hauling, which is why the small one refused",
+    !realGivers["Covalex"].includes("Hauling")
+      && realGivers["Covalex Independent Contractors"].includes("Hauling"),
+    `[Covalex ${realGivers["Covalex"]} | CIC ${realGivers["Covalex Independent Contractors"]}]`);
+
+  for (const [heading, canon] of Object.entries(REP_HEADING_ALIASES)) {
+    // ⚠️ An alias whose target is not a real giver silently does nothing — it falls through to the
+    // ordinary match and the page goes on refusing, looking exactly like an unaliased build.
+    check(`alias ${JSON.stringify(heading)} points at a giver that exists`,
+      !!realGivers[canon], `[${canon}]`);
+    check(`...and ${JSON.stringify(heading)} is already normRep form, or it can never match`,
+      normRep(heading) === heading, `[${normRep(heading)}]`);
+  }
+
+  // 🔴 THE GUARD THAT MATTERS ON THE NEXT PATCH. The table is explicit BECAUSE a prefix rule is
+  // the kind of heuristic that has burned this repo before — so the safety rests on there being
+  // few enough pairs to inspect by hand. Pin the count: a dataset that grows a third one must
+  // fail here rather than be silently mishandled by a table nobody revisited.
+  const pairs: string[] = [];
+  const names = Object.keys(realGivers);
+  for (const a of names) for (const b of names) {
+    if (a !== b && normRep(b).startsWith(normRep(a) + " ")) pairs.push(`${a} < ${b}`);
+  }
+  check("the dataset still has exactly the two hand-inspected prefix pairs",
+    pairs.length === 2, pairs.join(" ; ") || "[none]");
+  check("...and they are the two that were inspected",
+    pairs.some((p) => p.startsWith("Covalex <"))
+      && pairs.some((p) => p.toLowerCase().startsWith("civilian defense force <")),
+    pairs.join(" ; "));
+  // Civilian Defense Force is deliberately NOT aliased: both spellings award Emergency, so the
+  // heading already resolves and it scans fine today. Asserting the reason, not just the absence.
+  check("the un-aliased prefix pair really needs no alias — both spellings award the same scope",
+    !REP_HEADING_ALIASES[normRep("Civilian Defense Force")]
+      && realGivers["Civilian Defense Force"].includes("Emergency")
+      && realGivers["CIVILIAN DEFENSE FORCE INITIATIVE"].includes("Emergency"),
+    `[${realGivers["Civilian Defense Force"]} | ${realGivers["CIVILIAN DEFENSE FORCE INITIATIVE"]}]`);
+
+  // And the alias actually changes the answer, driven through the real reader on the real frame.
+  // SHOT1 is a Bounty Hunters Guild page, so stand a Covalex heading in for its own.
+  const asCovalex = frame(SHOT1.lines.map((l) =>
+    l.text === "BOUNTY HUNTERS GUILD" ? { ...l, text: "COVALEX" } : l));
+  const aliased = readRepPage(asCovalex, SCOPES,
+    { ...GIVERS, "Covalex": ["Courier"],
+      "Covalex Independent Contractors": ["BountyHunter_BountyHuntersGuild"] });
+  check("a COVALEX heading is attributed to the canonical giver, not the 35-mission one",
+    aliased.layout?.giver === "Covalex Independent Contractors" && aliased.refusal === null,
+    `[${aliased.layout?.giver ?? aliased.refusal}]`);
+  // POSITIVE CONTROL: without the alias target in the map the same frame falls back to the
+  // ordinary match and refuses — so the assertion above is about the ALIAS, not about the frame.
+  const unaliased = readRepPage(asCovalex, SCOPES, { ...GIVERS, "Covalex": ["Courier"] });
+  check("...and with only the small giver present it refuses, exactly as Sub saw",
+    unaliased.refusal === "no-scope" && unaliased.giver === "Covalex" && unaliased.tried.length === 0,
+    `[${unaliased.refusal} / ${unaliased.giver} / ${unaliased.tried.length} tried]`);
 }
 
 console.log(failed ? `\nFAILED (${failed})` : "\nall rep-page checks passed");
