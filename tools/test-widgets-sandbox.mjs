@@ -139,9 +139,14 @@ const FORWARD = [];
 }
 
 const flag = (name) => argv.includes(name);
+// 🔑 BOTH SPELLINGS, because the split above ACCEPTS both. Reading only `--port 8781` while
+// accepting `--port=8781` would drop the value and fall back to 8779 without a word — the same
+// silent-drop bug one layer down, and the one that costs you a port collision with the live app.
 const value = (name, fallback) => {
-  const i = argv.indexOf(name);
-  return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
+  const i = argv.findIndex((a) => a === name || a.startsWith(name + "="));
+  if (i < 0) return fallback;
+  return argv[i].startsWith(name + "=") ? argv[i].slice(name.length + 1) || fallback
+    : (argv[i + 1] || fallback);
 };
 
 const PORT = String(value("--port", process.env.OVERLAY_PORT || "8779"));
