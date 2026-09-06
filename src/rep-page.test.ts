@@ -426,6 +426,30 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
   check("...and always carries `tried`, so absent and empty stay distinguishable",
     Array.isArray(bad.tried), `[${typeof bad.tried}]`);
 
+  // 🔴 WHICH refusals reach the player is decided HERE, not in capture.cjs. It used to be an
+  // ACTIONABLE_REP_REFUSALS set in the capture loop — a second copy of this module's own refusal
+  // vocabulary, in the one file no suite can load.
+  check("a scrolled ladder is reported to the player", bad.report === true, `[${bad.report}]`);
+  check("...and a frame that is not the rep page at all is NOT",
+    repReadPayload(readRepPage(frame([]), SCOPES, GIVERS)).report === false,
+    `[no-heading -> ${repReadPayload(readRepPage(frame([]), SCOPES, GIVERS)).report}]`);
+  // 🔴 THE WIKELO CLAUSE. `no-section` is normally the commonest refusal there is, so it is only
+  // reported when the heading resolved to a giver we know — otherwise Sub's page fails with no
+  // feedback anywhere, which is exactly what happened. Both halves asserted, or "report on
+  // no-section" would look identical to "report on everything".
+  const noSectionKnown = readRepPage(
+    frame(SHOT1.lines.filter((l) => l.text !== "BOUNTY HUNTING")), SCOPES, GIVERS);
+  check("a rep page whose section we cannot match IS reported when we know the faction",
+    noSectionKnown.refusal === "no-section" && !!noSectionKnown.giver
+      && repReadPayload(noSectionKnown).report === true,
+    `[${noSectionKnown.refusal} / ${noSectionKnown.giver}]`);
+  const noSectionUnknown = readRepPage(
+    frame(SHOT1.lines.filter((l) => l.text !== "BOUNTY HUNTING")), SCOPES, { "Someone Else": [] });
+  check("...and stays quiet on a no-section frame whose heading is nobody we know",
+    noSectionUnknown.refusal === "no-section" && !noSectionUnknown.giver
+      && repReadPayload(noSectionUnknown).report === false,
+    `[${noSectionUnknown.refusal} / ${noSectionUnknown.giver}]`);
+
   // A refusal from BEFORE the heading is known projects nulls rather than omitting the keys —
   // the consumer can then tell "we never got that far" from "the field was not sent".
   const blank = repReadPayload(readRepPage(frame([]), SCOPES, GIVERS));

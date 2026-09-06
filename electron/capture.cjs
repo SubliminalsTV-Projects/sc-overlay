@@ -60,10 +60,10 @@ function writeFgPs1() {
 // run on EVERY tick, i.e. ~20 PowerShell launches a minute for one HWND.
 const fgWatch = require("./foreground.cjs");
 const { readBars, pixelsOf } = require("./rep-bars.cjs");
-/** REP-page refusals worth telling the player about: each one means the page is on screen and
- *  we declined it, so the player can act (scroll the ladder fully into view, pick a faction).
- *  Everything else just means this frame was not the rep page. */
-const ACTIONABLE_REP_REFUSALS = new Set(["cards-incomplete", "scope-ambiguous", "no-scope"]);
+/* 🔑 WHICH REFUSALS ARE WORTH REPORTING IS THE SIDECAR'S CALL, not ours. It used to be an
+   ACTIONABLE_REP_REFUSALS set right here — a second copy of src/rep-page.ts's own refusal
+   vocabulary, living in the one file no suite can load. The payload carries `report` now, and
+   `repRefusalWorthReporting()` beside `repReadPayload()` is where the rule (and its test) lives. */
 function foregroundWindow() {
   if (fgWatch.ready()) return Promise.resolve(fgWatch.foreground());
   return new Promise((resolve) => {
@@ -799,13 +799,12 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
                                          faction: read.rep.faction, bars }),
                   signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
                 });
-              } else if (!read.rep.ok && ACTIONABLE_REP_REFUSALS.has(read.rep.refusal)) {
-                // 🔑 Only the refusals the PLAYER can do something about are forwarded. Most
-                // frames are not the rep page at all and refuse with `no-heading`/`no-section`
-                // every tick; reporting those would be a status message that says "you are not
-                // looking at the thing" several times a second. These three mean the opposite —
-                // the page IS up and we are declining it — and that is the case where silence
-                // reads as a broken feature.
+              } else if (!read.rep.ok && read.rep.report) {
+                // 🔑 Only the refusals the PLAYER can do something about are forwarded, and WHICH
+                // ones those are is `repRefusalWorthReporting()` in src/rep-page.ts — deliberately
+                // not restated here. ⚠️ The previous version of this comment said "these three",
+                // and it was stale the day `no-section` joined them conditionally. A count in a
+                // comment rots; a function does not.
                 await fetch(`http://localhost:${port}/api/rep-scan`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },

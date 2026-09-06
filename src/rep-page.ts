@@ -111,7 +111,37 @@ export function repReadPayload(r: RepLayoutResult): Record<string, unknown> {
     ? { ok: true, scope: r.layout.scope, giver: r.layout.giver,
         faction: r.layout.factionRaw, section: r.layout.sectionRaw, cards: r.layout.cards }
     : { ok: false, refusal: r.refusal, faction: r.factionRaw ?? null,
-        section: r.sectionRaw ?? null, giver: r.giver ?? null, tried: r.tried };
+        section: r.sectionRaw ?? null, giver: r.giver ?? null, tried: r.tried,
+        report: repRefusalWorthReporting(r) };
+}
+
+/**
+ * Is this refusal worth telling the player about?
+ *
+ * Most frames are not the rep page and refuse every tick, so forwarding everything would put
+ * "you are not looking at the thing" on the widget several times a second. These mean the
+ * opposite — the page IS up and we are declining it — which is the only case where silence reads
+ * as a broken feature.
+ *
+ * 🔴 IT LIVES HERE, NOT IN `capture.cjs`, BECAUSE A REFUSAL VOCABULARY IN THE CAPTURE LOOP IS A
+ * SECOND COPY OF THIS MODULE'S OWN — the same shape as the prefilter/parser drift this repo has
+ * been bitten by before, and in a file no suite can load. The loop just reads `report` off the
+ * payload now.
+ *
+ * 🔴 `no-section` IS INCLUDED **WHEN THE HEADING RESOLVED TO A GIVER WE KNOW**, and that clause is
+ * the whole Wikelo lesson. `no-section` is normally the commonest refusal there is (any frame with
+ * a big line of text on it), which is why it was excluded outright — but it is also how Sub's
+ * Wikelo page failed, and because it was not forwarded that page produced **no feedback anywhere
+ * at all**: not on the widget, not in `sidecar.log`. It was silent as well as wrong.
+ * 🔑 The giver clause is what makes it safe: a random game screen does not have its largest line
+ * of text equal to a dataset mission giver's name. Quiet everywhere else, loud on a rep page we
+ * could not finish reading.
+ */
+export function repRefusalWorthReporting(r: RepLayoutResult): boolean {
+  if (!r.refusal) return false;
+  if (r.refusal === "cards-incomplete" || r.refusal === "scope-ambiguous"
+      || r.refusal === "no-scope") return true;
+  return r.refusal === "no-section" && !!r.giver;
 }
 
 // ── Text normalisation ────────────────────────────────────────────────────────

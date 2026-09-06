@@ -107,6 +107,20 @@ const CONTROLS = [
     // the whole reason both fixes were needed, so assert the reading half survives.
     staysGreen: ["shot3: the Wikelo page reads at all"],
   },
+  {
+    // The reason Wikelo was SILENT rather than merely broken: `no-section` was never forwarded,
+    // so the page produced no feedback on the widget and no line in sidecar.log.
+    name: "C8 no-section stops being reported even when we know the faction",
+    suite: PAGE,
+    file: "src/rep-page.ts",
+    from: '  return r.refusal === "no-section" && !!r.giver;',
+    to: "  return false;   // CONTROL: the pre-fix behaviour",
+    reddens: ["a rep page whose section we cannot match IS reported when we know the faction"],
+    // Must stay green, or the control has just made the rule report NOTHING rather than testing
+    // the clause — and "quiet on an unknown heading" would then pass for the wrong reason.
+    staysGreen: ["...and stays quiet on a no-section frame whose heading is nobody we know",
+                 "a scrolled ladder is reported to the player"],
+  },
 ];
 
 let bad = 0;
