@@ -586,6 +586,10 @@
   function render(v) {
     current = v;
     if (v.prefs) { PREFS = v.prefs; applyPrefs(); }
+    // The REP-page scan's status strip lives on the widget FACE and is drawn by canvas.js, which
+    // owns #ocrBar. The sidecar broadcasts this view on every scan result, so this call site IS
+    // the moment a read lands — the strip needs no poll of its own.
+    if (v.prefs) setRepScan(v.prefs.repScan, v.prefs.repScanLast);
     isLive = !!v.live; updateDiamond();
     const panel = $("panel");
     // Show the dataset version, and flag when the player's actual build isn't the one

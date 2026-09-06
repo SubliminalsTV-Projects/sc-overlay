@@ -119,6 +119,7 @@ const SUITE_TAGS = {
   "payout scan session panel": ["blueprint"],
   "contract board calibration box": ["blueprint"],
   "idle panel (nothing tracked)": ["blueprint"],
+  "rep scan on the widget face": ["blueprint"],
   "mission + faction drawers": ["blueprint"],
   "widget settings close when idle": ["shell"],
   "canvas calibration (mixed-DPI)": ["shell"],
@@ -1539,6 +1540,124 @@ const MIDRAWERS = `(async () => {
     nextName: "Veteran Contractor", nextRank: 4, nextRewards: [], max: false, noData: false });
   ok("...and a contract that DOES advance the bar is not marked",
      !/not from this one/.test(barOn.textContent), barOn.textContent.slice(0, 60));
+  return out;
+})()`;
+
+// ── Suite: the REP-page scan on the widget face ───────────────────────────────
+// Sub: "what visual indication do I get that the rep scanner is working? All I see is waiting
+// for Star Citizen." The feature worked; its only feedback lived in the settings window, which is
+// by definition not the window a player in mobiGlas is looking at.
+//
+// Driven by calling setRepScan() with fixtures rather than by fetching /api/missions: the pool of
+// real scan results belongs to whoever last played, so a suite that read it would pass or fail on
+// that. ?rates is reused purely because it is an existing FIXTURES flag and therefore leaves the
+// live feed disconnected — a fixture a real broadcast can paint over tests nothing.
+// (No backticks, no regex and no backslash escapes anywhere in a suite body — template literal.)
+const REPSTRIP = `(async () => {
+  ${PRELUDE}
+  const bar = document.getElementById("ocrBar");
+  const txt = () => { const e = document.getElementById("ocrBarText"); return e ? e.textContent : "(no #ocrBarText)"; };
+  const showing = () => !!bar && bar.classList.contains("show");
+  const NOW = Date.now();
+
+  // ── POSITIVE FIRST: the shared vocabulary reached this page at all ──────────────────────
+  // Without it describe() returns nothing, the strip falls back to the OCR line, and every
+  // "the strip does not say X" assertion below is satisfied for free.
+  ok("the shared refusal vocabulary is loaded on the widget page",
+     !!(window.REP_SCAN_STATUS && window.REP_SCAN_STATUS.describe && window.REP_SCAN_STATUS.FRESH_MS > 0),
+     window.REP_SCAN_STATUS ? "FRESH_MS " + window.REP_SCAN_STATUS.FRESH_MS : "(REP_SCAN_STATUS missing)");
+  ok("...and the strip it feeds exists", !!bar && !!document.getElementById("ocrBarText"));
+
+  // ── ONE PLACE FOR THE WORDS ─────────────────────────────────────────────────────────────
+  // 🔴 The whole reason repScanLast is a single field is that "it synced" and "it refused, here
+  // is why" must never be reported by two things that disagree. The same argument applies to the
+  // STRINGS, so no page may carry its own copy of the table. Both files are served by our own
+  // sidecar, so this costs one same-origin fetch each and cannot trip the network check.
+  const PHRASE = "bring every rank into view";
+  const owns = async (u) => { try { return (await (await fetch(u)).text()).indexOf(PHRASE) >= 0; } catch (e) { return "(fetch failed: " + e.message + ")"; } };
+  const inShared = await owns("/rep-status.js");
+  const inConfig = await owns("/config.html");
+  const inCanvas = await owns("/canvas.js");
+  ok("the refusal wording lives in the shared module", inShared === true, "rep-status.js -> " + inShared);
+  ok("...and NOT in a second copy inside the settings page", inConfig === false, "config.html -> " + inConfig);
+  ok("...and NOT in a third copy inside the canvas", inCanvas === false, "canvas.js -> " + inCanvas);
+
+  // ── A GOOD READ ─────────────────────────────────────────────────────────────────────────
+  setRepScan(true, { at: NOW, ok: true, giver: "Recco Battaglia", standing: "Prestige 1",
+                     before: 25314, after: 25900, outcome: "raised", estimated: true });
+  ok("a fresh scan puts itself on the widget face", showing(), txt());
+  ok("...and names the FACTION", txt().indexOf("Recco Battaglia") >= 0, txt());
+  // Sub: "what would also help is if it actually listed the rank. For example, Prestige 1 with
+  // Battaglia." A rep number with no rank beside it makes the player do a lookup the app has
+  // already done.
+  ok("...and names the RANK, not just the number", txt().indexOf("Prestige 1") >= 0, txt());
+  ok("...and says which way it moved", txt().indexOf("25,314") >= 0 && txt().indexOf("25,900") >= 0, txt());
+  ok("...in the good-read colour, not the warning one",
+     bar.classList.contains("on") && !bar.classList.contains("warn"), bar.className);
+
+  // ── A REFUSAL ───────────────────────────────────────────────────────────────────────────
+  // The one Sub is hitting: the ladder is scrolled. The strip leads with what to DO, because it
+  // is one ellipsised line on a widget that can be 320px wide.
+  setRepScan(true, { at: NOW, ok: false, refusal: "cards-incomplete" });
+  ok("a refusal is shown too, not swallowed", showing(), txt());
+  ok("...in the warning colour", bar.classList.contains("warn") && !bar.classList.contains("on"), bar.className);
+  ok("...and it says what to do about it", txt().indexOf("scroll the rank list") >= 0, txt());
+
+  // 🔴 THE no-giver CASE NAMES THE FACTION. Sub: "there were some mission givers that didn't
+  // record anything. It was like it didn't know the name." Without the heading in the message
+  // neither he nor the app can say WHICH faction is missing, and the in-game faction list is
+  // inside Data.p4k where nothing here can read it. Naming what it saw IS the measurement.
+  setRepScan(true, { at: NOW, ok: false, refusal: "no-giver", faction: "CITIZENS FOR PROSPERITY",
+                     standing: "Neutral" });
+  ok("a no-giver refusal names the faction heading it read",
+     txt().indexOf("CITIZENS FOR PROSPERITY") >= 0, txt());
+  ok("...and still reports the rank the page stated", txt().indexOf("Neutral") >= 0, txt());
+
+  // ── FRESHNESS, AND THE SWITCH ───────────────────────────────────────────────────────────
+  // 🔑 The strip is a LIVE indicator; the settings line is the durable record. An hour-old read
+  // sitting on the widget face reads as the current state of a page nobody is looking at.
+  // Assert the fallback text explicitly rather than just "no longer mentions Battaglia" — an
+  // empty strip would satisfy that for free.
+  OCR = { state: "watching", fabNote: "", fabWarn: false };
+  setRepScan(true, { at: NOW - window.REP_SCAN_STATUS.FRESH_MS - 5000, ok: true,
+                     giver: "Recco Battaglia", standing: "Prestige 1",
+                     before: 1, after: 2, outcome: "raised", estimated: true });
+  ok("a stale read hands the line back to the OCR status", txt() === "Watching Star Citizen…", txt());
+  ok("...and the colour goes back to describing the OCR state, not the old read",
+     bar.classList.contains("on") && !bar.classList.contains("warn"), bar.className);
+
+  // Turning the switch off must clear it immediately, not in twenty seconds.
+  setRepScan(false, { at: Date.now(), ok: true, giver: "Recco Battaglia", standing: "Prestige 1",
+                      before: 1, after: 2, outcome: "raised", estimated: true });
+  ok("a read is not shown once the rep-scan switch is off", txt().indexOf("Battaglia") < 0, txt());
+
+  // ── ARMING ──────────────────────────────────────────────────────────────────────────────
+  // 🔑 rep scan is its own opt-in, separate from fabCapture/missionOcr. capture.cjs already
+  // counts it in the loop's arming test, so the shell keeps emitting idle/watching — but the
+  // strip must not depend on that push having arrived, and a player with EVERY opt-in off must
+  // still get a clean empty widget face.
+  OCR = { state: "off", fabNote: "", fabWarn: false };
+  setRepScan(false, null);
+  ok("everything off leaves the widget face empty", !showing(), bar.className + " / " + txt());
+  OCR = { state: "", fabNote: "", fabWarn: false };
+  setRepScan(true, { at: Date.now(), ok: true, giver: "Recco Battaglia", standing: "Prestige 1",
+                     before: 1, after: 2, outcome: "raised", estimated: true });
+  ok("a fresh read shows the strip even before any OCR state has arrived", showing(), bar.className);
+  ok("...and it is the rep line, not a blank strip", txt().indexOf("Prestige 1") >= 0, txt());
+
+  // ── THE REAL CALL SITE ──────────────────────────────────────────────────────────────────
+  // Everything above drives setRepScan directly. This drives the wiring that actually feeds it —
+  // render(), which the missions SSE calls on every broadcast — so the strip cannot be perfect
+  // while nothing connects it to the sidecar.
+  let threw = "";
+  try {
+    render({ prefs: { repScan: true, repScanLast: { at: Date.now(), ok: false,
+      refusal: "no-giver", faction: "TRANSPORT GUILD", standing: "Courier" } } });
+  } catch (e) { threw = e.message; }
+  ok("the tracker view feeds the strip, so a real broadcast reaches it",
+     !threw && txt().indexOf("TRANSPORT GUILD") >= 0, threw || txt());
+
+  setRepScan(false, null);
   return out;
 })()`;
 
@@ -8548,6 +8667,10 @@ app.whenReady().then(async () => {
     // ?rates loads the idle-panel fixture AND leaves the live feed disconnected — a fixture a
     // real broadcast can paint over tests nothing.
     fails += await run("idle panel (nothing tracked)", IDLEPANEL, null, "rates");
+    // ?rates only because it is an existing FIXTURES flag and therefore disconnects the live
+    // feed — a broadcast landing mid-suite would call setRepScan with the real prefs and paint
+    // over every fixture below. This suite touches nothing the idle panel draws.
+    fails += await run("rep scan on the widget face", REPSTRIP, null, "rates");
     fails += await run("mission + faction drawers", MIDRAWERS, null, "missioninfo");
     fails += await run("widget settings close when idle", WCFGIDLE, null, "wcfgidle=250");
     // ?arrange: the calibration panel lives INSIDE the arrange scrim, so a suite that doesn't open

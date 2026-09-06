@@ -2780,18 +2780,64 @@
     ver.classList.add("toasting");
     clearTimeout(ocrToastT); ocrToastT = setTimeout(() => ver.classList.remove("toasting"), 4200);
   }
-  // One-line OCR status strip on the widget face. Hidden entirely unless OCR is armed
-  // (at least one opt-in on) — so OBS/idle overlays stay uncluttered.
+  // ── The REP-page scan, on the widget face ──────────────────────────────────────────────
+  //
+  // 🔴 THE WHOLE POINT OF THE REP SCAN IS THAT THE PLAYER IS IN MOBIGLAS, IN GAME, LOOKING AT
+  // REP. Its feedback lived only in the settings window — a window they are by definition not
+  // looking at — so a feature that was working perfectly (it found the page, matched the ladder
+  // and read a bar at 41.5%) presented as "all I see is waiting for Star Citizen". Sub's
+  // instruction was to feed the strip that already exists rather than build a second notifier.
+  //
+  // The words are `rep-status.js`, shared with config.html. See the comment there.
+  let repLast = null;      // prefs.repScanLast, off the missions view
+  let repScanOn = false;   // prefs.repScan — a stale result must not outlive the switch
+  let repClearT;
+  function setRepScan(on, last) {
+    repScanOn = !!on;
+    repLast = last || null;
+    clearTimeout(repClearT);
+    // The strip has no poll of its own, so nothing would repaint it when the read goes stale.
+    // One timer, re-armed per read, rather than a tick — this is an always-on-top transparent
+    // window and a heartbeat here is the idle-repaint mistake in another costume.
+    const left = repLast && window.REP_SCAN_STATUS
+      ? window.REP_SCAN_STATUS.FRESH_MS - (Date.now() - repLast.at) : 0;
+    if (left > 0) repClearT = setTimeout(updateOcr, left + 250);
+    updateOcr();
+  }
+  /** The read the strip should be showing right now, or null. Fresh only: while the player is on
+   *  the REP page the scan re-fires every capture tick so `at` keeps moving, and it clears a few
+   *  seconds after they leave. A read from an hour ago on a live status strip is worse than
+   *  nothing — it reads as the current state of a page nobody is looking at. */
+  function freshRep() {
+    if (!repScanOn || !repLast || !window.REP_SCAN_STATUS) return null;
+    if (Date.now() - repLast.at >= window.REP_SCAN_STATUS.FRESH_MS) return null;
+    return window.REP_SCAN_STATUS.describe(repLast);
+  }
+
+  // One-line OCR status strip on the widget face. Hidden entirely unless screen reading is armed
+  // — so OBS/idle overlays stay uncluttered.
+  //
+  // 🔑 THE ARMING RULE ALREADY COVERS REP SCAN AND MUST NOT BE "FIXED". `repScan` is its own
+  // opt-in, separate from `fabCapture`/`missionOcr`, but electron/capture.cjs already counts it
+  // in the loop's arming test — so a player with rep scan on and every other OCR opt-in off
+  // still gets `idle`/`watching` here rather than `off`, and everything off still gets `off` and
+  // a clean empty widget face. The `|| !!rep` below is a belt, not the rule: a read that just
+  // happened is proof the loop is running whatever the last IPC push said, which also sidesteps
+  // the push-arrives-before-the-renderer-is-ready race this canvas has been bitten by before.
   function updateOcr() {
     const bar = $("ocrBar");
     const active = OCR.state === "watching" || OCR.state === "fabricator";
-    const armed = OCR.state && OCR.state !== "off";
+    const rep = freshRep();
+    const armed = (OCR.state && OCR.state !== "off") || !!rep;
     const warn = OCR.state === "fabricator" && OCR.fabWarn;
     bar.classList.toggle("show", !!armed);
-    bar.classList.toggle("on", active);
-    bar.classList.toggle("warn", warn);
+    // A rep read is the most specific thing that has just happened AND it is happening while the
+    // player is looking at the page it describes, so it takes the line over the generic context.
+    bar.classList.toggle("on", rep ? rep.tone === "on" : active);
+    bar.classList.toggle("warn", rep ? rep.tone === "warn" : warn);
     let head;
-    if (OCR.state === "fabricator") head = OCR.fabNote ? "Fabricator — " + OCR.fabNote : "Reading the fabricator…";
+    if (rep) head = rep.short;
+    else if (OCR.state === "fabricator") head = OCR.fabNote ? "Fabricator — " + OCR.fabNote : "Reading the fabricator…";
     else if (OCR.state === "idle") head = "Waiting for Star Citizen…";
     else if (active) head = "Watching Star Citizen…";
     else head = "";

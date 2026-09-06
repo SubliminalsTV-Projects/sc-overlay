@@ -1725,6 +1725,7 @@
     out.appendChild(note);
   });
 </script>
+<script src="rep-status.js"></script>
 <script>
 // ── "Sync my reputation from the in-game REP page": what the last scan did ────────────────
 //
@@ -1735,56 +1736,23 @@
 //
 // Reads `prefs.repScanLast` off /api/missions — the same field the sidecar sets in one place, so
 // "it synced" and "it refused, here is why" can never be reported by two things that disagree.
+//
+// 🔑 The WORDS come from `rep-status.js`, which the widget strip in missions.html also loads. The
+// table used to live here, and a second copy on the widget face would have drifted the first time
+// anyone improved a refusal string — leaving the settings window and the widget explaining the
+// same refusal differently, which is the same failure the single `repScanLast` field exists to
+// prevent, one layer up.
 (function () {
   var el = document.getElementById("repScanState");
   var box = document.getElementById("repScan");
   if (!el || !box) return;
   var timer = null;
 
-  // Spelled out rather than shown as a code. Each one is a thing the player can act on.
-  var WHY = {
-    "cards-incomplete": "the rank list is scrolled — bring every rank into view and it will read",
-    "scope-ambiguous": "could not tell which reputation track this page is showing",
-    "no-scope": "this faction's track isn't in the app's data yet",
-    "no-giver": "read the page, but this faction isn't one the app tracks missions for",
-    "not-live": "read your page, but this is the PTU — nothing was saved",
-    "bars-unreadable": "could not read the progress bars on this page",
-    "no-rank-reached": "no rank on this page is filled in yet",
-    "rank-not-contiguous": "the progress bars didn't make sense — nothing was saved",
-    "reader-failed": "something went wrong reading the page",
-  };
-
-  function ago(ms) {
-    var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-    if (s < 60) return s + "s ago";
-    if (s < 3600) return Math.round(s / 60) + "m ago";
-    return Math.round(s / 3600) + "h ago";
-  }
-
   function paint(last) {
-    if (!last) {
-      el.textContent = "Waiting — open mobiGlas → REP in game and it will read the page.";
-      return;
-    }
-    if (last.ok) {
-      var moved = last.before === last.after
-        ? "already matched"
-        : (last.outcome === "raised" ? "corrected up" : "corrected down")
-          + " from " + last.before.toLocaleString() + " to " + last.after.toLocaleString();
-      el.textContent = "Last read " + ago(last.at) + ": " + (last.giver || "that faction")
-        + " — " + moved + (last.estimated ? " (estimated from the progress bar)" : "") + ".";
-      return;
-    }
-    // 🔑 The PTU case is NOT an error and must not read like one: the page was understood
-    // perfectly and the refusal is deliberate. It gets the rank it read, so the player can see
-    // the feature working even where it will not write anything.
-    if (last.refusal === "not-live") {
-      el.textContent = "Last read " + ago(last.at) + ": read your page correctly, but this is the "
-        + "PTU — test-server reputation is never saved over your live standing.";
-      return;
-    }
-    el.textContent = "Last read " + ago(last.at) + ": not saved — "
-      + (WHY[last.refusal] || last.refusal) + ".";
+    var d = window.REP_SCAN_STATUS && window.REP_SCAN_STATUS.describe(last);
+    el.textContent = d
+      ? d.long
+      : "Waiting — open mobiGlas → REP in game and it will read the page.";
   }
 
   // 🔴 THE POLL DECIDES WHETHER TO SHOW ITSELF — it does not wait to be told the mode is on.
