@@ -4,6 +4,11 @@
  *   npm run test:widgets:sandbox
  *   npm run test:widgets:sandbox -- --port 8791 --reset --keep
  *   npm run test:widgets:sandbox -- --serve        seed and hold the sidecar, run no suite
+ *   npm run test:widgets:sandbox -- --only blueprint          the one-widget loop, sandboxed
+ *   npm run test:widgets:sandbox -- --port 8791 -- --only blueprint    same, `--` forwards anything
+ *
+ * Suite arguments reach `widget-dom-test.cjs` — see the argument split below. An argument this
+ * script cannot place is REFUSED, never dropped.
  *
  * `--serve` is what you want while iterating on a widget or running a negative control: it gives
  * you a seeded sidecar to point `OVERLAY_PORT=<n> npm run test:widgets` at, or a probe file, or a
@@ -75,11 +80,73 @@ const PROFILE = join(ROOT, ".test-profile");
 const STATE = join(PROFILE, "sc-blueprint-tracker");
 const FIXTURE = join(ROOT, "tools", "fixtures", "trade-prices.json");
 
-const argv = process.argv.slice(2);
+/* ── WHOSE ARGUMENT IS THIS? ─────────────────────────────────────────────────────────────────────
+ *
+ * 🔴 THIS WRAPPER MUST NEVER SWALLOW AN ARGUMENT IT DOES NOT OWN. It used to parse its own flags
+ * and drop the rest on the floor, so `--port 8781 --reset -- --only blueprint` ran the FULL 52-suite
+ * pass — five and a half minutes — while printing nothing to say `--only` had been discarded. You
+ * read "all widget DOM tests passed" and believed you had run a 34-second subset. Both halves are
+ * documented workflows (the sandbox is how you iterate without fighting the live app on :8778;
+ * `--only` is how you iterate on one widget) and combining them silently gave you neither.
+ *
+ * The split, and it has no silent branch in it:
+ *   · everything after a bare `--` is FORWARDED VERBATIM. That is the escape hatch, and it keeps
+ *     working when the suite grows a flag this file has never heard of.
+ *   · before that, a flag this wrapper owns is consumed, and a flag the SUITE owns is forwarded,
+ *     so the common `--only blueprint` needs no separator.
+ *   · anything else is REFUSED — exit 2, print both lists — exactly the way `--only` itself refuses
+ *     an unknown widget key. A typo must cost you a message, never a five-minute run of the wrong
+ *     thing.
+ */
+const OWN_FLAGS = new Set(["--reset", "--keep", "--serve"]);
+const OWN_VALUE_FLAGS = new Set(["--port"]);
+// Suite flags named here are accepted without the `--` separator as a convenience; `--` still
+// forwards anything at all, so this list going stale costs a message, never a dropped argument.
+const SUITE_FLAGS = new Set(["--only", "--pairs"]);
+const SUITE_VALUE_FLAGS = new Set(["--only"]);
+
+const argv = [];
+const FORWARD = [];
+{
+  const raw = process.argv.slice(2);
+  const sep = raw.indexOf("--");
+  const head = sep >= 0 ? raw.slice(0, sep) : raw;
+  if (sep >= 0) FORWARD.push(...raw.slice(sep + 1));
+  for (let i = 0; i < head.length; i++) {
+    const a = head[i];
+    const bare = a.split("=")[0];
+    const inline = a.includes("=");
+    if (OWN_VALUE_FLAGS.has(bare)) {
+      argv.push(a);
+      if (!inline && head[i + 1] !== undefined) argv.push(head[++i]);
+    } else if (OWN_FLAGS.has(bare)) {
+      argv.push(a);
+    } else if (SUITE_FLAGS.has(bare)) {
+      FORWARD.push(a);
+      if (SUITE_VALUE_FLAGS.has(bare) && !inline && head[i + 1] !== undefined) FORWARD.push(head[++i]);
+    } else {
+      console.error("");
+      console.error(`unknown argument: ${a}`);
+      console.error("");
+      console.error("sandbox flags : " + [...OWN_VALUE_FLAGS, ...OWN_FLAGS].sort().join(", "));
+      console.error("suite flags   : " + [...SUITE_FLAGS].sort().join(", ") + " (forwarded to widget-dom-test.cjs)");
+      console.error("");
+      console.error("Anything else meant for the suite goes after a bare `--`, e.g.");
+      console.error("  node tools/test-widgets-sandbox.mjs --port 8781 -- --only blueprint");
+      process.exit(2);
+    }
+  }
+}
+
 const flag = (name) => argv.includes(name);
+// 🔑 BOTH SPELLINGS, because the split above ACCEPTS both. Reading only `--port 8781` while
+// accepting `--port=8781` would drop the value and fall back to 8779 without a word — the same
+// silent-drop bug one layer down, and the one that costs you a port collision with the live app.
 const value = (name, fallback) => {
-  const i = argv.indexOf(name);
-  return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
+  const i = argv.findIndex((a) => a === name || a.startsWith(name + "="));
+  if (i < 0) return fallback;
+  return argv[i].startsWith(name + "=") ? argv[i].slice(name.length + 1) || fallback
+    : (argv[i + 1] || fallback);
 };
 
 const PORT = String(value("--port", process.env.OVERLAY_PORT || "8779"));
@@ -193,7 +260,9 @@ if (!up) {
 
 if (flag("--serve")) {
   console.log(`sidecar up on :${PORT} (pid ${sidecarPid}). Ctrl-C to stop.`);
-  console.log(`  OVERLAY_PORT=${PORT} npm run test:widgets`);
+  // `--serve` runs no suite, so anything forwarded belongs in the command you are about to type
+  // rather than on the floor — the same rule the argument split above exists to enforce.
+  console.log(`  OVERLAY_PORT=${PORT} npm run test:widgets${FORWARD.length ? " -- " + FORWARD.join(" ") : ""}`);
   process.on("SIGINT", () => { stopSidecar(); process.exit(0); });
   await new Promise(() => {}); // hold
 }
@@ -203,10 +272,11 @@ const electron = join(ROOT, "node_modules", "electron", "dist", "electron.exe");
 // they are the only thing standing between a stray backtick and a run that hangs for hours.
 let code = await step(process.execPath, [join("tools", "check-suite-literals.cjs")]);
 if (code === 0) code = await step(process.execPath, ["--check", join("tools", "widget-dom-test.cjs")]);
-// `--pairs` is forwarded so the RELEASE run can be made here too — the release recipe reaches for
-// this script whenever another session is holding the default port, and a release check that
-// silently could not opt into the pair merges would be the exact false green they exist to prevent.
-if (code === 0) code = await step(electron, [join("tools", "widget-dom-test.cjs"), ...(flag("--pairs") ? ["--pairs"] : [])]);
+// The suite's own arguments ride along here — `--only` for a flight's twenty-times-an-afternoon
+// loop, `--pairs` so the RELEASE run can be made here too. The release recipe reaches for this
+// script whenever another session is holding the default port, and a release check that silently
+// could not opt into the pair merges would be the exact false green they exist to prevent.
+if (code === 0) code = await step(electron, [join("tools", "widget-dom-test.cjs"), ...FORWARD]);
 
 if (flag("--keep")) {
   console.log(`\nsidecar left running on :${PORT} (pid ${sidecarPid}) - --keep was passed`);
