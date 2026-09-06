@@ -20,6 +20,7 @@ import { categorize, type TabKey } from "./categories.js";
 import { parseLine } from "./parser.js";
 import { BlueprintDetailStore, type BlueprintDetail } from "./blueprint-detail.js";
 import { Phrasebook, type PhrasebookInfo } from "./localization.js";
+import { normRep, repFloorForRank } from "./rep-page.js";
 import type { SyncSource } from "./sync.js";
 import {
   tiersCrossed, receiptForCrossing, candidateForTier, isPromptDue, shouldAsk,
@@ -3284,14 +3285,43 @@ export class MissionTracker extends EventEmitter {
    *  drawn from. */
   repScopesForScan(): Record<string, RepScope> { return this.repScopes; }
 
+  /** 🔴 KEYED BY `normRep` GROUP, NOT BY THE RAW DATASET SPELLING — and that is a bug fix, not
+   *  tidiness. The reader takes the faction heading and keeps a giver only when EXACTLY ONE key
+   *  normalises to it; the 4.10 dataset carries `Citizens for Prosperity` AND
+   *  `Citizens For Prosperity`, so that heading matched two keys, resolved to none, and the
+   *  faction refused `no-giver` on every scan forever. Measured on 12519617: 65 raw spellings,
+   *  64 groups, exactly one collision — and `normRep` produces the SAME 64 groups as the `norm()`
+   *  that `giverTrack` already matches on, so merging here can never fuse two tracks the rest of
+   *  the app keeps apart.
+   *
+   *  🔑 The emitted key is the FIRST dataset spelling in the group, which is the same rule
+   *  `giverTrack` uses for its `canonical` — so the giver a scan WRITES under is the giver the
+   *  track READS back, which is the whole point of resolving a giver at all. */
   giverScopes(): Record<string, string[]> {
-    const out: Record<string, Set<string>> = {};
+    const out = new Map<string, { giver: string; scopes: Set<string> }>();
     for (const m of Object.values(this.dataset?.missions ?? {})) {
       if (!m.giver) continue;
-      const set = (out[m.giver] ??= new Set<string>());
-      for (const r of m.reputationGained ?? []) if (r.scope && this.repScopes[r.scope]) set.add(r.scope);
+      const key = normRep(m.giver);
+      let e = out.get(key);
+      if (!e) out.set(key, (e = { giver: m.giver, scopes: new Set<string>() }));
+      for (const r of m.reputationGained ?? []) if (r.scope && this.repScopes[r.scope]) e.scopes.add(r.scope);
     }
-    return Object.fromEntries(Object.entries(out).map(([g, s]) => [g, [...s]]));
+    return Object.fromEntries([...out.values()].map((e) => [e.giver, [...e.scopes]]));
+  }
+
+  /** The standing NAME a scanned rank index means on `scope`'s ladder — "Prestige 1", not "3".
+   *
+   *  🔑 The name comes out of `repLadderPosition`, the same function the mission drawer and the
+   *  standing bar render from, rather than indexing the ladder here. A scan that named the rank
+   *  its own way would be a second implementation of "which rank is this number", and the first
+   *  time the two rounded differently it would be reported as a bug — the widget saying one rank
+   *  while the bar two inches above it says another. `test:repscan` pins that they agree for
+   *  every rank of every scope. */
+  repStandingAtRank(scope: string, rank: number): string | null {
+    const s = this.repScopes[scope];
+    const floor = s ? repFloorForRank(s, rank) : null;
+    if (!s || floor === null) return null;
+    return repLadderPosition(s, floor)?.standing ?? null;
   }
 
   /** True when the app is watching a LIVE (PUB) game log. The REP scan is gated on this — see
@@ -3346,6 +3376,10 @@ export class MissionTracker extends EventEmitter {
     giver: string;
     scope: string;
     rank: number;
+    /** The rank's NAME — "Prestige 1". Sub asked for this outright: a scan that reports only
+     *  "X rep to Y rep" makes the player do the ladder lookup the app has already done. Null only
+     *  when the scope has no ladder, which cannot happen on a scan that got this far. */
+    standing: string | null;
     /** The rank's band, for the UI to explain the result with. */
     floor: number;
     ceiling: number | null;
@@ -3386,6 +3420,11 @@ export class MissionTracker extends EventEmitter {
     this.saveState();
     return {
       applied: true, giver, scope, rank, floor, ceiling, before, after,
+      // 🔑 Named from the value that was just STORED, not from the rank index — so the standing a
+      // scan reports is by construction the standing every other consumer of that number will
+      // render. That is also a live check on the ceiling-1 cap above: without it a 100% bar
+      // stores exactly the next rank's floor and this name would disagree with `rank`.
+      standing: repLadderPosition(this.repScopes[scope], after)?.standing ?? null,
       estimated: usable,
       outcome: after > before ? "raised" : after < before ? "lowered" : "unchanged",
     };

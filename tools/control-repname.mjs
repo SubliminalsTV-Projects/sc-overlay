@@ -1,0 +1,80 @@
+/**
+ * Negative controls for the two invariants `npm run test:repscan` gained with the rep-scan
+ * feedback work. Run with `npm run control:repname`.
+ *
+ * Each control re-injects the exact defect the assertion exists to catch, requires the suite to
+ * go RED **naming that assertion**, and restores the file. A green control here means the
+ * assertion is a tautology, not that the code is fine.
+ *
+ * The rules this runner obeys, all of them learned the expensive way in this repo:
+ *  · GRADE ON THE OUTPUT TEXT (`FAIL `), never on the exit code.
+ *  · ABORT LOUDLY ON A NO-OP PATCH — a replace that matched nothing runs the suite on unmodified
+ *    source and prints a perfect green, which reads as "the control proves nothing is broken".
+ *  · REQUIRE THE SUITE TO HAVE REPORTED AT ALL, and to have reached its own TERMINATOR. A run
+ *    that produced no assertions, or that crashed part-way, is a broken control and never a pass.
+ *  · CHECK *WHICH* ASSERTION WENT RED. A control that reddens a different assertion — especially
+ *    a positive-first guard — is a bug in the test, not evidence for it.
+ *  · Restore from a copy held IN MEMORY, not from git: these are the files being protected, and a
+ *    runner that dies mid-restore is how this repo lost a source file once already.
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+const SUITE = ["src/rep-scan-apply.test.ts"];
+const CONTROLS = [
+  {
+    name: "C1 giverScopes keyed by the raw dataset spelling again",
+    file: "src/missions.ts",
+    from: "      const key = normRep(m.giver);",
+    to: "      const key = m.giver;   // CONTROL: the pre-fix behaviour",
+    reddens: ["giverScopes offers EXACTLY ONE key"],
+    // The positive-first guard must survive: it is sourced from the dataset file, not from the
+    // code under control, so it vouches for there being two spellings either way.
+    staysGreen: ["the dataset really does spell this faction more than one way"],
+  },
+  {
+    name: "C2 the interpolation cap removed (a 100% bar lands on the next rank's floor)",
+    file: "src/missions.ts",
+    from: "      ? Math.min(Math.round(floor + p * ((ceiling as number) - floor)), (ceiling as number) - 1)",
+    to: "      ? Math.round(floor + p * ((ceiling as number) - floor))   // CONTROL: cap removed",
+    reddens: ["the stored value and the rank index NEVER name different ranks"],
+    staysGreen: ["the sweep really covered every rank of every shipped scope"],
+  },
+];
+
+let bad = 0;
+for (const c of CONTROLS) {
+  const original = readFileSync(c.file, "utf8");
+  const patched = original.replace(c.from, c.to);
+  if (patched === original) {
+    console.log(`\n${c.name}\n  ABORT — the anchor did not match. The control would have run on`
+      + ` unmodified source and printed a false green.\n  anchor: ${JSON.stringify(c.from)}`);
+    bad++;
+    continue;
+  }
+  let out = "";
+  try {
+    writeFileSync(c.file, patched);
+    const r = spawnSync(process.execPath, ["node_modules/tsx/dist/cli.mjs", ...SUITE],
+      { encoding: "utf8", timeout: 300_000 });
+    out = (r.stdout ?? "") + (r.stderr ?? "");
+  } finally {
+    writeFileSync(c.file, original);
+  }
+
+  const reported = /^(ok|FAIL)/m.test(out);
+  const finished = /all rep re-baseline checks passed|FAILED \(\d+\)/.test(out);
+  const failedLines = out.split(/\r?\n/).filter((l) => l.startsWith("FAIL"));
+  const hit = c.reddens.every((a) => failedLines.some((l) => l.includes(a)));
+  const vouched = c.staysGreen.every((a) => !failedLines.some((l) => l.includes(a)));
+
+  const ok = reported && finished && failedLines.length > 0 && hit && vouched;
+  if (!ok) bad++;
+  console.log(`\n${c.name}\n  ${ok ? "PASS" : "BROKEN"} — `
+    + `reported=${reported} finished=${finished} failures=${failedLines.length} `
+    + `reddened-the-right-one=${hit} positive-guard-survived=${vouched}`);
+  for (const l of failedLines) console.log("    " + l);
+}
+
+console.log(bad ? `\nCONTROLS BROKEN (${bad})` : `\nall ${CONTROLS.length} controls behaved`);
+process.exit(bad ? 1 : 0);

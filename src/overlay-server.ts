@@ -1143,8 +1143,15 @@ interface RepScanLast {
   ok: boolean;
   refusal?: string;
   giver?: string;
+  /** The faction heading the page actually showed, verbatim off the OCR. Carried even when the
+   *  scan refused — on `no-giver` it is the ONLY thing that says which faction failed, which is
+   *  what turns "it didn't know the name" into a report somebody can act on. */
+  faction?: string;
   scope?: string;
   rank?: number;
+  /** The rank's NAME on the ladder ("Prestige 1"). Present on a refusal too whenever the ladder
+   *  was identified — the page was still read, and saying what it read is the point. */
+  standing?: string | null;
   progress?: number | null;
   floor?: number;
   ceiling?: number | null;
@@ -4570,14 +4577,26 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     }
     const scope = typeof body?.scope === "string" ? body.scope : "";
     const giver = typeof body?.giver === "string" ? body.giver : "";
+    const faction = typeof body?.faction === "string" ? body.faction : "";
     const bars = Array.isArray(body?.bars) ? (body.bars as RepBarRead[]) : [];
     const v = repRankFromBars(bars);
+    // The rank the page STATED, named. Available on the refusal paths too, because on those the
+    // page really was read and refusing to repeat back what we read is what makes the feature
+    // look broken rather than careful.
+    const standing = scope && typeof v.rank === "number"
+      ? tracker.repStandingAtRank(scope, v.rank) : null;
     let out: Record<string, unknown>;
     if (!scope || !giver) {
       // A page whose faction did not resolve to a dataset giver is readable but not writable:
       // `repWitnessed` is keyed by giver, so there is nowhere to put the answer. Say so rather
       // than inventing a key — a giver spelling we made up would never be read back by anything.
-      out = { ok: false, refusal: "no-giver", rank: v.rank, progress: v.progress };
+      //
+      // 🔑 It carries the FACTION HEADING it read. Sub's report was "some mission givers didn't
+      // record anything — it was like it didn't know the name", and without the name neither he
+      // nor the app can say WHICH faction is missing. This is the whole measurement: the
+      // exhaustive in-game faction list is inside Data.p4k, so the residual is closed by the app
+      // naming what it saw rather than by a data pull.
+      out = { ok: false, refusal: "no-giver", faction, scope, rank: v.rank, progress: v.progress, standing };
     } else if (v.refusal) {
       out = { ok: false, refusal: v.refusal };
     } else if (!tracker.envIsLiveForScan) {
@@ -4588,15 +4607,16 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // be ready when it goes live. This is the app's THIRD isLiveEnv gate, beside the blueprint
       // receipt and the event journal entry, and it reads the same getter they do.
       out = { ok: false, refusal: "not-live", rank: v.rank, progress: v.progress,
-              scope, giver, envIsLive: false };
+              scope, giver, faction, standing, envIsLive: false };
     } else {
       const applied = tracker.applyRepScan(giver, scope, v.rank!, v.progress);
       out = applied
-        ? { ok: true, ...applied, progress: v.progress, envIsLive: true }
+        ? { ok: true, ...applied, faction, progress: v.progress, envIsLive: true }
         : { ok: false, refusal: "unknown-scope" };
       if (applied) {
         console.log(
           `[rep-scan] ${giver} / ${scope}: page says rank ${applied.rank} ` +
+          `(${applied.standing ?? "unnamed"}) ` +
           `(band ${applied.floor}..${applied.ceiling ?? "max"}, bar ` +
           `${Math.round((v.progress ?? 0) * 100)}%), stored ${applied.before} -> ${applied.after} ` +
           `(${applied.outcome}${applied.estimated ? ", interpolated" : ", band floor"})`,
@@ -4604,7 +4624,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         broadcastMissions();
       }
     }
-    if (!out.ok) console.log(`[rep-scan] refused: ${out.refusal}${scope ? ` (${giver} / ${scope})` : ""}`);
+    // 🔑 Names the FACTION HEADING on a refusal, not just the giver — on `no-giver` the giver is
+    // empty by definition, so the old form logged `( / Courier)` and the one fact worth having
+    // (which faction the app failed to recognise) went nowhere.
+    if (!out.ok) {
+      const who = giver || (faction ? `heading "${faction}"` : "");
+      console.log(`[rep-scan] refused: ${out.refusal}${who || scope ? ` (${who}${scope ? ` / ${scope}` : ""})` : ""}`);
+    }
     repScanLast = { at: Date.now(), ...out } as RepScanLast;
     if (!out.ok) broadcastMissions();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });

@@ -792,7 +792,11 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
                 await fetch(`http://localhost:${port}/api/rep-scan`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ scope: read.rep.scope, giver: read.rep.giver, bars }),
+                  // `faction` is the heading verbatim off the OCR. Forwarded even though the
+                  // sidecar does not need it to WRITE, because when a heading resolves to no
+                  // giver it is the only thing that can say WHICH faction was refused.
+                  body: JSON.stringify({ scope: read.rep.scope, giver: read.rep.giver,
+                                         faction: read.rep.faction, bars }),
                   signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
                 });
               } else if (!read.rep.ok && ACTIONABLE_REP_REFUSALS.has(read.rep.refusal)) {
