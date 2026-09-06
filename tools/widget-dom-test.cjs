@@ -1591,7 +1591,13 @@ const REPSTRIP = `(async () => {
   // Battaglia." A rep number with no rank beside it makes the player do a lookup the app has
   // already done.
   ok("...and names the RANK, not just the number", txt().indexOf("Prestige 1") >= 0, txt());
-  ok("...and says which way it moved", txt().indexOf("25,314") >= 0 && txt().indexOf("25,900") >= 0, txt());
+  // 🔴 BOTH figures, not just the first. Measured on the real widget at 378px, the sentence form
+  // ("corrected up from 25,314 to 25,900") ellipsised away the second number — and Sub asked for
+  // the rank AND the movement. This is the assertion that keeps the short form short.
+  ok("...and says which way it moved, with BOTH numbers",
+     txt().indexOf("25,314") >= 0 && txt().indexOf("25,900") >= 0, txt());
+  ok("...and the whole line fits a narrow widget without losing a figure",
+     txt().length <= 60, txt().length + " chars");
   ok("...in the good-read colour, not the warning one",
      bar.classList.contains("on") && !bar.classList.contains("warn"), bar.className);
 

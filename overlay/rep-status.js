@@ -95,11 +95,18 @@
         ? "already matched"
         : (last.outcome === "raised" ? "corrected up" : "corrected down")
           + " from " + num(last.before) + " to " + num(last.after);
+      // ⚠️ The strip is ONE ellipsised line. Measured on the real widget at its 378px content
+      // width, the sentence form truncated at "corrected up from 25,314 …" and threw away the
+      // second number — and Sub asked for the rank AND the movement, not one of them. An arrow
+      // says the same thing in 20 fewer characters and both figures survive.
+      var movedShort = last.before === last.after
+        ? "already matched"
+        : num(last.before) + " " + String.fromCharCode(8594) + " " + num(last.after);
       var est = last.estimated ? " (estimated from the progress bar)" : "";
       return {
         ok: true,
         tone: "on",
-        short: "REP · " + (subject || "that faction") + rank + " · " + moved,
+        short: "REP · " + (subject || "that faction") + rank + " · " + movedShort,
         long: "Last read " + ago(last.at) + ": " + (subject || "that faction") + rank
           + " · " + moved + est + ".",
       };
