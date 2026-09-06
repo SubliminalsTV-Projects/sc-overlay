@@ -79,6 +79,34 @@ const CONTROLS = [
     // this alias exists for is real whether or not the alias is present.
     staysGreen: ["the dataset really does split Covalex into two givers"],
   },
+  {
+    // The FIRST of Wikelo's two defects: OCR reads the game's ampersand as a lowercase e, so
+    // "BARTER e TRADE" never matched "Barter & Trade" and the page refused `no-section` —
+    // a refusal the capture loop does not even forward, so it was silent as well as wrong.
+    name: "C6 the ampersand-misread repair removed",
+    suite: PAGE,
+    file: "src/rep-page.ts",
+    from: '  return toks.map((t, i) => (t === "E" && i > 0 && i < toks.length - 1 ? "AND" : t));',
+    to: "  return toks;   // CONTROL: ampersand repair removed",
+    reddens: ["the ampersand misread normalises to the same thing as a real ampersand",
+              "shot3: the Wikelo page reads at all"],
+    // Sourced from the shipped files, not from normRep, so it vouches the vocabulary is really
+    // closed whether or not the repair exists.
+    staysGreen: ["no shipped name has a standalone E the ampersand repair could corrupt"],
+  },
+  {
+    // The SECOND defect, independent of the first: the heading is longer than the giver.
+    // Note this alias runs the opposite way to Covalex's, which is why a prefix RULE was rejected.
+    name: "C7 the WIKELO EMPORIUM heading alias removed",
+    suite: PAGE,
+    file: "src/rep-page.ts",
+    from: '  "WIKELO EMPORIUM": "Wikelo",',
+    to: "  // CONTROL: alias removed",
+    reddens: ["shot3: the heading is aliased to the dataset giver rep is stored under"],
+    // The page still READS without the alias — it just cannot be attributed. That asymmetry is
+    // the whole reason both fixes were needed, so assert the reading half survives.
+    staysGreen: ["shot3: the Wikelo page reads at all"],
+  },
 ];
 
 let bad = 0;

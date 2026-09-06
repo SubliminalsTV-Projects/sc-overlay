@@ -127,6 +127,41 @@ const SHOT2 = frame([
   L(1656, 1327, 90, 12, "CONTRACTS"),
 ]);
 
+// ── Fixture 3: Wikelo Emporium / BARTER & TRADE, 3 ranks ─────────────────────
+// Verbatim OCR over Sub's own 3440x1440 capture, 2026-09-06 — the page he reported as "not
+// working". It carries TWO independent defects at once and that is exactly why it is here:
+//   · the section header comes back as "BARTER e TRADE" (Windows OCR reads the game's ampersand
+//     as a lowercase e), which refused `no-section` — a refusal the capture loop does not even
+//     forward, so it was silent as well as wrong;
+//   · the heading is "WIKELO EMPORIUM" while the dataset giver is plain `Wikelo`.
+// Fixing either alone still leaves the page unreadable, which is the point of keeping the frame
+// whole rather than reducing it to the one line under test.
+const SHOT3 = frame([
+  L(2766, 145, 23, 23, "x"),
+  L(1372, 147, 89, 19, "CAREER"),
+  L(1543, 148, 98, 18, "DOSSIER"),
+  L(1390, 264, 463, 37, "WIKELO EMPORIUM"),
+  L(1392, 321, 109, 17, "NEUTRAL"),
+  L(797, 336, 93, 20, "COVALE"),
+  L(1409, 422, 260, 22, "BARTER e TRADE"),
+  L(804, 491, 177, 17, "HEADHUNTERS"),
+  L(806, 640, 384, 17, "INTERSEC DEFENSE SOLUTIONS"),
+  L(2057, 662, 114, 15, "VERY BEST"),
+  L(1740, 663, 117, 14, "VERY GOOD"),
+  L(1423, 664, 163, 15, "NEW CUSTOMER"),
+  L(1741, 683, 110, 15, "CUSTOMER"),
+  L(2058, 683, 110, 14, "CUSTOMER"),
+  L(2058, 707, 121, 11, "SPECIAL IDRIS-P"),
+  L(1741, 708, 106, 11, "SPECIAL WOLF"),
+  L(2059, 722, 140, 12, "BARTER CONTRACT"),
+  L(1741, 723, 140, 11, "BARTER CONTRACT"),
+  L(799, 790, 225, 18, "RECCO BATTAGLIA"),
+  L(786, 942, 323, 19, "UNITED WAYFARERS CLUB"),
+  L(746, 1103, 241, 20, "WIKELO EMPORIUM"),
+  L(2214, 1323, 29, 13, "REP"),
+  L(1646, 1327, 90, 14, "CONTRACTS"),
+]);
+
 /** The giver -> scope map the app builds from the shipped dataset. Only the entries these two
  *  pages need, plus the ones that make the ambiguous cases real. */
 const GIVERS: Record<string, string[]> = {
@@ -476,6 +511,72 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
   check("...and with only the small giver present it refuses, exactly as Sub saw",
     unaliased.refusal === "no-scope" && unaliased.giver === "Covalex" && unaliased.tried.length === 0,
     `[${unaliased.refusal} / ${unaliased.giver} / ${unaliased.tried.length} tried]`);
+}
+
+// ── The ampersand OCR reads as a lowercase e ─────────────────────────────────
+{
+  // 🔴 Measured, not supposed: Windows OCR returned "BARTER e TRADE" for the game's
+  // "BARTER & TRADE". The scope's display name normalises to BARTER AND TRADE, so the header
+  // could never match and the page refused `no-section` on every tick — and `no-section` is NOT
+  // one of the refusals the capture loop forwards, so Sub got no message at all.
+  check("the ampersand misread normalises to the same thing as a real ampersand",
+    normRep("BARTER e TRADE") === normRep("Barter & Trade"),
+    `[${normRep("BARTER e TRADE")} vs ${normRep("Barter & Trade")}]`);
+  check("...and a real ampersand is unaffected",
+    normRep("Rough & Ready") === "ROUGH AND READY", `[${normRep("Rough & Ready")}]`);
+  check("...and the misread form of that one lands in the same place too",
+    normRep("ROUGH e READY") === normRep("Rough & Ready"), `[${normRep("ROUGH e READY")}]`);
+  // The repair only fires MID-phrase, which is the only position an ampersand occupies.
+  check("a leading or trailing E is left alone",
+    normRep("E TRADE") === "E TRADE" && normRep("BARTER E") === "BARTER E",
+    `[${normRep("E TRADE")} | ${normRep("BARTER E")}]`);
+
+  // 🔴 THE SAFETY ARGUMENT, ASSERTED AGAINST THE SHIPPED FILES rather than taken on trust —
+  // exactly what the roman-numeral repair does, and for the same reason. The substitution is only
+  // safe because the vocabulary is CLOSED: if any scope display name, rank name or dataset giver
+  // ever contains a standalone E token, this repair starts corrupting a real name.
+  const ds = JSON.parse(readFileSync("data/blueprints.latest.json", "utf8"))
+    .missions as Record<string, { giver?: string }>;
+  const vocab: string[] = [];
+  for (const s of Object.values(SCOPES)) {
+    if (s.displayName) vocab.push(s.displayName);
+    for (const r of s.ranks) vocab.push(r.name);
+  }
+  for (const m of Object.values(ds)) if (m.giver) vocab.push(m.giver);
+  // Positive first: the vocabulary was really assembled. An empty list satisfies the guard below
+  // for free, and that is the one way this assertion could quietly stop meaning anything.
+  check("the closed vocabulary was really assembled", vocab.length > 250, `[${vocab.length} entries]`);
+  const withE = vocab.filter((v) => {
+    // Read the RAW tokens, not normRep's output — normRep is the thing under test here.
+    const t = v.replace(/[^A-Za-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
+    return t.some((x, i) => x.toUpperCase() === "E" && i > 0 && i < t.length - 1);
+  });
+  check("no shipped name has a standalone E the ampersand repair could corrupt",
+    withE.length === 0, withE.join(" | ") || "(none)");
+}
+
+// ── The Wikelo page, end to end on the real capture ──────────────────────────
+{
+  // Both defects at once. Fixing either alone leaves the page unreadable.
+  const r = readRepPage(SHOT3, SCOPES, { ...GIVERS, "Wikelo": ["Wikelo"] });
+  check("shot3: the Wikelo page reads at all", r.refusal === null && !!r.layout, String(r.refusal));
+  check("shot3: the ampersand-misread section still resolves to the right scope",
+    r.layout?.scope === "Wikelo" && r.layout?.sectionRaw === "BARTER e TRADE",
+    `[${r.layout?.scope} / ${r.layout?.sectionRaw}]`);
+  check("shot3: the heading is aliased to the dataset giver rep is stored under",
+    r.layout?.giver === "Wikelo", `[${r.layout?.giver}]`);
+  check("shot3: the heading really is the longer in-game name, so the alias is load-bearing",
+    r.layout?.factionRaw === "WIKELO EMPORIUM", `[${r.layout?.factionRaw}]`);
+  check("shot3: all three ranks located, in order",
+    r.layout?.cards.map((c) => c.rank).join(",") === "0,1,2",
+    `[${r.layout?.cards.map((c) => c.rank).join(",")}]`);
+  check("shot3: no card absorbed the BARTER CONTRACT reward text",
+    r.layout?.cards.every((c) => !normRep(c.name).includes("CONTRACT")) === true,
+    `[${r.layout?.cards.map((c) => c.name).join(" | ")}]`);
+  // ⚠️ The left-hand faction list also says WIKELO EMPORIUM (and OCR dropped the X off COVALEX
+  // there). The heading must be the LARGE one, not the list copy — the same trap SHOT1 guards.
+  check("shot3: the heading is the large one, not the left-list copy",
+    (r.layout?.cards[0]?.label.x ?? 0) > 1200, `[card0 x=${r.layout?.cards[0]?.label.x}]`);
 }
 
 console.log(failed ? `\nFAILED (${failed})` : "\nall rep-page checks passed");

@@ -134,17 +134,40 @@ function romanFix(tok: string): string {
   return tok.replace(/[l|]/g, "I").toUpperCase();
 }
 
+/** 🔴 WINDOWS OCR READS THE GAME'S AMPERSAND AS A LOWERCASE `e`.
+ *
+ *  Measured on Sub's own 3440x1440 capture of the Wikelo Emporium REP page, 2026-09-06: the
+ *  section header "BARTER & TRADE" came back as **"BARTER e TRADE"**, so it normalised to
+ *  `BARTER E TRADE` and could never match the scope's `Barter & Trade` -> `BARTER AND TRADE`.
+ *  The page refused `no-section` on every tick, which is a refusal the capture loop does not even
+ *  forward — so it was silent as well as wrong.
+ *
+ *  Same family as `romanFix` and for the same reason it is safe: the vocabulary is CLOSED. Across
+ *  all 304 scope display names, rank names and dataset givers on 12519617, **zero** have a
+ *  standalone `E` token anywhere — so nothing real can be corrupted by turning one into `AND`.
+ *  `rep-page.test.ts` asserts that against the shipped files rather than taking it on trust,
+ *  exactly as the roman-numeral repair does.
+ *
+ *  ⚠️ Restricted to a MID-PHRASE token, which is the only position an ampersand occupies. It is
+ *  belt-and-braces (the count is 0 either way) but it keeps the repair describing the thing it is
+ *  actually repairing. */
+function ampFix(toks: string[]): string[] {
+  return toks.map((t, i) => (t === "E" && i > 0 && i < toks.length - 1 ? "AND" : t));
+}
+
 export function normRep(s: string): string {
-  return s
-    .replace(/&/g, " and ")
-    // The pipe survives the punctuation strip on purpose: it is one of the glyphs OCR returns
-    // for a capital I, so romanFix has to still be able to see it. Anything left over after
-    // that is dropped on the way out.
-    .replace(/[^A-Za-z0-9|]+/g, " ")
-    .trim()
-    .split(" ")
-    .filter(Boolean)
-    .map(romanFix)
+  return ampFix(
+    s
+      .replace(/&/g, " and ")
+      // The pipe survives the punctuation strip on purpose: it is one of the glyphs OCR returns
+      // for a capital I, so romanFix has to still be able to see it. Anything left over after
+      // that is dropped on the way out.
+      .replace(/[^A-Za-z0-9|]+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean)
+      .map(romanFix),
+  )
     .join(" ")
     .replace(/\|/g, "")
     .replace(/\s+/g, " ")
@@ -261,6 +284,14 @@ export const REP_HEADING_ALIASES: Record<string, string> = {
   // ⚠️ Deliberately NOT aliasing Civilian Defense Force / CIVILIAN DEFENSE FORCE INITIATIVE, the
   // other prefix pair: both award Emergency, the heading already resolves, and it scans fine today.
   "COVALEX": "Covalex Independent Contractors",
+  // Measured from Sub's own 3440x1440 capture of the page, 2026-09-06: the heading really is
+  // "WIKELO EMPORIUM" and the section resolves to the `Wikelo` scope 3/3 ranks — but the dataset
+  // giver is spelled plain `Wikelo`, which is where his 20 rep is stored.
+  // 🔑 Note this alias runs the OPPOSITE way to Covalex's: there the heading is a PREFIX of the
+  // canonical giver, here it is the giver plus a suffix. That asymmetry is the argument for an
+  // explicit table rather than the prefix rule that was considered — a prefix rule would not have
+  // caught this one at all.
+  "WIKELO EMPORIUM": "Wikelo",
 };
 
 /**
