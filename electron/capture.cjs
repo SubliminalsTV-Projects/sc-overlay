@@ -809,7 +809,12 @@ function startFabCapture({ port, configDir, onStatus, devTools = false }) {
                 await fetch(`http://localhost:${port}/api/rep-scan`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ refusalOnly: read.rep.refusal }),
+                  // The heading, the section and the candidate scoring ride along. They cost
+                  // nothing (the sidecar already computed them for this very frame) and they are
+                  // the difference between "not saved" and a report someone can act on.
+                  body: JSON.stringify({ refusalOnly: read.rep.refusal,
+                                         faction: read.rep.faction, section: read.rep.section,
+                                         giver: read.rep.giver, tried: read.rep.tried }),
                   signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
                 });
               }

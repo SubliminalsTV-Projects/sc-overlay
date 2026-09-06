@@ -1608,6 +1608,12 @@ const REPSTRIP = `(async () => {
   ok("a refusal is shown too, not swallowed", showing(), txt());
   ok("...in the warning colour", bar.classList.contains("warn") && !bar.classList.contains("on"), bar.className);
   ok("...and it says what to do about it", txt().indexOf("scroll the rank list") >= 0, txt());
+  // 🔴 AND IT NAMES THE PAGE. Sub reported two factions "not working"; a strip that says only
+  // "scroll the rank list" is indistinguishable from the widget talking about a different faction
+  // entirely. Every refusal that KNOWS a heading now carries it, not just no-giver.
+  setRepScan(true, { at: NOW, ok: false, refusal: "cards-incomplete", faction: "COVALEX" });
+  ok("...and names the faction when the reader got far enough to know one",
+     txt().indexOf("COVALEX") >= 0 && txt().indexOf("scroll the rank list") >= 0, txt());
 
   // 🔴 THE no-giver CASE NAMES THE FACTION. Sub: "there were some mission givers that didn't
   // record anything. It was like it didn't know the name." Without the heading in the message

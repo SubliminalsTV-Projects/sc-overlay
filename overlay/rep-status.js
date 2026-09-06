@@ -128,9 +128,12 @@
     }
 
     var w = WHY[last.refusal] || { long: last.refusal, short: last.refusal };
-    // On `no-giver` the heading is the whole message — naming it is what makes the refusal
-    // reportable instead of just puzzling.
-    var named = last.refusal === "no-giver" && subject ? ' "' + subject + '"' : "";
+    // 🔑 NAME THE FACTION ON EVERY REFUSAL THAT KNOWS ONE, not just `no-giver`. Sub reported two
+    // factions "not working" and the strip could only have said "scroll the rank list" with no
+    // clue which page it meant — which is indistinguishable from the widget talking about some
+    // other faction entirely. `cards-incomplete`, `no-scope` and `scope-ambiguous` all carry the
+    // heading now; before, only `no-giver` did.
+    var named = subject ? ' "' + subject + '"' : "";
     return {
       ok: false,
       tone: "warn",

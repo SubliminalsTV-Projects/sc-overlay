@@ -4560,7 +4560,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       out = r.layout
         ? { ok: true, scope: r.layout.scope, giver: r.layout.giver, faction: r.layout.factionRaw,
             section: r.layout.sectionRaw, cards: r.layout.cards }
-        : { ok: false, refusal: r.refusal };
+        // 🔑 A refusal carries the heading, the section and the candidate scoring too. Without
+        // them a forwarded refusal says only "not saved", which is where the Covalex / Wikelo
+        // Emporium report started — a page the player is staring at, declining for a reason
+        // nothing anywhere records.
+        : { ok: false, refusal: r.refusal, faction: r.factionRaw ?? null,
+            section: r.sectionRaw ?? null, giver: r.giver ?? null, tried: r.tried };
     }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(out));
@@ -4572,7 +4577,35 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // A refusal the player can act on, forwarded with no bars — see ACTIONABLE_REP_REFUSALS in
     // capture.cjs. Broadcast so the widget can say WHY the page in front of them is not syncing.
     if (typeof body?.refusalOnly === "string") {
-      repScanLast = { at: Date.now(), ok: false, refusal: body.refusalOnly };
+      const rf = typeof body?.faction === "string" ? body.faction : "";
+      const rs = typeof body?.section === "string" ? body.section : "";
+      const rg = typeof body?.giver === "string" ? body.giver : "";
+      // ⚠️ `rs` is the SECTION HEADER ("Standing"), a display name — deliberately not stored as
+      // `scope`, which everywhere else in this file means a scope KEY. It belongs in the log line
+      // and nowhere else.
+      repScanLast = { at: Date.now(), ok: false, refusal: body.refusalOnly,
+                      faction: rf || undefined, giver: rg || undefined };
+      // 🔴 THIS PATH DID NOT LOG AT ALL, and it is the path the three refusals a player can
+      // actually act on travel down — so the only refusals that reach a human were the only ones
+      // absent from the log. That is how "Covalex and Wikelo Emporium don't seem to be working"
+      // arrived with nothing in `sidecar.log` to explain it while eight other factions scanned
+      // cleanly in the same session.
+      //
+      // 🔑 `tried` is what makes the line diagnostic rather than merely present. On a `no-scope`
+      // an EMPTY tried means the giver resolved and our dataset says it never awards this scope
+      // (a data gap); a NON-empty one means we weighed real ladders and none matched the cards
+      // (an OCR or layout problem). Same refusal string, opposite fixes.
+      const tried = Array.isArray(body?.tried)
+        ? (body.tried as { scope: string; matched: number; of: number }[]) : [];
+      const why = tried.length
+        ? tried.map((t) => `${t.scope} ${t.matched}/${t.of}`).join(", ")
+        : "no candidate ladders were even considered";
+      const line = `[rep-scan] refused: ${body.refusalOnly}`
+        + ` (heading ${rf ? JSON.stringify(rf) : "?"}`
+        + `${rs ? ` / section ${JSON.stringify(rs)}` : ""}`
+        + `${rg ? ` -> giver ${JSON.stringify(rg)}` : " -> no giver matched"})`
+        + ` [${why}]`;
+      if (line !== lastRepRefusalLine) { lastRepRefusalLine = line; console.log(line); }
       broadcastMissions();
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify({ ok: false, refusal: body.refusalOnly }));

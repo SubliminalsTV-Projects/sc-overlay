@@ -200,12 +200,49 @@ const GIVERS: Record<string, string[]> = {
   const r = readRepPage(clipped, SCOPES, GIVERS);
   check("a partly-visible ladder is REFUSED, not read at the wrong index",
     r.layout === null && r.refusal === "cards-incomplete", `[${r.refusal}]`);
+  // 🔴 A REFUSAL HAS TO SAY WHICH FACTION IT REFUSED. Sub reported "Covalex and Wikelo Emporium
+  // don't seem to be working" and nothing anywhere said which page had been declined or why: the
+  // three refusals a player can act on were the only ones reaching a human AND the only ones
+  // absent from sidecar.log. Everything below the heading match is already known by this point,
+  // so withholding it was never a safety property — just an omission.
+  check("...and it names the faction heading it read", r.factionRaw === "BOUNTY HUNTERS GUILD",
+    `[${r.factionRaw}]`);
+  check("...and the section header", r.sectionRaw === "BOUNTY HUNTING", `[${r.sectionRaw}]`);
+  check("...and whether the heading resolved to a giver at all",
+    r.giver === "Bounty Hunters Guild", `[${r.giver}]`);
 }
 {
   // Nothing on screen names a scope we ship.
   const noSection = frame(SHOT1.lines.filter((l) => l.text !== "BOUNTY HUNTING"));
   const r = readRepPage(noSection, SCOPES, GIVERS);
   check("a page with no scope header is refused", r.refusal === "no-section", `[${r.refusal}]`);
+  check("...and still names the faction, which is all it managed to read",
+    r.factionRaw === "BOUNTY HUNTERS GUILD" && !r.sectionRaw,
+    `[${r.factionRaw} / ${r.sectionRaw}]`);
+}
+{
+  // 🔴 AN EMPTY `tried` ON A `no-scope` IS THE DIAGNOSIS, not a missing detail: it means the
+  // candidate loop skipped everything on `giverScopeSet` — the heading resolved to a giver our
+  // dataset says never awards the scope this page is showing. That is a DATA gap, and it is a
+  // completely different fix from "we weighed real ladders and none matched", which produces the
+  // SAME refusal string with a populated `tried`. This is the distinction the Covalex report
+  // needs, so it is asserted rather than left to be re-derived from a log line.
+  const starved = readRepPage(frame(SHOT1.lines), SCOPES,
+    { "Bounty Hunters Guild": ["Wikelo"] });   // a giver that awards nothing on this page
+  check("a giver that never awards the section's scope refuses no-scope",
+    starved.refusal === "no-scope", `[${starved.refusal}]`);
+  check("...with an EMPTY tried, which is what says it was a data gap and not a bad read",
+    starved.tried.length === 0, `[${starved.tried.length} considered]`);
+  check("...and still names the giver it resolved, so the gap is reportable",
+    starved.giver === "Bounty Hunters Guild" && starved.sectionRaw === "BOUNTY HUNTING",
+    `[${starved.giver} / ${starved.sectionRaw}]`);
+  // POSITIVE CONTROL off the SAME frame: with the real giver map that identical page resolves and
+  // `tried` is populated. Without it, everything above is equally consistent with the fixture
+  // simply being unreadable — which would make "empty tried" mean nothing at all.
+  const ok2 = readRepPage(frame(SHOT1.lines), SCOPES, GIVERS);
+  check("...while the same frame with the real giver map reads fine and DID weigh ladders",
+    ok2.refusal === null && ok2.tried.length > 0,
+    `[${ok2.refusal} / ${ok2.tried.length} tried]`);
 }
 {
   // Two equally-large headings: we cannot tell which faction this is.

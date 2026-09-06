@@ -1,5 +1,5 @@
 /**
- * Negative controls for the two invariants `npm run test:repscan` gained with the rep-scan
+ * Negative controls for the invariants `test:repscan` and `test:reppage` gained with the rep-scan
  * feedback work. Run with `npm run control:repname`.
  *
  * Each control re-injects the exact defect the assertion exists to catch, requires the suite to
@@ -20,10 +20,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const SUITE = ["src/rep-scan-apply.test.ts"];
+const APPLY = ["src/rep-scan-apply.test.ts"];
+const PAGE = ["src/rep-page.test.ts"];
 const CONTROLS = [
   {
     name: "C1 giverScopes keyed by the raw dataset spelling again",
+    suite: APPLY,
     file: "src/missions.ts",
     from: "      const key = normRep(m.giver);",
     to: "      const key = m.giver;   // CONTROL: the pre-fix behaviour",
@@ -34,11 +36,35 @@ const CONTROLS = [
   },
   {
     name: "C2 the interpolation cap removed (a 100% bar lands on the next rank's floor)",
+    suite: APPLY,
     file: "src/missions.ts",
     from: "      ? Math.min(Math.round(floor + p * ((ceiling as number) - floor)), (ceiling as number) - 1)",
     to: "      ? Math.round(floor + p * ((ceiling as number) - floor))   // CONTROL: cap removed",
     reddens: ["the stored value and the rank index NEVER name different ranks"],
     staysGreen: ["the sweep really covered every rank of every shipped scope"],
+  },
+  {
+    // The state the Covalex / Wikelo Emporium report arrived in: a refusal that names no faction.
+    name: "C3 a refusal stops carrying the faction heading it read",
+    suite: PAGE,
+    file: "src/rep-page.ts",
+    from: 'return { layout: null, refusal: "cards-incomplete", tried, factionRaw, sectionRaw, giver };',
+    to: 'return { layout: null, refusal: "cards-incomplete", tried };   // CONTROL: the pre-fix behaviour',
+    reddens: ["...and it names the faction heading it read"],
+    // Sourced from a DIFFERENT refusal path, so it vouches that the fixture still reads and the
+    // suite still runs even with this one path gutted.
+    staysGreen: ["...and still names the giver it resolved, so the gap is reportable"],
+  },
+  {
+    // 🔑 The one that stops "empty tried" being a free assertion: make the loop consider a ladder
+    // it should have skipped, and the data-gap signature disappears.
+    name: "C4 the giver's scope set stops filtering the candidate ladders",
+    suite: PAGE,
+    file: "src/rep-page.ts",
+    from: "    if (giverScopeSet && !giverScopeSet.has(key)) continue;   // this giver never awards it",
+    to: "    if (false && giverScopeSet && !giverScopeSet.has(key)) continue;   // CONTROL",
+    reddens: ["...with an EMPTY tried, which is what says it was a data gap and not a bad read"],
+    staysGreen: ["...while the same frame with the real giver map reads fine and DID weigh ladders"],
   },
 ];
 
@@ -55,7 +81,7 @@ for (const c of CONTROLS) {
   let out = "";
   try {
     writeFileSync(c.file, patched);
-    const r = spawnSync(process.execPath, ["node_modules/tsx/dist/cli.mjs", ...SUITE],
+    const r = spawnSync(process.execPath, ["node_modules/tsx/dist/cli.mjs", ...c.suite],
       { encoding: "utf8", timeout: 300_000 });
     out = (r.stdout ?? "") + (r.stderr ?? "");
   } finally {
@@ -63,7 +89,7 @@ for (const c of CONTROLS) {
   }
 
   const reported = /^(ok|FAIL)/m.test(out);
-  const finished = /all rep re-baseline checks passed|FAILED \(\d+\)/.test(out);
+  const finished = /all rep re-baseline checks passed|all rep-page checks passed|FAILED \(\d+\)/.test(out);
   const failedLines = out.split(/\r?\n/).filter((l) => l.startsWith("FAIL"));
   const hit = c.reddens.every((a) => failedLines.some((l) => l.includes(a)));
   const vouched = c.staysGreen.every((a) => !failedLines.some((l) => l.includes(a)));

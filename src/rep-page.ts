@@ -72,8 +72,23 @@ export interface RepLayoutResult {
   layout: RepLayout | null;
   refusal: RepRefusal | null;
   /** Every candidate considered and how it scored, so a refusal can be explained rather than
-   *  just reported. This is what a diagnostics dump prints. */
+   *  just reported. This is what a diagnostics dump prints.
+   *
+   *  🔑 AN EMPTY `tried` ON A `no-scope` IS ITSELF THE DIAGNOSIS, and it is the one worth having:
+   *  it means the loop skipped every candidate on `giverScopeSet` — the heading resolved to a
+   *  giver our dataset says never awards the scope this page is showing. A NON-empty `tried` on
+   *  the same refusal means the opposite: we considered ladders and none matched the cards. One
+   *  refusal string, two completely different fixes (a giver→scope gap vs an OCR/ladder problem). */
   tried: { scope: string; matched: number; of: number }[];
+  /** The faction heading and section header as OCR read them, carried on a REFUSAL as well as on
+   *  a good read. Without them "it isn't working" names nothing anyone can act on — which is
+   *  exactly the state the Covalex / Wikelo Emporium report arrived in. Null until they are known
+   *  (`no-heading`, `heading-not-decisive`). */
+  factionRaw?: string | null;
+  sectionRaw?: string | null;
+  /** The dataset giver the heading resolved to, or null when it matched none or several. On a
+   *  refusal this separates "we do not know this faction" from "we know it and declined". */
+  giver?: string | null;
 }
 
 // ── Text normalisation ────────────────────────────────────────────────────────
@@ -236,7 +251,7 @@ export function readRepPage(
     if (arr) arr.push(key); else byDisplay.set(k, [key]);
   }
   const sectionLine = below.find((l) => byDisplay.has(normRep(l.text)));
-  if (!sectionLine) return { layout: null, refusal: "no-section", tried };
+  if (!sectionLine) return { layout: null, refusal: "no-section", tried, factionRaw, giver };
   const sectionRaw = sectionLine.text.trim();
 
   // The standing word is whatever sits between the heading and the section header on the
@@ -261,15 +276,15 @@ export function readRepPage(
     if (found.length > bestMatched) { bestMatched = found.length; best = { key, cards: found }; bestTied = false; }
     else if (found.length === bestMatched && found.length > 0) bestTied = true;
   }
-  if (!best || bestMatched === 0) return { layout: null, refusal: "no-scope", tried };
-  if (bestTied) return { layout: null, refusal: "scope-ambiguous", tried };
+  if (!best || bestMatched === 0) return { layout: null, refusal: "no-scope", tried, factionRaw, sectionRaw, giver };
+  if (bestTied) return { layout: null, refusal: "scope-ambiguous", tried, factionRaw, sectionRaw, giver };
 
   // 🔴 EVERY rank has to be on screen. A section whose ladder is only partly visible is a
   // scrolled page, and reading a rank index off a partial ladder puts the player at the wrong
   // place on it — which, given the scan overwrites, is the failure this whole module exists to
   // avoid. Refuse and let them scroll.
   const wanted = scopes[best.key].ranks.length;
-  if (best.cards.length !== wanted) return { layout: null, refusal: "cards-incomplete", tried };
+  if (best.cards.length !== wanted) return { layout: null, refusal: "cards-incomplete", tried, factionRaw, sectionRaw, giver };
 
   return {
     layout: {
