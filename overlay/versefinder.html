@@ -1093,6 +1093,16 @@
           const a = document.createElement("span");
           a.className = "age " + ageBand(shownAt);
           a.textContent = cf ? receiptAge(shownAt) : ageOf(shownAt);
+          // 🔴 THE MOMENT THE BAND WAS COMPUTED FROM, because the PRINTED age cannot carry it.
+          // `ageOf` compresses to whole months above 60 days, so "3mo" means anything from 90 to
+          // 119 — and the stale/ancient cut is at 100, INSIDE that bucket. Nothing reading the
+          // rendered text can tell which side of the cut a quote fell on, so before this attribute
+          // existed the band was computed from a value no observer could see. That made the pill
+          // untestable at the precision it operates at, and the suite's band assertion had been
+          // silently comparing a full-precision band against a label rounded down by up to 29 days.
+          // ⚠️ DIAGNOSTIC ONLY — nothing renders from it and no behaviour reads it. The 7d and 45d
+          // cuts need it least (ageOf prints exact days below 60); the 100d cut cannot do without.
+          a.dataset.at = String(shownAt);
           // The source word rides INSIDE the pill, as a child so it can be subordinated
           // typographically without taking a colour of its own — see `.age .src`.
           const src = document.createElement("span");

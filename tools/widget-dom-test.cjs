@@ -3719,22 +3719,9 @@ const VERSEFINDER = `(async () => {
        "inherited=" + inherited + "  " + BANDS.map((k) => k + "=" + seen[k]).join("  "));
     probe.remove();
   }
-  // Parse the rendered text back and check it agrees with the band it was given.
-  const bandOf = (txt) => {
-    const m = /^(\\d+)(d|mo)$/.exec(txt.trim());
-    // ⚠️ "today" covers BOTH live and fresh — the printed text cannot separate an hour from six
-    // days, so this accepts either rather than pretending to a precision it does not have.
-    if (txt.trim() === "today") return "today";
-    if (!m) return null;
-    const d = m[2] === "mo" ? Number(m[1]) * 30 : Number(m[1]);
-    return d <= 7 ? "fresh" : d <= 45 ? "recent" : d <= 100 ? "stale" : "ancient";
-  };
-  const agrees = (want, got) => (want === "today" ? (got === "live" || got === "fresh") : want === got);
   // 🔴 RE-POINTED, flight onepill: the pill now carries the SOURCE WORD inside it, so its
-  // textContent reads "8d UEX" and the anchored pattern above matched none of them. That drove
-  // the checked list to zero and the assertion went red on its own non-empty guard, not on a
-  // wrong band — which is the guard doing exactly its job, and the reason it is written that way.
-  // The mark is appended LAST, so trimming its length off the end recovers the age exactly.
+  // textContent reads "8d UEX". The mark is appended LAST, so trimming its length off the end
+  // recovers the age exactly.
   const ageTextOf = (p) => {
     const s = p.querySelector(".src");
     const whole = p.textContent || "";
@@ -3742,11 +3729,122 @@ const VERSEFINDER = `(async () => {
     return mark && whole.slice(-mark.length) === mark
       ? whole.slice(0, whole.length - mark.length) : whole;
   };
-  const checked = pills.map((p) => ({ want: bandOf(ageTextOf(p)), got: BANDS.find((b) => p.classList.contains(b)) }))
-    .filter((x) => x.want !== null);
-  ok("the band really matches the age it prints", checked.length > 0 && checked.every((x) => agrees(x.want, x.got)),
-     checked.length + " checked, first mismatch: "
-     + (checked.find((x) => !agrees(x.want, x.got)) ? JSON.stringify(checked.find((x) => !agrees(x.want, x.got))) : "none"));
+
+  /* ══ 🔴 THE BAND IS CHECKED AGAINST THE MOMENT; THE LABEL IS CHECKED AGAINST THE BAND ═══════
+     These are TWO rules, and they were one — which is why the one could not be made to pass.
+
+     It parsed the printed age back into days (three-months -> 3 x 30 = 90) and compared that to a
+     band the widget had computed from the real timestamp. A LOSSY ROUND TRIP: ageOf compresses to
+     whole months above 60 days, so a three-month label means anything from 90 to 119 days, and
+     the stale/ancient cut sits at 100 — INSIDE that bucket. A quote 103 days old prints as three
+     months, reconstructs as 90, and is demanded to be stale while the widget correctly calls it
+     ancient. The 7d and 45d cuts never had this problem: ageOf prints exact days below 60, so
+     they are recoverable. Only the 100d cut falls inside a compressed label.
+
+     🔴 NOT A REGRESSION, AND IT COULD ONLY GET WORSE. Measured on the shipped data/item-shops.json
+     the day this was repaired: 11,803 of 24,288 quotes (48.6%) sit at 101-119 days, and the median
+     quote age had drifted from the 83 days recorded when the assertion was written to 99 — one day
+     short of the cut. It went red on an untouched tree the week enough rows crossed 100, and would
+     have reddened harder every week after. An assertion over a dated fixture must be relative, or
+     it becomes a clock.
+
+     🔑 THE REAL DEFECT WAS THAT THE BAND'S INPUT WAS NOT OBSERVABLE. The widget banded off a value
+     the DOM did not expose, so no render-side test could ever verify it at the precision it runs
+     at. The pill states that moment now (data-at); everything below is downstream of that. */
+
+  // ── RULE 1 — the band matches the MOMENT it was computed from ──────────────────────────────
+  // 🔑 The thresholds are restated here DELIBERATELY. This is the specification, so moving
+  // ageBand's cuts must redden this and be looked at, rather than the test silently agreeing with
+  // whatever the page now does. Calling the page's own ageBand would be a tautology — it is the
+  // function that set the class.
+  const abBandForDays = (d) => (d <= 7 ? "fresh" : d <= 45 ? "recent" : d <= 100 ? "stale" : "ancient");
+  const abBandFromSec = (sec) => {
+    const nowSec = Date.now() / 1000;
+    if (Math.max(0, Math.floor(nowSec - sec)) <= 6 * 3600) return "live";
+    return abBandForDays(Math.floor((nowSec - sec) / 86400));
+  };
+  // POSITIVE FIRST: the precise check below is a must-not-contain over a list this fills, so a
+  // pill that stopped carrying its moment would empty the list and satisfy it for free.
+  const abStamped = pills.filter((p) => Number(p.dataset.at) > 0);
+  ok("🔴 every age pill states the moment its band was computed from",
+     pills.length > 0 && abStamped.length === pills.length,
+     abStamped.length + " of " + pills.length + " carry data-at");
+  const abWrong = abStamped
+    .map((p) => ({ at: Number(p.dataset.at), says: ageTextOf(p).trim(),
+                   want: abBandFromSec(Number(p.dataset.at)),
+                   got: BANDS.find((b) => p.classList.contains(b)) }))
+    .filter((x) => x.want !== x.got);
+  ok("the band really matches the age it prints",
+     abStamped.length > 0 && abWrong.length === 0,
+     abStamped.length + " checked, " + abWrong.length + " wrong"
+     + (abWrong.length ? ", first: " + JSON.stringify(abWrong[0]) : ""));
+
+  // ── RULE 1b — and that moment is really the quote's, not a clock the renderer invented ──────
+  // 🔑 Sourced UPSTREAM of the code under test: the sidecar payload, not the render. Without this
+  // rule 1 would still pass if the page stamped data-at and banded from the same wrong value.
+  const abAsOf = {};
+  for (const r of ((vfPayload && vfPayload.results) || [])) for (const q of (r.quotes || [])) {
+    if (typeof q.asOf === "number") abAsOf[q.asOf] = 1;
+  }
+  // UEX pills only — a confirmation ages from the community pool, which the sandbox switches off.
+  const abUex = abStamped.filter((p) => {
+    const s = p.querySelector(".src");
+    return s && (s.textContent || "").indexOf("UEX") >= 0;
+  });
+  if (Object.keys(abAsOf).length === 0 || abUex.length === 0) {
+    skip("every surveyed pill's moment came from the payload",
+         "payload had " + Object.keys(abAsOf).length + " dated quotes, " + abUex.length + " UEX pills on screen");
+  } else {
+    const abStrays = abUex.filter((p) => !abAsOf[Number(p.dataset.at)]);
+    ok("every surveyed pill's moment came from the payload, not from a clock",
+       abStrays.length === 0,
+       abUex.length + " UEX pills against " + Object.keys(abAsOf).length + " dated quotes, "
+       + abStrays.length + " unaccounted for");
+  }
+
+  // ── RULE 2 — the LABEL beside that colour must not contradict it ────────────────────────────
+  // This is what the player actually sees, and rule 1 cannot catch it: a correct band beside a
+  // label whose formatter has drifted (an 8-day pill painted ancient) passes rule 1 happily.
+  // Checked as the RANGE of ages the label admits, which is the strongest claim a lossy label
+  // supports — three months admits stale OR ancient and both are honest; 8 days admits recent and
+  // nothing else, so this is a real check on every exact-day label rather than a loosening.
+  // ⚠️ No regex anywhere in here: a suite body is a template literal and a backslash escape is
+  // eaten before the pattern is ever compiled, which makes a must-not-contain pass forever.
+  const abLabelRange = (t) => {
+    const s = t.trim();
+    // "today" covers BOTH live and fresh — the printed text cannot separate an hour from six days.
+    if (s === "today") return { lo: 0, hi: 0, today: true };
+    if (s.length > 2 && s.slice(-2) === "mo") {
+      const n = Number(s.slice(0, -2));
+      return n > 0 ? { lo: n * 30, hi: n * 30 + 29 } : null;
+    }
+    if (s.length > 1 && s.slice(-1) === "d") {
+      const n = Number(s.slice(0, -1));
+      return n > 0 ? { lo: n, hi: n } : null;
+    }
+    return null;   // "just now" / "5m" / "7h" — the receipt ladder, not an age in days
+  };
+  const abAllowed = (r) => {
+    if (r.today) return ["live", "fresh"];
+    const set = [];
+    for (let d = r.lo; d <= r.hi; d++) {
+      const b = abBandForDays(d);
+      if (set.indexOf(b) < 0) set.push(b);
+    }
+    return set;
+  };
+  const abLabelled = pills
+    .map((p) => ({ says: ageTextOf(p).trim(), range: abLabelRange(ageTextOf(p)),
+                   got: BANDS.find((b) => p.classList.contains(b)) }))
+    .filter((x) => x.range !== null);
+  ok("there are day-ladder labels to check the colour against",
+     abLabelled.length > 0, abLabelled.length + " of " + pills.length + " pills print an age in days");
+  const abContra = abLabelled.filter((x) => abAllowed(x.range).indexOf(x.got) < 0);
+  ok("no pill prints an age its own colour contradicts",
+     abContra.length === 0,
+     abLabelled.length + " checked, " + abContra.length + " contradictory"
+     + (abContra.length ? ", first: " + JSON.stringify({ says: abContra[0].says, got: abContra[0].got,
+                                                          allowed: abAllowed(abContra[0].range) }) : ""));
 
   // 🔑 Price and age stay TOGETHER (Sub, 2026-08-21) — they answer the same question, and
   // splitting them to opposite edges made the eye travel to reconcile two halves of one fact.
