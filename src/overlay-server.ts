@@ -1163,6 +1163,9 @@ interface RepScanLast {
   envIsLive?: boolean;
 }
 let repScanLast: RepScanLast | null = null;
+/** The last `[rep-scan] refused:` line written, so an unchanged refusal is not written again on
+ *  every capture tick. Not persisted — it describes this session's log file. */
+let lastRepRefusalLine = "";
 let payoutMatcher: ContractMatcher | null = null;
 let payoutMatcherFor = "";
 
@@ -4627,9 +4630,19 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // 🔑 Names the FACTION HEADING on a refusal, not just the giver — on `no-giver` the giver is
     // empty by definition, so the old form logged `( / Courier)` and the one fact worth having
     // (which faction the app failed to recognise) went nowhere.
+    //
+    // ⚠️ DEDUPED, because the scan re-fires every capture tick while the page is up — up to
+    // once a second. Undeduped it writes the same line ~60 times a minute, which pushes
+    // everything else out of the 60-line `logTail` that "Copy diagnostics" sends. That matters
+    // more now than it did: with the faction named, this line IS the record of which factions
+    // the app does not recognise, and a record that drowns the rest of the log is not one.
     if (!out.ok) {
       const who = giver || (faction ? `heading "${faction}"` : "");
-      console.log(`[rep-scan] refused: ${out.refusal}${who || scope ? ` (${who}${scope ? ` / ${scope}` : ""})` : ""}`);
+      const line = `[rep-scan] refused: ${out.refusal}`
+        + (who || scope ? ` (${who}${scope ? ` / ${scope}` : ""})` : "");
+      if (line !== lastRepRefusalLine) { lastRepRefusalLine = line; console.log(line); }
+    } else {
+      lastRepRefusalLine = "";   // a good read re-arms it, so the NEXT refusal is logged
     }
     repScanLast = { at: Date.now(), ...out } as RepScanLast;
     if (!out.ok) broadcastMissions();
