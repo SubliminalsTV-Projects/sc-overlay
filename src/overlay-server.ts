@@ -46,7 +46,7 @@ import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLine
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
 import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, contractRegionOrDefault, DEFAULT_CONTRACT_REGION, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
-import { readRepPage, repRankFromBars, type RepBarRead } from "./rep-page.js";
+import { readRepPage, repReadPayload, repRankFromBars, type RepBarRead } from "./rep-page.js";
 import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
@@ -2874,10 +2874,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // neither of them.
       if (config.repScan) {
         const rp = readRepPage(ocr, tracker.repScopesForScan(), tracker.giverScopes());
-        repRead = rp.layout
-          ? { ok: true, scope: rp.layout.scope, giver: rp.layout.giver,
-              faction: rp.layout.factionRaw, section: rp.layout.sectionRaw, cards: rp.layout.cards }
-          : { ok: false, refusal: rp.refusal };
+        // 🔴 ONE PROJECTION, TWO ROUTES. This is the call site the capture loop actually
+        // consumes; /api/rep-read is the other. They were written out by hand and diverged the
+        // moment refusal detail was added to only one — see repReadPayload's comment.
+        repRead = repReadPayload(rp);
       }
       // 🔑 Contract parsing does NOT happen on this branch. This is Windows OCR, which
       // mangles the panel's ~12px giver line badly enough to lose otherwise-perfect rows
@@ -4557,15 +4557,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (config.repScan && Array.isArray(body?.lines)) {
       const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
       const r = readRepPage(ocr, tracker.repScopesForScan(), tracker.giverScopes());
-      out = r.layout
-        ? { ok: true, scope: r.layout.scope, giver: r.layout.giver, faction: r.layout.factionRaw,
-            section: r.layout.sectionRaw, cards: r.layout.cards }
-        // 🔑 A refusal carries the heading, the section and the candidate scoring too. Without
-        // them a forwarded refusal says only "not saved", which is where the Covalex / Wikelo
-        // Emporium report started — a page the player is staring at, declining for a reason
-        // nothing anywhere records.
-        : { ok: false, refusal: r.refusal, faction: r.factionRaw ?? null,
-            section: r.sectionRaw ?? null, giver: r.giver ?? null, tried: r.tried };
+      // Same projection the screen-read glance uses — see repReadPayload.
+      out = repReadPayload(r);
     }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(out));
@@ -4595,11 +4588,19 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // an EMPTY tried means the giver resolved and our dataset says it never awards this scope
       // (a data gap); a NON-empty one means we weighed real ladders and none matched the cards
       // (an OCR or layout problem). Same refusal string, opposite fixes.
-      const tried = Array.isArray(body?.tried)
+      // 🔴 AN ABSENT `tried` AND AN EMPTY ONE MEAN COMPLETELY DIFFERENT THINGS, and collapsing
+      // them is how this line told its first lie: patched into only one of the two readRepPage
+      // call sites, the field never arrived, and the log confidently reported "no candidate
+      // ladders were even considered" — i.e. a DATA GAP — about a frame nobody had asked. Say
+      // "the caller sent none" when the field is missing; only a real empty array is evidence.
+      const sentTried = Array.isArray(body?.tried);
+      const tried = sentTried
         ? (body.tried as { scope: string; matched: number; of: number }[]) : [];
-      const why = tried.length
-        ? tried.map((t) => `${t.scope} ${t.matched}/${t.of}`).join(", ")
-        : "no candidate ladders were even considered";
+      const why = !sentTried
+        ? "no candidate detail sent"
+        : tried.length
+          ? tried.map((t) => `${t.scope} ${t.matched}/${t.of}`).join(", ")
+          : "no candidate ladders were even considered (the giver awards none of them)";
       const line = `[rep-scan] refused: ${body.refusalOnly}`
         + ` (heading ${rf ? JSON.stringify(rf) : "?"}`
         + `${rs ? ` / section ${JSON.stringify(rs)}` : ""}`

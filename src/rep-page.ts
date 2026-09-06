@@ -91,6 +91,29 @@ export interface RepLayoutResult {
   giver?: string | null;
 }
 
+/**
+ * The wire shape of a page read — what BOTH sidecar routes hand to the capture loop.
+ *
+ * 🔴 THIS EXISTS BECAUSE THE PROJECTION WAS WRITTEN OUT BY HAND IN TWO PLACES AND THEY DIVERGED.
+ * `readRepPage` is called from `/api/screen-read` (the one the capture loop actually consumes)
+ * and from `/api/rep-read`. Adding the refusal detail to only the second shipped a log line
+ * reading `refused: no-scope (heading ? -> no giver matched) [no candidate ladders were even
+ * considered]` — which is not just unhelpful, it CONFIDENTLY REPORTED A DATA GAP, because an
+ * absent `tried` was indistinguishable from an empty one. A diagnostic that invents a diagnosis
+ * is worse than no diagnostic at all.
+ *
+ * 🔑 The repo's standing rule is "when something must hold in several places, enumerate the call
+ * sites". Better still is to remove the second place: one function, two callers, nothing to keep
+ * in sync. Add a field here and both routes get it.
+ */
+export function repReadPayload(r: RepLayoutResult): Record<string, unknown> {
+  return r.layout
+    ? { ok: true, scope: r.layout.scope, giver: r.layout.giver,
+        faction: r.layout.factionRaw, section: r.layout.sectionRaw, cards: r.layout.cards }
+    : { ok: false, refusal: r.refusal, faction: r.factionRaw ?? null,
+        section: r.sectionRaw ?? null, giver: r.giver ?? null, tried: r.tried };
+}
+
 // ── Text normalisation ────────────────────────────────────────────────────────
 //
 // OCR gives us upper case with the game's own letter-spacing, and the dataset gives us mixed

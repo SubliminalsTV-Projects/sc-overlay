@@ -14,7 +14,7 @@
  */
 import { readFileSync } from "node:fs";
 import {
-  readRepPage, repRankFromBars, repFloorForRank, barSearchBox, normRep,
+  readRepPage, repReadPayload, repRankFromBars, repFloorForRank, barSearchBox, normRep,
   type RepScopes, type RepBarRead,
 } from "./rep-page.js";
 import type { OcrLine, OcrResult } from "./screen-read.js";
@@ -361,6 +361,42 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
       && !/^[IVX]+$/.test(t)));
   check("no shipped rank name is an all-roman-letter WORD the repair could mangle",
     allRoman.length === 0, allRoman.join(" | ") || "(none)");
+}
+
+// ── The wire shape both routes send ──────────────────────────────────────────
+{
+  // 🔴 THE BUG THIS BLOCK EXISTS FOR: the projection from a RepLayoutResult to the JSON the
+  // capture loop reads was written out BY HAND IN TWO PLACES — `/api/screen-read` (the one the
+  // loop actually consumes) and `/api/rep-read`. Refusal detail was added to the second only, so
+  // the field never arrived and the log confidently printed
+  //   refused: no-scope (heading ? -> no giver matched) [no candidate ladders were even considered]
+  // — asserting a DATA GAP about a frame nobody had asked, because an absent `tried` was
+  // indistinguishable from an empty one. There is one projection now; this pins its contract so a
+  // future field cannot be added to a route instead of to the shape.
+  const good = repReadPayload(readRepPage(frame(SHOT1.lines), SCOPES, GIVERS));
+  check("a good read is projected with everything the bar reader needs",
+    good.ok === true && !!good.scope && !!good.cards && good.giver === "Bounty Hunters Guild",
+    `[${good.scope} / ${good.giver}]`);
+
+  const clipped = frame(SHOT1.lines.filter((l) => !(l.y > 980 && l.x > 2000)));
+  const bad = repReadPayload(readRepPage(clipped, SCOPES, GIVERS));
+  check("a refusal is projected with the heading, the section and the giver",
+    bad.ok === false && bad.faction === "BOUNTY HUNTERS GUILD"
+      && bad.section === "BOUNTY HUNTING" && bad.giver === "Bounty Hunters Guild",
+    `[${bad.faction} / ${bad.section} / ${bad.giver}]`);
+  // 🔑 `tried` must be PRESENT on every refusal, even when it is empty. An absent field and an
+  // empty array mean opposite things to the log line that reads them, and conflating them is what
+  // manufactured the false "data gap" verdict above.
+  check("...and always carries `tried`, so absent and empty stay distinguishable",
+    Array.isArray(bad.tried), `[${typeof bad.tried}]`);
+
+  // A refusal from BEFORE the heading is known projects nulls rather than omitting the keys —
+  // the consumer can then tell "we never got that far" from "the field was not sent".
+  const blank = repReadPayload(readRepPage(frame([]), SCOPES, GIVERS));
+  check("a refusal with nothing read yet still projects the keys, as nulls",
+    blank.ok === false && blank.refusal === "no-heading"
+      && blank.faction === null && blank.section === null && Array.isArray(blank.tried),
+    `[${blank.refusal} / ${blank.faction} / ${blank.section}]`);
 }
 
 console.log(failed ? `\nFAILED (${failed})` : "\nall rep-page checks passed");
