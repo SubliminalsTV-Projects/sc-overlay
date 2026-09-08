@@ -121,7 +121,7 @@ const HAUL_INJECT =
 const CONTROLS = [
   {
     name: "C1  log: a live game feeding the widget while every assertion runs",
-    why: "the noise the repaired assertions must tolerate — 17 lines/sec, carrying the real token",
+    why: "the noise the repaired assertions must tolerate — 67 lines/sec, carrying the real token",
     only: "logView",
     edits: [patch(SUITE, LOG_NOISE_ANCHOR, LOG_NOISE)],
     mustRedden: [],
@@ -262,10 +262,16 @@ const CONTROLS = [
          rather than something else about this suite. */
       patch(SUITE, "  ${HAULFREEZE}\n\n  plan = {", "\n  plan = {"),
     ],
-    // 🔴 The board check is what a replaced fixture destroys FIRST, and it is the one that used to
-    // be unreachable — the suite threw on trackedNow before ever printing a verdict. It must now
-    // fail BY NAME. The runner separately fails this control if the suite throws at all.
-    mustRedden: [H_BOARD, H_FIXTURE, H_TRACKED],
+    /* 🔴 THE BOARD CHECK IS WHAT A REPLACED FIXTURE DESTROYS FIRST, and it must fail BY NAME.
+       It could not, on the first run of this file: the guard failed and then the very next line
+       threw on byTitle(), and a throw makes `out` never return — so all three came back ABSENT
+       under "suite threw before it could report", which is the ORIGINAL defect reproduced rather
+       than a graded failure. The suite bails out after a failed board check now.
+       ⚠️ H_FIXTURE and H_TRACKED are deliberately NOT listed: they sit past that bail-out, so
+       they do not run at all and the suite says so with a skip. Listing them would demand a red
+       from an assertion that never executed. The runner separately fails this control if the
+       suite throws at all, which is what stops the bail-out hiding a regression. */
+    mustRedden: [H_BOARD],
     mustStayGreen: [],
   },
 ];

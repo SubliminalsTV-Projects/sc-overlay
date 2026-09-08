@@ -7545,6 +7545,25 @@ const HAULING = `(async () => {
   const cards = [...document.querySelectorAll(".card")];
   const byTitle = (t) => cards.find((c) => c.querySelector(".t").textContent === t);
   ok("three contracts on the board", cards.length === 3, cards.length);
+  if (cards.length !== 3) {
+    /* 🔴 STOP HERE — AND ONLY BECAUSE THE ASSERTION ABOVE HAS ALREADY FAILED. Everything below
+       indexes cards[] and byTitle(), so on a board that is not the fixture it THROWS. A throw is
+       not merely one more failure: the out array never returns, so it discards every assertion
+       this suite has already collected, and the run reports
+         FAIL suite threw before it could report [Cannot read properties of undefined ...]
+       naming no feature at all. That is exactly how this whole family stayed invisible — the
+       original report was a throw on trackedNow, which reads as a mission-tracking regression
+       and was really the sidecar's live board replacing the fixture. Measured: with the freeze
+       removed and a real SSE frame injected, the guard above fails and then the NEXT line throws,
+       taking the named failure down with it. Returning leaves the named red standing.
+       ⚠️ THIS IS NOT THE FUNNEL'S EARLY-RETURN SHAPE, which is the one this file warns about.
+       That one returns on a GREEN path and silently drops 21 of 28 assertions while printing
+       "7/7 passed". This one is unreachable unless the run is already RED, so it can never turn a
+       coverage cliff into a pass — and it says out loud what it did not measure. */
+    skip("the rest of the hauling suite",
+         "the board is not the fixture (" + cards.length + " cards), so nothing below is measurable");
+    return out;
+  }
   ok("🔴 a RANGED contract prints both ends, never the worst case alone",
      byTitle("Untracked Haul").querySelector(".amt").textContent === "40–56 SCU",
      byTitle("Untracked Haul").querySelector(".amt").textContent);
