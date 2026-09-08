@@ -218,6 +218,12 @@
           "pickPng", "pickLog", "setOverlayHotkey", "setBindingHotkey", "setMiningHotkey",
           "setWebViewHotkey", "setInteractHotkey", "setMoveHotkey", "setFabClaimHotkey",
           "setOpacityHotkey", "setUnfocusedOpacity",
+          // 🔴 THREE THAT WERE MISSING, and they failed in exactly the way this allowlist's own
+          // warning describes: config.html's Journal row and all ten per-widget rows call these,
+          // so from the EMBEDDED settings widget a hotkey was written to config.json and never
+          // registered — it worked after the next restart, which reads like a flaky hotkey rather
+          // than a missing bridge. (The settings WINDOW has the real preload and was always fine.)
+          "setNotepadHotkey", "setWidgetHotkey", "getWidgetHotkeys",
           "setHoldMode", "resetLayout", "metrics", "openDataFolder", "isElevated",
           "restartAsAdmin", "getOverlayEnabled", "setOverlayEnabled", "onOverlayEnabledChanged",
           // 🔑 This list is an ALLOWLIST, so a method added to config-preload.cjs reaches the
@@ -496,6 +502,14 @@
   const WCFG_IDLE_MS = +(new URLSearchParams(location.search).get("wcfgidle")) || 15000;
   let wcfgIdleT = null;
   let wcfgOpenFor = null; // the widget whose settings are up, so only that one gets closed
+  // The live per-widget hotkey capture, or null. One at a time — the keyboard grab it takes is
+  // canvas-wide. Declared up here (with the rest of the popover's state) because showEl() below
+  // has to be able to cancel one, and showEl runs long before the hotkey block further down.
+  let hkCapture = null;      // { w, btn, win, onKey, onBlur }
+  // Which button to focus once the shell says the keyboard is ours. Held here rather than routed
+  // through textFocusTarget, because that channel addresses a WIDGET's focusFn and this button may
+  // be in the canvas document, which is not any widget's page.
+  let hkPendingFocus = null;
   function cancelWidgetSettingsIdle() {
     clearTimeout(wcfgIdleT); wcfgIdleT = null; wcfgOpenFor = null;
   }
@@ -521,6 +535,11 @@
   function showEl(w, vis) {
     vis = !!vis;
     const was = wShown(w);
+    // 🔴 Hiding a widget UNLOADS its iframe, so a hotkey capture living in that page has no
+    // document left to release the canvas-wide keyboard grab from. Same rule every typing widget
+    // carries in its onHide, applied here because this row exists on every widget rather than
+    // being wired per registry entry.
+    if (!vis && hkCapture && hkCapture.w === w) endHotkeyCapture();
     if (w.local) document.body.classList.toggle("bp-hidden", !vis);
     else { const el = wEl(w); if (el) el.style.display = vis ? "" : "none"; }
     if (vis !== was) notifyVisibility(w, vis);
@@ -591,6 +610,12 @@
         + '<label class="wcfg-row"><span class="wcfg-lbl">Full on hover</span>'
         + '<input type="checkbox" class="wcfg-hover"'
         + ' title="Bring this widget back to full opacity while the cursor is over it." /></label>'
+        // Hidden until the shell says this widget can carry a hotkey — which is also never, in a
+        // browser source, where there is no shell to register one.
+        + '<div class="wcfg-row wcfg-hkrow" hidden><span class="wcfg-lbl">Hotkey</span>'
+        + '<button type="button" class="wh-btn wcfg-hk"></button>'
+        + '<button type="button" class="wh-btn wcfg-hkx" title="Remove this hotkey" hidden>✕</button>'
+        + '</div>'
         + '</div>'
         + '<div class="wmove"><div class="movebox">' + label + '<button type="button" class="wdone">Done</button></div></div>'
         + '<div class="wresize" title="Drag to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 20 L20 8 M14 20 L20 14"/></svg></div>'
@@ -1448,6 +1473,7 @@
     injectTextRow(w);
     injectAngleRow(w);
     injectFadeRows(w);
+    injectHotkeyRow(w);
     showAngle(w);
   }
   // 🔑 The fade controls have to be injected as well, not just offered in the local popover.
@@ -1546,6 +1572,181 @@
     w.s.text = Math.round(Math.max(TEXT_MIN, Math.min(TEXT_MAX, textScale(w) + by)) * 100) / 100;
     applyTextScale(w); showTextScale(w); persistW(w);
   }
+
+  // ── Per-widget hotkey ───────────────────────────────────────────────────────────────────
+  // Sub asked for a widget's hotkey to be settable IN the widget as well as in Settings. This is
+  // the second surface, and it MIRRORS the Settings row rather than moving it — which is only
+  // safe because `config.widgetHotkeys` is MERGED PER KEY server-side, never replaced, so two
+  // writers cannot delete each other's widgets. (A setting normally MOVES rather than being
+  // mirrored, for exactly that reason. See the settings page's whole-form save.)
+  // ⚠️ The residue of mirroring: Settings builds its map when it LOADS, so leaving that window
+  // open, setting a hotkey here, then pressing Save there writes the stale value back for that
+  // one widget. Narrow, and the price of having the control in both places.
+  //
+  // 🔑 TWO SURFACES, like the fade sliders: a widget whose page has settings of its own never
+  // opens the shell `.wcfg` popover (the cog has ONE destination), so a row added only to the
+  // popover is unreachable for Mining, Loot Split, Event Tracker and SC Feed — the widgets you
+  // would most likely test on. Both are built from the same wiring function below.
+  //
+  // 🔑 The key vocabulary is `hotkey-keys.js`, shared with config.html: both surfaces write into
+  // the SAME map, so a second copy of the key table here could produce a binding Settings cannot
+  // display or re-set.
+
+  // {registryKey: accel} as the SHELL currently has it registered — including the historical
+  // defaults for mining/notepad/bindingChart that live in no config file. Null until the shell
+  // answers, and permanently null in a browser (OBS), where a hotkey means nothing and the row
+  // therefore never appears.
+  let widgetAccels = null;
+  function refreshWidgetHotkeys() {
+    const get = window.overlayApi?.cfg?.getWidgetHotkeys;
+    if (typeof get !== "function") return Promise.resolve(null);
+    return get().then((m) => {
+      if (!m || typeof m !== "object") return null;
+      widgetAccels = m;
+      for (const w of WIDGETS) showHotkey(w);
+      return m;
+    }).catch(() => null);
+  }
+  /** Can this widget carry a hotkey at all? Derived from what the shell reports, so a widget
+   *  added to WIDGET_TOGGLES later gets its row with no change here. */
+  const wCanBind = (w) => !!widgetAccels && Object.prototype.hasOwnProperty.call(widgetAccels, w.key);
+  const wAccel = (w) => (widgetAccels && widgetAccels[w.key]) || "";
+  // Both surfaces at once, same shape as fadeControls.
+  function hotkeyControls(w, sel) {
+    const out = [];
+    const local = wEl(w)?.querySelectorAll(sel); if (local) out.push(...local);
+    let root = null; try { root = wSettingsRoot(w); } catch { /* iframe gone */ }
+    if (root) out.push(...root.querySelectorAll(sel));
+    return out;
+  }
+  function showHotkey(w) {
+    const can = wCanBind(w);
+    const accel = wAccel(w);
+    for (const r of hotkeyControls(w, ".wcfg-hkrow")) r.hidden = !can;
+    for (const b of hotkeyControls(w, ".wcfg-hk")) {
+      if (b === hkCapture?.btn) continue; // mid-capture: don't overwrite "Press keys…"
+      b.textContent = accel ? window.SCHotkeyKeys.pretty(accel) : "None — click to set";
+      b.title = accel
+        ? "Press " + window.SCHotkeyKeys.pretty(accel) + " in game to show or hide " + w.title
+        : "Give " + w.title + " a hotkey";
+    }
+    for (const x of hotkeyControls(w, ".wcfg-hkx")) x.hidden = !accel; // nothing to clear when unbound
+  }
+
+  function startHotkeyCapture(w, btn) {
+    endHotkeyCapture();                       // only one grab, and it is canvas-wide
+    const win = btn.ownerDocument.defaultView; // the canvas OR the widget's own iframe
+    const onKey = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === "Escape") { endHotkeyCapture(); showHotkey(w); return; }
+      if (window.SCHotkeyKeys.isModifierOnly(e)) return; // wait for the non-modifier key
+      const got = window.SCHotkeyKeys.fromEvent(e, {});
+      endHotkeyCapture();
+      if (got.reject) { btn.textContent = "⚠ " + window.SCHotkeyKeys.rejectText(got.reject); return; }
+      setWidgetHotkey(w, got.accel);
+    };
+    // 🔴 The grab is released on EVERY exit, blur included. A grab left up makes the whole canvas
+    // interactive on every display and suspends the interact key, with nothing on screen saying
+    // so — the stuck-lock class of bug. blur covers the popover closing under the capture (the
+    // 15s idle timer, an outside click, the widget being hidden and its iframe unloaded).
+    const onBlur = () => endHotkeyCapture();
+    hkCapture = { w, btn, win, onKey, onBlur };
+    win.addEventListener("keydown", onKey, true);
+    btn.addEventListener("blur", onBlur);
+    btn.textContent = "Press keys…  (Esc cancels)";
+    // Take the canvas-wide keyboard grab. A DELIBERATE act — the user clicked a button that says
+    // "click to set" — which is the bar this grab has to clear.
+    hkPendingFocus = btn;
+    window.overlayApi?.notepadEditing?.(true);
+    try { btn.focus({ preventScroll: true }); } catch { /* gone */ }
+    armWidgetSettingsIdle(); // don't let the 15s timer shut the popover mid-chord
+  }
+  function endHotkeyCapture() {
+    const c = hkCapture;
+    hkCapture = null;
+    hkPendingFocus = null;
+    if (!c) return;
+    try { c.win.removeEventListener("keydown", c.onKey, true); } catch { /* window gone */ }
+    try { c.btn.removeEventListener("blur", c.onBlur); } catch { /* gone */ }
+    window.overlayApi?.notepadEditing?.(false);
+  }
+
+  /** Apply + persist. Apply FIRST so a chord another app owns is reported before it is saved. */
+  function setWidgetHotkey(w, accel) {
+    const set = window.overlayApi?.cfg?.setWidgetHotkey;
+    const done = (res) => {
+      if (res && res.ok === false) {
+        for (const b of hotkeyControls(w, ".wcfg-hk")) {
+          b.textContent = res.error === "in_use"
+            ? "⚠ " + window.SCHotkeyKeys.pretty(accel) + " is taken"
+            : "⚠ that combo is invalid";
+        }
+        return;
+      }
+      if (widgetAccels) widgetAccels[w.key] = accel;
+      showHotkey(w);
+      // `""` is a real saved value meaning "removed" — only an ABSENT key takes a default — and
+      // the sidecar merges this map field by field, so posting one widget leaves the rest alone.
+      fetch("/api/config", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ widgetHotkeys: { [w.key]: accel } }),
+      }).catch(() => { /* best-effort; the shell already registered it for this session */ });
+    };
+    if (typeof set !== "function") { done({ ok: true }); return; }
+    Promise.resolve(set(w.key, accel)).then((r) => done(r || { ok: true })).catch(() => done({ ok: true }));
+  }
+
+  /** Shared by the injected row and the local popover, so the two surfaces cannot drift. */
+  function wireHotkeyControls(w, root) {
+    const btn = root.querySelector(".wcfg-hk");
+    const clr = root.querySelector(".wcfg-hkx");
+    btn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (hkCapture?.btn === btn) { endHotkeyCapture(); showHotkey(w); return; } // click again = cancel
+      startHotkeyCapture(w, btn);
+    });
+    clr?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      endHotkeyCapture();
+      setWidgetHotkey(w, "");
+    });
+    // Don't start a widget drag from either button.
+    for (const el of [btn, clr]) el?.addEventListener("pointerdown", (e) => e.stopPropagation());
+  }
+
+  /** The same row inside a page's OWN settings sheet — see the two-surfaces note above. */
+  function injectHotkeyRow(w) {
+    // The tracker is the one LOCAL widget, and its "settings root" is the GLOBAL cog menu rather
+    // than a sheet of its own. It also has no shell toggle (nothing in WIDGET_TOGGLES), so there
+    // is nothing to bind — injecting here would put a permanently hidden control in the app's
+    // main menu.
+    if (w.local) return;
+    const root = wSettingsRoot(w);
+    if (!root || root.querySelector(".wcfg-hkrow")) return;
+    const doc = root.ownerDocument;
+    // 🔑 The row's layout goes in a STYLESHEET rather than inline, unlike the sibling injected
+    // rows — because this one is hidden until the shell answers, and an inline `display:flex`
+    // beats any [hidden] rule that isn't !important. A class rule keeps the guard ordinary.
+    if (!doc.querySelector("style[data-wcfg-hk]")) {
+      const guard = doc.createElement("style");
+      guard.setAttribute("data-wcfg-hk", "1");
+      guard.textContent = ".wcfg-hkrow{display:flex;align-items:center;gap:6px;padding:6px 12px}"
+        + ".wcfg-hkrow[hidden],.wcfg-hkx[hidden]{display:none}";
+      (doc.head || doc.documentElement).appendChild(guard);
+    }
+    const row = doc.createElement("div");
+    row.className = "wcfg-hkrow";
+    row.hidden = true; // revealed by showHotkey once the shell says this widget can bind one
+    const btnCss = "font:inherit;font-size:11px;cursor:pointer;padding:2px 7px;border-radius:5px;"
+      + "background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.22);color:inherit";
+    row.innerHTML = '<span style="flex:1;font-size:11px;letter-spacing:.06em;opacity:.85">Hotkey</span>'
+      + '<button type="button" class="wcfg-hk" style="' + btnCss + '"></button>'
+      + '<button type="button" class="wcfg-hkx" title="Remove this hotkey" style="' + btnCss + '" hidden>✕</button>';
+    wireHotkeyControls(w, row);
+    root.appendChild(row);
+    showHotkey(w);
+  }
+
   // Close any open settings popover on an outside click.
   document.addEventListener("click", (e) => {
     const t = e.target;
@@ -1743,6 +1944,12 @@
   let textFocusTarget = "notepad";
   // The shell says the (held) interact key is released → safe to focus the text field now.
   window.overlayApi?.onNotepadFocus?.(() => {
+    // A live hotkey capture owns the keyboard: the button to focus may be in THIS document (the
+    // shell popover), which is not any widget's page, so it cannot be addressed by focusFn.
+    if (hkPendingFocus) {
+      try { hkPendingFocus.focus({ preventScroll: true }); } catch { /* gone */ }
+      return;
+    }
     try {
       const w = WBY[textFocusTarget];
       if (w?.focusFn) frameWin(w)?.[w.focusFn]?.();
@@ -1891,6 +2098,10 @@
       // decided at parse time: the widget's frame doesn't exist yet, so it would always come out
       // "hidden" and a player who left the outline on would find it gone.
       syncScanBox();
+      // Which widgets can carry a hotkey, and what each one is bound to. Asked once here so the
+      // row is already correct the first time a cog is opened; re-asked on every cog open, which
+      // is how a change made in Settings reaches this surface.
+      void refreshWidgetHotkeys();
     })();
 
     for (const w of WIDGETS) {
@@ -2002,8 +2213,11 @@
         touchWidget(w);
         // ONE destination. A page with its own settings opens THAT (the Text size row was injected
         // into it); everything else opens the local popover, which carries Text size itself.
+        // Re-ask the shell what is bound, so a hotkey changed in Settings shows here (and vice
+        // versa) without a second push channel — opening the cog is the moment it is looked at.
+        void refreshWidgetHotkeys();
         if (el.classList.contains("has-settings")) {
-          try { wOpenSettings(w); showTextScale(w); showAngle(w); showFade(w); } catch { /* iframe gone */ }
+          try { wOpenSettings(w); showTextScale(w); showAngle(w); showFade(w); showHotkey(w); } catch { /* iframe gone */ }
           syncViewMask();
           armWidgetSettingsIdle(w);
           return;
@@ -2012,6 +2226,7 @@
         showTextScale(w);
         showAngle(w);
         showFade(w);
+        showHotkey(w);
         syncViewMask();
         armWidgetSettingsIdle(w);
       });
@@ -2028,6 +2243,7 @@
       // GROUP when one is stacked — so a grouped widget's fade was being saved onto an object
       // nothing reads it back from, and silently forgot itself on restart.
       wireFadeControls(w, el);
+      wireHotkeyControls(w, el);
       el.querySelector(".wh-move")?.addEventListener("click", (e) => { e.stopPropagation(); window.overlayApi?.beginMove?.(); });
       el.querySelector(".wh-reset")?.addEventListener("click", (e) => { e.stopPropagation(); resetWidget(w); });
       // Engaging a widget's own chrome reveals its header too (the iframe can't report this one).

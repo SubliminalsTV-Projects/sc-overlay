@@ -55,8 +55,10 @@ const SITE = "https://subliminal.gg";
 // the site refuses `break`s the loop WITHOUT recording the filename, so an oversized upload is
 // retried on every tick forever and every other backup queues behind it. Raising this constant
 // ahead of the site would not merely fail to help, it would wedge the queue of every heavy user.
-// Whoever raises it should also make a 400 (as opposed to a transient failure) record the name,
-// so a body the site will never accept cannot block the ones it would.
+// ✅ THAT LAST PARAGRAPH IS DONE (2026-09-08): a body-level refusal is now told apart from a
+// transient one and records the name in `skippedPatch`, so the wedge described above cannot
+// happen. The ceiling itself has NOT moved and must not move here first — it is still the site's
+// number, and the client sending 32 MB into a 4 MB door would simply refuse every heavy session.
 const MAX_BYTES = 4 * 1024 * 1024;
 /** Backups uploaded per tick.
  *
@@ -418,28 +420,111 @@ export function clearSkippedBackups(statePath: string): void {
   saveState(statePath, state);
 }
 
-/** POST one scrubbed body. Returns true when the site accepted it.
+// ── SAYING SO WHEN IT DOES NOT WORK ───────────────────────────────────────────────────────────
+//
+// 🔴 A CONTRIBUTOR SILENTLY SENDING NOTHING IS A DATA GAP NOBODY CAN SEE. The shared-log corpus
+// feeds community prices, so a user who ticked "share my logs" and whose uploads have been
+// refused for a month is invisible from both ends: the app shows a ticked box, and the site
+// simply has fewer rows than it thought. The box says what was ASKED FOR; this says what is
+// HAPPENING, which is the same distinction `configSave` exists for in /api/diagnostics.
+//
+// 🔑 REMEMBERED as well as logged, for the reason `lastSaveError` is: a console line is the first
+// thing to age out of the 60-line `logTail` the diagnostics report carries, and a fault that has
+// been quietly recurring for weeks is exactly the one whose line has scrolled away. The remembered
+// copy is a standing statement; the log line is the timestamped event.
+//
+// 🔑 DEDUPED. This tick runs every 20 minutes forever, so an unconditional line means a user who
+// is offline overnight opens a log holding nothing but 30 copies of the same sentence — which
+// destroys the log as a place to read anything else. The same fault repeats only in the
+// remembered copy (whose `at` keeps moving); the console gets it once, plus one line when it
+// clears, so a reader can tell a live problem from a historical one.
+export interface ShareFault {
+  /** When it last happened — this keeps moving while the same fault recurs. */
+  at: string;
+  /** What was being attempted, in the words a reader needs. */
+  what: string;
+  /** The HTTP status, or null when the request never got an answer at all. */
+  status: number | null;
+  detail: string;
+}
+let lastFault: ShareFault | null = null;
+let faultKey = ""; // the fault currently on the record; "" once it has cleared
+/** The last thing that went wrong while sharing, or null when sharing is working. Read by
+ *  /api/diagnostics so the paste-able report says so without depending on a log line surviving. */
+export function logShareFault(): ShareFault | null { return lastFault; }
+function noteFault(what: string, status: number | null, detail: string): void {
+  lastFault = { at: new Date().toISOString(), what, status, detail };
+  const key = `${what}|${status ?? ""}|${detail.slice(0, 120)}`;
+  if (key === faultKey) return; // same trouble as last tick — already said once
+  faultKey = key;
+  console.error(`[log-share] ${what}${status === null ? "" : ` (HTTP ${status})`}: ${detail}`);
+}
+function clearFault(note: string): void {
+  if (!faultKey) return; // nothing was wrong; a "recovered" line for a fault nobody saw is noise
+  faultKey = "";
+  lastFault = null;
+  console.log(`[log-share] sharing is working again — ${note}`);
+}
+
+/** What to do about an upload that did not succeed.
+ *  - `retry`   the SITE is unhappy, not this body. Stop the tick and try the same file again.
+ *  - `refused` this BODY will never be accepted (too large, malformed). Set it aside and move on.
+ *
+ *  🔴 THE SPLIT IS THE POINT, and getting it wrong is expensive in both directions. Treating
+ *  everything as `retry` is what wedges the queue: an oversized session is re-sent every tick
+ *  forever with every other backup stuck behind it, which is why MAX_BYTES could not be raised.
+ *  Treating everything as `refused` is worse — a 503 or an expired token would set aside the
+ *  player's whole backlog for a problem that had nothing to do with any of it.
+ *  ⚠️ 401/403 are `retry` DESPITE being 4xx: they are about the TOKEN, and nothing will be
+ *  accepted until the user fixes it. Setting files aside over an auth failure blames the file. */
+function uploadVerdict(status: number): "retry" | "refused" {
+  if (status === 401 || status === 403) return "retry"; // the token, not the body
+  if (status === 429 || status >= 500) return "retry";  // rate-limited or the site is down
+  return status >= 400 ? "refused" : "retry";
+}
+
+/** POST one scrubbed body.
  *
  *  🔑 `kind` is not cosmetic — the site keeps a separate retention quota per kind, and that split
  *  is why a rotated session survives long enough to be read. ⚠️ Only "backup" is ever sent now;
  *  "live" stays in the type because the site's API still has the arm and a caller that guessed at
  *  a third value would be a silent 400. See maybeShareLog for why the live upload was removed. */
-async function upload(text: string, token: string, appVersion: string, label: string, kind: "live" | "backup"): Promise<boolean> {
+async function upload(
+  text: string, token: string, appVersion: string, label: string, kind: "live" | "backup",
+): Promise<"ok" | "retry" | "refused"> {
   const bytes = Buffer.byteLength(text, "utf8");
-  const res = await fetch(`${SITE}/api/bp-tracker/logs?v=${encodeURIComponent(appVersion)}&kind=${kind}`, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain", Authorization: `Bearer ${token}` },
-    body: text,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${SITE}/api/bp-tracker/logs?v=${encodeURIComponent(appVersion)}&kind=${kind}`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain", Authorization: `Bearer ${token}` },
+      body: text,
+    });
+  } catch (err) {
+    // 🔑 Caught HERE rather than by maybeShareLog's outer catch. That one reports "[log-share]
+    // failed" with no idea an upload was even involved, and — worse — it unwinds past
+    // saveState(), so a tick that had already classified twenty files threw the whole verdict set
+    // away because the twenty-first could not reach the network.
+    noteFault(`could not reach ${SITE} to send ${label}`, null, String(err));
+    return "retry";
+  }
   if (res.ok) {
     console.log(`[log-share] uploaded ${label} (${bytes} bytes)`);
-    return true;
+    clearFault(`uploaded ${label}`);
+    return "ok";
   }
   // A bare status told us nothing when this fired for real — say what was sent and what
   // the site said back, so the next one doesn't need an investigation.
   const why = await res.text().catch(() => "");
-  console.error(`[log-share] upload rejected: ${res.status} ${why.slice(0, 200)} (sent ${bytes} bytes of ${label} as ${appVersion || "unknown version"})`);
-  return false;
+  const verdict = uploadVerdict(res.status);
+  noteFault(
+    verdict === "refused"
+      ? `the site refused ${label} — it has been set aside rather than retried`
+      : `the site would not accept ${label}; it will be retried`,
+    res.status,
+    `${why.slice(0, 200)} (sent ${bytes} bytes as ${appVersion || "unknown version"})`,
+  );
+  return verdict;
 }
 
 /** Send up to BACKUPS_PER_TICK rotated sessions that carry signal and have not been sent before.
@@ -522,12 +607,17 @@ async function shareBackups(cfg: LogShareConfig, appVersion: string, state: Shar
 
     const text = tail(scrubGameLog(raw).text, MAX_BYTES);
     if (!Buffer.byteLength(text, "utf8")) { state.backups.add(b.n); rejected++; continue; }
-    if (await upload(text, cfg.syncToken, appVersion, `rotated session ${b.n}`, "backup")) {
-      state.backups.add(b.n);
-      sent++;
-    } else {
-      break; // site is unhappy — stop and retry next tick rather than hammering it
-    }
+    const verdict = await upload(text, cfg.syncToken, appVersion, `rotated session ${b.n}`, "backup");
+    if (verdict === "ok") { state.backups.add(b.n); sent++; continue; }
+    // 🔴 A BODY THE SITE WILL NEVER ACCEPT MUST NOT BLOCK THE ONES IT WOULD. This used to `break`
+    // whatever the reason and record nothing, so one oversized session was re-sent on every tick
+    // forever with the entire backlog queued behind it — the wedge that made MAX_BYTES unraisable.
+    // 🔑 It goes in `skippedPatch`, the RECOVERABLE set, never in `backups`. "The site refused
+    // this" is a verdict about a RULE that lives on the far side of the wire and can change (a
+    // raised ceiling), not about the file — the same distinction the 2026-08-16 blacklist bug was
+    // about. The Share-logs off→on gesture and a rules bump both put it back in play.
+    if (verdict === "refused") { state.skippedPatch.add(b.n); rejected++; continue; }
+    break; // site is unhappy in general — stop and retry next tick rather than hammering it
   }
 }
 
@@ -567,6 +657,8 @@ export async function maybeShareLog(cfg: LogShareConfig, appVersion = "", stateP
     await shareBackups(cfg, appVersion, state, patchOf(liveHead));
     saveState(statePath, state);
   } catch (err) {
-    console.error("[log-share] failed:", err);
+    // Deduped and remembered like every other fault — this fires every 20 minutes for as long as
+    // whatever went wrong keeps going wrong, and an undeduped line here would bury the log.
+    noteFault("the sharing tick failed", null, String(err));
   }
 }

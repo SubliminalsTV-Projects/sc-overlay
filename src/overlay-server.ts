@@ -50,7 +50,7 @@ import { readRepPage, repReadPayload, repRankFromBars, type RepBarRead } from ".
 import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
-import { maybeShareLog, clearSkippedBackups } from "./log-share.js";
+import { maybeShareLog, clearSkippedBackups, logShareFault } from "./log-share.js";
 import { EventFeed, EVENT_REFRESH_MS } from "./event-feed.js";
 import { reportBody as rewardReportBody } from "./event-rewards.js";
 
@@ -4422,6 +4422,17 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         // screen-reading feature is on, which is not a failure — there is nothing to test.
         ocr: await getOcrHealth(),
       },
+      // 🔑 `shareLogs` above is the user's SETTING; this is whether it is actually working. They
+      // differ exactly when it matters — the shared-log corpus feeds community prices, so a
+      // contributor whose uploads have been refused for a month is a data gap invisible from both
+      // ends: a ticked box here and simply fewer rows there. Same distinction as `configSave`.
+      // The remembered copy is here rather than left to `logTail` because a fault that has been
+      // recurring for weeks is precisely the one whose console line has scrolled out of it.
+      logSharing: config.shareLogs !== true
+        ? { enabled: false }
+        : logShareFault()
+          ? { enabled: true, ok: false, ...logShareFault() }
+          : { enabled: true, ok: true },
       display: { hwAccel: config.hwAccel === true, amdCompat: config.amdCompat === true, theme: config.theme || "mobiglas" },
       twitch: { chatChannel: config.twitchChannel || "(none)", signedInAs: config.twitchUserLogin || "(not signed in)" },
       // Mixed-DPI is the one class of bug that is INVISIBLE from a machine whose monitors all

@@ -2088,6 +2088,20 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.handle("set-widget-hotkey", (_e, key, accel) =>
     registerWidgetHotkey(String(key || ""), typeof accel === "string" ? accel : ""));
   ipcMain.handle("list-widget-hotkeys", () => Object.keys(WIDGET_TOGGLES));
+  // What is bound RIGHT NOW, for every widget that can be bound at all. The canvas's per-widget
+  // hotkey row reads this rather than the config file, for two reasons: the legacy-scalar
+  // fallback in applyWidgetHotkeys() is the shell's rule and a second copy of it in the canvas
+  // would drift (mining/notepad/bindingChart keep HISTORICAL shell defaults that are in no
+  // config file), and the KEY SET is derived from WIDGET_TOGGLES — so a widget added later gets
+  // its row with no change here or in the canvas.
+  // ⚠️ `widgetAccels` holds only what really registered, so a chord another app owns reads back
+  // as unbound. That is the honest answer for a control whose whole subject is "does this key
+  // work"; Settings shows the saved value plus its own "couldn't register" warning.
+  ipcMain.handle("get-widget-hotkeys", () => {
+    const out = {};
+    for (const key of Object.keys(WIDGET_TOGGLES)) out[key] = widgetAccels.get(key) || "";
+    return out;
+  });
   ipcMain.handle("set-overlay-hotkey", (_e, accel) =>
     registerOverlayHotkey(typeof accel === "string" ? accel : ""));
   ipcMain.handle("set-binding-hotkey", (_e, accel) =>

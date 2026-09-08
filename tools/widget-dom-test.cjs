@@ -110,6 +110,7 @@ const SUITE_TAGS = {
   "client errors reach the sidecar": ["shell"],
   "per-widget angle": ["canvas"],
   "split fade: panel vs text": ["canvas"],
+  "per-widget hotkey row": ["canvas"],
   "test-environment badge": ["shell"],
   "nothing animates at rest": ["shell", "blueprint"],
   "mission info from community data": ["blueprint"],
@@ -711,6 +712,13 @@ const REACH = `(async () => {
         if (!reachable(cfg)) unreachable.push(w.key + " settings popover");
         for (const b of cfg.querySelectorAll(".wh-btn")) {
           if (getComputedStyle(b).display === "none") continue;
+          // 🔑 ...and the same question one level up. A control can be withheld by its ROW rather
+          // than by itself — the hotkey row is hidden outright wherever there is no shell to
+          // register one, which is every browser source and every suite here with no stub
+          // preload. offsetParent is null exactly when this element or an ancestor is
+          // display:none, so it separates "not offered" from "offered and clipped away", which is
+          // the only thing this assertion is about. A control that IS drawn still has one.
+          if (b.offsetParent === null) continue;
           if (visibleArea(b) < 25) clipped.push(w.key + " popover " + b.className.replace("wh-btn ", ""));
         }
       }
@@ -5200,6 +5208,194 @@ const ANGLE = `(async () => {
   return out;
 })()`;
 
+// ── Suite: the per-widget hotkey row ───────────────────────────────────────────
+// The FIRST attempt at this control shipped nowhere: it was added to the shell's `.wcfg` popover
+// and its click handler never fired, so it was reverted rather than committed as a dead button.
+// The cause is structural and is what half of this suite is about — the cog has ONE destination,
+// so a widget whose page carries its own settings sheet NEVER opens that popover. A row added
+// only there is unreachable for Mining, Loot Split, Event Tracker and SC Feed. Both surfaces are
+// driven here, on real widgets of each kind, by clicking the real button.
+//
+// 🔴 THE NETWORK IS STUBBED, not avoided. This control POSTs to /api/config, and the suite drives
+// the LIVE sidecar — so without a stub a green run would have written a hotkey into whoever's
+// profile the sidecar is pointed at. The stub is asserted to be installed AND recording before
+// anything clicks, because a stub that returns without recording makes every "it was saved"
+// assertion here free.
+const HOTKEYROW = `(async () => {
+  ${PRELUDE}
+  for (const w of WIDGETS) setWidgetVisible(w, true);
+  await sleep(1200);                        // iframes must LOAD before we can reach into them
+  await refreshWidgetHotkeys();
+
+  // ── the fetch stub, and its own positive control ────────────────────────────
+  const posts = [];
+  const realFetch = window.fetch;
+  window.fetch = (url, init) => {
+    posts.push({ url: String(url), body: (init && typeof init.body === "string") ? init.body : "" });
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+  };
+  await fetch("/__stub-selftest", { method: "POST", body: "x" });
+  ok("the config POST stub is installed AND recording", posts.length === 1, posts.length);
+  posts.length = 0;
+  const cfgPosts = () => posts.filter(p => p.url.indexOf("/api/config") >= 0);
+
+  // ── which widgets get a row at all ──────────────────────────────────────────
+  const rowOf = (w, root) => root.querySelector(".wcfg-hkrow");
+  const vis = (e) => !!e && getComputedStyle(e).display !== "none" && e.getBoundingClientRect().width > 0;
+  const logView = WBY.logView, party = WBY.party, bp = WBY.blueprint, webView = WBY.webView;
+  // ⚠️ ONE POPOVER AT A TIME. The cog handler clears cfgopen from every widget before opening
+  // this one, so opening a second closes the first — the surfaces have to be driven in turn.
+
+  // ── a widget the shell offers no toggle for must get no control, not an inert one ───────────
+  // 🔴 THE SUBJECT HAS TO BE A WIDGET THAT HAS A POPOVER. The tracker was the obvious choice and
+  // it is a tautology: it is LOCAL, so buildWidgetEls skips it entirely and there is no popover
+  // to put a row in — the assertion passes however the visibility rule behaves. webView is a
+  // normal widget that the stub shell simply does not report a hotkey for, which is the state a
+  // widget added to the registry before WIDGET_TOGGLES is really in.
+  el(webView).querySelector(".wh-cog").click();
+  await sleep(250);
+  const wvRow = rowOf(webView, el(webView));
+  ok("the popover really is open, or 'the row is hidden' is free",
+     vis(el(webView).querySelector(".wcfg-dimrow")));
+  ok("a widget the shell reports no hotkey for keeps its row hidden",
+     !wCanBind(webView) && !!wvRow && !vis(wvRow),
+     wvRow ? getComputedStyle(wvRow).display : "(no row)");
+  ok("...and the tracker, a LOCAL widget with no popover at all, has no row to hide",
+     !wCanBind(bp) && !rowOf(bp, el(bp)));
+
+  el(logView).querySelector(".wh-cog").click();
+  await sleep(250);
+
+  const popRow = rowOf(logView, el(logView));
+  ok("a widget with no settings sheet gets the row in the shell popover", vis(popRow),
+     popRow ? getComputedStyle(popRow).display + " w=" + Math.round(popRow.getBoundingClientRect().width) : "(no row)");
+
+  // ── what it says before anything is bound, and after ────────────────────────
+  const btn = popRow.querySelector(".wcfg-hk");
+  const clr = popRow.querySelector(".wcfg-hkx");
+  ok("an unbound widget says so rather than showing a blank", btn.textContent.indexOf("None") === 0, btn.textContent);
+  ok("...and offers nothing to clear", !vis(clr));
+  const boundRow = rowOf(WBY.bindingChart, el(WBY.bindingChart));
+  ok("a widget the SHELL has bound shows that binding, defaults included",
+     boundRow && boundRow.querySelector(".wcfg-hk").textContent === "Ctrl + F3",
+     boundRow ? boundRow.querySelector(".wcfg-hk").textContent : "(no row)");
+
+  // ── capture: the real button, the real keyboard grab ────────────────────────
+  window.__editing = false;
+  window.__hotkeySets.length = 0;
+  btn.click();
+  ok("clicking it starts a capture", btn.textContent.indexOf("Press keys") === 0, btn.textContent);
+  ok("...and takes the canvas keyboard grab, or the keypress never arrives", window.__editing === true);
+  ok("...focusing the button, which is what routes the keydown to it", document.activeElement === btn);
+
+  const press = (target, init) => target.dispatchEvent(new KeyboardEvent("keydown", Object.assign({ bubbles: true, cancelable: true }, init)));
+  // A bare letter is not a hotkey — this window is over a game.
+  press(btn, { key: "k", code: "KeyK" });
+  ok("a bare letter is refused, in words", btn.textContent.indexOf("modifier") > 0, btn.textContent);
+  ok("...and the grab is released even on a refusal", window.__editing === false);
+
+  btn.click();
+  press(btn, { key: "Control", code: "ControlLeft", ctrlKey: true });
+  ok("a modifier alone does not end the capture", btn.textContent.indexOf("Press keys") === 0, btn.textContent);
+  press(btn, { key: "F9", code: "F9", ctrlKey: true, shiftKey: true });
+  await sleep(60);
+  ok("a real chord is accepted and shown", btn.textContent === "Ctrl + Shift + F9", btn.textContent);
+  ok("...the grab is handed back", window.__editing === false);
+  ok("...the SHELL was told to register it, so it works this session",
+     window.__hotkeySets.length === 1 && window.__hotkeySets[0][0] === "logView"
+       && window.__hotkeySets[0][1] === "Control+Shift+F9", JSON.stringify(window.__hotkeySets));
+  const saveBody = cfgPosts().length ? cfgPosts()[cfgPosts().length - 1].body : "";
+  ok("...and it was SAVED, so it survives a restart", saveBody.indexOf("Control+Shift+F9") > 0, saveBody);
+  // 🔑 The reason a per-widget control may MIRROR the Settings row instead of moving it: the
+  // sidecar merges this map key by key. Posting the whole map would let one widget's cog delete
+  // every other widget's hotkey.
+  let sent = null; try { sent = JSON.parse(saveBody); } catch (e) { sent = null; }
+  ok("...posting ONLY its own key, since the map is merged per key server-side",
+     !!sent && sent.widgetHotkeys && Object.keys(sent.widgetHotkeys).length === 1
+       && sent.widgetHotkeys.logView === "Control+Shift+F9", saveBody);
+  ok("...and now offers to remove it", vis(clr));
+
+  // ── Escape, and clearing ────────────────────────────────────────────────────
+  btn.click();
+  press(btn, { key: "Escape", code: "Escape" });
+  ok("Escape cancels and puts the binding back", btn.textContent === "Ctrl + Shift + F9", btn.textContent);
+  ok("...releasing the grab", window.__editing === false);
+
+  window.__hotkeySets.length = 0;
+  posts.length = 0;
+  clr.click();
+  await sleep(60);
+  ok("the remove button unbinds it", btn.textContent.indexOf("None") === 0, btn.textContent);
+  // "" is a REAL saved value meaning removed; an ABSENT key means never set and takes a default.
+  // Sending nothing, or deleting the key, would resurrect whatever default the shell has.
+  ok("...by saving an EMPTY string, not by deleting the key",
+     window.__hotkeySets.length === 1 && window.__hotkeySets[0][1] === "",
+     JSON.stringify(window.__hotkeySets));
+  const clearBody = cfgPosts().length ? cfgPosts()[cfgPosts().length - 1].body : "";
+  ok("...and persisting that same empty string", clearBody.indexOf('"logView":""') > 0, clearBody);
+
+  // ── the injected surface drives the same code ───────────────────────────────
+  // 🔴 THE HALF THAT GOT THE FIRST ATTEMPT REVERTED. The cog has ONE destination, so a widget
+  // whose page owns its settings NEVER opens the popover above — a control that lives only there
+  // is unreachable for Mining, Loot Split, Event Tracker and SC Feed, which are exactly the
+  // widgets someone would try it on. Opening this cog also CLOSES the popover above, which is why
+  // the two surfaces are driven in turn.
+  el(party).querySelector(".wh-cog").click();
+  await sleep(250);
+  let injRoot = null;
+  try { injRoot = wSettingsRoot(party); } catch (e) { injRoot = null; }
+  const injRow = injRoot ? rowOf(party, injRoot) : null;
+  ok("a widget whose PAGE owns its settings gets the row injected there", vis(injRow),
+     injRow ? getComputedStyle(injRow).display + " w=" + Math.round(injRow.getBoundingClientRect().width) : "(no injected row)");
+  ok("...and it really is the other surface: this one never opens the shell popover",
+     !el(party).classList.contains("cfgopen") && el(party).classList.contains("has-settings"),
+     el(party).className);
+  // 🔑 A DEFENSIVE LOOKUP, not a bare injRow.querySelector call. With the injection removed — which is
+  // precisely the reverted-attempt shape one of the controls re-injects — a bare dereference
+  // THROWS and takes the whole suite down before it can report, so the control reads as a green
+  // that "proves nothing is broken". A detached stand-in makes every assertion below fail by name.
+  const iBtn = (injRow && injRow.querySelector(".wcfg-hk")) || document.createElement("button");
+  window.__hotkeySets.length = 0;
+  iBtn.click();
+  ok("the injected row starts a capture too", iBtn.textContent.indexOf("Press keys") === 0, iBtn.textContent);
+  ok("...and takes the same canvas-wide grab", window.__editing === true);
+  // The keydown listener is bound to the document that owns the button — here, the widget's OWN
+  // iframe. Binding it to the canvas would leave this surface permanently dead, which is exactly
+  // the shape of the failure that got the first attempt reverted.
+  press(iBtn, { key: "F13", code: "F13" });
+  await sleep(60);
+  ok("a bare F13 is allowed, and it lands from INSIDE the widget's own document",
+     iBtn.textContent === "F13", iBtn.textContent);
+  ok("...telling the shell about the right widget",
+     window.__hotkeySets.length === 1 && window.__hotkeySets[0][0] === "party", JSON.stringify(window.__hotkeySets));
+  ok("...and the grab is released from there too", window.__editing === false);
+
+  // ── a chord the shell refuses must not be shown as if it took ───────────────
+  window.__hotkeyRefuse = true;
+  iBtn.click();
+  press(iBtn, { key: "F14", code: "F14" });
+  await sleep(60);
+  window.__hotkeyRefuse = false;
+  ok("a chord another app owns says so instead of pretending", iBtn.textContent.indexOf("taken") > 0, iBtn.textContent);
+  ok("...and is NOT saved, so a restart does not re-apply a binding that never worked",
+     cfgPosts().every(p => p.body.indexOf("F14") < 0), cfgPosts().map(p => p.body).join(" | "));
+
+  // ── the stranded-grab guard ─────────────────────────────────────────────────
+  // 🔴 Hiding a widget UNLOADS its iframe, so a capture living in that page has no document left
+  // to lower the canvas-wide grab from — and a stranded grab makes every click AND keystroke on
+  // every monitor stop reaching the game, with nothing on screen able to recover it.
+  iBtn.click();
+  ok("a capture is live before the widget is hidden", window.__editing === true);
+  setWidgetVisible(party, false);
+  await sleep(60);
+  ok("hiding the widget mid-capture releases the grab", window.__editing === false);
+  setWidgetVisible(party, true);
+
+  window.fetch = realFetch;
+  for (const w of WIDGETS) resetWidget(w);
+  return out;
+})()`;
+
 // ── Suite: split fade — the panel and its text, independently ──────────────────
 // 🔑 Half of these assertions exist because the FIRST attempt at this feature shipped a
 // regression that 545 green assertions did not notice. It put the surface layer on
@@ -9257,6 +9453,10 @@ app.whenReady().then(async () => {
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
+    // Stub preload REQUIRED: only the SHELL knows which widgets can carry a hotkey, so without
+    // it the row correctly never appears and every assertion in this suite would be vacuous.
+    fails += await run("per-widget hotkey row", HOTKEYROW,
+      path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("test-environment badge", ENVBADGE, null);
     fails += await run("nothing animates at rest", IDLEPAINT, null);
     fails += await run("mission info from community data", MISSIONINFO, null);

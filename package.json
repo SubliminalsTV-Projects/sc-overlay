@@ -102,7 +102,9 @@
     "control:ageband": "node tools/control-ageband.mjs",
     "control:suiteflakes": "node tools/control-suiteflakes.mjs",
     "control:jauditui": "node tools/control-jauditui.mjs",
-    "control:locfix": "node tools/control-locfix.mjs"
+    "control:locfix": "node tools/control-locfix.mjs",
+    "control:logsharefault": "node tools/control-logsharefault.mjs",
+    "control:widgethotkey": "node tools/control-widgethotkey.cjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",
