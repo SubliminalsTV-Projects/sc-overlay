@@ -99,7 +99,8 @@
     "test:staterecovery": "tsx src/state-recovery.test.ts",
     "control:orisonfix": "node tools/control-orisonfix.mjs",
     "control:repname": "node tools/control-repname.mjs",
-    "control:ageband": "node tools/control-ageband.mjs"
+    "control:ageband": "node tools/control-ageband.mjs",
+    "control:jauditui": "node tools/control-jauditui.mjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",

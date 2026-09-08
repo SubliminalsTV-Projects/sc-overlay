@@ -8960,7 +8960,7 @@ const TDFILTERS = `(async () => {
     tfUrls = [];
     tfPill("any").click();
     await sleep(900);
-    ok("clearing it asks again", tfLast().indexOf("/api/trade/routes") >= 0, tfLast());
+    ok("clearing the age filter asks the sidecar again", tfLast().indexOf("/api/trade/routes") >= 0, tfLast());
     /* 🔑 ABSENT, not a sentinel. An always-present maxAgeDays=0 would make the query string claim a
        constraint that is not there, and the next reader of a captured URL would believe it. */
     ok("...and sends no maxAgeDays at all rather than a value meaning none",
@@ -8994,7 +8994,7 @@ const TDFILTERS = `(async () => {
         if (tfX) {
           tfX.click();
           await sleep(900);
-          ok("clearing it asks again", tfLast().indexOf("/api/trade/routes") >= 0, tfLast());
+          ok("clearing the spend slot asks the sidecar again", tfLast().indexOf("/api/trade/routes") >= 0, tfLast());
           ok("...and sends no budget", tfLast().indexOf("budget=") < 0, tfLast());
         }
       }
@@ -9003,7 +9003,6 @@ const TDFILTERS = `(async () => {
     /* ── 🔴 THE ONE THAT IS UNSENT ON PURPOSE.
        Positive first, and it has to be: "no URL mentions knownStock" is true of an empty list, and
        an empty list is exactly what a broken wrapper or a dead sidecar produces. */
-    const tfAll = tfUrls.concat(["seed"]);
     const tfRoutes = tfUrls.filter((u) => u.indexOf("/api/trade/routes") >= 0);
     ok("the widget really did ask for routes while this suite ran", tfRoutes.length > 0,
        tfRoutes.length + " request(s)");
