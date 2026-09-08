@@ -4789,26 +4789,73 @@ const LOGVIEW = `(async () => {
   const rowCount = () => document.querySelectorAll("#rows .row").length;
   const rowText = () => [...document.querySelectorAll("#rows .row")].map((r) => r.textContent);
   const mk = (n, s) => ({ n, t: Date.now(), s });
+  // Find the row the suite pushed, by content. Every assertion below reads THIS rather than an
+  // ordinal, because an ordinal is a claim about how many other lines exist.
+  const rowWith = (tok) => [...document.querySelectorAll("#rows .row")]
+    .filter((r) => r.textContent.indexOf(tok) > -1)[0] || null;
+  const has = (tok) => rowText().some((t) => t.indexOf(tok) > -1);
+  /* 🔴 IDENTIFY OUR LINES BY A TOKEN ONLY THIS SUITE WRITES. The obvious anchor is
+     AddToPlayerDataBank — and that is a line THE GAME REALLY WRITES, so anchoring on it would
+     find the game's row and vouch for a widget that had lost ours. The engine does not write
+     "marker one" or route anything to "Orbituary".
+     ⚠️ The filter block further down still searches for AddToPlayerDataBank ON PURPOSE — reaching
+     a real engine token past the DOM cap is the thing being tested — but it then checks that OUR
+     line is what came back, using these. */
+  const MINE = "marker one";
+  const MINE2 = "Orbituary";
+
+  /* 🔴 CUT THE LIVE FEED. This suite's own header says it drives push()/render() rather than a
+     live game "so it asserts behaviour instead of whatever Sub happened to be flying" — and that
+     was only ever true of what it PUSHES, never of what it MEASURES. The page holds an
+     EventSource on /logview/events and the sidecar tails a real game.log, so with Star Citizen
+     running the widget keeps appending rows underneath every assertion here. Measured while
+     playing: 220 lines / 30s, about 7 a second — so the exact-count assertions below were failing
+     most runs, with detail strings that read as widget regressions and were nothing of the sort.
+     This is the same repair missions.html already carries as its FIXTURES flag: "a fixture that a
+     real update can overwrite tests nothing, so this one route stays disconnected."
+     🔑 It is the BELT. The assertions below are also written to tolerate an extra line, and both
+     layers are deliberate: this one makes the suite deterministic, and that one keeps it honest
+     if anyone ever re-arms the feed. A negative control has to inject at the layer on the path to
+     the thing it measures.
+     ⚠️ close() does not fire onerror, and nothing else re-arms — connect() is called once at load
+     and only from here. Restored in the finally at the end of the suite. */
+  try { es.close(); } catch { /* never connected */ }
 
   // Start from a known state. The page is talking to the LIVE sidecar, which is tailing a real
   // game.log — asserting against whatever it has streamed would be asserting on Sub's evening.
   ring = []; dropped = 0; filterText = ""; document.getElementById("filter").value = "";
   setPaused(false);
   render();
+  // POSITIVE FIRST, and it is not decoration: with the feed cut, every "only our lines are here"
+  // assertion below is satisfied for free by a page that renders nothing at all. This is the
+  // guard that says the widget was alive when we measured it.
+  ok("the feed is cut, and the panel really is empty to start with", rowCount() === 0, rowCount());
 
   const stamp = "<2026-08-17T22:00:00.000Z>";
   push([mk(1, stamp + " [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> marker one"),
         mk(2, stamp + " [Notice] <CSCItemNavigation> routing from Pyro System to Orbituary")]);
   await sleep(40);
-  ok("a line the game wrote appears", rowCount() === 2, rowCount());
+  /* 🔴 THIS USED TO BE rowCount() === 2, AND IT RACED SUB'S RUNNING GAME. It read 3 on 2026-09-06
+     with Star Citizen open — one engine line inside the 40ms above is enough, and the failure
+     names a token from the game rather than anything in this repo.
+     🔑 What the widget actually promises is that EVERY line it is handed appears, untouched. That
+     is what is asserted now: both pushed lines are found BY CONTENT. It is strictly stronger than
+     a tally — a tally of 2 is equally satisfied by one of our lines plus one of the game's — and
+     it cannot care how many other lines arrived. */
+  const markerRow = rowWith(MINE);
+  const navRow = rowWith(MINE2);
+  ok("a line the game wrote appears", !!markerRow && !!navRow,
+     "marker " + !!markerRow + ", navigation " + !!navRow + " of " + rowCount() + " rows");
   ok("...carrying the whole raw line, timestamp included",
-     rowText()[0].indexOf("AddToPlayerDataBank") > -1 && rowText()[0].indexOf(stamp) === 0,
-     rowText()[0].slice(0, 60));
+     !!markerRow && markerRow.textContent.indexOf(stamp) === 0,
+     markerRow ? markerRow.textContent.slice(0, 60) : "(no such row)");
   // The timestamp is DIMMED, not removed. Removing it would be editing the log; a widget whose job
   // is to say what the game said may not quietly reformat it.
+  // Read off OUR row, not the first one on screen: a real line is also stamped, so measuring the
+  // first row would go on passing with our own row rendered wrongly.
   ok("...with the timestamp dimmed rather than stripped",
-     !!document.querySelector("#rows .row .ts"),
-     document.querySelector("#rows .row .ts") ? document.querySelector("#rows .row .ts").textContent : "none");
+     !!markerRow && !!markerRow.querySelector(".ts"),
+     markerRow && markerRow.querySelector(".ts") ? markerRow.querySelector(".ts").textContent : "none");
 
   // 🔴 THE MELT GUARD. The overlay is always-on-top and composited over the game; an unbounded
   // row list is how you take the frame rate down with it. 900 pushed, at most 500 kept.
@@ -4839,8 +4886,13 @@ const LOGVIEW = `(async () => {
   // survived the row cap — otherwise the widget can only answer "is X logged" for lines that
   // arrive after you thought to ask, which is the wrong half of the question.
   const buried = "AddToPlayerDataBank";
+  /* 🔴 ALSO A LIVE-LOG RACE, and a subtle one: the "not currently on screen" half was written as
+     "the token AddToPlayerDataBank is nowhere in the DOM" — but the game writes that token itself,
+     so with Star Citizen running a real marker line sitting in the visible rows makes this red
+     while OUR line is buried exactly as it should be. Ask about OUR line, which is the only one
+     the claim is about. */
   ok("a line pushed off the DOM is still held for the filter",
-     ring.some((l) => l.s.indexOf(buried) > -1) && !rowText().some((t) => t.indexOf(buried) > -1),
+     ring.some((l) => l.s.indexOf(MINE) > -1) && !has(MINE),
      "ring " + ring.length + " / rows " + rowCount());
 
   const filterTo = async (v) => {
@@ -4849,11 +4901,28 @@ const LOGVIEW = `(async () => {
     el.dispatchEvent(new Event("input", { bubbles: true }));
     await sleep(60);
   };
+  /* 🔴 A THIRD EXACT COUNT ON A LIVE LOG, AND THIS ONE HID IN PLAIN SIGHT: the token being
+     filtered for is AddToPlayerDataBank, which is a line THE GAME REALLY WRITES — it is
+     CObjectiveMarkerComponent::AddToPlayerDataBank, emitted every time Sub tracks a contract in
+     mobiGlas. So the filter legitimately matches the game's line as well as ours and the count
+     reads 2. Nobody listed this one; it was found by grepping the suite for exact counts rather
+     than by trusting the list.
+     🔑 The two halves the filter really promises are "it reached back past the DOM cap and found
+     the buried line" and "nothing that does not match is on screen". Asserting both is stronger
+     than a count of one, and neither cares how many other lines matched. */
   await filterTo(buried);
-  ok("...and the filter reaches back and finds it", rowCount() === 1, rowCount());
-  ok("...showing only what matched", rowText()[0].indexOf(buried) > -1, rowText()[0].slice(0, 60));
+  // OUR line specifically. has(buried) alone would be satisfied by the game's own marker line.
+  ok("...and the filter reaches back and finds it", has(MINE), rowCount() + " rows shown");
+  // POSITIVE FIRST: "every row matches" is true for free of an empty panel.
+  const shownNow = rowText();
+  ok("...showing only what matched",
+     shownNow.length > 0 && shownNow.filter((t) => t.indexOf(buried) > -1).length === shownNow.length,
+     shownNow.length + " shown, " + shownNow.filter((t) => t.indexOf(buried) > -1).length + " matching");
+  await filterTo("addtoplayerdatabank");
+  const shownLower = rowText();
   ok("the filter is case-insensitive, because nobody types engine casing",
-     (await filterTo("addtoplayerdatabank"), rowCount()) === 1, rowCount());
+     shownLower.length > 0 && shownLower.filter((t) => t.indexOf(buried) > -1).length === shownLower.length,
+     shownLower.length + " shown, " + shownLower.filter((t) => t.indexOf(buried) > -1).length + " matching");
 
   // A miss is SAID. Otherwise "no line matched" and "nothing has arrived" render identically, and
   // the reader concludes the game is silent when it is the filter that is wrong.
@@ -4872,13 +4941,31 @@ const LOGVIEW = `(async () => {
   // many, which is the opposite of the point.
   const before = rowCount();
   setPaused(true);
+  // Atomic with setPaused above — no await in between, so nothing can land in the gap and this
+  // really is the count at the moment the freeze went on.
+  const heldBefore = heldWhilePaused;
   push([mk(9001, stamp + " [Notice] <Frozen> arrived behind the freeze")]);
   await sleep(60);
+  const stat = () => document.getElementById("stat").textContent;
   ok("pausing freezes the view", rowCount() === before, rowCount() + " vs " + before);
   ok("...while the feed keeps running behind it",
      ring.some((l) => l.s.indexOf("arrived behind the freeze") > -1));
-  ok("...and says how many are waiting", /PAUSED . 1 new/.test(document.getElementById("stat").textContent),
-     document.getElementById("stat").textContent);
+  /* 🔴 THIS DEMANDED EXACTLY "PAUSED · 1 new" OFF A COUNTER A REAL game.log INCREMENTS. It pushes
+     ONE synthetic line inside a 60ms pause and then reads a tally that the game is also feeding —
+     measured with Star Citizen running, it read 4 new. The failure detail is a number, which
+     reads as the freeze miscounting and is nothing of the sort.
+     🔑 What the freeze promises is "it says how many arrived behind it", not "the only thing that
+     ever arrives is yours". Asserted as a DELTA — the counter rose by at least the line we pushed
+     — plus the printed figure agreeing with the counter, which is what keeps this a claim about
+     the UI rather than about a variable. Two-sided: a push that stops counting while paused fails
+     the first half, and a status() that stops printing the figure fails the second.
+     ⚠️ Substring, not a regex: the separator is a middle dot and this is a template literal, so a
+     regex here is how you get a pattern that silently never matches. */
+  ok("...and says how many are waiting",
+     stat().indexOf("PAUSED") > -1
+       && heldWhilePaused >= heldBefore + 1
+       && stat().indexOf(heldWhilePaused + " new") > -1,
+     "held " + heldBefore + " -> " + heldWhilePaused + " · stat [" + stat() + "]");
   setPaused(false);
   await sleep(60);
   ok("resuming shows what arrived while frozen",
@@ -7209,6 +7296,22 @@ const UNLOCK = `(async () => {
   const src = () => img.getAttribute("src") || "";
   const at = (secsAgo) => new Date(Date.now() - secsAgo * 1000).toISOString();
 
+  /* 🔴 A FIXED SLEEP STANDING IN FOR A CONDITION IS A FLAKE GENERATOR, and the image chain is the
+     worst place for one: it is NETWORK-timed end to end. The 404 has to come back before onerror
+     can swap the fallback in, and only then does the fallback itself have to load — so a flat
+     500ms budget passes or fails on how busy the machine is rather than on the widget. Measured
+     across identical runs on one unmodified tree: 0, 0, then 2 failures.
+     Poll for the state the chain SETTLES into instead. Falls through after ~2s and asserts
+     anyway, so a chain that never settles is still a real failure and not a wait — the same
+     shape, and the same reasoning, as embeddedReady in the size sweep. */
+  const settles = async (done) => {
+    for (let i = 0; i < 80; i++) {
+      if (done()) return true;
+      await sleep(25);
+    }
+    return false;
+  };
+
   ok("starts hidden", !up());
 
   // Hold the timestamp: a receipt is identified BY it, so re-sending the same receipt means the
@@ -7240,13 +7343,17 @@ const UNLOCK = `(async () => {
 
   // No capture for this item — must land on the render, not a blank tile.
   offer({ name: "No Capture Yet", at: at(3), image: BAD, imageFallback: GOOD2 });
-  await sleep(500);
+  // Both terminal states of the chain, so a run that lands on the glyph stops waiting and fails
+  // on the assertion below by name rather than burning the whole budget first.
+  await settles(() => src().endsWith(GOOD2) || thumb.classList.contains("noimg"));
   ok("falls back to the render when the capture 404s", src().endsWith(GOOD2), src());
   ok("...and still shows a picture", !thumb.classList.contains("noimg"));
 
   document.getElementById("close").click(); await sleep(80);
   offer({ name: "Nothing At All", at: at(4), image: BAD, imageFallback: BAD });
-  await sleep(600);
+  // The sibling two lines up had the identical exposure with a 600ms budget, and this one is
+  // strictly slower: it takes TWO 404 round trips to reach the glyph, not one.
+  await settles(() => thumb.classList.contains("noimg"));
   ok("falls through to the glyph when both fail", thumb.classList.contains("noimg"));
 
   // A reconnect replays the last view; anything older than the freshness window must stay quiet.
@@ -7302,6 +7409,40 @@ async function writeScanRegion(region) {
 // Driven by ASSIGNING the page's own `plan` binding rather than by seeding the sidecar: these are
 // rendering rules, and a fabricated plan makes them deterministic on any machine, with or without
 // a game running. (`plan` is a top-level `let` in a classic script, so it is reachable by name.)
+// ⚠️ That "with or without a game running" was only ever true of the ASSIGNMENT — see HAULFREEZE.
+
+/* 🔴 THE FIXTURE HAS TO OUTLIVE THE FEED. Shared by every hauling suite that fabricates a plan.
+   The page holds an EventSource on /hauling/events, and every frame it delivers runs
+   refresh() -> setTimeout(load, 120) -> "plan = await r.json()". So while Sub is playing, the
+   sidecar's REAL board lands on top of the fixture BETWEEN two assertions — measured at 5-7 log
+   lines a second, which is most runs, not a rare one.
+   That is the whole story behind
+     FAIL suite threw before it could report [Cannot set properties of undefined (setting
+     'trackedNow')]
+   in "hauling: honest loads, whole route". By the time it reached plan.contracts[1] the fixture
+   was gone and the real board had no second contract. It surfaces as a THROW rather than a failed
+   assertion, so it names no feature at all — and before the harness learned to catch a suite
+   throwing, it took every suite behind it down with it.
+   🔴 trackedNow is the tell: it is parsed from CObjectiveMarkerComponent::Add/RemoveFromPlayer-
+   DataBank, which is exactly what Sub's game writes when he tracks a contract while playing. The
+   assertion looked like it was about mission tracking. It was about a fixture being overwritten.
+
+   🔑 NEUTRALISE load, NOT THE EventSource. refresh() resolves the identifier when it fires, so a
+   frozen `load` covers the SSE, the tab handlers and every control on the page in one place —
+   whereas closing the socket leaves the other callers. Clear the coalescing timer too: a refresh
+   that has ALREADY fired captured the real function and is still counting down behind you.
+   ⚠️ BARE assignment, deliberately. `load` is a top-level function declaration in a classic
+   script, so it is a writable property of the global object and window.load would also work — but
+   window.plan would NOT, because the top-level `let` shadows the own-property. Mixing the two
+   forms in one suite is how that lesson gets relearned; bare is correct for both.
+   ⚠️ NOT for the suites that MEASURE live data — the funnel, the tab row, the trade tabs. Those
+   need the real load, and freezing it there would test nothing. */
+const HAULFREEZE = `
+  const realLoad = load;
+  load = async () => {};
+  clearTimeout(pending);
+`;
+
 const HAULING = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
@@ -7332,10 +7473,14 @@ const HAULING = `(async () => {
      itself. Drive the tab the way a player does. */
 
   document.getElementById("tabRoute").click();
-  // Long enough for the load() that click kicks off to come back and repaint. Too short and its
-  // response lands AFTER the fixture below is assigned, quietly replacing it with the sidecar's
-  // real (empty) board - which reads as "the route drew nothing" rather than as a race.
-  await sleep(500);
+  /* WAIT FOR THE PAGE'S OWN FIRST load() TO LAND, then freeze. A fixed budget here was the other
+     half of the race: too short and the initial response lands AFTER the fixture is assigned,
+     quietly replacing it with the sidecar's real (empty) board — which reads as "the route drew
+     nothing" rather than as a race. Waiting for the condition puts that load strictly UNDER the
+     fixture, and HAULFREEZE then guarantees nothing follows it. Bounded and it falls through: a
+     sidecar that never answers is a real failure the assertions below report by name. */
+  for (let i = 0; i < 60 && plan === null; i++) await sleep(25);
+  ${HAULFREEZE}
 
   plan = {
     updatedAt: Date.now(),
@@ -7460,14 +7605,29 @@ const HAULING = `(async () => {
   // 🔴 Now track it. The tonnage is STILL unknown — the game states it at objective assignment
   // and re-tracking replays nothing — so the panel must stop asking for something already done.
   // This is Sub's live 2026-08-17 board, and the exact state the old prompt got wrong.
-  plan.contracts[1].trackedNow = true;
+  /* 🔴 POSITIVE FIRST, AND IT IS THE ASSERTION THIS SUITE MOST NEEDED. Reading plan.contracts[1]
+     blind is exactly how this suite used to die — as
+     "suite threw before it could report [Cannot set properties of undefined (setting
+     'trackedNow')]", which names no feature and, before the harness caught suite throws, took
+     every suite behind it down too. HAULFREEZE stops the fixture being replaced; this stops a
+     replacement ever being a nameless throw again. The two are independent on purpose. */
+  ok("the fixture is still what is on screen, so the tracking rules are measured on it",
+     !!(plan && plan.contracts && plan.contracts.length === 3 && plan.contracts[1]),
+     plan && plan.contracts ? plan.contracts.length + " contracts" : "the plan was replaced");
+  // Defensive by the file's own rule: a missing element FAILS its own assertion by name instead of
+  // taking the run down. Never a bare find() followed by a property read.
+  const tTxt = (root, sel) => {
+    const el = root && root.querySelector ? root.querySelector(sel) : null;
+    return el ? el.textContent : "(no " + sel + ")";
+  };
+  if (plan && plan.contracts && plan.contracts[1]) plan.contracts[1].trackedNow = true;
   plan.trackedMissionId = "m-range";
   render();
   await sleep(60);
   const trow = document.querySelector(".trow");
   ok("🔴 a TRACKED contract with no tonnage is not told to track it again",
-     trow.querySelector(".badge").textContent === "tracked",
-     trow.querySelector(".badge").textContent);
+     tTxt(trow, ".badge") === "tracked",
+     tTxt(trow, ".badge"));
   ok("🔴 ...and the heading stops being an instruction nothing can satisfy",
      document.getElementById("trackK").textContent === "Load not confirmed",
      document.getElementById("trackK").textContent);
@@ -7478,10 +7638,11 @@ const HAULING = `(async () => {
      /re-tracking does not replay/.test(document.getElementById("trackInfo").title),
      document.getElementById("trackInfo").title);
   ok("...while the row still offers the box to type the figure into",
-     !!trow.querySelector("input"));
+     !!(trow && trow.querySelector("input")));
   ok("...and the contract is still listed, not hidden",
-     document.querySelectorAll(".trow").length === 1);
-  plan.contracts[1].trackedNow = false;
+     document.querySelectorAll(".trow").length === 1,
+     document.querySelectorAll(".trow").length);
+  if (plan && plan.contracts && plan.contracts[1]) plan.contracts[1].trackedNow = false;
   plan.trackedMissionId = null;
   render();
   await sleep(60);
@@ -7695,7 +7856,10 @@ const BUYROUTE = `(async () => {
      load() that click fires to come back BEFORE the fixture is assigned, or the sidecar's real
      (empty) board lands on top of it. */
   document.getElementById("tabRoute").click();
-  await sleep(900);
+  // Same race, same repair as HAULING: wait for the page's own first load to land UNDER the
+  // fixture, then freeze so nothing can land on top of it. 900ms was a guess at both.
+  for (let i = 0; i < 60 && plan === null; i++) await sleep(25);
+  ${HAULFREEZE}
 
   /* ⚠️ A BARE ASSIGNMENT TO plan, NEVER ONE QUALIFIED WITH window. The page declares plan with let
      at script top level, so the binding lives in the global LEXICAL environment and an own-property
@@ -8385,6 +8549,13 @@ const STOW = `(async () => {
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
   const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Wait for the page's own first load to land UNDER the fixtures below, then freeze so a live
+  // SSE frame cannot land on top of one between two assertions. This suite assigns basePlan()
+  // twice and reads the DOM after each, so it had the identical exposure to HAULING's.
+  for (let i = 0; i < 60 && plan === null; i++) await sleep(25);
+  ${HAULFREEZE}
+  // autoLoadClasses comes from /api/ships via loadShips(), which is a DIFFERENT call and is not
+  // frozen — the auto-load assertion below still proves that plumbing end to end.
   await sleep(500);
 
   const leg = (group, over) => Object.assign({
