@@ -7956,12 +7956,13 @@ const FUNNEL = `(async () => {
 
   // 🔑 POSITIVE GUARD FIRST. Every claim below is about what the funnel offers, and a funnel that
   // never rendered offers nothing — which satisfies every must-not-contain check for free.
-  // ⚠️ FOUR since 2026-08-25 — the hold slot joined what/buy/sell. RE-POINTED, not relaxed: this
-  // count is the positive guard for everything below it, so turning it into "at least three" would
-  // retire the thing it exists to catch. The names are listed so a slot going MISSING fails by
-  // name rather than as arithmetic.
-  const FUNNEL_SLOTS = ["what", "buy", "sell", "hold"];
-  ok("the funnel drew all four slots",
+  // ⚠️ FOUR since 2026-08-25 (the hold slot), FIVE since 2026-09-08 (spend, which is the budget
+  // parameter the server had accepted and nothing had ever sent). RE-POINTED each time, not
+  // relaxed: this count is the positive guard for everything below it, so turning it into "at
+  // least three" would retire the thing it exists to catch. The names are listed so a slot going
+  // MISSING fails by name rather than as arithmetic.
+  const FUNNEL_SLOTS = ["what", "buy", "sell", "hold", "budget"];
+  ok("the funnel drew all five slots",
      slots().length === FUNNEL_SLOTS.length
        && FUNNEL_SLOTS.every(function (n) { return !!slotFor(n); }),
      slots().map(function (s) { return s.dataset.slot; }).join(","));
@@ -7971,7 +7972,9 @@ const FUNNEL = `(async () => {
   // constraint applied this is the leaderboard the tab has always been.
   // 🔑 The hold slot counts here too. It shows the ship's capacity at rest, but that is a DEFAULT
   // the app worked out and not a choice the player made, so it must read dim exactly like the
-  // other three — an inherited value that looks like a set one is a bug this project shipped once.
+  // others — an inherited value that looks like a set one is a bug this project shipped once.
+  // 🔑 The spend slot is the strongest case for this rule: there is no balance to detect, so its
+  // resting state is genuinely "no limit" and anything that reads as a figure there is a lie.
   const offAtRest = slots().filter(function (s) {
     const vEl = s.querySelector(".v");
     return vEl && vEl.classList.contains("off");
@@ -8718,6 +8721,318 @@ const TRADEUNIT = `(async () => {
   return out;
 })()`;
 
+/* 🔴 THE JOURNAL AUDIT, ON SCREEN — and the constraint that it may NEVER offer a repair.
+   `JournalView.audit` has ridden the payload since 2026-08-23 and nothing rendered it, so the one
+   surface that answers "my Ledger is missing a sale" was a log line and a terminal command.
+
+   The two things this suite exists to stop, both of which look like helpfulness:
+
+   1. A REPAIR CONTROL. There is no partial cure. An orphaned key means the row was removed while
+      its key stayed, so dropping the keys makes the startup replay book those sales a SECOND time,
+      and editing rows out is what causes the state in the first place. Deleting the whole file is
+      the only safe move, and it is not something a widget should do on one click. So: the block
+      carries NO button at all, and that assertion is paired with a positive one about the same
+      block — a block that failed to render satisfies "has no button" for free.
+
+   2. THE OPPOSITE DIAGNOSIS. Left unexplained, "a sale I made is not here" reads as the app
+      refusing good trades, and somebody then loosens a confirmation gate that is working. The
+      block has to say DEDUPED, not refused, in those words.
+
+   🔑 AND THE ORDERING IS A REAL ASSERTION, not decoration: drift bad enough to take every row
+   leaves a journal that is EMPTY and drifted, which is exactly the report worth explaining, and
+   the Ledger's "Nothing recorded yet" branch returns before anything below it can draw. */
+const JAUDITUI = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  /* Clicked, not assigned — same trap the sibling journal suites document. And the fixture goes in
+     AFTER the load() that click fires has come back, or the sidecar's real (empty) board lands on
+     top of it and this suite reports on data nobody chose. */
+  const jaTab = document.getElementById("tabJournal");
+  ok("the journal tab exists to be driven", !!jaTab, jaTab ? "found" : "(no #tabJournal)");
+  if (!jaTab) return out;
+  jaTab.click();
+  await sleep(500);
+
+  const jaZero = { runs: 0, scu: 0, cost: 0, revenue: 0, profit: 0, minutes: 0, profitPerHour: null,
+                   unpricedRevenue: 0, unpricedSales: 0 };
+  const jaOrphan = (kind, at, shop) => ({
+    key: at + "|" + kind + "|" + shop + "|g1|1000", at: at, kind: kind, shopName: shop,
+    resourceGuid: "g1", total: "1000",
+    wanted: kind === "sell" ? "a closed run or an unmatched sale" : "an open lot",
+  });
+  const jaBase = (audit, rows) => ({
+    runs: (rows && rows.runs) || [], open: [], unmatched: [], writtenOff: [],
+    today: jaZero, allTime: jaZero, audit: audit,
+  });
+  const jaBody = () => document.getElementById("body");
+  const jaText = () => { const b = jaBody(); return b && b.textContent ? b.textContent : "(no #body)"; };
+  const jaBad = () => document.querySelector(".jaud.bad");
+  const jaOk = () => document.querySelector(".jaud.ok");
+  const jaBadText = () => { const b = jaBad(); return b && b.textContent ? b.textContent : "(no .jaud.bad)"; };
+
+  // ── 1. DRIFT, WITH EVERY ROW GONE. The worst real case and the one the empty branch ate.
+  tradeJournal = jaBase({
+    ok: false, keysAudited: 7, keysTotal: 9, sellKeys: 4, buyKeys: 3,
+    orphans: [jaOrphan("sell", "2026-08-23T18:41:02.221Z", "SCShop_Levski_Commodities"),
+              jaOrphan("sell", "2026-08-23T18:44:51.008Z", ""),
+              jaOrphan("buy", "2026-08-22T11:02:19.500Z", "SCShop_Admin_Area18")],
+    boundedOutKeys: 2, unreadableKeys: [], rows: { runs: 0, unmatched: 0, open: 0, writtenOff: 0 },
+  });
+  render();
+  await sleep(140);
+
+  // 🔑 POSITIVE FIRST. Every "it does not say / does not offer" below is free on a blank panel.
+  ok("drift draws a block at all", !!jaBad(), jaBadText().slice(0, 80));
+  ok("...naming how many transactions are missing", jaBadText().indexOf("3 recorded") >= 0,
+     jaBadText().slice(0, 120));
+  ok("...and splitting them by kind, off the audit's own orphan list",
+     jaBadText().indexOf("2 sell, 1 buy") >= 0, jaBadText().slice(0, 200));
+  const jaEvidence = jaBad() ? jaBad().querySelectorAll(".k") : [];
+  ok("...with one evidence line per orphan", jaEvidence.length === 3, jaEvidence.length + " lines");
+
+  // 🔴 THE DIAGNOSIS. The obvious reading of this state is the wrong one, so the block says which.
+  ok("🔴 it says DEDUPED, not refused, in those words",
+     jaBadText().indexOf("DEDUPED, not refused") >= 0, jaBadText().slice(0, 260));
+  ok("...and rules the confirmation gate out rather than leaving it as the suspect",
+     jaBadText().indexOf("only booked after the trade has been confirmed") >= 0, jaBadText().slice(0, 300));
+
+  // 🔴 THE REPAIR RULE. Positive first: it names the ONE safe move, then it names both wrong ones.
+  ok("🔴 it names deleting the whole file as the only safe repair",
+     jaBadText().indexOf("deleting trade-journal.json") >= 0, jaBadText());
+  ok("...and warns against dropping the entries, which re-books the sales",
+     jaBadText().indexOf("do not delete the entries") >= 0, jaBadText());
+  ok("...and against editing rows out, which is what causes it",
+     jaBadText().indexOf("Do not edit rows out of it") >= 0, jaBadText());
+  /* 🔴 THE ONE THAT MATTERS MOST. Vouched for by the four assertions above: this block rendered,
+     has evidence lines in it, and carries three paragraphs of prose — so a zero here is a real
+     absence of controls rather than an absence of block. */
+  const jaButtons = jaBad() ? jaBad().querySelectorAll("button, .hbtn, input, a") : [];
+  ok("🔴 it offers NO control that could perform a repair", jaButtons.length === 0,
+     jaButtons.length + " control(s): "
+       + Array.prototype.slice.call(jaButtons).map((b) => b.textContent).join(" | "));
+
+  // ── the ordering, which is the whole reason it is drawn where it is
+  ok("the journal really is empty in this fixture", jaText().indexOf("Nothing recorded yet") >= 0,
+     jaText().slice(0, 120));
+  const jaKids = jaBody() ? Array.prototype.slice.call(jaBody().children) : [];
+  const jaBadAt = jaKids.indexOf(jaBad());
+  const jaEmptyAt = jaKids.map((k) => (k.textContent || "").indexOf("Nothing recorded yet") >= 0)
+    .indexOf(true);
+  ok("🔴 ...and the drift block is drawn ABOVE the empty state, not swallowed by it",
+     jaBadAt >= 0 && jaEmptyAt >= 0 && jaBadAt < jaEmptyAt, "block " + jaBadAt + ", empty " + jaEmptyAt);
+
+  // ── keys nobody judged are never folded into silence
+  ok("keys the bound could have trimmed are stated rather than ignored",
+     jaBadText().indexOf("not judged") >= 0, jaBadText());
+
+  // ── 2. A CLEAN JOURNAL WITH SOMETHING IN IT
+  tradeJournal = jaBase({
+    ok: true, keysAudited: 12, keysTotal: 12, sellKeys: 5, buyKeys: 7,
+    orphans: [], boundedOutKeys: 0, unreadableKeys: [],
+    rows: { runs: 1, unmatched: 0, open: 0, writtenOff: 0 },
+  }, { runs: [{ commodity: "Astatine", profit: 118400, profitPerHour: 240000,
+                buyShop: "SCShop_A", sellShop: "SCShop_B", soldAt: new Date().toISOString(),
+                buyPricePerScu: 2760, sellPricePerScu: 4500, marginPct: 63, scu: 68, minutes: 29 }] });
+  render();
+  await sleep(140);
+  ok("a clean journal states that it was checked", !!jaOk(),
+     jaOk() ? jaOk().textContent : "(no .jaud.ok)");
+  ok("...counting what it judged, so the claim is bounded",
+     (jaOk() ? jaOk().textContent : "").indexOf("all 12 booked entries") >= 0,
+     jaOk() ? jaOk().textContent : "(no .jaud.ok)");
+  ok("...and draws no drift block", !jaBad(), jaBadText().slice(0, 80));
+  ok("...and offers no control either",
+     jaOk() ? jaOk().querySelectorAll("button, .hbtn, input, a").length === 0 : false,
+     jaOk() ? String(jaOk().querySelectorAll("button").length) : "(no .jaud.ok)");
+
+  // ── 3. 🔴 A GREEN VERDICT OVER ZERO KEYS CERTIFIES NOTHING
+  tradeJournal = jaBase({
+    ok: true, keysAudited: 0, keysTotal: 3, sellKeys: 2, buyKeys: 1,
+    orphans: [], boundedOutKeys: 3, unreadableKeys: [],
+    rows: { runs: 0, unmatched: 0, open: 0, writtenOff: 0 },
+  });
+  render();
+  await sleep(140);
+  const jaVac = jaOk() ? jaOk().textContent : "(no .jaud.ok)";
+  ok("a journal with keys still says something about them", !!jaOk(), jaVac);
+  ok("🔴 ...but an audit that judged NOTHING does not report itself as checked",
+     jaVac.indexOf("Not checked") >= 0 && jaVac.indexOf("Checked: all") < 0, jaVac);
+
+  // ── 4. an unreadable key is reported, never counted as drift
+  tradeJournal = jaBase({
+    ok: true, keysAudited: 2, keysTotal: 3, sellKeys: 1, buyKeys: 1,
+    orphans: [], boundedOutKeys: 0, unreadableKeys: ["nonsense"],
+    rows: { runs: 0, unmatched: 0, open: 0, writtenOff: 0 },
+  });
+  render();
+  await sleep(140);
+  const jaUnread = jaOk() ? jaOk().textContent : "(no .jaud.ok)";
+  ok("a key this check cannot read is still mentioned", jaUnread.indexOf("does not recognise") >= 0,
+     jaUnread);
+  ok("...and the verdict is still the clean one, because unreadable is not drift", !jaBad(), jaUnread);
+
+  // ── 5. nothing on record, nothing to say
+  tradeJournal = jaBase({
+    ok: true, keysAudited: 0, keysTotal: 0, sellKeys: 0, buyKeys: 0,
+    orphans: [], boundedOutKeys: 0, unreadableKeys: [],
+    rows: { runs: 0, unmatched: 0, open: 0, writtenOff: 0 },
+  });
+  render();
+  await sleep(140);
+  ok("an untouched journal still renders its own empty state",
+     jaText().indexOf("Nothing recorded yet") >= 0, jaText().slice(0, 100));
+  ok("...and says nothing about an audit, because there is no record to have drifted",
+     !document.querySelector(".jaud"), jaText().slice(0, 160));
+
+  return out;
+})()`;
+
+/* 🔴 THE TWO FILTERS THE SERVER HAS ALWAYS ACCEPTED AND NOTHING SENT — and the third that is
+   unsent on purpose.
+
+   `/api/trade/routes` parses `budget`, `maxAgeDays` and `knownStock`. Until 2026-09-08 the widget
+   sent none of them. Two of those were a gap; the third is a decision.
+
+   🔑 EVERY ASSERTION HERE IS ABOUT THE URL THE WIDGET BUILDS, captured off a wrapped `fetch`,
+   because that is the claim being made — "the control reaches the server". Reading the rendered
+   board instead would make every one of these depend on what the live price table happens to hold
+   that afternoon.
+
+   🔴 AND `knownStock` IS ASSERTED ABSENT, paired with a positive about the same list. Sub cut that
+   toggle on 2026-08-25 and the widget stopped SENDING the parameter rather than the sidecar
+   dropping it, so the only thing standing between it and a well-meaning re-wiring is a comment and
+   this assertion. A request list that came back empty would satisfy it for nothing. */
+const TDFILTERS = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const tfTab = document.getElementById("tabTrade");
+  ok("the commodities tab exists to be driven", !!tfTab, tfTab ? "found" : "(no #tabTrade)");
+  if (!tfTab) return out;
+  tfTab.click();
+  await sleep(900);
+
+  /* Record every routes URL and pass the call through, so the board keeps behaving normally.
+     Restored below — a suite that leaves fetch wrapped poisons every suite after it. */
+  const tfReal = window.fetch;
+  let tfUrls = [];
+  window.fetch = function (u, o) { tfUrls.push(String(u)); return tfReal.call(window, u, o); };
+  const tfLast = () => {
+    const routes = tfUrls.filter((u) => u.indexOf("/api/trade/routes") >= 0);
+    return routes.length ? routes[routes.length - 1] : "(no routes request)";
+  };
+  const tfSlot = (which) => document.querySelector(".slot[data-slot=" + which + "]");
+  const tfPills = () => Array.prototype.slice.call(document.querySelectorAll(".tdbar .hbtn"));
+  const tfPill = (label) => tfPills().filter((b) => b.textContent === label)[0] || null;
+
+  try {
+    // ── the controls exist. Positive first: everything below drives one of these.
+    ok("the funnel carries a spend slot", !!tfSlot("budget"),
+       Array.prototype.slice.call(document.querySelectorAll(".slot"))
+         .map((s) => s.dataset.slot).join(","));
+    ok("...and the bar carries an age group with the number on each pill",
+       !!tfPill("any") && !!tfPill("7d") && !!tfPill("30d"),
+       tfPills().map((b) => b.textContent).join("|"));
+    /* 🔑 EXCLUSIVE, AND EXACTLY ONE IS LIT. That is what tells this apart from the lit/unlit toggle
+       Sub retired: with a fixed label there was no way to read whether it was adding rows or
+       taking them away. */
+    const tfLit = () => tfPills().filter((b) => b.classList.contains("on") && !!tfPill(b.textContent)
+      && (b.textContent === "any" || b.textContent === "7d" || b.textContent === "30d"));
+    ok("...exactly one of the three is lit", tfLit().length === 1,
+       tfLit().map((b) => b.textContent).join(",") || "(none lit)");
+
+    // ── 🔴 maxAgeDays reaches the server
+    tfUrls = [];
+    tfPill("7d").click();
+    await sleep(900);
+    ok("clicking an age pill asks the sidecar again",
+       tfLast().indexOf("/api/trade/routes") >= 0, tfLast());
+    ok("🔴 ...carrying maxAgeDays, which no UI had ever sent",
+       tfLast().indexOf("maxAgeDays=7") >= 0, tfLast());
+
+    tfUrls = [];
+    tfPill("any").click();
+    await sleep(900);
+    ok("clearing it asks again", tfLast().indexOf("/api/trade/routes") >= 0, tfLast());
+    /* 🔑 ABSENT, not a sentinel. An always-present maxAgeDays=0 would make the query string claim a
+       constraint that is not there, and the next reader of a captured URL would believe it. */
+    ok("...and sends no maxAgeDays at all rather than a value meaning none",
+       tfLast().indexOf("maxAgeDays") < 0, tfLast());
+
+    // ── 🔴 budget reaches the server
+    tfUrls = [];
+    const tfVal = tfSlot("budget") ? tfSlot("budget").querySelector(".v") : null;
+    ok("the spend slot opens to be typed into", !!tfVal,
+       tfSlot("budget") ? tfSlot("budget").textContent : "(no slot)");
+    if (tfVal) {
+      tfVal.click();
+      await sleep(200);
+      const tfInp = tfSlot("budget") ? tfSlot("budget").querySelector("input") : null;
+      ok("...into a real input", !!tfInp, tfInp ? tfInp.type : "(no input)");
+      if (tfInp) {
+        // Driving the page's own commit path, not a helper: a player types and clicks away.
+        tfInp.value = "250000";
+        tfInp.dispatchEvent(new Event("change"));
+        await sleep(900);
+        ok("🔴 committing a figure sends budget, which no UI had ever sent",
+           tfLast().indexOf("budget=250000") >= 0, tfLast());
+        ok("...and the slot shows the figure back rather than the placeholder",
+           (tfSlot("budget").textContent || "").indexOf("250,000") >= 0,
+           tfSlot("budget") ? tfSlot("budget").textContent : "(no slot)");
+
+        tfUrls = [];
+        const tfX = tfSlot("budget") ? tfSlot("budget").querySelector(".x") : null;
+        ok("...and carries a control to clear it again", !!tfX,
+           tfSlot("budget") ? tfSlot("budget").textContent : "(no slot)");
+        if (tfX) {
+          tfX.click();
+          await sleep(900);
+          ok("clearing it asks again", tfLast().indexOf("/api/trade/routes") >= 0, tfLast());
+          ok("...and sends no budget", tfLast().indexOf("budget=") < 0, tfLast());
+        }
+      }
+    }
+
+    /* ── 🔴 THE ONE THAT IS UNSENT ON PURPOSE.
+       Positive first, and it has to be: "no URL mentions knownStock" is true of an empty list, and
+       an empty list is exactly what a broken wrapper or a dead sidecar produces. */
+    const tfAll = tfUrls.concat(["seed"]);
+    const tfRoutes = tfUrls.filter((u) => u.indexOf("/api/trade/routes") >= 0);
+    ok("the widget really did ask for routes while this suite ran", tfRoutes.length > 0,
+       tfRoutes.length + " request(s)");
+    ok("🔴 ...and knownStock is on none of them, which is Sub's decision and not a gap",
+       tfRoutes.every((u) => u.indexOf("knownStock") < 0),
+       tfRoutes.filter((u) => u.indexOf("knownStock") >= 0).join(" | ") || "clean");
+
+    /* ── 🔑 THE PILL IS LIT FROM THE ANSWER, NOT FROM WHAT WAS CLICKED. Same contract the sort row keeps:
+       a control claiming a filter the rows in front of the player are not under is worse than no
+       control. Stubbed rather than fetched, so this tests the widget and not the sidecar. */
+    tradeData = Object.assign({}, tradeData || {}, { maxAgeDays: 30, routes: (tradeData && tradeData.routes) || [] });
+    render();
+    await sleep(140);
+    const tf30 = tfPill("30d");
+    ok("a board that came back filtered at 30d lights the 30d pill",
+       !!tf30 && tf30.classList.contains("on"), tf30 ? tf30.className : "(no 30d pill)");
+    const tfAny = tfPill("any");
+    ok("...and not the one the player last chose",
+       !!tfAny && !tfAny.classList.contains("on"), tfAny ? tfAny.className : "(no any pill)");
+  } finally {
+    window.fetch = tfReal;
+    // Leave the tab as this suite found it, so a later suite is not filtered by our leftovers.
+    try { localStorage.removeItem("sc-trade-budget"); localStorage.removeItem("sc-trade-maxage"); }
+    catch (e) { /* private mode */ }
+  }
+
+  return out;
+})()`;
+
 
 app.whenReady().then(async () => {
   let fails = 0;
@@ -8805,6 +9120,8 @@ app.whenReady().then(async () => {
     fails += await run("hauling: the Runs row survives 320px", RUNSNARROW, null, null, "hauling.html");
     fails += await run("hauling: the trade journal's held cargo", TRADEHOLD, null, null, "hauling.html");
     fails += await run("hauling: a sale with no stated volume shows no tonnage", TRADEUNIT, null, null, "hauling.html");
+    fails += await run("hauling: the Ledger renders the journal audit", JAUDITUI, null, null, "hauling.html");
+    fails += await run("hauling: the two filters nothing used to send", TDFILTERS, null, null, "hauling.html");
     fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");
     fails += await run("hauling: stowage order + signature", STOW, null, null, "hauling.html");
     fails += await run("completion card holds while you use it", REPORTHOLD, null);

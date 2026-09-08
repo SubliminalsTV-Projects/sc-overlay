@@ -395,6 +395,45 @@ console.log("\n-- routes: filters --");
   check("requireKnownStock drops unreported rows", stocked.length === 0, String(stocked.length));
 }
 
+/* 🔴 THE AGE FILTER. Parsed by `/api/trade/routes` since the finder was written and sent by nothing
+   until 2026-09-08, so it reached its first user with no coverage at all.
+
+   🔑 EVERY "IT DROPPED SOMETHING" ASSERTION IS PRECEDED BY THE SAME QUERY WITH NO BOUND. A filter
+   that returned nothing at every setting satisfies "the old one is gone" for free, and an empty
+   board is exactly what this filter's failure looks like. */
+console.log("\n-- routes: how old a price may be --");
+{
+  const aged = [
+    q({ commodity: "Fresh", terminal: "A", buy: 100, stockScu: 500, asOf: daysAgo(2) }),
+    q({ commodity: "Fresh", terminal: "B", body: "Hurston", sell: 200, demandScu: 500, asOf: daysAgo(3) }),
+    q({ commodity: "Stale", terminal: "A", buy: 100, stockScu: 500, asOf: daysAgo(40) }),
+    q({ commodity: "Stale", terminal: "B", body: "Hurston", sell: 200, demandScu: 500, asOf: daysAgo(2) }),
+    // No timestamp at all — the bundled table's whole shape.
+    q({ commodity: "Undated", terminal: "A", buy: 100, stockScu: 500 }),
+    q({ commodity: "Undated", terminal: "B", body: "Hurston", sell: 200, demandScu: 500 }),
+  ];
+  const names = (rs: TradeRoute[]) => rs.map((r) => r.commodity).sort().join(",");
+
+  const unbounded = findRoutes(aged, { capacityScu: 64, now: NOW, limit: 50 });
+  check("all three runs are there with no bound", names(unbounded) === "Fresh,Stale,Undated", names(unbounded));
+
+  const week = findRoutes(aged, { capacityScu: 64, now: NOW, limit: 50, maxAgeDays: 7 });
+  check("a week's bound keeps the fresh run", week.some((r) => r.commodity === "Fresh"), names(week));
+  check("...and drops the one whose BUY half is 40 days old",
+    !week.some((r) => r.commodity === "Stale"), names(week));
+  /* ⚠️ An undated quote survives every setting, deliberately: excluding it empties the entire
+     bundled table, and the row still renders its own unknown age. */
+  check("...while an undated quote survives, or the bundled table empties itself",
+    week.some((r) => r.commodity === "Undated"), names(week));
+
+  /* 🔴 A NON-POSITIVE BOUND IS NO BOUND. `?? null` let 0 through, and "nothing older than zero
+     days" excludes every dated quote in the game — indistinguishable from "there are no routes". */
+  const zero = findRoutes(aged, { capacityScu: 64, now: NOW, limit: 50, maxAgeDays: 0 });
+  check("a bound of zero is no bound, not an empty board", names(zero) === names(unbounded), names(zero));
+  const negative = findRoutes(aged, { capacityScu: 64, now: NOW, limit: 50, maxAgeDays: -5 });
+  check("...and neither is a negative one", names(negative) === names(unbounded), names(negative));
+}
+
 console.log("\n-- routes: budget and ranking --");
 {
   const quotes = [
