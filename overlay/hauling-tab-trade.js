@@ -109,6 +109,8 @@
   const TD_HOLD_KEY = "sc-trade-hold";
   const TD_SORT_KEY = "sc-trade-sort";
   const TD_UNIT_KEY = "sc-trade-unit";
+  const TD_BUDGET_KEY = "sc-trade-budget";
+  const TD_MAXAGE_KEY = "sc-trade-maxage";
   /**
    * Which question the board's ORDER answers. "hour" is what it has always done.
    *
@@ -145,6 +147,50 @@
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
     } catch { return null; }
   })();
+  /**
+   * Cash on hand, when the hold is not the thing that binds. `null` = no limit.
+   *
+   * 🔴 IT IS A SEARCH INPUT, NOT A CLAIM ABOUT THE PLAYER'S BALANCE. The app cannot read aUEC from
+   * anywhere — the log never states it — so this is only ever a number somebody typed, and it must
+   * never be defaulted, guessed, or presented as detected. Unset means unset.
+   * 🔑 The finder folds it into the hold bound: running out of money reads as "you could only fill
+   * this much of the hold", which is what `scuBound: "hold"` on the row already says. So this
+   * changes the FIGURES on the rows rather than only removing them, and the board is honest about
+   * a run it has capped.
+   */
+  let tdBudget = (() => {
+    try {
+      const raw = localStorage.getItem(TD_BUDGET_KEY);
+      const n = raw === null ? NaN : Number(raw);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    } catch { return null; }
+  })();
+  /**
+   * Drop quotes older than this many days. `null` = keep everything, which is the default and has
+   * to stay the default.
+   *
+   * 🔴 IT REMOVES ROWS, SO THE LIT PILL HAS TO NAME THE NUMBER. That is the lesson the retired
+   * "Confirmed stock" toggle left behind: a lit/unlit pill with a fixed label gave no way to tell
+   * whether it was currently adding rows or taking them away. An exclusive group whose lit member
+   * reads "7d" states the filter and its own state in one word, exactly as the `sort` row does.
+   * ⚠️ An UNDATED quote survives every setting — `findRoutes` keeps a null age deliberately, or the
+   * bundled table empties itself and the filter reads as broken. The row still shows its own age.
+   */
+  let tdMaxAge = (() => {
+    try {
+      const raw = localStorage.getItem(TD_MAXAGE_KEY);
+      const n = raw === null ? NaN : Number(raw);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    } catch { return null; }
+  })();
+  /** The choices the age pills offer. Data, so the row is one loop and adding a rung is one edit.
+   *  🔑 `null` FIRST and lit by default: the unfiltered board is the one every existing user
+   *  already has, and a filter that arrives switched on silently changes what they see. */
+  const TD_MAXAGE_CHOICES = [
+    { days: null, label: "any", tip: "Every price the table holds, however old. Each row still shows its own age." },
+    { days: 7, label: "7d", tip: "Only runs where both quotes were reported in the last week. The strictest useful setting — the table's median quote is older than this, so it thins the board a lot." },
+    { days: 30, label: "30d", tip: "Only runs where both quotes were reported in the last month." },
+  ];
   /** "run" = what the whole trip clears. "scu" = what one unit is worth carrying. Two real
    *  answers to two different questions, and the second is what stays comparable across rows
    *  whose hold fills differ. */
@@ -501,6 +547,13 @@
     };
     put(tdBuyAt, "fromSystem", "fromBody", "fromTerminal");
     put(tdSellAt, "toSystem", "toBody", "toTerminal");
+    /* 🔑 UNSET SENDS NOTHING, rather than sending a value that means "no limit". `numParam` reads
+       an absent parameter as null and `findRoutes` branches on null, so an omitted parameter and a
+       sentinel are the same to the server today — but a widget that always sent `budget=0` would
+       make the query string claim a constraint that is not there, and the next reader of a captured
+       URL would believe it. */
+    if (tdBudget) p.set("budget", String(tdBudget));
+    if (tdMaxAge) p.set("maxAgeDays", String(tdMaxAge));
   }
 
   /** Provenance + the system list, before any query has been run. Also the one place the buy-at
@@ -829,10 +882,14 @@
        updated. The player can see that themselves. We don't need to help them sort that out."
        Second reason, and the one that made it actively bad: as a lit/unlit pill with a fixed label
        there was no way to tell whether it was currently adding rows or removing them.
-       🔑 The server still accepts `knownStock=1` on /api/trade/routes — the widget simply stops
-       sending it. Nothing else in the app ever did, so the parameter is now unused, like `budget`
-       and `maxAgeDays` beside it. Left alone deliberately: deleting a query parameter is a sidecar
-       change, and this is a display decision. */
+       🔴 `knownStock` IS INTENTIONALLY UNSENT AND IS NOT A GAP TO CLOSE. The server still accepts
+       `knownStock=1` on /api/trade/routes; nothing in the app sends it, and nothing should. This is
+       Sub's decision above, not an oversight — the widget stopped sending the parameter rather than
+       the sidecar dropping it, because deleting a query parameter is a sidecar change and this was
+       a display decision. Leave the route option alone too: an unused option costs nothing, and
+       removing it would break any caller that already passes it.
+       ⚠️ This comment used to group `budget` and `maxAgeDays` in here as equally unused. They are
+       SENT now (see `tdSlotParams`) — those two were a real gap and this one is not. */
 
     /* 🔴 THE RANKING IS A CONTROL NOW. It was one hardcoded `profitPerHour` comparator with no way
        to ask anything else, and the pills beside it made that worse rather than better: Per run /
@@ -890,6 +947,41 @@
     tdBtn(bar, "Per SCU", tradeUnit === "scu",
       "What one SCU is worth carrying. Changes the figure on each row, not the order.", () => setUnit("scu"));
 
+    /* 🔴 HOW OLD A PRICE MAY BE. `/api/trade/routes` has parsed `maxAgeDays` since the finder was
+       written and no UI has ever sent it, so this is a row of pills and one query param.
+
+       🔑 IT IS IN THE BAR RATHER THAN THE FUNNEL, and the split is not arbitrary. The funnel's
+       slots describe the RUN — what, bought where, sold where, how much of it — and read as a
+       sentence about a trade. How stale a quote is allowed to be is not part of that sentence; it
+       is a statement about the BOARD, like the ranking two pills to the left, which also re-fetches
+       for the same reason.
+       🔑 AN EXCLUSIVE GROUP, NOT A TOGGLE, and the lit pill names the number. That is the whole
+       lesson the retired "Confirmed stock" control left: a lit/unlit pill with a fixed label gave
+       no way to tell whether it was currently adding rows or removing them. Here "any" and "7d" are
+       both states you can read without remembering what you last clicked.
+       🔑 LIT FROM `tradeData.maxAgeDays` where the server echoes it, for the same reason `sort` is:
+       a row of pills claiming a filter the rows in front of the player are not under is worse than
+       no pills. Falls back to the local value before the first response lands. */
+    const ageLbl = document.createElement("span");
+    ageLbl.className = "lbl";
+    ageLbl.textContent = "prices";
+    bar.appendChild(ageLbl);
+    const setMaxAge = (d) => {
+      if (tdMaxAge === d) return;
+      tdMaxAge = d;
+      try {
+        if (d) localStorage.setItem(TD_MAXAGE_KEY, String(d));
+        else localStorage.removeItem(TD_MAXAGE_KEY);
+      } catch { /* private mode */ }
+      loadTrade();
+      render();
+    };
+    const activeAge = tradeData && "maxAgeDays" in tradeData
+      ? (tradeData.maxAgeDays || null) : tdMaxAge;
+    for (const c of TD_MAXAGE_CHOICES) {
+      tdBtn(bar, c.label, activeAge === c.days, c.tip, () => setMaxAge(c.days));
+    }
+
     /* 🔑 BACKHAUL IS A SHORTCUT INTO THE `sell at` SLOT, not a filter of its own. "I am already
        flying there" is exactly `toBody`, which is what that slot sets — so it writes into `tdSellAt`
        and reads its lit state from it. One filter, two ways to reach it, and the slot shows the
@@ -924,7 +1016,7 @@
    *  terminal that has nothing to do with it, which returns nothing and looks like a broken board.
    *  A system or a body survives, because those are true of any commodity. */
   function tdSetSlot(which, value) {
-    if (which === "hold") { tdSetHold(value); return; }
+    if (tdIsNumericSlot(which)) { tdSetNumericSlot(which, value); return; }
     if (which === "what") {
       tdWhat = value || "";
       tdLookup = null;
@@ -943,12 +1035,21 @@
     render();
   }
 
-  /** Set or clear the hold override. Anything that is not a positive whole number clears it. */
-  function tdSetHold(n) {
-    tdHold = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  /** The slots that take a typed figure rather than a pick from a list. They share an input type,
+   *  a commit path and the rule that a bad number clears rather than pins — see `tdSlot`. */
+  function tdIsNumericSlot(which) { return which === "hold" || which === "budget"; }
+
+  /** Set or clear one of those. Anything that is not a positive whole number clears it.
+   *
+   *  🔑 ONE FUNCTION FOR BOTH, because they differ only in which variable and which storage key
+   *  they write. Two near-identical setters is how one of them quietly stops persisting. */
+  function tdSetNumericSlot(which, n) {
+    const v = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    const key = which === "hold" ? TD_HOLD_KEY : TD_BUDGET_KEY;
+    if (which === "hold") tdHold = v; else tdBudget = v;
     try {
-      if (tdHold) localStorage.setItem(TD_HOLD_KEY, String(tdHold));
-      else localStorage.removeItem(TD_HOLD_KEY);
+      if (v) localStorage.setItem(key, String(v));
+      else localStorage.removeItem(key);
     } catch { /* private mode */ }
     tdOpen = null;
     tdTyped = "";
@@ -1008,10 +1109,23 @@
     tdSlot(f, "hold", "buy", tdHold ? num(tdHold) + " SCU" : "",
       typeof autoScu === "number" && autoScu > 0 ? num(autoScu) + " SCU — a full hold" : "a full hold",
       tdHold && typeof autoScu === "number" && autoScu > 0 ? "of " + num(autoScu) : "");
+    /* 🔴 THE FIFTH SLOT — "only show me what I can afford". `/api/trade/routes` has parsed `budget`
+       since the finder was written and no UI had ever sent it, so this was one slot and one query
+       param with no server work in it.
+       🔑 IT BELONGS BESIDE `buy`, and for the reason that slot's own note gives: it changes the
+       QUERY rather than the display, and it is the second half of the same question — how much of
+       the hold you are going to fill is bounded by the hold AND by the money. The finder folds it
+       into the hold bound for exactly that reason, so a capped row still reads as `hold` and states
+       what it could actually carry.
+       🔑 THE PLACEHOLDER SAYS "no limit", NOT "auto". There is nothing to detect: the app cannot
+       read the player's balance from anywhere, so unlike `buy` there is no auto value to state, and
+       a slot reading "auto" would imply one exists. */
+    tdSlot(f, "budget", "spend", tdBudget ? num(tdBudget) + " aUEC" : "", "no limit",
+      tdBudget ? "up to" : "");
     body.appendChild(f);
-    // ⚠️ `hold` is a free numeric entry, so it has no option list. Without this guard the list box
-    // opens empty under it and reads as a search that found nothing.
-    if (tdOpen && tdOpen !== "hold") tdSlotList(body);
+    // ⚠️ `hold` and `budget` are free numeric entries, so neither has an option list. Without this
+    // guard the list box opens empty under them and reads as a search that found nothing.
+    if (tdOpen && tdOpen !== "hold" && tdOpen !== "budget") tdSlotList(body);
   }
 
   function tdSlot(f, which, label, value, placeholder, hint) {
@@ -1037,16 +1151,17 @@
       inp.addEventListener("input", () => { tdTyped = inp.value; tdRedrawSlotList(); });
       // 🔑 A numeric slot needs a numeric keyboard on any touch surface and, more importantly here,
       // it must not offer the browser's text autofill over a figure the page already states.
-      if (which === "hold") { inp.type = "number"; inp.min = "1"; inp.step = "1"; }
+      if (tdIsNumericSlot(which)) { inp.type = "number"; inp.min = "1"; inp.step = "1"; }
       inp.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { e.preventDefault(); inp.blur(); tdOpen = null; tdTyped = ""; render(); }
         else if (e.key === "Enter") {
           e.preventDefault();
-          /* 🔴 A BAD NUMBER CLEARS BACK TO AUTO RATHER THAN PINNING A NONSENSE HOLD. Typing "abc"
+          /* 🔴 A BAD NUMBER CLEARS BACK TO UNSET RATHER THAN PINNING A NONSENSE ONE. Typing "abc"
              or "0" is a mistake, and the honest response is the ship's real capacity — not a 0 SCU
              hold, which would empty the board and read as the tab being broken. Same reasoning as
-             `num()` never printing a missing tonnage as "0". */
-          if (which === "hold") { tdSetHold(Math.floor(Number(inp.value))); return; }
+             `num()` never printing a missing tonnage as "0", and it is why `budget` shares this
+             path: a budget of 0 buys nothing, so it would empty the board the same way. */
+          if (tdIsNumericSlot(which)) { tdSetNumericSlot(which, Math.floor(Number(inp.value))); return; }
           const first = tdSlotOptions(which)[0];
           if (first) tdPickOption(which, first);
         }
@@ -1055,8 +1170,8 @@
       // Committing on blur too: a player who types a number and clicks the board has said what they
       // meant, and losing it to a missed Enter is the kind of small betrayal that stops people
       // using a control at all.
-      if (which === "hold") {
-        inp.addEventListener("change", () => tdSetHold(Math.floor(Number(inp.value))));
+      if (tdIsNumericSlot(which)) {
+        inp.addEventListener("change", () => tdSetNumericSlot(which, Math.floor(Number(inp.value))));
       }
       row.appendChild(inp);
       // Focus after the row is in the document, or the caret lands nowhere.
@@ -1433,6 +1548,156 @@
     return sec;
   }
 
+  /* ── the audit, rendered ───────────────────────────────────────────────────
+     🔴 THE POINT OF PUTTING IT ON SCREEN: it turns "my Ledger is missing a sale" from a diagnosis
+     into a reading. The audit has run at every load since 2026-08-23 and printed to `sidecar.log`,
+     and `npm run audit:journal` answers the same question from a terminal — but the person who
+     notices a missing sale is looking at THIS tab, and neither of those is in front of them.
+
+     🔴 IT RENDERS WHAT THE AUDIT SAYS AND DECIDES NOTHING. Every field below is read off
+     `view().audit`; no verdict is re-derived here. The rule lives in `src/trade-journal-audit.ts`
+     and having a second copy of it in a widget is how the two come to disagree.
+
+     🔴 IT OFFERS NO REPAIR, AND THAT IS THE WHOLE CONSTRAINT ON THIS SURFACE.
+       - An orphaned key means DEDUPED. It can NEVER mean "the confirmation gate refused it":
+         `apply()` tests `confirmed` BEFORE it keys anything, so a refusal cannot leave a key
+         behind. The two diagnoses want opposite responses, which is why the wording below says
+         "deduped, not refused" in those words rather than "the number looks off".
+       - The only safe repair is deleting the WHOLE file. Dropping the orphaned keys instead makes
+         the startup replay book those sales a SECOND time, and editing rows out is what causes
+         this in the first place. So the block names the file and stops there: there is no button,
+         because there is no partial cure and a widget with a "fix it" control would be offering
+         one of the two wrong ones. */
+
+  /** How many orphans to name before summarising. `describeAudit` uses 10 for a log line; this is
+   *  a panel over a game, and five rows is already more evidence than a decision needs. */
+  const TD_AUDIT_SHOWN = 5;
+
+  /** The same date shape the run rows use, so two lines about the same afternoon look alike.
+   *
+   *  ⚠️ FALLS BACK TO THE RAW STRING. An orphan's `at` comes verbatim out of a key in a file that,
+   *  by hypothesis, somebody has been editing by hand — so it is not guaranteed to parse, and
+   *  printing "Invalid Date" over evidence is worse than printing the evidence. */
+  function tdAuditWhen(iso) {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return String(iso);
+    return new Date(t).toLocaleString([], {
+      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  /** The clauses that must never be silent, whichever way the verdict went. `boundedOutKeys` and
+   *  `unreadableKeys` are both "we did not judge this", and a report that hides them lets a
+   *  mostly-unjudged journal read as a clean one. */
+  function tdAuditCaveats(a) {
+    const out = [];
+    if (a.boundedOutKeys > 0) {
+      out.push(a.boundedOutKeys + " older " + (a.boundedOutKeys === 1 ? "key was" : "keys were")
+        + " not judged — their rows are old enough to have been trimmed by design.");
+    }
+    const bad = (a.unreadableKeys && a.unreadableKeys.length) || 0;
+    if (bad > 0) {
+      out.push(bad + (bad === 1 ? " key is" : " keys are") + " in a shape this check does not"
+        + " recognise, so " + (bad === 1 ? "it was" : "they were") + " not judged either.");
+    }
+    return out;
+  }
+
+  /**
+   * The loud half: the journal has lost rows while keeping the keys that suppress them.
+   *
+   * ⚠️ IT IS DRAWN BEFORE THE "Nothing recorded yet" EARLY RETURN, and that ordering is
+   * load-bearing rather than cosmetic. Drift bad enough to remove every row leaves a journal that
+   * is empty AND drifted — which is exactly the state worth explaining — and the empty branch
+   * returns before anything below it can run.
+   */
+  function tdAuditNotice(body, a) {
+    const box = document.createElement("div");
+    box.className = "jaud bad";
+
+    const h = document.createElement("div");
+    h.className = "h";
+    const sells = a.orphans.filter((o) => o.kind === "sell").length;
+    const buys = a.orphans.length - sells;
+    h.textContent = a.orphans.length + " recorded "
+      + (a.orphans.length === 1 ? "transaction is" : "transactions are") + " missing from your Ledger";
+    box.appendChild(h);
+
+    const p1 = document.createElement("div");
+    p1.className = "p";
+    p1.textContent = "The journal has " + a.keysAudited + " booked "
+      + (a.keysAudited === 1 ? "entry" : "entries") + " and " + a.orphans.length + " of them ("
+      + sells + " sell, " + buys + " buy) have no row behind them.";
+    box.appendChild(p1);
+
+    /* 🔴 THE DIAGNOSIS, SPELLED OUT, BECAUSE THE OBVIOUS READING IS THE WRONG ONE. Left to itself
+       "a sale I made is not here" reads as the app refusing good trades, and somebody then goes and
+       loosens the confirmation gate that is working correctly. */
+    const p2 = document.createElement("div");
+    p2.className = "p";
+    p2.textContent = "They are DEDUPED, not refused. An entry is only booked after the trade has"
+      + " been confirmed, so this is never the app turning trades away — the rows were removed from"
+      + " the file while their entries stayed, and they will be skipped at every future launch.";
+    box.appendChild(p2);
+
+    const fix = document.createElement("div");
+    fix.className = "p fix";
+    fix.textContent = "The only safe repair is deleting trade-journal.json in your app data folder."
+      + " Do not edit rows out of it and do not delete the entries: editing rows is what causes"
+      + " this, and dropping entries books the sales a second time.";
+    box.appendChild(fix);
+
+    for (const o of a.orphans.slice(0, TD_AUDIT_SHOWN)) {
+      const k = document.createElement("div");
+      k.className = "k";
+      k.textContent = o.kind + " · " + tdAuditWhen(o.at) + " · "
+        + (o.shopName ? tdShop(o.shopName) : "no shop");
+      box.appendChild(k);
+    }
+    if (a.orphans.length > TD_AUDIT_SHOWN) {
+      const more = document.createElement("div");
+      more.className = "k";
+      more.textContent = "…and " + (a.orphans.length - TD_AUDIT_SHOWN) + " more";
+      box.appendChild(more);
+    }
+
+    for (const c of tdAuditCaveats(a)) {
+      const n = document.createElement("div"); n.className = "p"; n.textContent = c;
+      box.appendChild(n);
+    }
+    body.appendChild(box);
+  }
+
+  /**
+   * The quiet half, at the foot of the tab: the check ran and found nothing wrong.
+   *
+   * 🔴 `ok` ON ZERO KEYS CERTIFIES NOTHING, and saying "checked" over an unjudged journal is the
+   * exact false reassurance this whole feature exists to prevent — `AuditReport` puts `keysAudited`
+   * next to `ok` for that reason. So the two are worded differently, and a journal with nothing in
+   * it at all gets no line: there is no record to have drifted, and the empty state above already
+   * says why it can be empty.
+   */
+  function tdAuditLine(body, a) {
+    if (!a || !a.keysTotal) return;
+    const n = document.createElement("div");
+    n.className = "jaud ok";
+    const caveats = tdAuditCaveats(a);
+    if (a.keysAudited > 0) {
+      /* 🔑 "on record", NOT "on this list". The audit judges the whole journal, while the list
+         above it is period-filtered — a sentence about what is on screen would be a different
+         claim, and it would read as false every time Today is empty and All time is not. */
+      n.textContent = "Checked: all " + a.keysAudited + " booked "
+        + (a.keysAudited === 1 ? "entry has" : "entries have") + " a transaction on record ("
+        + a.sellKeys + " sell, " + a.buyKeys + " buy). Nothing the app booked is missing.";
+    } else {
+      // Not "OK". Nothing was judged, so nothing is being claimed.
+      n.textContent = "Not checked: none of the " + a.keysTotal + " booked "
+        + (a.keysTotal === 1 ? "entry" : "entries") + " could be judged.";
+    }
+    if (caveats.length) n.textContent += " " + caveats.join(" ");
+    body.appendChild(n);
+  }
+
   function renderJournal() {
     const body = $("body");
     body.textContent = "";
@@ -1470,6 +1735,11 @@
     // blank screen is not, and "the app is broken" is the other way to read one.
     tdBalance(body, t, j.open);
 
+    /* 🔴 ABOVE THE EMPTY CHECK ON PURPOSE. Drift that removed every row leaves a journal that is
+       empty AND drifted, and that is precisely the state a player reports as "everything I traded
+       has vanished" — the branch below would return before the explanation could be drawn. */
+    if (j.audit && !j.audit.ok) tdAuditNotice(body, j.audit);
+
     if (!j.runs.length && !j.open.length && !j.unmatched.length
         && !(j.writtenOff && j.writtenOff.length)) {
       const e = document.createElement("div"); e.className = "empty";
@@ -1482,6 +1752,7 @@
         + "A trade made before you started it — or long enough ago that its log has rotated away — "
         + "cannot be recovered.";
       body.appendChild(w);
+      if (j.audit && j.audit.ok) tdAuditLine(body, j.audit);
       return;
     }
 
@@ -1634,6 +1905,11 @@
         body.appendChild(row);
       }
     }
+
+    /* 🔑 THE FOOT OF THE TAB, because that is where somebody who has read the whole list and still
+       thinks a sale is missing arrives. The drift case is drawn at the TOP instead — it is a
+       finding rather than a reassurance, and it has to be seen before the list it explains. */
+    if (j.audit && j.audit.ok) tdAuditLine(body, j.audit);
   }
 
   /** Where the current route plan is heading, if anywhere - the backhaul anchor. Deliberately the

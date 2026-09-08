@@ -307,7 +307,15 @@ export function findRoutes(
   const hold = Math.max(0, opts.capacityScu || 0);
   if (!hold) return [];
   const limit = opts.limit ?? 40;
-  const maxAge = opts.maxAgeDays ?? null;
+  /* 🔴 A NON-POSITIVE BOUND IS NO BOUND, NOT AN EMPTY BOARD. `maxAgeDays: 0` reads as "nothing
+     older than zero days", which excludes every dated quote in the table and is indistinguishable
+     from "there are no routes" — this repo's worst failure mode for a filter, and the one the
+     case-insensitive system compare above carries the same warning about.
+     ⚠️ `?? null` alone does NOT cover it: 0 is not nullish, so it passed straight through. The route
+     folds it too, but for a different reason — see the echo in `trade-routes.ts` — and this guard is
+     the one that holds for every caller rather than only for the one behind HTTP. */
+  const maxAge = opts.maxAgeDays !== null && opts.maxAgeDays !== undefined && opts.maxAgeDays > 0
+    ? opts.maxAgeDays : null;
 
   const fresh = (q: TradeQuote): boolean => {
     if (maxAge === null) return true;
