@@ -115,27 +115,53 @@ import type { SignalInputs, TerminalFix } from "./origin-signals.js";
  */
 export const BIND_WINDOW_MS = 5 * 60_000;
 
-/** The `shopId[...]` / `shopName[...]` / `kioskId[...]` fields ride BOTH shop components:
- *  `CEntityComponentCommodityUIProvider` (bulk commodities) and `CEntityComponentShopUIProvider`
- *  (gear, weapons, food). The second is the bigger half — 484 lines against 311 — and nothing in
- *  the app read it before. Matching the component tag rather than the bare field keeps this from
- *  claiming any future line that happens to carry a `shopId`. */
-const SHOP_COMPONENT = "CEntityComponent";
-const SHOP_TAIL = "UIProvider::";
+/**
+ * 🔴 THE FIELDS ARE THE SUBJECT; THE COMPONENT TAG IS ONLY A SANITY CHECK.
+ *
+ * This used to require the text between `CEntityComponent` and `UIProvider::` to be exactly
+ * `Commodity` or `Shop`, on the reasoning that naming the two known components keeps the parser
+ * from claiming any future line that happens to carry a `shopId`. The guard was right; the way it
+ * was spelled was a guess about the verb, and it was wrong about FIVE components in the corpus:
+ *
+ *   accepted before, accepted now                 lines   distinct tokens
+ *     CEntityComponentCommodityUIProvider          2,642     9
+ *     CEntityComponentShopUIProvider                 574    29
+ *   REFUSED before, accepted now
+ *     CEntityComponentShoppingProvider               163    25   no `UIProvider::` in its name
+ *     CEntityComponentShop                             5     1   no `UIProvider::` either
+ *     CEntityComponentMiningShopUIProvider             3     2   "MiningShop" is not "Shop"
+ *
+ * Measured over Sub's 555 logbackups the shipped rule took **3,216 lines / 38 tokens** and this
+ * takes **3,387 / 61 — a strict superset, 171 extra, 0 the other way.**
+ *
+ * 🔴 THE LINE COUNT MASSIVELY UNDERSTATES IT: 171 lines is 5%, but they carry **23 shop tokens
+ * that appear NOWHERE ELSE.** Every ship dealership and rental desk (Astro Armada, New Deal, the
+ * Crusader showroom, the IAE and ExpoHall rental counters), every food stall and noodle bar, and
+ * both refinery ore-sale desks. A parser that finds two thirds of the terminals in the corpus and
+ * reports that as "all of them" is the failure this whole file exists to prevent.
+ *
+ * 🔑 ENUMERATE THE COMPONENTS, NEVER GREP FOR THE VERB YOU WERE TOLD ABOUT. Three of these five
+ * were invisible to every search for the words in the old rule, which is the same way the mobiGlas
+ * tracking signal hid under `CObjectiveMarkerComponent::Add/RemoveFromPlayerDataBank` for three
+ * sessions. `tools/probe-shoploc.ts` found the first two of them; the bare `CEntityComponentShop`
+ * is a third, and it is [Error]-severity — ⚠️ **which is fine here and would NOT be fine in
+ * `trade-log.ts`.** This parser answers "where is the player standing", and a rental lookup that
+ * failed still happened at the rental desk. Severity gates a PURCHASE, never a position.
+ *
+ * ⚠️ The component tag still has to be there, so the assertion it was written for still holds: a
+ * `shopId` on some unrelated line is refused. What no longer has to be true is that we guessed the
+ * component's name correctly in advance.
+ */
+const SHOP_COMPONENT = "<CEntityComponent";
 const SHOP_NAME_RE = /shopName\[([^\]]*)\]/;
 const SHOP_ID_RE = /shopId\[([^\]]*)\]/;
 const KIOSK_ID_RE = /kioskId\[([^\]]*)\]/;
 
-/** A shop line, if this is one. Exported for the test and for the measurement tool, so a prefilter
+/** A shop line, if this is one. Exported for the test and for the measurement tools, so a prefilter
  *  can never drift from what the parser accepts — the lesson `trade-log.ts` paid for. */
 export function parseShopLine(line: string): { shopId: string; shopName: string; kioskId: string | null } | null {
-  // Cheap reject first: the component tag, then the one field that must be present.
-  const c = line.indexOf(SHOP_COMPONENT);
-  if (c < 0) return null;
-  const t = line.indexOf(SHOP_TAIL, c);
-  if (t < 0) return null;
-  const between = line.slice(c + SHOP_COMPONENT.length, t);
-  if (between !== "Commodity" && between !== "Shop") return null;
+  // Cheap reject first: the component tag, then the two fields that make it a shop line.
+  if (line.indexOf(SHOP_COMPONENT) < 0) return null;
   const id = SHOP_ID_RE.exec(line);
   const nm = SHOP_NAME_RE.exec(line);
   if (!id?.[1] || !nm?.[1]) return null;

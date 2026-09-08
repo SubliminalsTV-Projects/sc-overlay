@@ -146,7 +146,11 @@ const quotes: ResolvedQuote[] = [
 
 const verdict = (over: Partial<OriginVerdict>): OriginVerdict => ({
   tier: "place", id: AREA18, label: "Area18", at: Date.now(), ageMin: 1,
-  from: "test", detail: null, howToImprove: "", stale: false, ...over,
+  from: "test", detail: null, howToImprove: "", stale: false,
+  // Ordering never reads `attribution` — a widget may sort by a last-known fix and that is the
+  // whole point of the fallback. Defaulted to the fresh shape so a case that overrides `stale`
+  // still describes a believable reading; the refusal is tested where it belongs, in test:origin.
+  attribution: { ok: true, tier: "place", id: AREA18 }, ...over,
 });
 const deps = (o: OriginVerdict): ProximityDeps => ({ index, locations, travel, origin: o });
 

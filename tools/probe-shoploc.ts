@@ -93,7 +93,7 @@ import { createGunzip } from "node:zlib";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
-import { PlayerLocation } from "../src/player-location.js";
+import { PlayerLocation, parseShopLine } from "../src/player-location.js";
 import { collectOriginSignals, originDepsFor } from "../src/origin-signals.js";
 import { resolveOrigin, TRUST_MIN, type OriginVerdict } from "../src/player-origin.js";
 import { parseLine } from "../src/parser.js";
@@ -234,10 +234,11 @@ const KEEP = [
   "at location [",                        // missions-parser RE.numericLocation A  (place tier)
   ":Location:",                           // missions-parser RE.numericLocation B  (place tier)
   "Platform state changed to",            // missions-parser RE.platformState      (place tier)
-  /* 🔴 THE SUBJECT IS ANY LINE THAT NAMES A SHOP, not the two components `parseShopLine` accepts.
-   * Anchoring on the components loses `CEntityComponentShoppingProvider` and
-   * `CEntityComponentMiningShopUIProvider` — 186 lines, but **14 shop tokens that appear nowhere
-   * else**, including every ship dealership and the refinery ore desks. See `shopLineOf`.
+  /* 🔴 THE SUBJECT IS ANY LINE THAT NAMES A SHOP. This list predates the `parseShopLine` repair,
+   * when anchoring on the two named components lost `CEntityComponentShoppingProvider`,
+   * `CEntityComponentMiningShopUIProvider` and the bare `CEntityComponentShop` — few lines, but
+   * **20 shop tokens that appear nowhere else**, including every ship dealership and the refinery
+   * ore desks. `shopName[` is what it always really keyed on and it is what the parser keys on now.
    * The two component terms are kept beside it so this list stays character-for-character the
    * SQL's, which is what the count cross-check in `--control` is testing. */
   "CEntityComponentCommodityUIProvider::",
@@ -247,37 +248,20 @@ const KEEP = [
 const keep = (line: string): boolean => KEEP.some((k) => line.indexOf(k) >= 0);
 
 /**
- * 🔴 THE SUBJECT OF THE MEASUREMENT IS WIDER THAN `parseShopLine`, DELIBERATELY — AND THE GAP IS
- * A REAL FINDING ABOUT `src/`, NOT A SHORTCUT TAKEN HERE.
+ * ✅ THE FORK IS CLOSED — this probe used to carry its own `shopLineOf`, deliberately WIDER than
+ * `parseShopLine`, because the shipped parser required the text between `CEntityComponent` and
+ * `UIProvider::` to be exactly "Commodity" or "Shop" and therefore refused
+ * `CEntityComponentShoppingProvider` (no `UIProvider::` in its name at all),
+ * `CEntityComponentMiningShopUIProvider` ("MiningShop" is not "Shop") and the bare
+ * `CEntityComponentShop`. Over this corpus that was 128 lines but **20 shop tokens that appear
+ * NOWHERE ELSE — 63 tokens became 83**: every ship dealership and rental desk, every food stall,
+ * all three refinery ore desks.
  *
- * `parseShopLine` in `player-location.ts` requires the text between `CEntityComponent` and
- * `UIProvider::` to be exactly "Commodity" or "Shop". Measured over the corpus, it accepts
- * **12,247 shop lines and this accepts 12,375 — a strict superset, 128 extra, 0 the other way.**
- * The 128 are `CEntityComponentShoppingProvider` (91), which has no `UIProvider::` in its name at
- * all, and `CEntityComponentMiningShopUIProvider` (36), whose "MiningShop" is not "Shop".
- *
- * 🔴 THE LINE COUNT MASSIVELY UNDERSTATES IT: 128 lines is 1%, but they carry **20 shop tokens
- * that appear NOWHERE ELSE — 63 tokens become 83.** Every ship dealership and rental desk (Astro
- * Armada, New Deal, Vantage Rentals, Regal Luxury, Teach's), every food stall, and all three
- * refinery ore-sale desks. **Seven of the 20 are tokens the tower had already matched by name**,
- * so without this the two methods could not have been compared on them at all.
- *
- * `references/item-shops.md` names the same shape from the other side: THREE purchase verbs
- * across TWO components, of which `ShoppingProvider::SendStandardItemBuyRequest` (143) and
- * `::SendRentalRequest` (20) are 37% of all purchases. The location service parses neither.
- *
- * 🔑 WIDENING HERE IS NOT FORKING THE LOCATION SERVICE. This decides WHICH LINES ARE ASKED ABOUT;
- * every ANSWER still comes from `PlayerLocation` + `collectOriginSignals` + `resolveOrigin`,
- * untouched. And the `lastShop` state `parseShopLine` feeds is the terminal signal, which this
- * probe deletes anyway. The `src/` repair is Cargo.
+ * `parseShopLine` now accepts exactly what this did, so the copy is deleted rather than kept in
+ * step. 🔑 That is the standing rule paying off in the direction it is usually quoted in reverse:
+ * a prefilter is a second copy of the parser's vocabulary, and the cure is one owner, not two
+ * files that agree today.
  */
-function shopLineOf(line: string): { shopId: string; shopName: string; kioskId: string | null } | null {
-  if (line.indexOf("<CEntityComponent") < 0) return null;
-  const id = /shopId\[([^\]]*)\]/.exec(line);
-  const nm = /shopName\[([^\]]*)\]/.exec(line);
-  if (!id?.[1] || !nm?.[1]) return null;
-  return { shopId: id[1], shopName: nm[1], kioskId: /kioskId\[([^\]]*)\]/.exec(line)?.[1] || null };
-}
 
 const TS_RE = /^<([^>]+)>/;
 const tsOf = (line: string): number | null => {
@@ -336,18 +320,23 @@ interface Obs {
  * putting the player at the centre of a sun); it simply is not applied on this path. Applying it
  * here is a measurement guard, not a fix — see the strip's Cargo for the `src/` half.
  *
- * 🔴 AND THE TIER IS NOT ENOUGH ON ITS OWN EITHER — `resolveOrigin` FALLS BACK TO AN EXPIRED
+ * ✅ AND THE TIER IS NOT ENOUGH ON ITS OWN EITHER — `resolveOrigin` FALLS BACK TO AN EXPIRED
  * READING AND STILL CALLS IT `place`. That fallback is right for a widget (a last-known beats
  * "unknown" on screen, and it ships `stale: true` beside it) and wrong here: a fix older than its
  * own trust window is a claim about where the player was an hour ago, and an hour is enough to fly
  * to another station. That is the wrong-attribution case this whole probe exists to avoid.
  *
- * Measured before adding the guard: **64 of 3,062 same-place observations (2.1%) were past
- * `TRUST_MIN.place`**, and nothing anywhere in the corpus rested on a reading older than 180
+ * Measured before this probe first guarded it: **64 of 3,062 same-place observations (2.1%) were
+ * past `TRUST_MIN.place`**, and nothing anywhere in the corpus rested on a reading older than 180
  * minutes — so closing the branch that could be badly wrong costs almost nothing.
  *
  * ⚠️ The merely-`stale` ones are KEPT — 303 (9.9%) sit past HALF the window. Half a window is
  * "believe it less", not "it is probably wrong", and `resolveOrigin`'s own comment says so.
+ *
+ * 🔑 THE RULE NOW LIVES IN `player-origin.ts` AND THIS READS IT. `verdict.attribution` is a union
+ * whose id is ABSENT on the refused branch, so the check below cannot be forgotten by the next
+ * caller the way this probe's hand-rolled `ageMin > TRUST_MIN.place` could be. Two copies of a
+ * threshold is how the two ends of a rule drift; comparing `ok` is how they cannot.
  *
  * 🔑 **A REJECTED PLACE IS NOT A REJECTED LOCATION, and reading it as one was too narrow.** Every
  * branch below still knows something true and coarser: a fix on the Moon "Ita" is a genuine BODY
@@ -370,23 +359,30 @@ function locate(
   };
   if (!v.id) return { id: null, loc: null, why: v.tier === "place" ? "unknown" : v.tier };
 
+  /** Inside its own trust window, straight from the grader. Never a threshold re-applied here. */
+  const inWindow = v.attribution.ok;
+
   if (v.tier === "system") return { id: null, loc: { tier: "system", id: v.id }, why: "system" };
   if (v.tier === "body") {
-    const fresh = v.ageMin === null || v.ageMin <= TRUST_MIN.body;
-    return { id: null, loc: fresh ? { tier: "body", id: v.id } : sys(v.id), why: "body" };
+    return { id: null, loc: inWindow ? { tier: "body", id: v.id } : sys(v.id), why: "body" };
   }
   if (v.tier !== "place") return { id: null, loc: null, why: "unknown" };
 
   const rowTier = tierOfRecord(locations[v.id]);
   if (rowTier === "system") return { id: null, loc: { tier: "system", id: v.id }, why: "place-is-a-body" };
   if (rowTier === "body") {
+    /* ⚠️ THE BODY WINDOW, NOT `attribution.ok` — and the difference is deliberate. The verdict was
+     * graded as a PLACE (45 min) and the starmap has just told us it is really a body, so what it
+     * is being believed AS has changed and the window has to change with it. Reading `ok` here
+     * would silently promote a 30-minute place fix into a body reading the body tier would have
+     * refused, and it would move a published number for a reason nobody asked for. */
     const fresh = v.ageMin === null || v.ageMin <= TRUST_MIN.body;
     return { id: null, loc: fresh ? { tier: "body", id: v.id } : sys(v.id), why: "place-is-a-body" };
   }
-  if (v.ageMin !== null && v.ageMin > TRUST_MIN.place) {
-    return { id: null, loc: sys(v.id), why: "place-too-old" };
-  }
-  return { id: v.id, loc: { tier: "place", id: v.id }, why: "same-place" };
+  /* 🔴 THE NAMING BRANCH, AND IT IS THE ONLY ONE. `attribution.id` does not exist until `ok` has
+   * been narrowed, which is what makes this refusal structural rather than remembered. */
+  if (!v.attribution.ok) return { id: null, loc: sys(v.id), why: "place-too-old" };
+  return { id: v.attribution.id, loc: { tier: "place", id: v.attribution.id }, why: "same-place" };
 }
 
 interface ReplayOpts {
@@ -453,7 +449,7 @@ function replay(lines: Kept[], o: ReplayOpts): Obs[] {
       else if (ev.kind === "cargoPlatform") cargoMove = { direction: ev.direction, platform: ev.platform, at };
     }
 
-    const shop = shopLineOf(k.line);
+    const shop = parseShopLine(k.line);
     if (!shop) continue;
     /* Which component wrote it. Free here, and it tells a consumer which price table a receipt
      * from this token belongs in — `commodities.json`, `item-shops.json`, or neither, since the

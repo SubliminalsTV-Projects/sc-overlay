@@ -359,5 +359,71 @@ const deps = { locations, now: () => NOW };
   ok(nothing.id === null, "...and carries no id for anything to compute from");
 }
 
+/* ── 🔴 AN EXPIRED FIX IS STILL SHOWN AND MAY NEVER BE ATTRIBUTED ─────────────────────────────
+ *
+ * `resolveOrigin` falls back to the freshest reading it has when nothing is inside its own trust
+ * window, and still labels it with that reading's tier. That is right for a WIDGET — a last-known
+ * beats "Location unknown" on screen, and `stale` rides beside it — and wrong for anything writing
+ * "this price was seen at this shop": `TRUST_MIN.place` is 45 minutes and an hour is enough to fly
+ * to another station. Measured over the shared-log corpus, **64 of 3,062 same-place observations
+ * (2.1%)** rested on a reading past its whole window.
+ *
+ * 🔑 THE DISTINCTION IS THE FEATURE, and it is three-way, not two. Past HALF the window is
+ * "believe it less" (9.9% of observations, and they are KEPT); past the whole window is "this is
+ * probably wrong". `stale` is true for both, so it cannot be the discriminator — `attribution` is.
+ *
+ * 🔑 THIS BLOCK PROVES ITS OWN PREMISE, the way the tier-rule block above does: the id it expects
+ * is the one the REAL name resolver hands back off the REAL starmap, never one injected here. An
+ * injected id would assert a belief about the resolver instead of exercising it.
+ */
+{
+  const graded = (atAgoMin: number, over: Parameters<typeof collectOriginSignals>[0] = {}) =>
+    resolveOrigin(
+      collectOriginSignals({ atLocation: { token: "Area18", at: NOW - atAgoMin * 60_000 }, ...over }, deps),
+      { ...originDepsFor(locations), now: () => NOW });
+
+  // POSITIVE FIRST, twice over. An expired verdict that named nothing at all would satisfy every
+  // must-not below for free, and so would a token that never resolved in the first place.
+  const fresh = graded(1);
+  ok(fresh.attribution.ok && fresh.attribution.id === AREA18,
+     "a fresh place fix hands out an attributable id, and it is the starmap's own",
+     fresh.attribution.ok ? fresh.attribution.id : "refused");
+  ok(!fresh.stale, "...and is not even stale yet", `stale=${fresh.stale}`);
+
+  // 🔴 NO SYSTEM SIGNAL, deliberately — that is what makes the fallback reachable at all. With a
+  // quantum route in the session the system tier has an infinite window and simply wins, which is
+  // why this over-claim only ever appears in sessions the drive was never touched in.
+  const expired = graded(3 * 60);
+  ok(expired.tier === "place" && expired.id === AREA18,
+     "🔑 a three-hour-old fix is STILL SHOWN as a place, with its id — the widget keeps its answer",
+     `${expired.tier}/${String(expired.label)}`);
+  ok(expired.stale, "...flagged stale, as it always was", `stale=${expired.stale}`);
+  ok(!expired.attribution.ok,
+     "🔴 ...and yet NOTHING may be named from it", JSON.stringify(expired.attribution));
+  ok(!expired.attribution.ok && expired.attribution.why === "expired",
+     "...saying which of the two refusals it is, so a caller can tell it from 'never placed'",
+     JSON.stringify(expired.attribution));
+
+  // The middle rung — the one the whole three-way split exists for. Past half of 45 minutes and
+  // inside the whole of it: believe it less, and still attribute from it.
+  const recent = graded(30);
+  ok(recent.stale, "a 30-minute fix is stale — past HALF the place window", `age=${recent.ageMin?.toFixed(0)}`);
+  ok(recent.attribution.ok && recent.attribution.id === AREA18,
+     "🔴 ...and is STILL attributable, because half a window is 'believe it less'",
+     recent.attribution.ok ? "ok" : JSON.stringify(recent.attribution));
+
+  // ...and the far end: nothing known at all is a different refusal from an expired reading.
+  const none = resolveOrigin([], { ...originDepsFor(locations), now: () => NOW });
+  ok(!none.attribution.ok && none.attribution.why === "unknown",
+     "an empty session refuses for the OTHER reason", JSON.stringify(none.attribution));
+
+  // A system reading in the same session outranks an aged-out place one and is itself in window,
+  // so it attributes — at SYSTEM precision, which can never name a kiosk.
+  const sys = graded(3 * 60, { system: "stanton" });
+  ok(sys.attribution.ok && sys.attribution.tier === "system",
+     "with a quantum route in the session the SYSTEM reading wins and is attributable as a system",
+     sys.attribution.ok ? sys.attribution.tier : JSON.stringify(sys.attribution));
+}
+
 console.log(`\n${fail ? `FAILED (${fail})` : "all passed"}  ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);

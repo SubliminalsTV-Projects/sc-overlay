@@ -48,6 +48,67 @@ const NOW = 1_800_000_000_000;
      "a shopId on some OTHER component is refused — the component tag is the gate");
 }
 
+/* ── 🔴 THE THREE COMPONENTS THE OLD RULE COULD NOT SEE ───────────────────────────────────────
+ *
+ * `parseShopLine` used to require the text between `CEntityComponent` and `UIProvider::` to be
+ * exactly "Commodity" or "Shop". Enumerating the components that really write `shopName[` over
+ * Sub's 555 logbackups turns up FIVE, and three of them were refused: 171 lines — but **23 shop
+ * tokens that appear nowhere else**, including every ship dealership and rental desk, every food
+ * stall and both refinery ore desks.
+ *
+ * 🔑 THE OLD RULE IS FROZEN HERE AS SOURCE rather than described, so this block cannot be a claim
+ * about what somebody remembers the parser used to do. `log-share.ts` keeps its superseded signal
+ * rules the same way and for the same reason.
+ *
+ * 🔑 IT IS TWO-SIDED. The frozen rule must still ACCEPT the two original components — otherwise
+ * "the old rule rejected these three" is satisfied by a frozen copy that rejects everything, which
+ * is exactly the free must-not this repo keeps walking into.
+ */
+{
+  /** VERBATIM from `logbackups/`, one per newly-accepted component. */
+  const BUY_SHOPPING = "<2025-08-01T22:30:17.435Z> [Notice] <CEntityComponentShoppingProvider::SendStandardItemBuyRequest> Sending SShopBuyRequest - playerId[201964486871] shopId[5061333926387] shopName[SCShop_PizzaBar_Food_RestStop] kioskId[0] client_price[7.000000] itemClassGUID[e07fa2c7-e2f2-4041-a898-d73f1f51eb06] itemName[Drink_bottle_synergy_01_plus_a] quantity[1] currencyType[UEC] [Team_CoreGameplayFeatures][Shops][UI]";
+  const RENTAL = "<2026-05-14T16:28:05.619Z> [Error] <CEntityComponentShop::GetRentalOptionsForEntityClassGUID> Item was not found in inventory - itemGUID[bba050c3-1348-45a8-91c6-73e4ecf5082f] itemName[COOL_JUST_S01_Thermax_SCItem] shopId[200862236441], shopName[SCShop_FW_ExpoHall] [Team_CoreGameplayFeatures][Shops]";
+  const REFINERY = "<2026-07-17T19:00:54.632Z> [Notice] <CEntityComponentMiningShopUIProvider::OnRefineryRequest> Sending SShopRefineryRequest - playerId[204772220757] shopId[718803279034] shopName[SCShop_NyxSocialStation_ORESales] kioskId[718803279035] request[] currencyType[UEC] [Team_CoreGameplayFeatures][Shops][UI]";
+
+  /** The SHIPPED rule as of 0.1.47, copied verbatim. Frozen; never "kept in step". */
+  const oldRule = (line: string): boolean => {
+    const c = line.indexOf("CEntityComponent");
+    if (c < 0) return false;
+    const t = line.indexOf("UIProvider::", c);
+    if (t < 0) return false;
+    const between = line.slice(c + "CEntityComponent".length, t);
+    if (between !== "Commodity" && between !== "Shop") return false;
+    return /shopId\[[^\]]+\]/.test(line) && /shopName\[[^\]]+\]/.test(line);
+  };
+
+  // POSITIVE FIRST: the frozen copy is a real rule, not a stub that says no to everything.
+  ok(oldRule(BUY_COMMODITY) && oldRule(BUY_ITEM),
+     "the frozen old rule really does accept the two components it was written for",
+     `${oldRule(BUY_COMMODITY)}/${oldRule(BUY_ITEM)}`);
+
+  ok(!oldRule(BUY_SHOPPING) && !oldRule(RENTAL) && !oldRule(REFINERY),
+     "🔴 ...and really did refuse all three of the others — the gap is not hypothetical",
+     `${oldRule(BUY_SHOPPING)}/${oldRule(RENTAL)}/${oldRule(REFINERY)}`);
+
+  const a = parseShopLine(BUY_SHOPPING);
+  ok(a?.shopName === "SCShop_PizzaBar_Food_RestStop",
+     "ShoppingProvider — no `UIProvider::` in its name at all — is read now", a?.shopName ?? "none");
+
+  // ⚠️ [Error] SEVERITY, AND THAT IS FINE HERE. `trade-log.ts` gates a PURCHASE on severity; this
+  // parser answers "where is the player standing", and a rental lookup that failed still happened
+  // at the rental desk. Copying the trade gate's rule across would lose the whole component.
+  const b = parseShopLine(RENTAL);
+  ok(b?.shopName === "SCShop_FW_ExpoHall",
+     "a bare CEntityComponentShop line is read, [Error] severity and all", b?.shopName ?? "none");
+  ok(b?.kioskId === null, "...and it states no kiosk, which is absence rather than failure",
+     String(b?.kioskId));
+
+  const c = parseShopLine(REFINERY);
+  ok(c?.shopName === "SCShop_NyxSocialStation_ORESales",
+     "MiningShopUIProvider — \"MiningShop\" is not \"Shop\" — is read now", c?.shopName ?? "none");
+  ok(c?.kioskId === "718803279035", "...with its kiosk", c?.kioskId ?? "none");
+}
+
 // ── The label ─────────────────────────────────────────────────────────────────────────────────
 {
   ok(terminalLabel("SCShop_Levski_CargoOffice_Commodities") === "Levski Cargo Office Commodities",
