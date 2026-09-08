@@ -74,7 +74,7 @@
     "test:playerloc": "tsx src/player-location.test.ts",
     "test:reppage": "tsx src/rep-page.test.ts",
     "measure:terminalorigin": "node tools/measure-terminal-origin.mjs",
-    "measure:origin": "node tools/measure-origin-coverage.mjs",
+    "measure:origin": "tsx tools/measure-origin-coverage.mts",
     "test:verseroutes": "tsx src/verse-routes.test.ts",
     "test:versecommodities": "tsx src/verse-commodities.test.ts",
     "test:itemshopstore": "tsx src/item-shops.test.ts",
@@ -99,7 +99,8 @@
     "test:staterecovery": "tsx src/state-recovery.test.ts",
     "control:orisonfix": "node tools/control-orisonfix.mjs",
     "control:repname": "node tools/control-repname.mjs",
-    "control:ageband": "node tools/control-ageband.mjs"
+    "control:ageband": "node tools/control-ageband.mjs",
+    "control:locfix": "node tools/control-locfix.mjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",

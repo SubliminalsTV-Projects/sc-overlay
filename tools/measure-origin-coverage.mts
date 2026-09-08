@@ -23,6 +23,14 @@
  */
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+/* 🔴 THE PARSER ITSELF, NOT A COPY OF IT — and this tool proved why on 2026-09-08. It carried its
+ * own `/<CEntityComponent(?:Commodity|Shop)UIProvider::/`, which is the rule `parseShopLine` used
+ * to have. So when that rule was widened to the five components the game really writes `shopName[`
+ * on, this tool re-derived the shop-terminal figures BYTE-IDENTICALLY and read like a clean
+ * before/after — a measuring tool cannot see a change to a vocabulary it keeps its own copy of.
+ * That is the same defect as any prefilter drifting from its parser, wearing the clothes of a
+ * reassuring measurement. (It is why this file is `.mts` and runs under `tsx`.) */
+import { parseShopLine } from "../src/player-location.js";
 
 const GAME = process.argv[2] ?? "C:/Program Files/Roberts Space Industries/StarCitizen/GAME";
 
@@ -34,9 +42,6 @@ const NAMED = /requested inventory for Location\[([^\]]+)\]/;
 const NUM_A = / at location \[([0-9]+)\]/;
 const NUM_B = /Location:([0-9]+)/;
 const CELLS = /planet cells:\s*(\d+)\s*\[\s*\d+\]\s*meshes:\s*\d+\s*\[\s*\d+\]\s*name:\s*(\S+)/;
-const SHOP_ID = /shopId\[([^\]]*)\]/;
-/* Both shop components. The item one is the bigger half and nothing in the app read it before. */
-const SHOP_COMP = /<CEntityComponent(?:Commodity|Shop)UIProvider::/;
 const QT_TAG = "[QuantumTravel]";
 
 /* From src/player-origin.ts. A trust window's HALF is where a reading stops being current and
@@ -81,10 +86,9 @@ function readSession(file) {
       continue;
     }
     if (line.indexOf(QT_TAG) >= 0) { evs.push({ k: "qt", t }); continue; }
-    if (line.indexOf("shopId[") >= 0 && SHOP_COMP.test(line)) {
-      const id = SHOP_ID.exec(line)?.[1];
-      if (id) evs.push({ k: "shop", t, id });
-      continue;
+    if (line.indexOf("shopId[") >= 0) {
+      const shop = parseShopLine(line);
+      if (shop) { evs.push({ k: "shop", t, id: shop.shopId }); continue; }
     }
     if (line.indexOf(" at location [") >= 0 || line.indexOf("Location:") >= 0) {
       const m = NUM_A.exec(line) ?? NUM_B.exec(line);

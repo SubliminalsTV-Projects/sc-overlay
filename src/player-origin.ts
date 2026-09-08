@@ -130,13 +130,50 @@ export interface OriginSignal {
   detail?: string | null;
 }
 
+/**
+ * 🔴 THE ONE SHAPE THAT MAY NAME A THING — and the reason it is a union rather than a flag.
+ *
+ * `resolveOrigin` returns two very different kinds of answer under one tier. A reading INSIDE its
+ * trust window is where the player is. A reading past it is the freshest thing we ever had, kept
+ * deliberately because **a last-known beats "unknown" on screen** — but it is a claim about where
+ * they were, and `TRUST_MIN.place` is 45 minutes, which is long enough to fly to another station.
+ *
+ * Both are correct answers to different questions, and the questions are:
+ *
+ *   SHOWING and ORDERING   — the widget's job. Use the verdict's own `tier` / `id` / `label`.
+ *                            An expired place fix still orders a list better than nothing, and
+ *                            `stale` already rides beside it so the UI can say so.
+ *   ATTRIBUTING            — writing "this price was seen at this shop". Use ONLY this.
+ *
+ * 🔴 IT IS A UNION BECAUSE A FLAG WOULD NOT BE ENOUGH. `stale` cannot carry this: it is true from
+ * HALF the window onward, and half a window is "believe it less" (measured over the corpus, 9.9%
+ * of same-place observations, and they are kept) while the whole window is "this is probably
+ * wrong" (2.1%, and those are the ones an attribution must refuse). One boolean cannot say which,
+ * and a second boolean beside it is a field somebody forgets to check. With the id ABSENT on the
+ * refused branch, `v.attribution.id` does not compile until it has been narrowed — the same move
+ * `sellvolume` made when `scu: number | null` let every caller write `?? 0`.
+ *
+ * ⚠️ `ok: true` does not mean "certain", it means "inside the window the tier was given". The tier
+ * still says how precise the answer is, and a `system`-tier attribution can never name a shop.
+ */
+export type OriginAttribution =
+  /** The reading is inside its own trust window. Data may be attributed to this id at this tier. */
+  | { ok: true; tier: Exclude<OriginTier, "unknown">; id: string }
+  /** Nothing may be named from this verdict. `expired` still knows something coarser — see
+   *  `OriginVerdict.id` and the note above — `unknown` knows nothing at all. */
+  | { ok: false; why: "expired" | "unknown" };
+
 export interface OriginVerdict {
   tier: OriginTier;
   /** The winning signal's own id — the starmap place/body/system token, NOT the display label.
    *
    *  🔑 Added by verse2 because without it a verdict cannot be USED, only shown: computing a
    *  distance needs the id that `locations-xyz` is keyed by, and re-deriving one from `label`
-   *  would be exactly the name-matching this module exists to avoid. Null only for "unknown". */
+   *  would be exactly the name-matching this module exists to avoid. Null only for "unknown".
+   *
+   *  🔴 THIS FIELD IS FOR SHOWING AND ORDERING, AND IT CAN BE EXPIRED. It is present on the
+   *  last-known fallback too, at whatever tier that reading claimed. Anything ATTRIBUTING data to
+   *  a place must read `attribution` instead, which withholds the id in exactly that case. */
   id: string | null;
   label: string;
   /** Epoch ms of the reading, or null when nothing is known. */
@@ -152,8 +189,14 @@ export interface OriginVerdict {
    *  "what they need to do to sync it", not merely that the estimate is uncertain. */
   howToImprove: string;
   /** True when the reading is old enough that it should be read as a last-known rather than a
-   *  current position. */
+   *  current position — from HALF the trust window onward.
+   *
+   *  ⚠️ IT IS A DISPLAY FLAG AND IT DOES NOT SEPARATE THE TWO KINDS OF DOUBT. `stale && ok` is
+   *  "believe it less"; `stale && !ok` is "this is probably wrong". Read `attribution` for that. */
   stale: boolean;
+  /** Whether anything may be NAMED from this verdict, and the id if so. See `OriginAttribution` —
+   *  it is a union rather than a flag on purpose. */
+  attribution: OriginAttribution;
 }
 
 /**
@@ -246,10 +289,20 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
       // 🔑 "stale" is a softer claim than aged-out: it means believe it less, not stop believing
       // it. Half the trust window is where a reading stops being current and starts being recent.
       stale: a > TRUST_MIN[tier] / 2,
+      // This is the branch — the only branch — where the reading is inside its own window, so it
+      // is the only one that hands out an attributable id.
+      attribution: { ok: true, tier, id: s.id },
     };
   }
   // Nothing inside its window — fall back to the freshest expired reading rather than nothing,
   // but say plainly that it is a last-known.
+  //
+  // 🔴 THE FALLBACK IS FOR THE WIDGET AND MUST NOT BE FOR AN ATTRIBUTION. Keeping it is right —
+  // "somewhere around Levski, an hour ago" orders a list far better than "unknown", and Sub sees
+  // an eye that says as much. Naming a shop from it is not: 45 minutes is enough to fly to another
+  // station, so the `place` tier here describes a station the player has probably left. Measured
+  // over the corpus, 2.1% of same-place observations rested on a reading past its whole window.
+  // The tier is honest about the reading; `attribution` is what refuses to let anyone bank on it.
   const expired = [...best.values()].sort((a, b) => b.at - a.at)[0];
   if (expired) {
     return {
@@ -262,6 +315,7 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
       detail: expired.detail ?? null,
       howToImprove: improve(expired.tier),
       stale: true,
+      attribution: { ok: false, why: "expired" },
     };
   }
   return {
@@ -274,6 +328,7 @@ export function resolveOrigin(signals: readonly OriginSignal[], deps: OriginDeps
     detail: null,
     howToImprove: improve("unknown"),
     stale: true,
+    attribution: { ok: false, why: "unknown" },
   };
 }
 
