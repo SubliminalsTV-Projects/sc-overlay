@@ -647,6 +647,25 @@
   .empty { padding: 26px 16px; text-align: center; color: var(--faint); font-size: 13px; line-height: 1.7; }
   .note { padding: 5px 12px; font-size: 11px; line-height: 1.5; color: var(--amber); }
 
+  /* ── the journal audit ──────────────────────────────────────────────────────
+     Two states, deliberately unlike each other: a finding you must not miss, and a reassurance
+     that must not shout. `--red` and `--faint` on purpose — those are the two tokens whose meaning
+     survives all 16 skins, where `--amber` computes to the same green as `--green` on argo and
+     `--good` is defined in no skin at all. See `references/item-shops.md`. */
+  .jaud { flex: none; margin: 6px 12px; padding: 7px 9px; border-radius: 3px;
+    font-size: 11px; line-height: 1.5; }
+  .jaud.bad { border: 1px solid var(--red); background: rgba(0, 0, 0, 0.28); color: var(--cyan-text); }
+  .jaud .h { font-size: 11.5px; font-weight: 700; letter-spacing: 0.03em; color: var(--red);
+    margin-bottom: 3px; }
+  .jaud .p { margin-bottom: 3px; }
+  .jaud .p.fix { color: var(--cyan-bright); }
+  /* A key line is evidence, not prose: monospaced, and clipped rather than wrapped so five of them
+     stay five lines at 320px. */
+  .jaud .k { font-family: var(--mono); font-size: 10px; color: var(--faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .jaud.ok { padding: 5px 0; margin: 8px 12px 10px; color: var(--faint);
+    border-top: 1px solid var(--divider); }
+
   /* ── Route ───────────────────────────────────────────────────────────────── */
   .stop { display: flex; gap: 8px; padding: 6px 12px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
   /* Done: collected, not yet delivered. Dimmed so it reads as history, not as an instruction —

@@ -1433,6 +1433,156 @@
     return sec;
   }
 
+  /* ── the audit, rendered ───────────────────────────────────────────────────
+     🔴 THE POINT OF PUTTING IT ON SCREEN: it turns "my Ledger is missing a sale" from a diagnosis
+     into a reading. The audit has run at every load since 2026-08-23 and printed to `sidecar.log`,
+     and `npm run audit:journal` answers the same question from a terminal — but the person who
+     notices a missing sale is looking at THIS tab, and neither of those is in front of them.
+
+     🔴 IT RENDERS WHAT THE AUDIT SAYS AND DECIDES NOTHING. Every field below is read off
+     `view().audit`; no verdict is re-derived here. The rule lives in `src/trade-journal-audit.ts`
+     and having a second copy of it in a widget is how the two come to disagree.
+
+     🔴 IT OFFERS NO REPAIR, AND THAT IS THE WHOLE CONSTRAINT ON THIS SURFACE.
+       - An orphaned key means DEDUPED. It can NEVER mean "the confirmation gate refused it":
+         `apply()` tests `confirmed` BEFORE it keys anything, so a refusal cannot leave a key
+         behind. The two diagnoses want opposite responses, which is why the wording below says
+         "deduped, not refused" in those words rather than "the number looks off".
+       - The only safe repair is deleting the WHOLE file. Dropping the orphaned keys instead makes
+         the startup replay book those sales a SECOND time, and editing rows out is what causes
+         this in the first place. So the block names the file and stops there: there is no button,
+         because there is no partial cure and a widget with a "fix it" control would be offering
+         one of the two wrong ones. */
+
+  /** How many orphans to name before summarising. `describeAudit` uses 10 for a log line; this is
+   *  a panel over a game, and five rows is already more evidence than a decision needs. */
+  const TD_AUDIT_SHOWN = 5;
+
+  /** The same date shape the run rows use, so two lines about the same afternoon look alike.
+   *
+   *  ⚠️ FALLS BACK TO THE RAW STRING. An orphan's `at` comes verbatim out of a key in a file that,
+   *  by hypothesis, somebody has been editing by hand — so it is not guaranteed to parse, and
+   *  printing "Invalid Date" over evidence is worse than printing the evidence. */
+  function tdAuditWhen(iso) {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return String(iso);
+    return new Date(t).toLocaleString([], {
+      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  /** The clauses that must never be silent, whichever way the verdict went. `boundedOutKeys` and
+   *  `unreadableKeys` are both "we did not judge this", and a report that hides them lets a
+   *  mostly-unjudged journal read as a clean one. */
+  function tdAuditCaveats(a) {
+    const out = [];
+    if (a.boundedOutKeys > 0) {
+      out.push(a.boundedOutKeys + " older " + (a.boundedOutKeys === 1 ? "key was" : "keys were")
+        + " not judged — their rows are old enough to have been trimmed by design.");
+    }
+    const bad = (a.unreadableKeys && a.unreadableKeys.length) || 0;
+    if (bad > 0) {
+      out.push(bad + (bad === 1 ? " key is" : " keys are") + " in a shape this check does not"
+        + " recognise, so " + (bad === 1 ? "it was" : "they were") + " not judged either.");
+    }
+    return out;
+  }
+
+  /**
+   * The loud half: the journal has lost rows while keeping the keys that suppress them.
+   *
+   * ⚠️ IT IS DRAWN BEFORE THE "Nothing recorded yet" EARLY RETURN, and that ordering is
+   * load-bearing rather than cosmetic. Drift bad enough to remove every row leaves a journal that
+   * is empty AND drifted — which is exactly the state worth explaining — and the empty branch
+   * returns before anything below it can run.
+   */
+  function tdAuditNotice(body, a) {
+    const box = document.createElement("div");
+    box.className = "jaud bad";
+
+    const h = document.createElement("div");
+    h.className = "h";
+    const sells = a.orphans.filter((o) => o.kind === "sell").length;
+    const buys = a.orphans.length - sells;
+    h.textContent = a.orphans.length + " recorded "
+      + (a.orphans.length === 1 ? "transaction is" : "transactions are") + " missing from your Ledger";
+    box.appendChild(h);
+
+    const p1 = document.createElement("div");
+    p1.className = "p";
+    p1.textContent = "The journal has " + a.keysAudited + " booked "
+      + (a.keysAudited === 1 ? "entry" : "entries") + " and " + a.orphans.length + " of them ("
+      + sells + " sell, " + buys + " buy) have no row behind them.";
+    box.appendChild(p1);
+
+    /* 🔴 THE DIAGNOSIS, SPELLED OUT, BECAUSE THE OBVIOUS READING IS THE WRONG ONE. Left to itself
+       "a sale I made is not here" reads as the app refusing good trades, and somebody then goes and
+       loosens the confirmation gate that is working correctly. */
+    const p2 = document.createElement("div");
+    p2.className = "p";
+    p2.textContent = "They are DEDUPED, not refused. An entry is only booked after the trade has"
+      + " been confirmed, so this is never the app turning trades away — the rows were removed from"
+      + " the file while their entries stayed, and they will be skipped at every future launch.";
+    box.appendChild(p2);
+
+    const fix = document.createElement("div");
+    fix.className = "p fix";
+    fix.textContent = "The only safe repair is deleting trade-journal.json in your app data folder."
+      + " Do not edit rows out of it and do not delete the entries: editing rows is what causes"
+      + " this, and dropping entries books the sales a second time.";
+    box.appendChild(fix);
+
+    for (const o of a.orphans.slice(0, TD_AUDIT_SHOWN)) {
+      const k = document.createElement("div");
+      k.className = "k";
+      k.textContent = o.kind + " · " + tdAuditWhen(o.at) + " · "
+        + (o.shopName ? tdShop(o.shopName) : "no shop");
+      box.appendChild(k);
+    }
+    if (a.orphans.length > TD_AUDIT_SHOWN) {
+      const more = document.createElement("div");
+      more.className = "k";
+      more.textContent = "…and " + (a.orphans.length - TD_AUDIT_SHOWN) + " more";
+      box.appendChild(more);
+    }
+
+    for (const c of tdAuditCaveats(a)) {
+      const n = document.createElement("div"); n.className = "p"; n.textContent = c;
+      box.appendChild(n);
+    }
+    body.appendChild(box);
+  }
+
+  /**
+   * The quiet half, at the foot of the tab: the check ran and found nothing wrong.
+   *
+   * 🔴 `ok` ON ZERO KEYS CERTIFIES NOTHING, and saying "checked" over an unjudged journal is the
+   * exact false reassurance this whole feature exists to prevent — `AuditReport` puts `keysAudited`
+   * next to `ok` for that reason. So the two are worded differently, and a journal with nothing in
+   * it at all gets no line: there is no record to have drifted, and the empty state above already
+   * says why it can be empty.
+   */
+  function tdAuditLine(body, a) {
+    if (!a || !a.keysTotal) return;
+    const n = document.createElement("div");
+    n.className = "jaud ok";
+    const caveats = tdAuditCaveats(a);
+    if (a.keysAudited > 0) {
+      /* 🔑 "on record", NOT "on this list". The audit judges the whole journal, while the list
+         above it is period-filtered — a sentence about what is on screen would be a different
+         claim, and it would read as false every time Today is empty and All time is not. */
+      n.textContent = "Checked: all " + a.keysAudited + " booked "
+        + (a.keysAudited === 1 ? "entry has" : "entries have") + " a transaction on record ("
+        + a.sellKeys + " sell, " + a.buyKeys + " buy). Nothing the app booked is missing.";
+    } else {
+      // Not "OK". Nothing was judged, so nothing is being claimed.
+      n.textContent = "Not checked: none of the " + a.keysTotal + " booked "
+        + (a.keysTotal === 1 ? "entry" : "entries") + " could be judged.";
+    }
+    if (caveats.length) n.textContent += " " + caveats.join(" ");
+    body.appendChild(n);
+  }
+
   function renderJournal() {
     const body = $("body");
     body.textContent = "";
@@ -1470,6 +1620,11 @@
     // blank screen is not, and "the app is broken" is the other way to read one.
     tdBalance(body, t, j.open);
 
+    /* 🔴 ABOVE THE EMPTY CHECK ON PURPOSE. Drift that removed every row leaves a journal that is
+       empty AND drifted, and that is precisely the state a player reports as "everything I traded
+       has vanished" — the branch below would return before the explanation could be drawn. */
+    if (j.audit && !j.audit.ok) tdAuditNotice(body, j.audit);
+
     if (!j.runs.length && !j.open.length && !j.unmatched.length
         && !(j.writtenOff && j.writtenOff.length)) {
       const e = document.createElement("div"); e.className = "empty";
@@ -1482,6 +1637,7 @@
         + "A trade made before you started it — or long enough ago that its log has rotated away — "
         + "cannot be recovered.";
       body.appendChild(w);
+      if (j.audit && j.audit.ok) tdAuditLine(body, j.audit);
       return;
     }
 
@@ -1634,6 +1790,11 @@
         body.appendChild(row);
       }
     }
+
+    /* 🔑 THE FOOT OF THE TAB, because that is where somebody who has read the whole list and still
+       thinks a sale is missing arrives. The drift case is drawn at the TOP instead — it is a
+       finding rather than a reassurance, and it has to be seen before the list it explains. */
+    if (j.audit && j.audit.ok) tdAuditLine(body, j.audit);
   }
 
   /** Where the current route plan is heading, if anywhere - the backhaul anchor. Deliberately the
