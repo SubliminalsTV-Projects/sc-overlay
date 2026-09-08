@@ -539,6 +539,22 @@
   let view = { rocks: [], targets: [], scan: null, jobs: [] };
   const targetSet = new Set();
 
+  // ---- commodity prices (for the scan panel's sell-price line) ----
+  // Static reference data — doesn't change mid-session — so this is a plain one-time fetch, not
+  // routed through the SSE state like `view`. Keyed lowercase so a scanned rock name (e.g. from
+  // mineables.json) matches regardless of case.
+  const commodityByName = new Map();
+  async function loadCommodities() {
+    try {
+      const r = await fetch("/api/commodities");
+      const j = await r.json();
+      for (const c of Object.values(j.commodities || {})) {
+        if (c.name) commodityByName.set(c.name.toLowerCase(), c);
+      }
+    } catch { /* price line just won't show — never blocks the scanner itself */ }
+  }
+  loadCommodities();
+
   // ---- audio + speech ----
   // User prefs (window-local): master volume (0–1), HAL-voice on/off. Both routed through
   // a master gain so the volume slider scales tones + clips + the alarm.
