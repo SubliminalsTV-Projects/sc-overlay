@@ -18,7 +18,7 @@
  * The stub is asserted to be installed before a single fixture is written. See selfTest below.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,17 +27,28 @@ import { join } from "node:path";
 // ---------------------------------------------------------------------------------------------
 interface Post { url: string; body: string; }
 const posts: Post[] = [];
-let failNext = false;
+// 0 = the site accepts everything. Otherwise the status it answers with — the two kinds matter:
+// a 400 is about the BODY (permanent) and a 503 is about the SITE (transient), and the code has
+// to tell them apart or it either wedges the queue or blacklists a backlog over an outage.
+let failStatus = 0;
+// `throw` = the request never reaches the site at all (offline, DNS, TLS). That path used to
+// unwind past saveState() and lose the whole tick's verdicts.
+let failThrow = false;
+// Per-upload control, for the one case where "the first body was refused and the second was not"
+// is the whole claim — a stub that answers the same way twice cannot express it.
+let failOn: (() => number) | null = null;
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   posts.push({ url, body: typeof init?.body === "string" ? init.body : "" });
   if (url.includes("selftest")) return new Response("STUBBED", { status: 200 });
-  if (failNext) return new Response("nope", { status: 400 });
+  if (failThrow) throw new TypeError("fetch failed (stubbed offline)");
+  const status = failOn ? failOn() : failStatus;
+  if (status) return new Response("nope", { status });
   return new Response("ok", { status: 200 });
 }) as typeof fetch;
 
-const { maybeShareLog, clearSkippedBackups, hasShareSignal, wasUploadedUnderRules, sessionStartOf } =
+const { maybeShareLog, clearSkippedBackups, hasShareSignal, wasUploadedUnderRules, sessionStartOf, logShareFault } =
   await import("./log-share.js");
 
 // 🔴 POSITIVE CONTROL ON THE SAFETY MECHANISM ITSELF. Every assertion below is worthless — and
@@ -93,6 +104,16 @@ writeFileSync(logPath, liveLog);
 
 const cfg = { shareLogs: true, syncToken: "scbp_fake_token_for_test", logPath };
 const uploads = () => posts.filter((p) => p.url.includes("/api/bp-tracker/logs"));
+/** Force the order the sharing loop will walk a folder in: it sorts by mtime, NEWEST FIRST, so
+ *  `names[0]` is judged first. Several assertions below are about what happens to the file BEHIND
+ *  another one, and leaving that to whatever mtime the writes happened to get makes them pass for
+ *  the wrong reason (or flake on a filesystem with coarse timestamps). */
+const order = (dir: string, names: string[]) => {
+  names.forEach((n, i) => {
+    const t = new Date(Date.now() - (i + 1) * 60_000);
+    utimesSync(join(dir, n), t, t);
+  });
+};
 const kindsOf = () => uploads().map((p) => (p.url.match(/kind=(\w+)/) ?? [])[1]);
 
 interface State { backups: string[]; skippedPatch: string[]; rules?: number; recheck?: string[]; liveHash?: string; v?: number }
@@ -449,9 +470,19 @@ try {
   rmSync(burstDir, { recursive: true, force: true });
 
   // =============================================================================================
-  // 9. A REFUSED UPLOAD MUST NOT BE RECORDED. It is retried next tick instead — which is also why
-  //    MAX_BYTES may not be raised ahead of the site: a body the site will never accept would be
-  //    retried forever with every other backup queued behind it.
+  // 9. A FAILING UPLOAD, IN ITS TWO KINDS — and they must be handled OPPOSITELY.
+  //
+  //    A TRANSIENT failure (5xx, rate limit, offline, a bad token) is about the SITE, so nothing
+  //    is recorded and the same file is tried again next tick. That is the original rule and it
+  //    still holds.
+  //
+  //    A BODY-LEVEL refusal (400: too large, malformed) is about THIS FILE and will never
+  //    succeed. Retrying it forever is the wedge that made MAX_BYTES unraisable — one oversized
+  //    session re-sent every tick with the whole backlog queued behind it. It is set aside in
+  //    `skippedPatch`, the RECOVERABLE list, so a raised site ceiling can put it back in play.
+  //    🔑 Asserting it is NOT in `backups` would be free on its own (the "must not be in this set"
+  //    trap: the wedge bug leaves it out of `backups` too), so the load-bearing assertions are the
+  //    POSITIVE ones — it IS in skippedPatch, and the file BEHIND it still got sent.
   // =============================================================================================
   const failDir = mkdtempSync(join(tmpdir(), "logshare-fail-"));
   const failBackups = join(failDir, "logbackups");
@@ -460,14 +491,90 @@ try {
   writeFileSync(failLive, liveLog);
   writeFileSync(join(failBackups, "refused.log"), session(1, SIGNAL));
   const failState = join(failDir, "s.json");
-  failNext = true;
+
+  // (a) TRANSIENT — the site is down. Nothing recorded anywhere; the retry succeeds.
+  failStatus = 503;
   await maybeShareLog({ ...cfg, logPath: failLive }, "0.1.47", failState);
-  failNext = false;
+  failStatus = 0;
   assert(!state(failState).backups.includes("refused.log"),
-    "a session the site REFUSED must not be recorded as done — it has to be retried");
+    "a session the SITE could not take must not be recorded as done — it has to be retried");
+  assert(!state(failState).skippedPatch.includes("refused.log"),
+    "…nor set aside: a 503 says nothing about this file, and setting it aside blames the wrong thing");
+  const faultAfter503 = logShareFault();
+  assert(faultAfter503 !== null && faultAfter503.status === 503,
+    `a failing upload must leave a fault the diagnostics report can state [${JSON.stringify(faultAfter503)}]`);
   await maybeShareLog({ ...cfg, logPath: failLive }, "0.1.47", failState);
   assert(state(failState).backups.includes("refused.log"), "…and the retry must succeed once the site accepts it");
+  assert.equal(logShareFault(), null, "…and a successful upload must CLEAR the fault, or it reads as still broken");
   rmSync(failDir, { recursive: true, force: true });
+
+  // (b) OFFLINE — the request never gets an answer. Same verdict as a 5xx, and it must not unwind
+  //     past the state save: a tick that classified twenty files before the network died has to
+  //     keep those twenty verdicts.
+  const offDir = mkdtempSync(join(tmpdir(), "logshare-offline-"));
+  const offBackups = join(offDir, "logbackups");
+  mkdirSync(offBackups);
+  const offLive = join(offDir, "game.log");
+  writeFileSync(offLive, liveLog);
+  writeFileSync(join(offBackups, "sendme.log"), session(1, SIGNAL));
+  writeFileSync(join(offBackups, "quiet.log"), session(1, BROWSED_ONLY)); // classified, never sent
+  // 🔴 THE ORDER IS LOAD-BEARING AND MUST BE PINNED, not left to whatever mtime the writes
+  // happened to get. The loop walks NEWEST FIRST, and the claim is "a verdict reached before the
+  // failure survives" — so the signal-free file has to be judged BEFORE the one that fails. With
+  // the order reversed the assertion passes on the broken code too, for the wrong reason.
+  order(offBackups, ["quiet.log", "sendme.log"]);
+  const offState = join(offDir, "s.json");
+  failThrow = true;
+  await maybeShareLog({ ...cfg, logPath: offLive }, "0.1.47", offState);
+  failThrow = false;
+  const offAfter = state(offState);
+  assert(offAfter.backups.includes("quiet.log"),
+    "a verdict reached BEFORE the network died must still be saved — the outer catch used to unwind past saveState");
+  assert(!offAfter.backups.includes("sendme.log") && !offAfter.skippedPatch.includes("sendme.log"),
+    "…while the file that could not be sent stays in play");
+  const offFault = logShareFault();
+  assert(offFault !== null && offFault.status === null,
+    `an unreachable site must leave a fault with no status, not silence [${JSON.stringify(offFault)}]`);
+  await maybeShareLog({ ...cfg, logPath: offLive }, "0.1.47", offState);
+  assert(state(offState).backups.includes("sendme.log"), "…and it is sent once the network is back");
+  assert.equal(logShareFault(), null, "…which clears the fault");
+  rmSync(offDir, { recursive: true, force: true });
+
+  // (c) BODY-LEVEL — a 400. Set aside recoverably, and the queue behind it KEEPS MOVING.
+  const wedgeDir = mkdtempSync(join(tmpdir(), "logshare-wedge-"));
+  const wedgeBackups = join(wedgeDir, "logbackups");
+  mkdirSync(wedgeBackups);
+  const wedgeLive = join(wedgeDir, "game.log");
+  writeFileSync(wedgeLive, liveLog);
+  // Two sessions, both eligible. The refused one must be judged FIRST — that is what makes the
+  // second one "behind it", and with the order reversed the assertion below passes on the wedge
+  // bug as well. Newest first is the order the loop walks, so the order is set explicitly.
+  writeFileSync(join(wedgeBackups, "toobig.log"), session(1, SIGNAL));
+  writeFileSync(join(wedgeBackups, "behind-it.log"), session(3, SIGNAL));
+  order(wedgeBackups, ["toobig.log", "behind-it.log"]);
+  const wedgeState = join(wedgeDir, "s.json");
+  // 🔑 The 400 is answered for the FIRST body only. A stub that refused both could not tell
+  // "the queue kept moving" from "the queue stopped", which is the whole claim here.
+  const wedgeUploadsBefore = uploads().length;
+  let seen = 0;
+  failOn = () => (++seen === 1 ? 400 : 0);
+  await maybeShareLog({ ...cfg, logPath: wedgeLive }, "0.1.47", wedgeState);
+  failOn = null;
+  const wedged = state(wedgeState);
+  assert(wedged.skippedPatch.includes("toobig.log"),
+    `a body the site REFUSED must be set aside recoverably [${JSON.stringify(wedged.skippedPatch)}]`);
+  assert(!wedged.backups.includes("toobig.log"),
+    "…and never blacklisted: the site's ceiling is a rule that can move, so this verdict must be reconsiderable");
+  assert(wedged.backups.includes("behind-it.log"),
+    "🔴 THE WEDGE: a file the site will never accept must not stop the ones it would");
+  assert.equal(uploads().length, wedgeUploadsBefore + 2,
+    "…and both were really attempted, or 'the queue kept moving' is a claim about a loop that ran once");
+  // The user's off→on gesture is what puts a set-aside file back in play — the same lever that
+  // recovers everything else in that list.
+  clearSkippedBackups(wedgeState);
+  assert(!state(wedgeState).skippedPatch.includes("toobig.log"),
+    "…and toggling sharing off and on must offer it again, like every other recoverable verdict");
+  rmSync(wedgeDir, { recursive: true, force: true });
 
   // A missing logbackups/ must be survivable — plenty of installs have never rotated a log.
   const bare = mkdtempSync(join(tmpdir(), "logshare-bare-"));
