@@ -524,9 +524,19 @@ export function tradeRoutes(
        it — deriving it twice is how a control and the thing it controls drift apart. */
     const sortKey = (["hour", "profit", "margin", "scu"] as const)
       .find((k) => k === strParam(p, "sort")) ?? "hour";
+    /* 🔑 RESOLVED ONCE, UP HERE, FOR THE SAME REASON `sort` IS: the answer echoes these two, and a
+       value derived twice is how a control and the thing it controls drift apart.
+       🔴 A NON-POSITIVE VALUE IS NO FILTER, NOT AN EMPTY BOARD. `maxAgeDays=0` and `maxAgeDays=-5`
+       would otherwise reach `findRoutes` and exclude every dated quote in the table, which is
+       indistinguishable from "there are no routes" — this repo's worst failure mode for a filter.
+       `findRoutes` already ignores a non-positive `budget`; folding it to null here is what makes
+       the echo honest about it rather than reporting a constraint that was not applied. */
+    const positive = (n: number | null): number | null => (n !== null && n > 0 ? n : null);
+    const budget = positive(numParam(p, "budget"));
+    const maxAgeDays = positive(numParam(p, "maxAgeDays"));
     const routes = findRoutes(table.quotes, {
       capacityScu,
-      budget: numParam(p, "budget"),
+      budget,
       fromSystem: strParam(p, "fromSystem"),
       fromBody: strParam(p, "fromBody"),
       toSystem: strParam(p, "toSystem"),
@@ -536,15 +546,25 @@ export function tradeRoutes(
       commodity: strParam(p, "commodity"),
       fromTerminal: strParam(p, "fromTerminal"),
       toTerminal: strParam(p, "toTerminal"),
+      /* 🔴 STILL PARSED, STILL SENT BY NOTHING, AND THAT IS DELIBERATE. Sub cut the "Confirmed
+         stock" toggle on 2026-08-25 because every row already carries its own age pill and a
+         stock chip, so the toggle asked the player to re-derive from a filter what the row already
+         states. The WIDGET stopped sending the parameter; the option stays because removing it
+         would break any caller that passes it, and it costs nothing unused. Unlike `budget` and
+         `maxAgeDays` beside it, this one is not a gap waiting to be closed. */
       requireKnownStock: p.get("knownStock") === "1",
-      maxAgeDays: numParam(p, "maxAgeDays"),
+      maxAgeDays,
       sort: sortKey,
       limit: numParam(p, "limit") ?? 30,
     });
-    // 🔑 The sort is ECHOED. The widget lights its own control from the answer rather than from
-    // what it last clicked, so a value the server rejected can never leave the UI claiming a
-    // ranking the rows are not in.
-    json(res, 200, { routes, capacityScu, ship: shipName, sort: sortKey, ...provenance(s, deps) });
+    // 🔑 The sort is ECHOED, and so are the two filters that can silently empty the board. The
+    // widget lights its own controls from the answer rather than from what it last clicked, so a
+    // value the server rejected or folded away can never leave the UI claiming a ranking the rows
+    // are not in, or a constraint that was never applied.
+    json(res, 200, {
+      routes, capacityScu, ship: shipName, sort: sortKey, budget, maxAgeDays,
+      ...provenance(s, deps),
+    });
     return true;
   }
 
