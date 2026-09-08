@@ -1,4 +1,34 @@
 {
+  "0.1.47": {
+    "date": "2026-09-08T12:01:55Z",
+    "notes": [
+      {
+        "kind": "new",
+        "label": "Sync your reputation from the in-game REP page",
+        "text": "The app has never been told your reputation — it adds it up from missions it watched you finish, so it drifts low every time the app was closed while you played. 4.10 gives mobiGlas a REP page, and the app can now read it.\n\nTurn it on in Settings, open mobiGlas → REP, and the app reads the rank you are actually at and corrects itself, in whichever direction it was wrong. It reads the page while it is on screen and nothing leaves your PC.\n\nThe widget tells you what happened without you having to go and look: a green line naming the faction, the rank and the numbers it moved between, or a gold one saying why it refused. It refuses more often than you might expect, on purpose — a page scrolled so a rank is cut off, a faction we do not have data for, a set of progress bars that do not make sense. A bad read overwrites a good number, so it would rather tell you it could not read it."
+      },
+      {
+        "kind": "fixed",
+        "label": "The background service that would not start",
+        "text": "If you ever got \"my background service didn't start\" after an update, this was it, and quitting from the tray did not help because that never actually freed anything.\n\nThe app was launching its background piece through an extra program in the middle, so when it tried to shut that piece down it was really only shutting down the middleman — and the real one survived, holding the slot the next launch needed. It is started directly now, and it also watches the app and exits on its own if the app dies unexpectedly, which covers the crash case the old shutdown could never reach."
+      },
+      {
+        "kind": "fixed",
+        "label": "Event progress you earned before the event went live",
+        "text": "If you ran an event on the PTU and then patched to live, those points were still counting toward the live run of the same event — so the tracker showed you a percentage you had not earned on live, and told you a reward tier was unlocked when it was not.\n\nProgress earned before an event's live run started no longer counts toward it. The records are kept rather than deleted, and the widget says how many were set aside, because a number that quietly drops with no explanation is its own kind of wrong. Tracking an event on the PTU still works exactly as it did — that is what it is for.\n\nThere is also a reset button on each event now. The game never tells the app your event points, so if your progress is wiped server-side the app has no way to find out; this is how you tell it."
+      },
+      {
+        "kind": "fixed",
+        "label": "One unreadable value no longer takes four others with it",
+        "text": "If any single field in your saved profile could not be read, everything after it was abandoned and then written back empty on the next save — so one bad value could silently cost you your mission history and your event progress at the same time.\n\nEach field is now read on its own, and anything the app cannot make sense of is written back exactly as it was found instead of being replaced. A later version that understands it will still find it there."
+      },
+      {
+        "kind": "improved",
+        "label": "Everything on 4.10 data",
+        "text": "Blueprints, missions, ships, hauling orders, mineables and the reputation ladders are all rebuilt from 4.10 live. The reputation data was two patches behind and nothing in the app could see that it was, which is part of why the rep bars have been reading low.\n\nOne faction could never be scanned at all: the data spelled Citizens for Prosperity two different ways, the reader keeps a match only when exactly one name fits, so it matched both and settled on neither."
+      }
+    ]
+  },
   "0.1.46": {
     "date": "2026-08-26T15:03:52Z",
     "notes": [
