@@ -100,7 +100,8 @@
     "control:orisonfix": "node tools/control-orisonfix.mjs",
     "control:repname": "node tools/control-repname.mjs",
     "control:ageband": "node tools/control-ageband.mjs",
-    "control:logsharefault": "node tools/control-logsharefault.mjs"
+    "control:logsharefault": "node tools/control-logsharefault.mjs",
+    "control:widgethotkey": "node tools/control-widgethotkey.cjs"
   },
   "dependencies": {
     "@gutenye/ocr-node": "^1.4.8",

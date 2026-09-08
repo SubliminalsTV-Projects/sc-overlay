@@ -829,6 +829,11 @@
   </div>
 </div>
 
+<!-- What counts as a hotkey (key names, the bare-F3 rule, how one reads). Shared with the
+     per-widget row the canvas puts in each widget's own settings — the two surfaces write into
+     the SAME `config.widgetHotkeys` map, so a second copy of this table here would let one of
+     them accept a chord the other cannot display. -->
+<script src="hotkey-keys.js"></script>
 <script>
   let cfg = { logPath: "" };
 
@@ -1352,9 +1357,9 @@
   // sidecar can crash) would persist six empty strings and silently delete every hotkey. Until this
   // is true, save() omits the hotkey fields entirely, and the server leaves the stored ones alone.
   let hotkeysLoaded = false;
-  function prettyHotkey(accel) {
-    return (accel || "").split("+").map(p => p === "Control" ? "Ctrl" : p === "Super" ? "Win" : p).join(" + ");
-  }
+  // The words, the key names and the bare-F3 rule all come from `hotkey-keys.js` — see the
+  // comment on its script tag.
+  const prettyHotkey = (accel) => window.SCHotkeyKeys.pretty(accel);
   function setHotkeyDisplay(which, accel) {
     const h = HOTKEYS[which];
     document.getElementById(h.input).value = accel || "";
@@ -1397,16 +1402,6 @@
     // the keydown below never arrives. No-op in the standalone window, which already has focus.
     window.__cfgGrab?.start(btn);
   }
-  // KeyboardEvent.code → Electron accelerator key token (layout-independent for QWERTY).
-  function hkKeyName(code) {
-    let m;
-    if ((m = /^Key([A-Z])$/.exec(code))) return m[1];
-    if ((m = /^Digit([0-9])$/.exec(code))) return m[1];
-    if ((m = /^F([0-9]{1,2})$/.exec(code))) return (+m[1] >= 1 && +m[1] <= 24) ? code : null; // F1–F24 (Electron's max)
-    return ({ Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/", Backslash: "\\",
-      BracketLeft: "[", BracketRight: "]", Minus: "-", Equal: "=", Backquote: "`",
-      Space: "Space", Tab: "Tab", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right" })[code] || null;
-  }
   window.addEventListener("keydown", async (e) => {
     if (!capturing) return;
     const which = capturing;
@@ -1420,26 +1415,18 @@
       setHotkeyDisplay(which, document.getElementById(h.input).value);
       return;
     }
-    if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return; // wait for the non-modifier key
-    const mods = [];
-    if (e.ctrlKey) mods.push("Control");
-    if (e.altKey) mods.push("Alt");
-    if (e.shiftKey) mods.push("Shift");
-    if (e.metaKey) mods.push("Super");
-    const key = hkKeyName(e.code);
-    // F3 and F13–F24 are free in Star Citizen (F4–F12 are taken), so allow them bare —
-    // that's the whole point of a dedicated overlay key. Everything else needs a modifier.
-    const bareOk = h.bare || /^F(3|1[3-9]|2[0-4])$/.test(key || "");
+    if (window.SCHotkeyKeys.isModifierOnly(e)) return; // wait for the non-modifier key
+    const got = window.SCHotkeyKeys.fromEvent(e, { bare: h.bare });
     capturing = null; btn.classList.remove("capturing");
     // Release the grab on BOTH outcomes below (rejected key and accepted key) — a grab left
     // held would keep the interact key suspended, i.e. the overlay stuck uninteractable.
     window.__cfgGrab?.end();
-    if (!key || (!mods.length && !bareOk)) {
+    if (got.reject) {
       setHotkeyDisplay(which, document.getElementById(h.input).value);
-      hint.innerHTML = "⚠ Use at least one modifier (Ctrl / Alt / Shift) plus a key — or a bare F3 / F13–F24. Try again.";
+      hint.innerHTML = "⚠ " + window.SCHotkeyKeys.rejectText(got.reject) + " Try again.";
       return;
     }
-    const accel = [...mods, key].join("+");
+    const accel = got.accel;
     setHotkeyDisplay(which, accel);
     let res = { ok: true };
     if (h.apply) res = (await h.apply(accel)) || { ok: true };

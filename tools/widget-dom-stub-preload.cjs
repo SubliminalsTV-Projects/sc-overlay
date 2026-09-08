@@ -49,7 +49,33 @@ const real = {
   // wantForeground resolves null (helper hasn't answered), which is what a real cold start does.
   onGameFocus: (cb) => { window.__fireGameFocus = cb; },
   wantForeground: (on) => { window.__foregroundWanted = !!on; return Promise.resolve(null); },
+  // The per-widget hotkey row. Only the SHELL knows which widgets can carry one (WIDGET_TOGGLES)
+  // and what is registered right now (including the historical defaults that live in no config
+  // file), so the canvas asks — and without this the row correctly never appears at all, which
+  // would make every assertion about it vacuous.
+  // 🔑 Two keys are deliberately ABSENT from the map below — see the note on it.
+  cfg: {
+    getWidgetHotkeys: async () => Object.assign({}, window.__widgetAccels),
+    setWidgetHotkey: async (key, accel) => {
+      window.__hotkeySets.push([key, accel]);
+      if (window.__hotkeyRefuse) return { ok: false, error: "in_use" };
+      window.__widgetAccels[key] = accel;
+      return { ok: true };
+    },
+  },
 };
+// Seeded here rather than in the suite so the page's own startup read sees them.
+// 🔑 `webView` is ABSENT as well, and unlike blueprint that is a stand-in rather than a fact:
+// it is a NORMAL widget (it has a popover), so it is the only way to test "the shell offers no
+// hotkey for this one" against a surface that could actually have shown a row. The tracker cannot
+// do that job - it has no popover at all, so the assertion would pass whatever the rule did.
+window.__widgetAccels = {
+  mining: "Shift+F3", notepad: "Alt+F3", bindingChart: "Ctrl+F3",
+  twitchChat: "", scFeed: "", unlockAlert: "", party: "", battaglia: "", hauling: "",
+  logView: "", verseFinder: "", chat: "", config: "",
+};
+window.__hotkeySets = [];
+window.__hotkeyRefuse = false;
 window.overlayApi = new Proxy(real, {
   get(t, k) { return k in t ? t[k] : () => {}; },
   has() { return true; },

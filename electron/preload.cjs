@@ -157,6 +157,9 @@ contextBridge.exposeInMainWorld("overlayApi", {
     // Per-widget hotkeys: one call for every widget, keyed by registry key.
     setWidgetHotkey: (key, a) => ipcRenderer.invoke("set-widget-hotkey", key, a),
     listWidgetHotkeys: () => ipcRenderer.invoke("list-widget-hotkeys"),
+    // {registryKey: accel} for every widget that can carry one — the canvas's per-widget row
+    // reads this instead of re-deriving the shell's legacy fallbacks.
+    getWidgetHotkeys: () => ipcRenderer.invoke("get-widget-hotkeys"),
     setBindingHotkey: (a) => ipcRenderer.invoke("set-binding-hotkey", a),
     setMiningHotkey: (a) => ipcRenderer.invoke("set-mining-hotkey", a),
     setWebViewHotkey: (a) => ipcRenderer.invoke("set-webview-hotkey", a),
