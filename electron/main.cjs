@@ -1848,11 +1848,14 @@ function refreshTray() {
  *  `build/icon.png` is NOT usable here: it is only an electron-builder input and never ships.
  *  A window with no `icon:` falls back to the EXECUTABLE's icon, which in dev is electron.exe —
  *  which is why the Electron logo showed up on the settings window, the wizard, and (now that
- *  the overlay is Alt-Tabbable) the overlay's own taskbar entry. */
+ *  the overlay is Alt-Tabbable) the overlay's own taskbar entry.
+ *  On Windows it is the .ico: it carries hand-filtered 16-64px frames, so the tray (16px at 100%
+ *  scaling) is not left to Windows' own downscale of a 256px PNG. Other platforms take the PNG. */
 function appIconPath() {
+  const file = process.platform === "win32" ? "tray-icon.ico" : "tray-icon.png";
   return app.isPackaged
-    ? path.join(process.resourcesPath, "server", "overlay", "tray-icon.png")
-    : path.join(ROOT, "overlay", "tray-icon.png");
+    ? path.join(process.resourcesPath, "server", "overlay", file)
+    : path.join(ROOT, "overlay", file);
 }
 
 function createTray() {
