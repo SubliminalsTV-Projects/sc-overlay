@@ -175,6 +175,10 @@
   .partner .p-code { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
   .partner .p-arrow { position: absolute; top: 9px; right: 11px; color: var(--outline); font-size: 13px; }
   .partner:hover .p-arrow { color: var(--amber); }
+  /* A partner with several codes (Pimax) is a plain card holding one link per deal. */
+  .partner .p-offer { display: flex; flex-direction: column; gap: 3px; padding-top: 6px; border-top: 1px dashed var(--line); text-decoration: none; }
+  .partner .p-offer:hover .p-code { color: var(--amber); }
+  .partner .p-code.copied { color: var(--amber); }
   /* ── Redesign: tiers, one-liner setting rows, info-icon tooltips ── */
   .tier { margin-top: 30px; }
   .tier-h { font-family: var(--font-head); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--amber); font-weight: 700; display: flex; align-items: baseline; gap: 10px; padding-bottom: 2px; border-bottom: 1px solid var(--line-soft); }
@@ -1522,16 +1526,55 @@
         "Pimax": "https://subliminal.gg/brands/pimax-white-color.svg",
         "Tobii": "https://subliminal.gg/brands/tobii-white.png",
       };
-      document.getElementById("partnerGrid").innerHTML = partners.map((p) =>
-        '<a class="partner" href="' + esc(p.url) + '" target="_blank" rel="noopener">' +
-          '<span class="p-arrow">↗</span>' +
-          (LOGOS[p.brand]
-            ? '<img class="p-logo" data-brand="' + esc(p.brand) + '" src="' + LOGOS[p.brand] + '" alt="' + esc(p.brand) + '" onerror="this.replaceWith(Object.assign(document.createElement(\'span\'),{className:\'p-brand\',textContent:this.alt}))" />'
-            : '<span class="p-brand">' + esc(p.brand) + "</span>") +
+      // One click copies the code AND opens the partner through Sub's link, so the code is ready at
+      // checkout (same as subliminal.gg/partners). `offers` lists every code when there is more
+      // than one (Pimax); an older site sends only code + discount, which is one offer.
+      const head = (p) =>
+        '<span class="p-arrow">↗</span>' +
+        (LOGOS[p.brand]
+          ? '<img class="p-logo" data-brand="' + esc(p.brand) + '" src="' + LOGOS[p.brand] + '" alt="' + esc(p.brand) + '" onerror="this.replaceWith(Object.assign(document.createElement(\'span\'),{className:\'p-brand\',textContent:this.alt}))" />'
+          : '<span class="p-brand">' + esc(p.brand) + "</span>");
+      const deal = (o) => (o.label && o.label !== "Code" ? (o.label.includes(o.amount) ? o.label : o.amount + " off " + o.label) : o.amount + " off");
+      const codeLine = (code) => '<span class="p-code" data-code="' + esc(code) + '">code ' + esc(code) + "</span>";
+      const link = (p, cls, inner, code) =>
+        '<a class="' + cls + '" href="' + esc(p.url) + '" target="_blank" rel="noopener"' +
+          (code ? ' data-copy="' + esc(code) + '" title="Copies the code and opens ' + esc(p.brand) + '"' : "") + ">" + inner + "</a>";
+      document.getElementById("partnerGrid").innerHTML = partners.map((p) => {
+        const offers = Array.isArray(p.offers) ? p.offers : [];
+        if (offers.length > 1) {
+          return '<div class="partner">' + head(p) + offers.map((o) =>
+            link(p, "p-offer", '<span class="p-deal">' + esc(deal(o)) + "</span>" + codeLine(o.code), o.code)).join("") + "</div>";
+        }
+        return link(p, "partner",
+          head(p) +
           (p.discount ? '<span class="p-deal">' + esc(p.discount) + "</span>" : "") +
-          (p.code ? '<span class="p-code">code ' + esc(p.code) + "</span>" : "") +
-        "</a>"
-      ).join("");
+          (p.code ? codeLine(p.code) : ""), p.code);
+      }).join("");
+      // The copy rides along on the link's own click; the browser still opens the link, so a
+      // refused clipboard can never stop the partner page opening.
+      const copyCode = (a) => {
+        const code = a.dataset.copy;
+        const line = a.querySelector(".p-code");
+        const done = (ok) => {
+          if (!line) return;
+          line.textContent = ok ? "✓ " + code + " copied" : "code " + code + " (couldn't copy)";
+          line.classList.toggle("copied", ok);
+        };
+        const legacy = () => {
+          const t = document.createElement("textarea");
+          t.value = code; t.style.position = "fixed"; t.style.opacity = "0";
+          document.body.appendChild(t); t.select();
+          let ok = false;
+          try { ok = document.execCommand("copy"); } catch {}
+          t.remove();
+          return ok;
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(() => done(true), () => done(legacy()));
+        else done(legacy());
+      };
+      const grid = document.getElementById("partnerGrid");
+      grid.addEventListener("click", (e) => { const a = e.target.closest("[data-copy]"); if (a) copyCode(a); });
+      grid.addEventListener("auxclick", (e) => { const a = e.button === 1 && e.target.closest("[data-copy]"); if (a) copyCode(a); });
       document.getElementById("partnersCard").style.display = "";
     } catch { /* offline — leave the card hidden */ }
   })();

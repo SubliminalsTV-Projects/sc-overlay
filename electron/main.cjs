@@ -170,6 +170,17 @@ let webViewMasked = false;   // ...but something is drawing over it right now
 let webViewPainted = false;  // what the two above actually resolved to
 let webViewHover = false;    // is the cursor over the view right now
 
+// target=_blank and window.open from our own pages must open in the player's REAL browser.
+// Electron's default is to spawn a bare BrowserWindow (measured 2026-10-25): no saved logins or
+// cart, so a partner deal opened from Settings checked out in a throwaway window, and from the
+// overlay canvas it landed over the game. Same rule the Web Page widget's view below has had.
+function sendPopupsToBrowser(wc) {
+  wc.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => { /* OS has no handler — nothing useful to do */ });
+    return { action: "deny" };
+  });
+}
+
 function ensureWebView() {
   if (webView || !overlay) return webView;
   const { WebContentsView } = require("electron");
@@ -687,6 +698,7 @@ function createOverlay() {
     // Web Audio; allow it to sound without a prior user gesture (matches the old mining window).
     webPreferences: { contextIsolation: true, preload: path.join(__dirname, "preload.cjs"), autoplayPolicy: "no-user-gesture-required" },
   });
+  sendPopupsToBrowser(overlay.webContents); // covers every widget iframe on the canvas too
   // Float above borderless fullscreen games.
   overlay.setAlwaysOnTop(true, "screen-saver");
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -1509,6 +1521,7 @@ function openConfig() {
   // fullscreen game. Put the settings window at the SAME level so it's never buried under the
   // binding-chart / HUD overlay — otherwise you can't get back to settings once one is up.
   configWin.setAlwaysOnTop(true, "screen-saver");
+  sendPopupsToBrowser(configWin.webContents);
   configWin.loadURL(`${CONFIG_URL}?v=${Date.now()}`);
   configWin.on("closed", () => {
     configWin = null;
