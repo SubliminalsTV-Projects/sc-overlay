@@ -738,5 +738,52 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   check("...and the 15% tier sits at 10,800 points", p15.tiers[0]?.points === 10800, String(p15.tiers[0]?.points));
 }
 
+// ---- 16. RSI Discovery Month: SHIPPED values from the 4.10.2-LIVE.12913470 datacore -----------
+//
+// Added 2026-11-08 (Sub confirmed the contracts are live on 4.10.2). Total 30,000 and the overall
+// ladder 4500/9900/24000/30000 come from missionscenarios/iasi_scenarioprogress.xml; the per-contract
+// points from visitingiasi.xml. ⚠️ The journal subject "RSI Discovery Event" is inferred from the
+// datacore journal entry and the mobiGlas group name — not yet seen in a real game.log line, so the
+// log strings below are built in the Orison shape, not copied from a log.
+{
+  const real = shipped.events.find((e: { id: string }) => e.id === "rsi-discovery-month");
+  check("shipped: Discovery Month exists", !!real, String(!!real));
+  check("shipped: Discovery total is 30,000", real?.total === 30000, String(real?.total));
+  check("shipped: Quantainium mining is 1,142", real?.contracts?.Iasi_ResourceGathering_Mining_Quantanium === 1142,
+    String(real?.contracts?.Iasi_ResourceGathering_Mining_Quantanium));
+  const minPoints = [4500, 9900, 24000, 30000];
+  const fromTiers = (real?.tiers ?? []).map((p: number) => Math.round((p / 100) * (real?.total ?? 0)));
+  check("shipped: Discovery tiers x total reproduce the 4.10.2 minPoints exactly",
+    fromTiers.join(",") === minPoints.join(","), fromTiers.join(","));
+
+  const mid = "1a2b3c4d-0000-4000-8000-00000000d15c";
+  const dir16 = mkdtempSync(join(tmpdir(), "ev-disco-"));
+  writeFileSync(join(dir16, "events.json"), JSON.stringify({
+    ...shipped,
+    events: shipped.events.map((e: { id: string }) => e.id === "rsi-discovery-month" ? { ...e, liveStart: null } : e),
+  }));
+  writeFileSync(join(dir16, "blueprints.latest.json"), JSON.stringify({
+    schema: "sc-blueprint-pools/2", version: `4.10.0-LIVE.${CL}`, changelist: CL, missionCount: 1,
+    missions: { Iasi_ResourceGathering_Mining_Quantanium: m("RSI Disc. Month: Procure Refined Quantainium", "VisitingIasi") },
+  }));
+  const s16 = new MissionTracker({ dataDir: dir16, stateDir: mkdtempSync(join(tmpdir(), "ev-disco-st-")) });
+  s16.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  s16.detectPatch("<2026> Environment: PUB");
+  s16.apply({
+    kind: "marker", ts: "2026-11-08T10:00:00.000Z", missionId: mid,
+    contract: "Iasi_ResourceGathering_Mining_Quantanium_0", contractKey: "Iasi_ResourceGathering_Mining_Quantanium",
+    generator: "VisitingIasi", contractDefId: "x", objectiveId: "o_0", markerEntityId: "1", pos: null,
+  } as never);
+  s16.apply(parseMissionEvent(ev(`Added notification "Contract Complete: RSI Disc. Month: Procure Refined Quantainium: " [42] to queue. New queue size: 1, MissionId: [${mid}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`, "2026-11-08T10:00:00.000Z"))!);
+  s16.apply(parseMissionEvent(ev('Added notification "Journal Entry Added: RSI Discovery Event: " [43] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]', "2026-11-08T10:00:00.200Z"))!);
+  const p16 = s16.eventProgress("rsi-discovery-month")!;
+  check("(setup) one Discovery contribution was recorded",
+    p16?.contributions.length === 1 && p16.contributions[0]?.key === "Iasi_ResourceGathering_Mining_Quantanium",
+    `n=${p16?.contributions.length} key=${p16?.contributions[0]?.key}`);
+  check("one Quantainium run is priced at 1,142", p16?.points === 1142, String(p16?.points));
+  check("...which is 3.81% of the 30,000 total", p16?.pct != null && Math.abs(p16.pct - (1142 / 30000) * 100) < 1e-9, String(p16?.pct));
+  check("...and the first tier sits at 4,500 points", p16?.tiers[0]?.points === 4500, String(p16?.tiers[0]?.points));
+}
+
 console.log(failed ? `\nFAILED (${failed})` : "\nevent-track tests passed");
 process.exit(failed ? 1 : 0);
