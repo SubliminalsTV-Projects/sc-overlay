@@ -13,16 +13,20 @@
 // stays correct across patches for free. A hand-written table would have started wrong
 // and rotted; this cannot.
 //
-// Usage: node tools/build-locations.mjs [<api base>] [<out.json>]
+// Usage: node tools/build-locations.mjs [<api base>] [<out.json>] [<game version code>]
+//   The version is optional: without it sc-api answers for its DEFAULT version, which is not
+//   promoted on patch day, so a new patch's places (4.10.2 added the Iasi platforms) are absent.
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const API = process.argv[2] || "http://192.168.1.97:8180";
 const outPath = process.argv[3] || join(process.cwd(), "data", "locations.json");
+const VERSION = process.argv[4] || "";
+const VQ = VERSION ? `&version=${encodeURIComponent(VERSION)}` : "";
 const PAGE = 200;
 
 async function page(n) {
-  const url = `${API}/api/locations?page%5Bsize%5D=${PAGE}&page%5Bnumber%5D=${n}`;
+  const url = `${API}/api/locations?page%5Bsize%5D=${PAGE}&page%5Bnumber%5D=${n}${VQ}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
   return res.json();
@@ -111,7 +115,7 @@ console.log(`[locations] ${composites} composite <parentCode>_<Name> aliases der
 
 const payload = {
   schema: "sc-locations/1",
-  source: `${API}/api/locations`,
+  source: `${API}/api/locations${VERSION ? `?version=${VERSION}` : ""}`,
   locationCount: Object.keys(locations).length,
   /** lowercased internal code (as it appears in game.log) -> [location uuid, ...] */
   aliases,
