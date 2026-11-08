@@ -20,7 +20,9 @@
       "patch": "4.10.2",
       "liveStart": "2026-10-09T00:00:00.000Z",
       "liveStartSource": "4.10.2 LIVE release date (9 Oct 2026, RSI patch notes / community guides). The 4.10.2 datacore carries no event dates. Floor only: nothing can be earned before the build that holds the Iasi_ contracts.",
-      "logSource": "The mobiGlas contract group reads 'RSI DISCOVERY EVENT' (Sub's screenshot, 2026-11-08, 4.10.2 LIVE); journal entry journalentry/pu/iasi_journalentry.xml. Matching a game.log line by this name follows the Orison pattern and has not been seen in a real log yet.",
+      "logSource": "The mobiGlas contract group reads 'RSI DISCOVERY EVENT' (Sub's screenshot, 2026-11-08, 4.10.2 LIVE); journal entry journalentry/pu/iasi_journalentry.xml. Seen in real game.logs since (a shared log 2026-10-12; Sub's own 2026-11-08): the journal line fires on ACCEPT, beside 'Contract Accepted: RSI Disc. Month: ...', and never after 'Contract Complete'.",
+      "creditOn": "complete",
+      "creditOnSource": "Unlike Orison Relief, this event's journal line marks an ACCEPT, so progress is credited when an Iasi_ contract COMPLETES (priced from 'contracts') and the journal line is ignored. Measured 2026-11-08 on two independent logs.",
       "note": "Every RSI Disc. Month contract adds the same points to your total (shown here) and to one of three category ladders (Transport, Collection, Defense) that this tracker does not show yet. Check your in-game Journal for your real numbers.",
       "contractPrefixes": [
         "Iasi_"

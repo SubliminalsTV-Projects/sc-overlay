@@ -349,6 +349,26 @@ export interface EventDef {
    * may appear inside the question and nowhere else.
    */
   rewardCandidates?: { tier: number; name: string; confirmed?: boolean }[];
+  /**
+   * WHICH LOG SIGNAL CREDITS a contract to this event. Absent (or `"journal"`) is the Orison
+   * behaviour: `Journal Entry Added: <log>` arrives ~134 ms after a completion and claims it.
+   *
+   * 🔴 `"complete"` EXISTS BECAUSE RSI DISCOVERY MONTH FIRES THAT SAME JOURNAL LINE ON ACCEPT.
+   * Measured 2026-11-08, two independent logs: a player's shared log (every `Contract Accepted:
+   * RSI Disc. Month: …` followed ~0.1 s later by `Journal Entry Added: RSI Discovery Event:`, and
+   * no journal line after any `Contract Complete`), and Sub's own (journal 18:13:21.431Z beside
+   * the accept, `Contract Complete: RSI Disc. Month: Constellation Rental Offer` 18:31:59.327Z
+   * with nothing after it). The journal path therefore recorded ONE unpriced contribution at
+   * accept time and nothing when the contract was actually done.
+   *
+   * With `"complete"` the tracker credits the event when a contract whose key matches
+   * `contractPrefixes` (or `generators`) COMPLETES, priced from `contracts`, and the event's
+   * journal line is ignored outright. Failed and abandoned contracts credit nothing.
+   *
+   * ⚠️ Rides the phone-home feed like any other field. Older builds pass the entry through and
+   * simply never read this key, so they keep their old (wrong-but-harmless) journal behaviour.
+   */
+  creditOn?: "journal" | "complete";
 }
 
 /** One witnessed "this completion counted toward the event" observation. */
@@ -380,6 +400,13 @@ export interface EventContribution {
    * changed is only which environment's contributions COUNT toward the number on screen.
    */
   env?: string | null;
+  /** `"complete"` when recorded by the completion path (`EventDef.creditOn: "complete"`).
+   *  Absent on everything the journal path recorded. For a `creditOn: "complete"` event ONLY
+   *  these count — a journal-path row for such an event is an accept-time line, not progress. */
+  via?: "complete";
+  /** The runtime MissionId the completion carried. Present only on `via: "complete"` rows, where
+   *  it is the dedupe key: two contracts can complete in the same millisecond, so `at` cannot be. */
+  missionId?: string;
 }
 
 /** The overlay-facing view of one event's track (the Event Tracker widget's tab). */
@@ -2087,6 +2114,10 @@ export class MissionTracker extends EventEmitter {
            PTU badge renders off it. Shown-and-labelled, not silently dropped. */
         const def = this.eventDefFor(ev.subject);
         if (!def) break;                          // an event we do not model; nothing to record
+        // 🔴 An event credited on COMPLETION (RSI Discovery Month) writes this line on ACCEPT, so
+        // it is not progress at all — recording it is how one unpriced row appeared at accept and
+        // nothing at completion. See `EventDef.creditOn` and `creditEventOnComplete`.
+        if (def.creditOn === "complete") break;
         const atMs = ev.ts ? Date.parse(ev.ts) : NaN;
         // 🔑 Correlate by TIME and CLAIM THE OLDEST pending completion. The journal line has an
         // all-zeros MissionId, so proximity is the only join — and because two contracts can
@@ -2174,10 +2205,16 @@ export class MissionTracker extends EventEmitter {
     // ⚠️ Guarded on the SAME condition as completedAtByMission above: beginCompletion runs twice
     // per mission (contractComplete AND MissionEnded both call it), so an unguarded push would
     // queue every completion twice and let one journal entry claim a phantom.
+    // 🔑 Called on EVERY signal, not inside the guard below: the first signal (MissionEnded) can
+    // arrive before anything identifies the contract, and only `contractComplete` carries a title.
+    // It is idempotent on the persisted missionId, so the three signals credit once.
+    const creditedOnComplete = this.creditEventOnComplete(missionId, title, completedAtMs);
     if (!this.completedAtByMission.has(missionId)) {
       this.completedAtByMission.set(missionId, completedAtMs);
       const info = this.missions.get(missionId);
-      this.pendingEventCompletions.push({
+      // A completion the event already credited must not also sit in the journal queue, or an
+      // Orison journal line in the next 6 s could claim it and credit it to the wrong event.
+      if (!creditedOnComplete) this.pendingEventCompletions.push({
         key: info?.contractKey ?? null,
         title: title ?? info?.title ?? null,
         missionId,
@@ -3679,6 +3716,64 @@ export class MissionTracker extends EventEmitter {
     return null;
   }
 
+  /**
+   * Credit a just-COMPLETED contract to an event declared `creditOn: "complete"`. Returns true
+   * when the completion belongs to such an event (credited now or already), false otherwise.
+   *
+   * Identification reuses `eventForMission`, so the prefix rule holds here too. The candidate keys
+   * are the marker's key, else the title-resolved variants, else every dataset contract carrying
+   * the completion's title; with no key at all a generator claimed by exactly one event decides.
+   * 🔑 Pricing is AGREE-OR-OMIT across the candidates: several same-titled variants credit their
+   * shared value, or nothing (`points: null`, counted as unpriced) when they disagree. Guessing
+   * one variant's value would put a number on screen the game never awarded.
+   *
+   * Idempotent on the persisted `missionId`, so the three completion signals of one contract and a
+   * later seeded replay of the same log all credit exactly once.
+   */
+  private creditEventOnComplete(missionId: string, title: string | null, atMs: number): boolean {
+    const info = this.missions.get(missionId);
+    const doneTitle = title ?? info?.title ?? null;
+    const keys = info?.acceptKeys?.length
+      ? info.acceptKeys
+      : info?.contractKey
+        ? [info.contractKey]
+        : doneTitle ? (this.variantsForTitle(doneTitle)?.keys ?? []) : [];
+    let def: EventDef | null;
+    if (keys.length) {
+      const defs = keys.map((k) => this.eventForMission(k, null));
+      def = defs[0];
+      // Every candidate must belong to the SAME event; a title shared with an ordinary contract
+      // is not evidence of event progress.
+      if (!def || defs.some((d) => d !== def)) return false;
+    } else {
+      def = this.eventForMission(null, info?.generator ?? null);
+    }
+    if (!def || def.creditOn !== "complete") return false;
+
+    const list = this.eventContributions.get(def.log) ?? [];
+    if (list.some((c) => c.missionId === missionId)) return true;
+    const prices = keys.map((k) => def.contracts?.[k]);
+    const points = prices.length && prices.every((p) => typeof p === "number" && p === prices[0]) ? prices[0]! : null;
+    const t = this.completedAtByMission.get(missionId) ?? atMs;
+    const at = new Date(t).toISOString();
+    const before = this.eventProgress(def.id)?.pct ?? null;
+    list.push({
+      key: keys.length === 1 ? keys[0] : null,
+      title: doneTitle,
+      at,
+      points,
+      env: this.logEnv,
+      via: "complete",
+      missionId,
+    });
+    this.eventContributions.set(def.log, list);
+    this.pendingEventCompletions = this.pendingEventCompletions.filter((c) => c.missionId !== missionId);
+    this.noteTierCrossings(def, before, t, at);
+    this.saveState();
+    this.emit("change");
+    return true;
+  }
+
   /** The event a journal-entry subject belongs to, or null. Exact match on the game's own
    *  string, case- and whitespace-insensitive only — deliberately NOT fuzzy, because a loose
    *  match here credits one event's progress to another. */
@@ -3735,7 +3830,13 @@ export class MissionTracker extends EventEmitter {
   eventProgress(id: string): EventProgress | null {
     const def = this.events.find((e) => e.id === id);
     if (!def) return null;
-    const stored = this.eventContributions.get(def.log) ?? [];
+    const all = this.eventContributions.get(def.log) ?? [];
+    // 🔑 For an event credited on COMPLETION, only rows the completion path wrote are progress. A
+    // journal-path row for such an event is the accept-time line an older build recorded (Sub's
+    // RSI Discovery Month on 2026-11-08: one row, key null, points null) — it is not a
+    // contribution, so it must not read as "1 unpriced". Filtered at READ time like the two below,
+    // so nothing on disk is deleted and the rule is reversible.
+    const stored = def.creditOn === "complete" ? all.filter((c) => c.via === "complete") : all;
     // 🔴 TWO FILTERS, EACH DOING A JOB THE OTHER CANNOT — and both filter at READ time, so
     // nothing is ever deleted and a wrong rule is a one-line correction rather than lost data.
     //

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MissionTracker } from "./missions.js";
 import { parseMissionEvent } from "./missions-parser.js";
+import { parseLine } from "./parser.js";
 import type { LogEvent } from "./parser.js";
 
 let failed = 0;
@@ -742,9 +743,9 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
 //
 // Added 2026-11-08 (Sub confirmed the contracts are live on 4.10.2). Total 30,000 and the overall
 // ladder 4500/9900/24000/30000 come from missionscenarios/iasi_scenarioprogress.xml; the per-contract
-// points from visitingiasi.xml. ⚠️ The journal subject "RSI Discovery Event" is inferred from the
-// datacore journal entry and the mobiGlas group name — not yet seen in a real game.log line, so the
-// log strings below are built in the Orison shape, not copied from a log.
+// points from visitingiasi.xml. The end-to-end behaviour (credited on COMPLETION, not on the journal
+// line) is block 17, driven by verbatim game.log lines — the journal subject "RSI Discovery Event"
+// has since been seen in real logs, and it fires on ACCEPT.
 {
   const real = shipped.events.find((e: { id: string }) => e.id === "rsi-discovery-month");
   check("shipped: Discovery Month exists", !!real, String(!!real));
@@ -756,33 +757,195 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   check("shipped: Discovery tiers x total reproduce the 4.10.2 minPoints exactly",
     fromTiers.join(",") === minPoints.join(","), fromTiers.join(","));
 
-  const mid = "1a2b3c4d-0000-4000-8000-00000000d15c";
-  const dir16 = mkdtempSync(join(tmpdir(), "ev-disco-"));
-  writeFileSync(join(dir16, "events.json"), JSON.stringify({
+  check("shipped: Discovery is credited on COMPLETION, not on the journal line", real?.creditOn === "complete",
+    String(real?.creditOn));
+  check("shipped: Orison keeps the journal-claim behaviour (no creditOn)",
+    shipped.events.find((e: { id: string }) => e.id === "orison-relief")?.creditOn === undefined);
+}
+
+// ---- 17. 🔴 RSI DISCOVERY MONTH CREDITS ON COMPLETION — the journal line fires on ACCEPT --------
+//
+// Measured 2026-11-08 on two independent logs. A player's shared log (bp_shared_logs tp5db0j66ys1dvt):
+// every `Contract Accepted:  RSI Disc. Month: …` is followed ~0.1 s later by `Journal Entry Added:
+// RSI Discovery Event:` and no `Contract Complete` has a journal line after it. Sub's own game.log
+// (lines below are VERBATIM from it): journal 18:13:21.431Z beside the accept and the markers,
+// completion 18:31:59Z, nothing after. The shipped code recorded ONE contribution at accept with
+// key null / points null and NOTHING at completion.
+{
+  // Shipped Discovery entry (creditOn from the real file), liveStart neutralised so a fixture dated
+  // before 9 Oct would still count — the dates below are after it anyway.
+  const discoEvents = (creditOn: "keep" | "drop") => JSON.stringify({
     ...shipped,
-    events: shipped.events.map((e: { id: string }) => e.id === "rsi-discovery-month" ? { ...e, liveStart: null } : e),
-  }));
-  writeFileSync(join(dir16, "blueprints.latest.json"), JSON.stringify({
-    schema: "sc-blueprint-pools/2", version: `4.10.0-LIVE.${CL}`, changelist: CL, missionCount: 1,
-    missions: { Iasi_ResourceGathering_Mining_Quantanium: m("RSI Disc. Month: Procure Refined Quantainium", "VisitingIasi") },
-  }));
-  const s16 = new MissionTracker({ dataDir: dir16, stateDir: mkdtempSync(join(tmpdir(), "ev-disco-st-")) });
-  s16.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
-  s16.detectPatch("<2026> Environment: PUB");
-  s16.apply({
-    kind: "marker", ts: "2026-11-08T10:00:00.000Z", missionId: mid,
-    contract: "Iasi_ResourceGathering_Mining_Quantanium_0", contractKey: "Iasi_ResourceGathering_Mining_Quantanium",
-    generator: "VisitingIasi", contractDefId: "x", objectiveId: "o_0", markerEntityId: "1", pos: null,
-  } as never);
-  s16.apply(parseMissionEvent(ev(`Added notification "Contract Complete: RSI Disc. Month: Procure Refined Quantainium: " [42] to queue. New queue size: 1, MissionId: [${mid}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`, "2026-11-08T10:00:00.000Z"))!);
-  s16.apply(parseMissionEvent(ev('Added notification "Journal Entry Added: RSI Discovery Event: " [43] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]', "2026-11-08T10:00:00.200Z"))!);
-  const p16 = s16.eventProgress("rsi-discovery-month")!;
-  check("(setup) one Discovery contribution was recorded",
-    p16?.contributions.length === 1 && p16.contributions[0]?.key === "Iasi_ResourceGathering_Mining_Quantanium",
-    `n=${p16?.contributions.length} key=${p16?.contributions[0]?.key}`);
-  check("one Quantainium run is priced at 1,142", p16?.points === 1142, String(p16?.points));
-  check("...which is 3.81% of the 30,000 total", p16?.pct != null && Math.abs(p16.pct - (1142 / 30000) * 100) < 1e-9, String(p16?.pct));
-  check("...and the first tier sits at 4,500 points", p16?.tiers[0]?.points === 4500, String(p16?.tiers[0]?.points));
+    events: shipped.events.map((e: Record<string, unknown>) => {
+      if (e.id !== "rsi-discovery-month" && e.id !== "orison-relief") return e;
+      const out: Record<string, unknown> = { ...e, liveStart: null };
+      if (creditOn === "drop") delete out.creditOn;
+      return out;
+    }),
+  });
+  const discoData = (d: string, creditOn: "keep" | "drop" = "keep") => {
+    writeFileSync(join(d, "events.json"), discoEvents(creditOn));
+    writeFileSync(join(d, "blueprints.latest.json"), JSON.stringify({
+      schema: "sc-blueprint-pools/2", version: `4.10.2-LIVE.12913470`, changelist: CL, missionCount: 4,
+      missions: {
+        Iasi_Courier_GoldItem_OnceOnly: m("RSI Disc. Month: Constellation Rental Offer", "VisitingIasi"),
+        Iasi_Courier_GoldItem: m("RSI Disc. Month: Relay Race", "VisitingIasi"),
+        Iasi_ResourceGathering_Mining_Quantanium: m("RSI Disc. Month: Procure Refined Quantainium", "VisitingIasi"),
+        ORS_SA: m("Orison Relief: Strike Nine Tails Squad", "TheBackpocket"),
+      },
+    }));
+  };
+  const mk = (stateDir: string, creditOn: "keep" | "drop" = "keep") => {
+    const d = mkdtempSync(join(tmpdir(), "ev-dc-"));
+    discoData(d, creditOn);
+    const tr = new MissionTracker({ dataDir: d, stateDir });
+    tr.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+    tr.detectPatch("<2026> Environment: PUB");
+    return tr;
+  };
+  const feed = (tr: MissionTracker, lines: string[]) => {
+    for (const raw of lines) {
+      const e = parseMissionEvent(parseLine(raw));
+      if (e) tr.apply(e);
+    }
+  };
+  const prog = (tr: MissionTracker) => tr.eventProgress("rsi-discovery-month")!;
+
+  // ---- Constellation Rental Offer: VERBATIM from Sub's game.log, 2026-11-08 ----
+  const C_ACCEPT_PHASE = [
+    '<2026-11-08T18:13:21.431Z> [Notice] <SHUDEvent_OnNotification> Added notification "Journal Entry Added: RSI Discovery Event: " [59] to queue. New queue size: 1, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]',
+    '<2026-11-08T18:13:21.445Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [95c705a4-8cb4-494d-a74e-ce6946cbe4d9], generator name [VisitingIasi], contract [Iasi_Courier_GoldItem_OnceOnly], contractDefinitionId[92804a73-edf7-4dcb-80d5-48b0a3a2fa9e], objectiveId [pickup_f1fc9593-e30c-4303-8a4e-7e1509141107_0], markerEntityId [24392], zoneHostId [876012058523], position [x: 267218.081644, y: -12719.153811, z: 211139.716892] [Team_MissionFeatures][Missions]',
+    '<2026-11-08T18:13:21.445Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [95c705a4-8cb4-494d-a74e-ce6946cbe4d9], generator name [VisitingIasi], contract [Iasi_Courier_GoldItem_OnceOnly], contractDefinitionId[92804a73-edf7-4dcb-80d5-48b0a3a2fa9e], objectiveId [dropoff_f1fc9593-e30c-4303-8a4e-7e1509141107_0], markerEntityId [24393], zoneHostId [876011712987], position [x: 191702.278553, y: -360175.147685, z: -913574.654955] [Team_MissionFeatures][Missions]',
+    '<2026-11-08T18:13:21.451Z> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Accepted:  RSI Disc. Month: Constellation Rental Offer: " [60] to queue. New queue size: 2, MissionId: [95c705a4-8cb4-494d-a74e-ce6946cbe4d9], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]',
+  ];
+  const C_COMPLETE_PHASE = [
+    '<2026-11-08T18:31:59.319Z> [Notice] <MissionEnded> Received MissionEnded push message for: mission_id 95c705a4-8cb4-494d-a74e-ce6946cbe4d9 - mission_state MISSION_STATE_COMPLETED [Team_GameServices][Missions]',
+    '<2026-11-08T18:31:59.322Z> [Notice] <EndMission> Ending mission for player. MissionId[95c705a4-8cb4-494d-a74e-ce6946cbe4d9] Player[IMC-SubliminaL] PlayerId[204772220757] CompletionType[Complete] Reason[Mission Ended] [Team_MissionFeatures][Missions]',
+    '<2026-11-08T18:31:59.327Z> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Complete: RSI Disc. Month: Constellation Rental Offer: " [80] to queue. New queue size: 1, MissionId: [95c705a4-8cb4-494d-a74e-ce6946cbe4d9], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]',
+  ];
+  // ---- Procure Refined Quantainium: same line shapes, in the SHARED log's order (accept, then
+  //      journal ~0.1 s later). Mission id and times are this fixture's own. ----
+  const QMID = "4f1d2e3c-7a6b-4c5d-9e8f-0a1b2c3d4e5f";
+  const Q_ACCEPT_PHASE = [
+    `<2026-11-08T18:14:02.100Z> [Notice] <CLocalMissionPhaseMarker::CreateMarker> Creating objective marker: missionId [${QMID}], generator name [VisitingIasi], contract [Iasi_ResourceGathering_Mining_Quantanium], contractDefinitionId[0e9b6a51-0000-4000-8000-000000000001], objectiveId [dropoff_0e9b6a51_0], markerEntityId [24500], zoneHostId [876011712987], position [x: 191702.278553, y: -360175.147685, z: -913574.654955] [Team_MissionFeatures][Missions]`,
+    `<2026-11-08T18:14:02.110Z> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Accepted:  RSI Disc. Month: Procure Refined Quantainium: " [63] to queue. New queue size: 1, MissionId: [${QMID}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
+    '<2026-11-08T18:14:02.212Z> [Notice] <SHUDEvent_OnNotification> Added notification "Journal Entry Added: RSI Discovery Event: " [64] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]',
+  ];
+  const Q_COMPLETE_PHASE = [
+    `<2026-11-08T18:45:10.500Z> [Notice] <MissionEnded> Received MissionEnded push message for: mission_id ${QMID} - mission_state MISSION_STATE_COMPLETED [Team_GameServices][Missions]`,
+    `<2026-11-08T18:45:10.503Z> [Notice] <EndMission> Ending mission for player. MissionId[${QMID}] Player[IMC-SubliminaL] PlayerId[204772220757] CompletionType[Complete] Reason[Mission Ended] [Team_MissionFeatures][Missions]`,
+    `<2026-11-08T18:45:10.508Z> [Notice] <SHUDEvent_OnNotification> Added notification "Contract Complete: RSI Disc. Month: Procure Refined Quantainium: " [81] to queue. New queue size: 1, MissionId: [${QMID}], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]`,
+  ];
+
+  // Positive first: the real lines really do parse into the events this block is about, or every
+  // "nothing was recorded" assertion below is free.
+  const kinds = [...C_ACCEPT_PHASE, ...C_COMPLETE_PHASE].map((l) => parseMissionEvent(parseLine(l))?.kind ?? "null");
+  check("(setup) the verbatim lines parse: journal, marker x2, accept, end x2, contractComplete",
+    kinds.join(",") === "journalEntry,marker,marker,accept,end,end,contractComplete", kinds.join(","));
+
+  // A. The accept-time journal line adds NOTHING.
+  const a = mk(mkdtempSync(join(tmpdir(), "ev-dc-st-")));
+  feed(a, C_ACCEPT_PHASE);
+  const pa = prog(a);
+  check("the accept-time journal line records NO contribution", pa.contributions.length === 0, String(pa.contributions.length));
+  check("...and nothing reads as unpriced", pa.unpriced === 0, String(pa.unpriced));
+
+  // B. Completion credits the contract's own points, once, across its three completion signals.
+  feed(a, C_COMPLETE_PHASE);
+  const pb = prog(a);
+  check("one completion = one contribution (three completion signals, credited once)",
+    pb.contributions.length === 1, String(pb.contributions.length));
+  check("...attributed to Iasi_Courier_GoldItem_OnceOnly", pb.contributions[0]?.key === "Iasi_Courier_GoldItem_OnceOnly",
+    String(pb.contributions[0]?.key));
+  check("Constellation Rental Offer is priced at 250", pb.points === 250, String(pb.points));
+  check("...nothing unpriced", pb.unpriced === 0, String(pb.unpriced));
+  check("...dated at the completion, not the accept", pb.contributions[0]?.at === "2026-11-08T18:31:59.319Z",
+    String(pb.contributions[0]?.at));
+
+  // C. A replay of the same log into the same tracker adds nothing; a restart replaying it from the
+  //    persisted state adds nothing; a cold seed into a FRESH profile credits the same as live.
+  feed(a, [...C_ACCEPT_PHASE, ...C_COMPLETE_PHASE]);
+  check("replaying the same lines into the live tracker does not double-count", prog(a).points === 250 && prog(a).contributions.length === 1,
+    `${prog(a).points} / ${prog(a).contributions.length}`);
+  const sharedState = mkdtempSync(join(tmpdir(), "ev-dc-st-"));
+  const r1 = mk(sharedState);
+  feed(r1, [...C_ACCEPT_PHASE, ...C_COMPLETE_PHASE]);
+  const r2 = mk(sharedState); // a restart: same state dir, the startup seed replays the log again
+  feed(r2, [...C_ACCEPT_PHASE, ...C_COMPLETE_PHASE]);
+  check("a seeded replay into a fresh profile credits the same as live (250)", prog(r1).points === 250, String(prog(r1).points));
+  check("a restart that replays the log again still credits it ONCE", prog(r2).contributions.length === 1 && prog(r2).points === 250,
+    `${prog(r2).contributions.length} / ${prog(r2).points}`);
+
+  // D. Two contracts accepted, then completed in EITHER order: both credit.
+  for (const [label, order] of [["C then Q", [C_COMPLETE_PHASE, Q_COMPLETE_PHASE]], ["Q then C", [Q_COMPLETE_PHASE, C_COMPLETE_PHASE]]] as const) {
+    const d = mk(mkdtempSync(join(tmpdir(), "ev-dc-st-")));
+    feed(d, [...C_ACCEPT_PHASE, ...Q_ACCEPT_PHASE]);
+    check(`(${label}) two accepts with two journal lines still record nothing`, prog(d).contributions.length === 0,
+      String(prog(d).contributions.length));
+    for (const phase of order) feed(d, phase);
+    const keys = prog(d).contributions.map((c) => c.key).sort().join(",");
+    check(`(${label}) both contracts are credited`,
+      keys === "Iasi_Courier_GoldItem_OnceOnly,Iasi_ResourceGathering_Mining_Quantanium", keys);
+    check(`(${label}) 250 + 1,142 = 1,392 points`, prog(d).points === 1392, String(prog(d).points));
+  }
+
+  // E. A FAILED Discovery contract credits nothing.
+  {
+    const f = mk(mkdtempSync(join(tmpdir(), "ev-dc-st-")));
+    feed(f, [...C_ACCEPT_PHASE,
+      '<2026-11-08T18:31:59.319Z> [Notice] <MissionEnded> Received MissionEnded push message for: mission_id 95c705a4-8cb4-494d-a74e-ce6946cbe4d9 - mission_state MISSION_STATE_FAILED [Team_GameServices][Missions]']);
+    check("a failed Discovery contract credits nothing", prog(f).contributions.length === 0, String(prog(f).contributions.length));
+  }
+
+  // F. Orison is UNCHANGED: still credited by the journal line that follows its completion. And an
+  //    Orison journal line arriving right after a DISCOVERY completion may not claim it.
+  {
+    const o = mk(mkdtempSync(join(tmpdir(), "ev-dc-st-")));
+    const OMID = "aaaaaaaa-0000-4000-8000-0000000000aa";
+    o.apply({
+      kind: "marker", ts: "2026-11-08T19:00:00.000Z", missionId: OMID, contract: "ORS_SA_0", contractKey: "ORS_SA",
+      generator: "TheBackpocket", contractDefId: "x", objectiveId: "o_0", markerEntityId: "1", pos: null,
+    } as never);
+    o.apply(parseMissionEvent(ev(`Added notification "Contract Complete: Orison Relief: Strike Nine Tails Squad: " [90] to queue. MissionId: [${OMID}]`, "2026-11-08T19:05:00.000Z"))!);
+    const po0 = o.eventProgress("orison-relief")!;
+    check("Orison: a completion WITHOUT its journal line credits nothing (journal claim unchanged)",
+      po0.contributions.length === 0, String(po0.contributions.length));
+    o.apply(parseMissionEvent(ev(JOURNAL, "2026-11-08T19:05:00.134Z"))!);
+    const po = o.eventProgress("orison-relief")!;
+    check("Orison: the journal line claims its completion, priced from events.json (4,000)",
+      po.contributions.length === 1 && po.contributions[0]?.key === "ORS_SA" && po.points === 4000,
+      `n=${po.contributions.length} key=${po.contributions[0]?.key} pts=${po.points}`);
+
+    feed(o, [...C_ACCEPT_PHASE, ...C_COMPLETE_PHASE]);
+    o.apply(parseMissionEvent(ev(JOURNAL, "2026-11-08T18:31:59.450Z"))!);
+    const po2 = o.eventProgress("orison-relief")!;
+    check("an Orison journal line cannot claim a Discovery completion",
+      !po2.contributions.some((c) => (c.key ?? "").startsWith("Iasi_")), po2.contributions.map((c) => c.key).join(","));
+    check("...and Discovery still credited it (250)", prog(o).points === 250, String(prog(o).points));
+  }
+
+  // G. 🔑 TODAY'S STALE ROW. An older build (no creditOn) recorded the accept-time journal line as
+  //    a key-null, points-null contribution. After upgrading, it must not read as "1 unpriced" —
+  //    and it must not be deleted either (read-time filter, same as liveStart and env).
+  {
+    const st = mkdtempSync(join(tmpdir(), "ev-dc-st-"));
+    const old = mk(st, "drop");
+    feed(old, C_ACCEPT_PHASE);
+    check("(setup) the OLD behaviour really records the accept-time row as unpriced",
+      prog(old).contributions.length === 1 && prog(old).unpriced === 1 && prog(old).contributions[0]?.key === null,
+      `n=${prog(old).contributions.length} unpriced=${prog(old).unpriced}`);
+    const upgraded = mk(st);
+    check("after the upgrade the stale accept-time row is not shown", prog(upgraded).contributions.length === 0,
+      String(prog(upgraded).contributions.length));
+    check("...and does not read as 1 unpriced", prog(upgraded).unpriced === 0, String(prog(upgraded).unpriced));
+    feed(upgraded, C_COMPLETE_PHASE);
+    check("...and the completion that follows is credited normally (250, nothing unpriced)",
+      prog(upgraded).points === 250 && prog(upgraded).unpriced === 0, `${prog(upgraded).points} / ${prog(upgraded).unpriced}`);
+    const rollback = mk(st, "drop");
+    check("the stale row is still on disk (an older build reading the same profile still sees it)",
+      rollback.eventProgress("rsi-discovery-month")!.contributions.some((c) => c.key === null && c.via === undefined),
+      String(rollback.eventProgress("rsi-discovery-month")!.contributions.length));
+  }
 }
 
 console.log(failed ? `\nFAILED (${failed})` : "\nevent-track tests passed");
