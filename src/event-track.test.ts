@@ -53,7 +53,9 @@ const realEvents = JSON.stringify({
       // every fixture contribution and turn fourteen MECHANISM assertions red for a reason that
       // has nothing to do with the mechanism. Block 12 declares its own cutoff to test the
       // filter; block 14 asserts the shipped file really carries one.
-      ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 }, rewards: [], liveStart: null }
+      // 🔑 `total` is pinned too (2026-11-08): 4.10.2 moved the shipped total 288,000 -> 72,000,
+      // and blocks 3 and 11 compute against this fixture's own total. Same reason as above.
+      ? { ...e, contracts: { ORS_MA_HaulingMedium: 6000 }, rewards: [], liveStart: null, total: 288000 }
       : e),
 });
 writeFileSync(join(dir, "events.json"), realEvents);
@@ -680,6 +682,60 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   // revert it — see src/event-feed.ts.
   check("shipped: revision was bumped so the site's older copy cannot revert this",
     Number(shipped.revision) >= 3, String(shipped.revision));
+}
+
+// ---- 15. The SHIPPED Orison point values are the 4.10.2-LIVE.12913470 datacore's ---------------
+//
+// Reads the REAL file on purpose, like block 14. 4.10.2 moved two of them: ORS_SA 2000 -> 4000
+// (thebackpocket.xml, ContractResult_ScenarioProgress PointsToAward) and the total 288,000 -> 72,000
+// (contracts/contractscenarios/ors_scenarioprogress.xml, top STierReward minPoints). Left at the
+// 4.10.0 values the tracker under-counted a ship-combat run by half and every percentage by four.
+// 🔴 This block is EXPECTED to change when a patch moves these values again — that is its job.
+// Update it beside data/events.json, with the datacore record named in contractsProvenance.
+{
+  const real = shipped.events.find((e: { id: string }) => e.id === "orison-relief");
+  check("shipped: ORS_SA is 4,000 (4.10.2 datacore)", real?.contracts?.ORS_SA === 4000, String(real?.contracts?.ORS_SA));
+  check("shipped: the total is 72,000 (4.10.2 datacore)", real?.total === 72000, String(real?.total));
+  check("shipped: the three unchanged values are still 6,000 / 3,000 / 3,000",
+    real?.contracts?.ORS_MA_HaulingMedium === 6000 && real?.contracts?.ORS_MA_HaulingSmall === 3000 &&
+    real?.contracts?.ORS_MA_DeliveryPilot === 3000, JSON.stringify(real?.contracts));
+  // The ladder is stated in percent and the datacore states it in points, so this is the one
+  // place both have to agree: every 4.10.2 minPoints must be exactly tier% of the total.
+  const minPoints4102 = [10800, 18000, 30960, 41040, 57600, 72000];
+  const fromTiers = (real?.tiers ?? []).map((p: number) => Math.round((p / 100) * (real?.total ?? 0)));
+  check("shipped: tiers x total reproduce the 4.10.2 minPoints exactly",
+    fromTiers.join(",") === minPoints4102.join(","), fromTiers.join(","));
+
+  // End to end through the tracker with the SHIPPED prices (only liveStart neutralised, so the
+  // fixture date is not excluded): one Strike Nine Tails Squad must be worth 4,000 of 72,000.
+  const dir15 = mkdtempSync(join(tmpdir(), "ev-shipped-"));
+  writeFileSync(join(dir15, "events.json"), JSON.stringify({
+    ...shipped,
+    events: shipped.events.map((e: { id: string }) => e.id === "orison-relief" ? { ...e, liveStart: null } : e),
+  }));
+  writeFileSync(join(dir15, "blueprints.latest.json"), JSON.stringify({
+    schema: "sc-blueprint-pools/2", version: `4.10.0-LIVE.${CL}`, changelist: CL, missionCount: 1,
+    missions: { ORS_SA: m("Orison Relief: Strike Nine Tails Squad", "TheBackpocket") },
+  }));
+  const s15 = new MissionTracker({ dataDir: dir15, stateDir: mkdtempSync(join(tmpdir(), "ev-shipped-st-")) });
+  s15.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  s15.detectPatch("<2026> Environment: PUB");
+  s15.apply({
+    kind: "marker", ts: "2026-11-01T10:00:00.000Z", missionId: "c48baebd-b6da-4537-86f1-1355c5e2d488",
+    contract: "ORS_SA_0", contractKey: "ORS_SA", generator: "TheBackpocket",
+    contractDefId: "x", objectiveId: "o_0", markerEntityId: "1", pos: null,
+  } as never);
+  s15.apply(parseMissionEvent(ev(COMPLETE, "2026-11-01T10:00:00.000Z"))!);
+  s15.apply(parseMissionEvent(ev(JOURNAL, "2026-11-01T10:00:00.200Z"))!);
+  const p15 = s15.eventProgress("orison-relief")!;
+  // Positive first: the contribution really was recorded and attributed, or the pricing checks
+  // below would be about nothing.
+  check("(setup) one ORS_SA contribution was recorded",
+    p15.contributions.length === 1 && p15.contributions[0]?.key === "ORS_SA",
+    `n=${p15.contributions.length} key=${p15.contributions[0]?.key}`);
+  check("one Strike Nine Tails Squad is priced at 4,000", p15.points === 4000, String(p15.points));
+  check("...which is 5.56% of the 72,000 total", p15.pct !== null && Math.abs(p15.pct - (4000 / 72000) * 100) < 1e-9, String(p15.pct));
+  check("...and the 15% tier sits at 10,800 points", p15.tiers[0]?.points === 10800, String(p15.tiers[0]?.points));
 }
 
 console.log(failed ? `\nFAILED (${failed})` : "\nevent-track tests passed");
