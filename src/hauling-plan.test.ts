@@ -643,6 +643,34 @@ check("an empty board quotes no rate at all",
     `${bare.rates.projected?.auec} vs ${open.rates.projected?.auec}`);
 }
 
+// ── 4.10.2: the Constellation Mk V Centaurus (asked for in Discord, 2026-11-07) ──
+// The log names it by class (`RSI_Constellation_Mk5_Centaurus_<entityId>`, seen in Sub's own
+// 4.10.2 logs), the picker by display name. Both must land on the flyable hull. 4.10.2 also ships
+// a `_Display` showroom twin with the same name and grid; it must not be in the dataset at all,
+// or the picker's first-of-each-name dedupe can hand back the showroom hull.
+{
+  const mk5 = data.ship("RSI_Constellation_Mk5_Centaurus");
+  check("the Mk V Centaurus is a hull, 240 SCU", mk5?.totalScu === 240, String(mk5?.totalScu));
+  const g = mk5?.grids[0];
+  check("...one 6x10x4 grid whose biggest box is 4x8x2 (a 32 SCU box fits, two layers high)",
+    mk5?.grids.length === 1 && g?.w === 6 && g.l === 10 && g.h === 4 &&
+    g.maxBox?.x === 4 && g.maxBox.y === 8 && g.maxBox.z === 2,
+    JSON.stringify(mk5?.grids));
+  check("...and its display name resolves to the flyable class",
+    data.ship("RSI Constellation Mk V Centaurus")?.className === "RSI_Constellation_Mk5_Centaurus",
+    String(data.ship("RSI Constellation Mk V Centaurus")?.className));
+  const all = Object.keys(data.ships());
+  const constellations = all.filter((k) => k.startsWith("RSI_Constellation_"));
+  check("the dataset carries the Constellation family (or the next check is free)",
+    constellations.length >= 6, String(constellations.length));
+  const display = all.filter((k) => /_display$/i.test(k));
+  check("🔴 no showroom _Display hull is in the dataset", display.length === 0, display.join(","));
+  const picked = buildHaulingPlan(viewOf(byId("haul-tracked")), data, { ship: "RSI Constellation Mk V Centaurus" });
+  check("picking it by name plans against its 240 SCU hold",
+    picked.ship?.className === "RSI_Constellation_Mk5_Centaurus" && picked.ship.totalScu === 240 && picked.ship.source === "manual",
+    JSON.stringify(picked.ship && { c: picked.ship.className, s: picked.ship.totalScu, src: picked.ship.source }));
+}
+
 // The bundle really is on disk where the server will look for it.
 check("the shipped orders file is the schema this module reads",
   JSON.parse(readFileSync(join(DATA_DIR, "hauling-orders.json"), "utf8")).schema === "sc-hauling-orders/1");

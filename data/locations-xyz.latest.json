@@ -1,9 +1,9 @@
 {
   "schema": "sc-locations-xyz/1",
-  "source": "4.10.0-LIVE.12519617",
+  "source": "4.10.2-LIVE.12913470",
   "units": "metres, per-system frame — coordinates are NOT comparable across systems",
   "key": "starmapRecord UUID — the same key as locations.json `locations`",
-  "placeCount": 1191,
+  "placeCount": 1240,
   "ambiguousCount": 9,
   "places": {
     "77ed5653-bd14-4952-b904-afd79faeef60": {
@@ -5066,6 +5066,16 @@
       "depth": 1,
       "entity": "s1c_asd_facility_010"
     },
+    "bb3751f4-c194-4597-8294-95db19ffd771": {
+      "pos": [
+        12792540969.4,
+        -74203093.1,
+        163821.9
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1c_004"
+    },
     "d9473f9f-1f79-4e66-ad10-d8536914eec2": {
       "pos": [
         12792490485.8,
@@ -5106,6 +5116,16 @@
       "depth": 1,
       "entity": "s1c_fob_abnd_001"
     },
+    "51207d0f-a361-4f84-ba59-faacd6c8618c": {
+      "pos": [
+        12792642316.8,
+        -74784094.4,
+        -110806.2
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1c_003"
+    },
     "a3412032-82ac-4674-b7a1-9cfd6a9a0c4b": {
       "pos": [
         12792412904.2,
@@ -5136,6 +5156,16 @@
       "depth": 1,
       "entity": "hurdyn_cluster_001_sand_red_{B9FB5543-A34F-4E60-970D-DADD058C7884}.socpak"
     },
+    "5d966ec0-49b6-4bd0-9634-62883757fa8e": {
+      "pos": [
+        12792443960.5,
+        -74437929.6,
+        -238319.7
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1c_002"
+    },
     "a00f6e3d-e142-4c28-ba5a-fcdf8d89589b": {
       "pos": [
         12792654248.9,
@@ -5145,6 +5175,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "s1c_asd_facility_008"
+    },
+    "8308ecc9-76ae-4ec5-9c47-55ea1c5a9b22": {
+      "pos": [
+        12792953585.6,
+        -74477290.2,
+        211130.1
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1c_001"
     },
     "343c445a-19f5-4b5d-a40b-0d1742c741c6": {
       "pos": [
@@ -5416,6 +5456,16 @@
       "depth": 1,
       "entity": "s3a_fob_abnd_003"
     },
+    "2f1c0110-6340-4332-b804-f7848cfeb022": {
+      "pos": [
+        18703460683.1,
+        -22121643334.6,
+        -169487.6
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3a_22"
+    },
     "e8ab01d7-97eb-4728-8bdf-454816586fdc": {
       "pos": [
         18703515181.5,
@@ -5445,6 +5495,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "ArcCorpSecurityPost042"
+    },
+    "647d4ee7-f5a0-4a56-bc62-922b1b9031ee": {
+      "pos": [
+        18703652956.3,
+        -22121858685.4,
+        -68344
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3a_004"
     },
     "7ce6da52-9d81-4d4b-bc5e-9f60a37fb660": {
       "pos": [
@@ -5476,6 +5536,16 @@
       "depth": 1,
       "entity": "indy_miner_001_frost_{D7271542-63F0-438A-BF3C-8E0D72926141}.socpak"
     },
+    "639d7adf-860b-4c0c-b0bf-10e16d5dad88": {
+      "pos": [
+        18703528577.3,
+        -22121445282.9,
+        -44686.7
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3a_001"
+    },
     "72898c6c-5489-4ec4-afc4-560d7ddafc49": {
       "pos": [
         18703666265.8,
@@ -5505,6 +5575,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "UGF_Wheelers"
+    },
+    "b25b53ea-a3a1-43c3-aa4d-2777a01eb667": {
+      "pos": [
+        18703733453.8,
+        -22121508623.5,
+        119032.1
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3a_005"
     },
     "12b87563-f768-4606-9c14-90c433d60232": {
       "pos": [
@@ -5695,6 +5775,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "ArcCorpSecurityPost033"
+    },
+    "380db38a-adbd-42b8-8234-b95a6864d313": {
+      "pos": [
+        18703583635.5,
+        -22121829995.3,
+        131563.9
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3a_003"
     },
     "9d1dae65-7868-48fc-b1cd-8c2fac764f1a": {
       "pos": [
@@ -6186,6 +6276,16 @@
       "depth": 1,
       "entity": "s4b_fob_abnd_002"
     },
+    "f063a522-876f-4f21-bd72-7cba335d84e7": {
+      "pos": [
+        22476928346.1,
+        37091121910,
+        -251975.1
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4b_003"
+    },
     "c33df615-d78d-4ed8-a6a7-8d123553de29": {
       "pos": [
         22476504687.5,
@@ -6256,6 +6356,16 @@
       "depth": 1,
       "entity": "s4b_asd_facility_003"
     },
+    "c77c3bfb-2bc3-4cd0-b5b1-571f7927fb7e": {
+      "pos": [
+        22476526011.9,
+        37090933504.4,
+        -256332.1
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4b_004"
+    },
     "f7c2c82d-87c3-4e37-a12c-36a750d18816": {
       "pos": [
         22477010992.3,
@@ -6305,6 +6415,26 @@
       "system": "stanton",
       "depth": 1,
       "entity": "s4b_asd_facility_002"
+    },
+    "2e22f64a-3f01-41b7-bc21-04b25e91090d": {
+      "pos": [
+        22476790603.1,
+        37091201604.7,
+        277561.3
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4b_001"
+    },
+    "9e5dea5c-f389-48e1-a8bd-f416176bd606": {
+      "pos": [
+        22476416691.3,
+        37091109092.1,
+        94658.8
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4b_002"
     },
     "fecb7c85-99b5-4909-aa25-e564be285124": {
       "pos": [
@@ -7066,6 +7196,16 @@
       "depth": 1,
       "entity": "ArcCorpSecurityPost108"
     },
+    "90952bc0-39db-4a1c-a63e-5622fe796cb4": {
+      "pos": [
+        18379442946.3,
+        -22000438947.5,
+        -190641.9
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3b_005"
+    },
     "7d972948-8e00-4239-bf6e-bdaf32ea4363": {
       "pos": [
         18379876972,
@@ -7075,6 +7215,26 @@
       "system": "stanton",
       "depth": 1,
       "entity": "s3b_fob_abnd_001"
+    },
+    "87355510-d265-4438-8f8e-f24e94ddb872": {
+      "pos": [
+        18379384203.4,
+        -22000493775.1,
+        94105.6
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3b_003"
+    },
+    "04ed3779-3103-44e7-9cd2-e546b86980f3": {
+      "pos": [
+        18379877829.9,
+        -22000432041.8,
+        -162725.8
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3b_002"
     },
     "f6ebebaf-073b-402b-9cda-99d7f5764398": {
       "pos": [
@@ -7286,6 +7446,16 @@
       "depth": 1,
       "entity": "RastarLocationEntity"
     },
+    "7ce20eb9-9720-41ae-a7de-1b6d167108e4": {
+      "pos": [
+        18379607589.4,
+        -22000206881.3,
+        103274.6
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3b_004"
+    },
     "2716131f-2cab-4ec8-8bfe-87465872beb0": {
       "pos": [
         18379377412.9,
@@ -7345,6 +7515,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "arccorp_cluster_004_dust_{E43B2A37-F470-4E93-8E49-E317E21DA116}.socpak"
+    },
+    "a5204b4c-34e1-42ae-a043-297ae70126fb": {
+      "pos": [
+        18379838976.8,
+        -22000625495.9,
+        -139192.3
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_3b_001"
     },
     "c1bf2ebc-1eaf-4ee8-9d4f-eec040e2dd90": {
       "pos": [
@@ -7886,6 +8066,16 @@
       "depth": 1,
       "entity": "RL_orbtl_001_saf_003"
     },
+    "b374f34d-60f5-4e72-9068-dd4951489056": {
+      "pos": [
+        12905655369.3,
+        40924502.7,
+        -253420.3
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1b_003"
+    },
     "8bf7e3b7-680e-4bff-9161-3d5c74241db3": {
       "pos": [
         12905948405,
@@ -7936,6 +8126,26 @@
       "depth": 1,
       "entity": "s1b_asd_facility_001"
     },
+    "85ef0977-d65e-4481-85a4-b4bfae906865": {
+      "pos": [
+        12906016164.2,
+        40928492.8,
+        -89541.3
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1b_001"
+    },
+    "02a373c1-566a-475f-9534-113d3d742d6a": {
+      "pos": [
+        12905712296.8,
+        41180565.3,
+        150568.6
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1b_002"
+    },
     "12dbdbf1-53e2-4c69-8d0f-a1b2c5e11e45": {
       "pos": [
         12905815241.4,
@@ -7975,6 +8185,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "ObjectContainer-Borehole_a"
+    },
+    "3dff9502-c1f7-4612-b4c9-d161fdb7642f": {
+      "pos": [
+        12905671202.4,
+        40742292.3,
+        150982.4
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1b_004"
     },
     "7788b2e2-e25c-4c49-8b34-b98361bbdfa4": {
       "pos": [
@@ -8696,6 +8916,16 @@
       "depth": 1,
       "entity": "em_shelter_002_frost_{7913567C-E54A-4505-AFF2-19144299B71E}.socpak"
     },
+    "3f7f974e-cbf4-422c-a856-e6efde9e7512": {
+      "pos": [
+        22463082287.5,
+        37185834857.5,
+        -11107.9
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4_002"
+    },
     "5a4e54f1-4f15-4a71-987b-e2c0baf4282f": {
       "pos": [
         22462779162.5,
@@ -8755,6 +8985,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "MTSecurityCenterD66-CRW-F"
+    },
+    "4f42ced7-7ecc-4acc-b8c5-fbdd337ea052": {
+      "pos": [
+        22461778970,
+        37186570806.1,
+        473917.6
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4_005"
     },
     "bc59bba2-0371-40b3-97ee-e3ed9f228a29": {
       "pos": [
@@ -8816,6 +9056,16 @@
       "depth": 1,
       "entity": "UGF_MTDC_5WQ-R2V-C"
     },
+    "2c3a5644-3f2e-465d-8f13-3de08b776e60": {
+      "pos": [
+        22461750837.4,
+        37185509355.7,
+        912536.5
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4_004"
+    },
     "fb9a1dbf-1715-487c-8774-462deedd3251": {
       "pos": [
         22462338118.5,
@@ -8825,6 +9075,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "MTSecurityCenterBH5-KEH-6"
+    },
+    "e1fc6660-cf55-4db0-b477-d7c8c05fbe82": {
+      "pos": [
+        22462547178,
+        37184889982,
+        237437.2
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4_001"
     },
     "0b07f5ab-f4d6-471c-af52-8c3b13344a61": {
       "pos": [
@@ -8905,6 +9165,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "UGF_MTDC_D79-ECG-R"
+    },
+    "876c8a56-fdb0-4fcf-9e84-0387e0655611": {
+      "pos": [
+        22461893543.3,
+        37186105152.9,
+        -913568.1
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4_003"
     },
     "fa4360b9-23e1-4138-816f-9462f795b05f": {
       "pos": [
@@ -9526,6 +9796,16 @@
       "depth": 1,
       "entity": "s4c_asd_facility_007"
     },
+    "18f212c9-6c79-4b8a-a6ac-ea501bade318": {
+      "pos": [
+        22488312481.2,
+        37081117505.5,
+        -66083.8
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4c_002"
+    },
     "a6836361-52d0-42c6-a284-3a60dc2bbc07": {
       "pos": [
         22488159909,
@@ -9566,6 +9846,26 @@
       "depth": 1,
       "entity": "s4c_asd_facility_010"
     },
+    "5c4d4202-00e1-4909-9482-685eca657687": {
+      "pos": [
+        22488187891.7,
+        37080928835,
+        38157.2
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4c_004"
+    },
+    "94af4aae-6c8d-483f-9142-1f3a7ef15e2d": {
+      "pos": [
+        22488138938.3,
+        37081334108,
+        -17961.2
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4c_001"
+    },
     "88d8f848-7023-4188-b1f3-16c11827a0cb": {
       "pos": [
         22487928298.9,
@@ -9595,6 +9895,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "racing_static_st4c_icebreaker"
+    },
+    "adfed0c9-2184-4f11-ab92-0f0cc96b6fa3": {
+      "pos": [
+        22488077780.2,
+        37081118145,
+        210648.2
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4c_003"
     },
     "d08a9bc5-b9e5-4f0d-8af0-77a245bb0f4c": {
       "pos": [
@@ -9866,6 +10176,16 @@
       "depth": 1,
       "entity": "hurdyn_cluster_001_sand_red_{F7C6FE12-A504-4AAD-910F-CC9DD059B7E6}.socpak"
     },
+    "f81954c0-8d17-40b5-8c41-d3c38b1e1894": {
+      "pos": [
+        12892507568.8,
+        -31764635.9,
+        92088.4
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1a_004"
+    },
     "7f49298c-f12e-4a18-b747-875848d6c112": {
       "pos": [
         12892803965.8,
@@ -9896,6 +10216,16 @@
       "depth": 1,
       "entity": "s1a_asd_facility_010"
     },
+    "ad9d5e93-0bef-4905-b8bd-97283f0ba110": {
+      "pos": [
+        12892877676.5,
+        -31627054.4,
+        233674.9
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1a_001"
+    },
     "b3f96e49-abc1-4d31-97de-067865e85bdc": {
       "pos": [
         12892428873.5,
@@ -9906,6 +10236,16 @@
       "depth": 1,
       "entity": "s1a_asd_facility_004"
     },
+    "fe3950f6-0244-4c83-a50f-9a329877ffe1": {
+      "pos": [
+        12892526130.3,
+        -31170798,
+        67540.1
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1a_002"
+    },
     "6ad85809-c654-4b43-9eac-8f55609c4f1c": {
       "pos": [
         12892974725.3,
@@ -9915,6 +10255,26 @@
       "system": "stanton",
       "depth": 1,
       "entity": "s1a_asd_facility_005"
+    },
+    "2d3044be-6670-4d2f-bd60-3302ef4b2da3": {
+      "pos": [
+        12892938627.6,
+        -31375713.3,
+        -196360.9
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1a_005"
+    },
+    "ea2e87f5-8c81-4975-9d37-60538a04e973": {
+      "pos": [
+        12892540149.1,
+        -31578143.4,
+        -301286.5
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1a_003"
     },
     "e5e4bf0d-3c05-457c-8b6a-9b7470642167": {
       "pos": [
@@ -10566,6 +10926,16 @@
       "depth": 1,
       "entity": "shubin_cluster_002_frost_{B2306CB2-6122-4A60-9FB8-B9C6336588FF}.socpak"
     },
+    "e3006016-96b4-4739-a2a4-531556dd23bc": {
+      "pos": [
+        22398352845.4,
+        37168847427.7,
+        239656.9
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4a_002"
+    },
     "2a93560b-5549-49aa-9f3c-3555d7cea851": {
       "pos": [
         22398309249.1,
@@ -10626,6 +10996,16 @@
       "depth": 1,
       "entity": "s4a_fob_abnd_002"
     },
+    "f4e3c68e-d5bd-44c3-b94a-34e4964e1d59": {
+      "pos": [
+        22398269296.9,
+        37168622458.7,
+        1703.6
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4a_001"
+    },
     "5438c7ed-29a1-47e4-83bb-877f818e5abd": {
       "pos": [
         22398244378.6,
@@ -10676,6 +11056,16 @@
       "depth": 1,
       "entity": "s4a_fob_abnd_004"
     },
+    "d68e500c-386b-4d06-9d88-57f90460220f": {
+      "pos": [
+        22398465419.2,
+        37168946679.9,
+        -192975.8
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4a_003"
+    },
     "20ed2b0d-912e-4049-9a5f-dccfaf676f69": {
       "pos": [
         22398263280.3,
@@ -10695,6 +11085,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "UGF_SPMC-14"
+    },
+    "23acf075-46f1-4bc3-810f-2b18fe53e3cd": {
+      "pos": [
+        22398172945.8,
+        37168915944.7,
+        -115724.5
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_4a_004"
     },
     "4f188a3d-ac10-45d4-a387-60559c2330cd": {
       "pos": [
@@ -11116,6 +11516,16 @@
       "depth": 1,
       "entity": "HDRSO-McKuen"
     },
+    "2e6bd23f-2c90-4398-aba9-2827ad62b6f2": {
+      "pos": [
+        12849940495.6,
+        858427.3,
+        -29479.1
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1_003"
+    },
     "cde1a437-d781-4875-ae7c-51b144cff6e4": {
       "pos": [
         12849561150.3,
@@ -11336,6 +11746,16 @@
       "depth": 1,
       "entity": "Drlct_Stmnt_005_Windmill_RastarLE"
     },
+    "74dbf4cb-5e47-4348-b431-cbff17a364b0": {
+      "pos": [
+        12850762081.9,
+        -254724.9,
+        -918882.3
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1_004"
+    },
     "b7c63d48-3596-4378-8a65-13686c71d84c": {
       "pos": [
         12851359312,
@@ -11405,6 +11825,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "hurdyn_cluster_001_sand_red_{BDA2AFC9-17FB-4E0C-A5BD-A0707821B381}.socpak"
+    },
+    "3a32ad75-197f-4ef0-a555-0330f4a5175a": {
+      "pos": [
+        12849827854.2,
+        -710417.1,
+        -318608.5
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1_001"
     },
     "47aea516-d208-48be-907e-5ca402099fbb": {
       "pos": [
@@ -11626,6 +12056,16 @@
       "depth": 1,
       "entity": "HDRSO-Simms"
     },
+    "dfa1d3c8-005c-4c14-b149-a34e3277c95c": {
+      "pos": [
+        12851402405.9,
+        304814.7,
+        116614
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1_005"
+    },
     "44da89c1-91fb-4e7e-aa1e-88bd66fd7752": {
       "pos": [
         12849899405.3,
@@ -11635,6 +12075,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "UGF_HDSF_Breckinridge"
+    },
+    "6e1132cc-8abd-429a-8008-2bd1278d4656": {
+      "pos": [
+        12850413844.1,
+        -647193.8,
+        761236.1
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1_002"
     },
     "904c526a-8d09-407b-a215-c880170252d7": {
       "pos": [
@@ -11826,6 +12276,16 @@
       "depth": 1,
       "entity": "s1d_asd_facility_010"
     },
+    "8308cafb-3018-466c-9566-2130dc002ffa": {
+      "pos": [
+        12830142421.5,
+        115230429.8,
+        51108.7
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1d_003"
+    },
     "40b7719a-569b-4263-8ed6-fa32d1d2a504": {
       "pos": [
         12830018841.6,
@@ -11836,6 +12296,16 @@
       "depth": 1,
       "entity": "hurdyn_cluster_004_sand_red_{469867B3-F138-4F28-A984-90A1FD670DB3}.socpak"
     },
+    "bdbc57f9-0aa8-445e-81fc-a4dd54f96396": {
+      "pos": [
+        12830487538.7,
+        114846015.4,
+        -123919.8
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1d_001"
+    },
     "16684593-e010-47e2-bfb5-a13cc0703301": {
       "pos": [
         12830198264.6,
@@ -11845,6 +12315,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "s1d_asd_facility_007"
+    },
+    "a818883e-1d83-4ee0-9032-67fe2b35692c": {
+      "pos": [
+        12829938684.2,
+        114869238.3,
+        -195638.3
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1d_004"
     },
     "2a15c2ab-c9bd-424f-b251-f2a1d1e8adee": {
       "pos": [
@@ -11865,6 +12345,16 @@
       "system": "stanton",
       "depth": 1,
       "entity": "s1d_asd_facility_009"
+    },
+    "7fbdf13c-307f-4917-9053-6e2ed10c975a": {
+      "pos": [
+        12830157552.3,
+        114714450.6,
+        254413.9
+      ],
+      "system": "stanton",
+      "depth": 1,
+      "entity": "IasiPlatform_1d_002"
     },
     "da676ebf-4869-42d2-a826-491e65a66809": {
       "pos": [

@@ -49,6 +49,10 @@ const SHIP_DENY = [
   /_ai_ea_/, /_shipboarded(_|$)/, /_boarded(_|$)/, /_hijacked(_|$)/, /_dead(_|$)/,
   /_derelict(_|$)/, /_wreck(_|$)/, /_test(_|$)/, /_template$/, /_indestructible(_|$)/,
   /_nointerior(_|$)/, /_modifiers(_|$)/, /_ea_pir(_|$)/, /_tutorial(_|$)/, /_temp$/,
+  // Hangar/showroom display hulls (new in 4.10.2: Mk V Centaurus, Andromeda GS, Avenger
+  // Stalker, Skylark). Same name and grid as the real ship, so they only add a decoy row
+  // that the picker's first-of-each-name dedupe could pick instead of the flyable hull.
+  /_display$/,
 ];
 
 /** After stripping `<hullclass>_` off a container-record name, the remainder must START
