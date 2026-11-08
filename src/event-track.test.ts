@@ -923,6 +923,27 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
       !po2.contributions.some((c) => (c.key ?? "").startsWith("Iasi_")), po2.contributions.map((c) => c.key).join(","));
     check("...and Discovery still credited it (250)", prog(o).points === 250, String(prog(o).points));
   }
+  // 🔑 Why the journal line is IGNORED for Discovery rather than merely hidden by the read-time
+  // filter: left on the journal path it CLAIMS whatever completion is pending. Accept a Discovery
+  // contract in the 134 ms between an Orison completion and Orison's own journal line, and the
+  // Discovery journal steals the Orison completion — Orison then records an unpriced row.
+  // (Negative-controlled: removing the `creditOn === "complete"` break leaves every assertion above
+  // green, because the read-time filter hides the row; only this one goes red.)
+  {
+    const o = mk(mkdtempSync(join(tmpdir(), "ev-dc-st-")));
+    const OMID = "bbbbbbbb-0000-4000-8000-0000000000bb";
+    o.apply({
+      kind: "marker", ts: "2026-11-08T20:00:00.000Z", missionId: OMID, contract: "ORS_SA_0", contractKey: "ORS_SA",
+      generator: "TheBackpocket", contractDefId: "x", objectiveId: "o_0", markerEntityId: "1", pos: null,
+    } as never);
+    o.apply(parseMissionEvent(ev(`Added notification "Contract Complete: Orison Relief: Strike Nine Tails Squad: " [91] to queue. MissionId: [${OMID}]`, "2026-11-08T20:05:00.000Z"))!);
+    o.apply(parseMissionEvent(ev('Added notification "Journal Entry Added: RSI Discovery Event: " [92] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]', "2026-11-08T20:05:00.050Z"))!);
+    o.apply(parseMissionEvent(ev(JOURNAL, "2026-11-08T20:05:00.134Z"))!);
+    const po = o.eventProgress("orison-relief")!;
+    check("a Discovery accept between an Orison completion and its journal line does not steal it",
+      po.contributions.length === 1 && po.contributions[0]?.key === "ORS_SA" && po.points === 4000,
+      `n=${po.contributions.length} key=${po.contributions[0]?.key} pts=${po.points}`);
+  }
 
   // G. 🔑 TODAY'S STALE ROW. An older build (no creditOn) recorded the accept-time journal line as
   //    a key-null, points-null contribution. After upgrading, it must not read as "1 unpriced" —
