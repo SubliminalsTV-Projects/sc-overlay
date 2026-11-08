@@ -1,4 +1,54 @@
 {
+  "0.1.48": {
+    "date": "2026-11-08T02:48:11Z",
+    "notes": [
+      {
+        "kind": "new",
+        "label": "The Constellation Mk V Centaurus, and everything on 4.10.2",
+        "text": "The Mk V Centaurus is in the hauling ship picker now: 240 SCU in one grid, and it takes 32 SCU boxes. The Mk IV versions of the Andromeda, Aquila, Phoenix and Taurus are there too, under the new names CIG gave them.\n\nEvery dataset is rebuilt from 4.10.2 live: blueprints, missions, hauling orders, ships, places, mineables and the reputation ladders. That is about 20 new hauling contracts and 65 new places.\n\nShowroom copies of ships no longer show up in the picker. Picking the Mk V by name used to pick the display model, which has no cargo grid."
+      },
+      {
+        "kind": "new",
+        "label": "Set a widget's hotkey from the widget",
+        "text": "Every widget's own settings now has a Hotkey row, so you no longer have to go to Settings to give one a key. Click it, press the keys, done. It is the same setting as the one in Settings, so changing it in one place changes it in both.\n\nWidgets still ship with no hotkey. Pick your own."
+      },
+      {
+        "kind": "new",
+        "label": "Budget and price age on the Commodities tab",
+        "text": "You can now tell the Commodities tab how much money you have to spend, and it sizes each run to what you can afford rather than to the whole hold. Leave it empty for no limit.\n\nThere is also a choice of how old a price is allowed to be. Prices are reported by players, and some have not been updated in weeks, so you can leave the old ones out when you only want recent numbers."
+      },
+      {
+        "kind": "new",
+        "label": "A new app icon",
+        "text": "The app has a new logo: the exe, the installer, the tray and the windows all use it."
+      },
+      {
+        "kind": "improved",
+        "label": "The Ledger tells you when its records disagree",
+        "text": "The app has been checking your trade records for gaps every time it starts, but only wrote the result to a log file nobody reads. If a sale you made is missing, the Ledger now says so in red at the top, and says where the file is. When everything checks out, it says that too, in a small line at the bottom.\n\nIt does not offer a fix button. Both of the obvious fixes make it worse."
+      },
+      {
+        "kind": "improved",
+        "label": "More shops tell the app where you are",
+        "text": "The app reads which shop you are using to work out where you are standing. It only knew two of the five kinds of shop the game writes to the log. It now knows all five, so ship dealerships, rental desks, food stalls and refinery ore desks count too.\n\nAnd a location the app has not confirmed in a long time is no longer used to name the shop you are at. It still shows you where you were last seen, so the widget keeps its answer."
+      },
+      {
+        "kind": "improved",
+        "label": "Partner deals copy their code",
+        "text": "Clicking a partner deal in Settings now copies the code as it opens the page, so it is ready at checkout. Pimax shows both of its deals. And links from Settings and the widgets open in your normal browser, where you are signed in, instead of a bare app window."
+      },
+      {
+        "kind": "fixed",
+        "label": "Hotkeys set in the settings widget work straight away",
+        "text": "If you set a hotkey from the settings widget on the overlay, it saved but did nothing until you restarted the app. The Settings window was always fine. Both work straight away now."
+      },
+      {
+        "kind": "fixed",
+        "label": "Log sharing says when it isn't working",
+        "text": "If you share your logs and the uploads were failing, nothing told you. Now Copy diagnostics says so. And a log too big for the site no longer blocks every log behind it from being sent."
+      }
+    ]
+  },
   "0.1.47": {
     "date": "2026-09-08T12:01:55Z",
     "notes": [
