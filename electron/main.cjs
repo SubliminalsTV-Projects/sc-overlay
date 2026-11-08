@@ -747,6 +747,11 @@ function createOverlay() {
   // left it open last session, else armed-hidden if auto-show is on (so it can self-pop).
   overlay.webContents.on("did-finish-load", () => {
     try { overlay.setBounds(bounds); } catch { /* re-assert the full span past any creation-time clamp */ }
+    // 🔴 Chromium saves page zoom per HOST in the profile, so one stray Ctrl+= (or any other
+    // electron sharing this profile) zooms every localhost page on every later launch. On
+    // 2026-11-08 a saved ~200% drew Sub's whole canvas at double size, shifted, live on stream.
+    // The canvas's own scale is canvasScale (CSS zoom), never page zoom, so page zoom is always 0.
+    try { overlay.webContents.setZoomLevel(0); } catch { /* window gone */ }
     // 🔑 `initial: true` marks this as REPLAYING saved state, not the user turning something on.
     // The renderer treats "turn this widget on" as "bring its tab to the front of its group" —
     // correct for a click, wrong here, because replaying nine widgets in order left whichever
