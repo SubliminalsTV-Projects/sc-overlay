@@ -46,6 +46,16 @@
         "kind": "fixed",
         "label": "Log sharing says when it isn't working",
         "text": "If you share your logs and the uploads were failing, nothing told you. Now Copy diagnostics says so. And a log too big for the site no longer blocks every log behind it from being sent."
+      },
+      {
+        "kind": "fixed",
+        "label": "RSI Discovery Month counts your missions",
+        "text": "The Event Tracker now follows RSI Discovery Month, but it gave you nothing for the missions you finished. The game writes the event's journal line when you accept a Discovery contract, not when you finish it. The tracker now credits each contract when you complete it, and missions your party shares with you count too, the same as in the game.\n\nWe checked a full day of play against the game's own event screen, and the totals matched to the point."
+      },
+      {
+        "kind": "fixed",
+        "label": "The overlay no longer opens zoomed in",
+        "text": "If the overlay ever got zoomed, for example by a stray Ctrl and +, it remembered that zoom and drew every widget too big and in the wrong place on every launch after. It now resets the zoom each time it opens. Your canvas scale setting is a different thing and is not touched."
       }
     ]
   },
