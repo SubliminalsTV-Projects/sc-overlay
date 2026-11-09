@@ -369,6 +369,34 @@ export interface EventDef {
    * simply never read this key, so they keep their old (wrong-but-harmless) journal behaviour.
    */
   creditOn?: "journal" | "complete";
+  /**
+   * Category ladders that run BESIDE the overall total (RSI Discovery Month: Transport,
+   * Collection, Defense). Every contract on a ladder adds its points to the overall total AND to
+   * its own ladder. `contracts` lists the dataset keys that count toward the ladder (from the
+   * contract's completion tag in the datacore); `total`/`tiers` work as on the event itself.
+   * Older builds ignore the field.
+   */
+  ladders?: EventLadderDef[];
+}
+
+export interface EventLadderDef {
+  id: string;
+  label: string;
+  total: number;
+  /** Reward milestones as PERCENTAGES of `total`. */
+  tiers: number[];
+  contracts: string[];
+  rewards?: { tier: number; name: string }[];
+}
+
+/** One category ladder's view, computed from the same contributions as the overall total. */
+export interface EventLadderProgress {
+  id: string;
+  label: string;
+  total: number;
+  points: number;
+  pct: number;
+  tiers: { pct: number; points: number; reached: boolean; rewards: { name: string; owned: boolean }[] }[];
 }
 
 /** One witnessed "this completion counted toward the event" observation. */
@@ -488,6 +516,8 @@ export interface EventProgress {
   /** True when the event declares no rewards yet — the widget shows "not yet known" rather
    *  than an empty list that reads like "no rewards". */
   rewardsUnknown: boolean;
+  /** Category ladders (`EventDef.ladders`); empty for an event that has none. */
+  ladders: EventLadderProgress[];
 }
 
 export interface DatasetMission {
@@ -3927,6 +3957,33 @@ export class MissionTracker extends EventEmitter {
       tiers,
       ...this.eventContractCoverage(def),
       rewardsUnknown: rewards.length === 0,
+      ladders: (def.ladders ?? []).map((l) => {
+        // Same contributions and the same live re-pricing as the overall total. A contribution
+        // with no key cannot be placed on a ladder, so it counts toward the total only.
+        const on = new Set(l.contracts);
+        let lp = 0;
+        for (const c of contributions) {
+          if (!c.key || !on.has(c.key)) continue;
+          const live = def.contracts ? def.contracts[c.key] : undefined;
+          const p = live ?? c.points;
+          if (typeof p === "number") lp += p;
+        }
+        const lpct = l.total > 0 ? Math.min(100, (lp / l.total) * 100) : 0;
+        return {
+          id: l.id,
+          label: l.label,
+          total: l.total,
+          points: lp,
+          pct: lpct,
+          tiers: l.tiers.slice().sort((a, b) => a - b).map((t) => ({
+            pct: t,
+            points: Math.round((t / 100) * l.total),
+            reached: lpct >= t,
+            rewards: (l.rewards ?? []).filter((r) => r.tier === t)
+              .map((r) => ({ name: r.name, owned: this.isOwned(r.name).owned })),
+          })),
+        };
+      }),
     };
   }
 

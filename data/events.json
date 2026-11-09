@@ -23,7 +23,7 @@
       "logSource": "The mobiGlas contract group reads 'RSI DISCOVERY EVENT' (Sub's screenshot, 2026-11-08, 4.10.2 LIVE); journal entry journalentry/pu/iasi_journalentry.xml. Seen in real game.logs since (a shared log 2026-10-12; Sub's own 2026-11-08): the journal line fires on ACCEPT, beside 'Contract Accepted: RSI Disc. Month: ...', and never after 'Contract Complete'.",
       "creditOn": "complete",
       "creditOnSource": "Unlike Orison Relief, this event's journal line marks an ACCEPT, so progress is credited when an Iasi_ contract COMPLETES (priced from 'contracts') and the journal line is ignored. Measured 2026-11-08 on two independent logs.",
-      "note": "Every RSI Disc. Month contract adds the same points to your total (shown here) and to one of three category ladders (Transport, Collection, Defense) that this tracker does not show yet. Check your in-game Journal for your real numbers.",
+      "note": "Every RSI Disc. Month contract adds the same points to your total and to one of three category ladders (Transport, Collection, Defense), shown below. Check your in-game Journal for your real numbers.",
       "contractPrefixes": [
         "Iasi_"
       ],
@@ -69,9 +69,10 @@
         "Iasi_Refueling_Stanton_Quantum_1L_Medium": 104,
         "Iasi_Refueling_Stanton_Both_2M_1L_Hard": 271,
         "Iasi_Courier_GoldItem": 250,
-        "Iasi_Courier_GoldItem_OnceOnly": 250
+        "Iasi_Courier_GoldItem_OnceOnly": 250,
+        "Iasi_ResourceGathering_BasicItem": 250
       },
-      "contractsProvenance": "All 30 values are ContractResult_ScenarioProgress PointsToAward in the 4.10.2 datacore (contracts/contractgenerator/yearspecificcontent/visitingiasi.xml). None measured in game yet. Points are not split across a party (splitPointsForParty=0).",
+      "contractsProvenance": "All 31 values are ContractResult_ScenarioProgress PointsToAward in the 4.10.2 datacore (contracts/contractgenerator/yearspecificcontent/visitingiasi.xml). None measured in game yet. Points are not split across a party (splitPointsForParty=0).",
       "rewards": [
         {
           "tier": 15,
@@ -119,7 +120,146 @@
           "item": null
         }
       ],
-      "rewardsSource": "Reward names from the game's own award messages (awardservice_config + global.ini), 4.10.2 datacore. The starcitizen.tools wiki lists extra 30,000-tier items (Zeus suits, more blades) that the award message does not name; left out."
+      "rewardsSource": "Reward names from the game's own award messages (awardservice_config + global.ini), 4.10.2 datacore. The starcitizen.tools wiki lists extra 30,000-tier items (Zeus suits, more blades) that the award message does not name; left out.",
+      "ladders": [
+        {
+          "id": "transport",
+          "label": "Transport",
+          "total": 10000,
+          "tiers": [
+            20,
+            40,
+            65,
+            100
+          ],
+          "contracts": [
+            "Iasi_2H_Box_Courier",
+            "Iasi_Courier_GoldItem",
+            "Iasi_Courier_GoldItem_OnceOnly",
+            "Iasi_HaulCargo_AtoB_Small_PartySupplies",
+            "Iasi_HaulCargo_AtoB_Supply_PartySupplies",
+            "Iasi_HaulCargo_AtoB_Supply_SecuritySupplies",
+            "Iasi_RecoverItem_Easy",
+            "Iasi_RecoverItem_Hard",
+            "Iasi_RecoverItem_Medium",
+            "Iasi_RecoverItem_Space_Easy",
+            "Iasi_RecoverItem_Space_Hard",
+            "Iasi_RecoverItem_Space_Medium",
+            "Iasi_Refueling_Stanton_Both_2M_1L_Hard",
+            "Iasi_Refueling_Stanton_Hydrogen_1M_Easy",
+            "Iasi_Refueling_Stanton_Quantum_1L_Medium"
+          ],
+          "rewards": [
+            {
+              "tier": 20,
+              "name": "Zeus Keelback Livery"
+            },
+            {
+              "tier": 20,
+              "name": "BriskAir IC-20 Cooler"
+            },
+            {
+              "tier": 40,
+              "name": "Zeus Mk II PHB and TSB Flight Blades"
+            },
+            {
+              "tier": 65,
+              "name": "BriskAir IC-30 Cooler"
+            },
+            {
+              "tier": 100,
+              "name": "MaxLift-II \"Keelback\" Tractor Beam"
+            }
+          ]
+        },
+        {
+          "id": "collection",
+          "label": "Collection",
+          "total": 10000,
+          "tiers": [
+            20,
+            40,
+            65,
+            100
+          ],
+          "contracts": [
+            "Iasi_ResourceGathering_BasicItem",
+            "Iasi_ResourceGathering_Mining_Beryl",
+            "Iasi_ResourceGathering_Mining_Iron",
+            "Iasi_ResourceGathering_Mining_Quantanium",
+            "Iasi_Salvage_Large",
+            "Iasi_Salvage_Medium",
+            "Iasi_Salvage_Small"
+          ],
+          "rewards": [
+            {
+              "tier": 20,
+              "name": "Salvation Glacier Livery"
+            },
+            {
+              "tier": 20,
+              "name": "Delphi RS-20 Radar"
+            },
+            {
+              "tier": 40,
+              "name": "Mantis PHB and TSB Flight Blades"
+            },
+            {
+              "tier": 65,
+              "name": "Delphi RS-30 Radar"
+            },
+            {
+              "tier": 100,
+              "name": "Cambio-II \"Glacier\" SRT"
+            }
+          ]
+        },
+        {
+          "id": "defense",
+          "label": "Defense",
+          "total": 10000,
+          "tiers": [
+            20,
+            40,
+            65,
+            100
+          ],
+          "contracts": [
+            "Iasi_DefendShip_Easy",
+            "Iasi_DefendShip_Hard",
+            "Iasi_DefendShip_Medium",
+            "Iasi_EliminateAll_Medium",
+            "Iasi_EliminateBoss_Hard",
+            "Iasi_EliminateSpecific_Easy",
+            "Iasi_Patrol_Easy",
+            "Iasi_Patrol_Hard",
+            "Iasi_Patrol_Medium"
+          ],
+          "rewards": [
+            {
+              "tier": 20,
+              "name": "Scorpius Echo Livery"
+            },
+            {
+              "tier": 20,
+              "name": "Sovereign IP-20 Power Plant"
+            },
+            {
+              "tier": 40,
+              "name": "Meteor PHB and TSB Flight Blades"
+            },
+            {
+              "tier": 65,
+              "name": "Sovereign IP-30 Power Plant"
+            },
+            {
+              "tier": 100,
+              "name": "P8-SC \"Echo\" SMG"
+            }
+          ]
+        }
+      ],
+      "laddersSource": "4.10.2-LIVE.12913470 datacore. Ladders, tiers (minPoints 2000/4000/6500/10000 = 20/40/65/100% of 10,000) from missionscenarios/iasi_scenarioprogress.xml; each contract's ladder from its ContractResult_CompletionTag in contracts/contractgenerator/yearspecificcontent/visitingiasi.xml; reward names from the game's award messages (global.ini IASI_Badge_Reward_<Category>_T1..T4_Desc). Sub's split on 2026-11-08 matched the game's own Journal: Transport 1,937, Collection 3,804, Defense 4,457."
     },
     {
       "id": "orison-relief",

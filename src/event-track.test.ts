@@ -969,5 +969,64 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
   }
 }
 
+// ---- 18. RSI DISCOVERY MONTH CATEGORY LADDERS — Transport / Collection / Defense ---------------
+//
+// Sub's in-game Journal on 2026-11-08 read Transport 1,937, Collection 3,804, Defense 4,457 (total
+// 10,198) after this exact mix of contracts. The ladders must reproduce that split from the SHIPPED
+// events.json, and every Discovery contract must sit on exactly one ladder.
+{
+  const disco = shipped.events.find((e: { id: string }) => e.id === "rsi-discovery-month");
+  const ladders: { id: string; contracts: string[]; total: number; tiers: number[]; rewards: { tier: number }[] }[] = disco?.ladders ?? [];
+  check("shipped: Discovery declares three ladders", ladders.map((l) => l.id).join(",") === "transport,collection,defense",
+    ladders.map((l) => l.id).join(","));
+  const onLadders = ladders.flatMap((l) => l.contracts);
+  const priced = Object.keys(disco?.contracts ?? {});
+  check("shipped: every priced Discovery contract is on exactly one ladder",
+    onLadders.length === new Set(onLadders).size && priced.every((k) => onLadders.includes(k)) && onLadders.length === priced.length,
+    `${onLadders.length} on ladders / ${priced.length} priced`);
+  check("shipped: each ladder is 10,000 with tiers 20/40/65/100 and a reward on every tier",
+    ladders.every((l) => l.total === 10000 && l.tiers.join(",") === "20,40,65,100" && l.tiers.every((t) => l.rewards.some((r) => r.tier === t))));
+
+  const d18 = mkdtempSync(join(tmpdir(), "ev-ladders-"));
+  writeFileSync(join(d18, "events.json"), JSON.stringify({
+    ...shipped,
+    events: shipped.events.map((e: { id: string }) => e.id === "rsi-discovery-month" ? { ...e, liveStart: null } : e),
+  }));
+  writeFileSync(join(d18, "blueprints.latest.json"), JSON.stringify({
+    schema: "sc-blueprint-pools/2", version: `4.10.2-LIVE.12913470`, changelist: CL, missionCount: 0, missions: {},
+  }));
+  const l18 = new MissionTracker({ dataDir: d18, stateDir: mkdtempSync(join(tmpdir(), "ev-ladders-st-")) });
+  l18.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+  l18.detectPatch("<2026> Environment: PUB");
+  // Sub's 2026-11-08 mix, by dataset key (counts from his completions that day).
+  const mix: [string, number][] = [
+    ["Iasi_HaulCargo_AtoB_Small_PartySupplies", 3], ["Iasi_HaulCargo_AtoB_Supply_SecuritySupplies", 1],
+    ["Iasi_Courier_GoldItem_OnceOnly", 1], ["Iasi_Salvage_Small", 18], ["Iasi_Salvage_Medium", 2],
+    ["Iasi_DefendShip_Easy", 12], ["Iasi_DefendShip_Medium", 10], ["Iasi_Patrol_Easy", 2],
+    ["Iasi_EliminateSpecific_Easy", 1],
+  ];
+  let n18 = 0;
+  const rows = mix.flatMap(([key, count]) => Array.from({ length: count }, () => ({
+    key, title: null, at: "2026-11-08T20:00:00.000Z", points: null, env: "PUB", via: "complete" as const,
+    missionId: `m-${n18++}`,
+  })));
+  // Test-only: seed the witnessed contributions directly; the completion path is covered by block 17.
+  (l18 as unknown as { eventContributions: Map<string, unknown[]> }).eventContributions.set("RSI Discovery Event", rows);
+  const p18 = l18.eventProgress("rsi-discovery-month")!;
+  const by = (id: string) => p18.ladders.find((l) => l.id === id);
+  check("the overall total matches the game (10,198)", p18.points === 10198, String(p18.points));
+  check("Transport matches the game (1,937)", by("transport")?.points === 1937, String(by("transport")?.points));
+  check("Collection matches the game (3,804)", by("collection")?.points === 3804, String(by("collection")?.points));
+  check("Defense matches the game (4,457)", by("defense")?.points === 4457, String(by("defense")?.points));
+  check("Collection tier 1 (2,000) reached, tier 2 (4,000) not",
+    by("collection")?.tiers[0].reached === true && by("collection")?.tiers[1].reached === false);
+  check("Transport tier 1 not reached at 1,937 (63 short)", by("transport")?.tiers[0].reached === false);
+  check("Defense tiers 1 and 2 reached", by("defense")?.tiers.filter((t) => t.reached).length === 2);
+  check("a ladder tier carries its reward names",
+    by("defense")?.tiers[3].rewards.map((r) => r.name).join() === 'P8-SC "Echo" SMG', by("defense")?.tiers[3].rewards.map((r) => r.name).join());
+  check("Orison has no ladders (empty array, not missing)", Array.isArray(l18.eventProgress("orison-relief")?.ladders) &&
+    l18.eventProgress("orison-relief")!.ladders.length === 0);
+}
+
 console.log(failed ? `\nFAILED (${failed})` : "\nevent-track tests passed");
 process.exit(failed ? 1 : 0);

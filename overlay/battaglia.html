@@ -171,6 +171,28 @@
   .evloot .it { display: block; }
   .evloot .it.owned { color: var(--green); }
   .evloot .unk { color: var(--faint); font-style: italic; }
+  /* Category ladders under the main one (RSI Discovery Month). Smaller, so the overall total
+     stays the headline. */
+  .evlad { margin: 14px 0 4px; padding-top: 8px; border-top: 1px solid var(--divider); }
+  .evladhd { display: flex; align-items: baseline; margin: 0 12px 6px; }
+  .evladhd .nm { font-family: var(--sans); font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--cyan-bright); }
+  .evladhd .sp { flex: 1; }
+  .evladhd .ct { font-family: var(--mono); font-size: 11px; color: var(--cyan-text);
+    font-variant-numeric: tabular-nums; }
+  .evladbar { margin-bottom: 22px; }
+  .evladbar .evtrack { height: 10px; }
+  .evladbar .evtick .stem { height: 10px; }
+  /* The last tick sits on the right edge; a centred "10,000" would be clipped by the widget. */
+  .evladbar .evtick.end { transform: translateX(-100%); align-items: flex-end; }
+  .evladrow { display: flex; gap: 9px; margin: 0 12px 4px; font-size: 11px; line-height: 1.5; }
+  .evladrow .at { flex: none; min-width: 42px; font-family: var(--mono); font-size: 10px;
+    color: var(--faint); font-variant-numeric: tabular-nums; padding-top: 1px; }
+  .evladrow.hit .at { color: var(--gold); font-weight: 700; }
+  .evladrow .its { color: var(--cyan-text); }
+  .evladrow .its .it { display: block; }
+  .evladrow .its .it.owned { color: var(--green); }
+  .evladrow .its .unk { color: var(--faint); font-style: italic; }
   /* 🔴 A GUESS MUST NOT LOOK LIKE A MEASUREMENT. Sub's ruling, 2026-08-22, is that the candidates
      found online may now be SHOWN — not that they may be shown as rewards. Three separate signals
      carry the difference, because any one of them alone is a signal somebody can miss: a dim,
@@ -944,6 +966,27 @@
       html.push('<div class="evkey"><b>UNCONFIRMED</b> rewards are what we found reported online. ' +
         "Nobody has verified them against a real log, so treat them as a lead, not a promise — " +
         'press <b>Wrong?</b> on any tier to tell us what it really gave you.</div>');
+    }
+    // Category ladders (RSI Discovery Month: Transport / Collection / Defense). Each contract adds
+    // its points to the total above AND to one of these. 🔑 OWN CLASS NAMES (`evlad*`), never
+    // `.evrow`/`.evloot`/`.evfix`: the widget suite counts those per tier of the main ladder.
+    for (const l of (ev.ladders || [])) {
+      html.push('<div class="evlad"><div class="evladhd"><span class="nm">' + esc(l.label) + "</span>" +
+        '<span class="sp"></span><span class="ct">' + num(l.points) + " / " + num(l.total) + "</span></div>" +
+        '<div class="evbarwrap evladbar"><div class="evtrack"><div class="evfill" style="width:' +
+        Math.max(0, Math.min(100, l.pct)).toFixed(2) + '%"></div></div>');
+      for (const t of l.tiers) {
+        html.push('<div class="evtick' + (t.reached ? " hit" : "") + (t.pct >= 100 ? " end" : "") + '" style="left:' + t.pct + '%">' +
+          '<div class="stem"></div><div class="lbl">' + num(t.points) + "</div></div>");
+      }
+      html.push("</div>");
+      for (const t of l.tiers) {
+        const its = t.rewards.map((r) => '<span class="it' + (r.owned ? " owned" : "") + '">' +
+          (r.owned ? "✔ " : "· ") + esc(r.name) + "</span>").join("");
+        html.push('<div class="evladrow' + (t.reached ? " hit" : "") + '"><span class="at">' + num(t.points) +
+          '</span><span class="its">' + (its || '<span class="unk">Reward not known yet</span>') + "</span></div>");
+      }
+      html.push("</div>");
     }
     $("body").innerHTML = html.join("");
   }
