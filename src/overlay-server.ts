@@ -4627,7 +4627,9 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const giver = typeof body?.giver === "string" ? body.giver : "";
     const faction = typeof body?.faction === "string" ? body.faction : "";
     const bars = Array.isArray(body?.bars) ? (body.bars as RepBarRead[]) : [];
-    const v = repRankFromBars(bars);
+    // The ladder length is what lets a scrolled page read: the cards may be only a window onto
+    // the ladder, and whether the rank is safely inside it depends on how much ladder there is.
+    const v = repRankFromBars(bars, tracker.repScopesForScan()[scope]?.ranks.length);
     // The rank the page STATED, named. Available on the refusal paths too, because on those the
     // page really was read and refusing to repeat back what we read is what makes the feature
     // look broken rather than careful.

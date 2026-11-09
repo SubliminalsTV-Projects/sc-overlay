@@ -66,7 +66,7 @@ export type RepRefusal =
   | "no-section"          // no line below the heading names a rep scope we ship
   | "no-scope"            // the section named a scope, but no candidate ladder matched the cards
   | "scope-ambiguous"     // two ladders matched equally well and nothing separates them
-  | "cards-incomplete";   // the ladder's ranks are not all on screen (a scrolled/partial section)
+  | "cards-incomplete";   // the visible rank cards have a hole in them, or are too few to read
 
 export interface RepLayoutResult {
   layout: RepLayout | null;
@@ -405,12 +405,25 @@ export function readRepPage(
   if (!best || bestMatched === 0) return { layout: null, refusal: "no-scope", tried, factionRaw, sectionRaw, giver };
   if (bestTied) return { layout: null, refusal: "scope-ambiguous", tried, factionRaw, sectionRaw, giver };
 
-  // 🔴 EVERY rank has to be on screen. A section whose ladder is only partly visible is a
-  // scrolled page, and reading a rank index off a partial ladder puts the player at the wrong
-  // place on it — which, given the scan overwrites, is the failure this whole module exists to
-  // avoid. Refuse and let them scroll.
-  const wanted = scopes[best.key].ranks.length;
-  if (best.cards.length !== wanted) return { layout: null, refusal: "cards-incomplete", tried, factionRaw, sectionRaw, giver };
+  // 🔴 THE WHOLE LADDER DOES NOT HAVE TO BE ON SCREEN — AN UNBROKEN RUN OF IT DOES.
+  //
+  // This used to demand every rank at once, and that is a layout assumption, not a safety rule.
+  // It held on Sub's 3440x1440 screen (four cards a row, two rows, so a seven-rank Standing
+  // ladder fits). On a smaller screen the same page needs scrolling, the top row leaves as the
+  // bottom one arrives, and all seven are NEVER in view together — so a standing-only faction
+  // (Adagio Holdings, Bit Zeros: their only ladder is the 7-rank FactionReputation) asked the
+  // player to scroll forever and never saved. Reported by a viewer, 2026-11-08.
+  //
+  // 🔑 What a partial ladder actually risks is the player's rank being OFF SCREEN, and that is
+  // decided by the BARS, not here: `repRankFromBars` refuses unless the green run ends on a
+  // visible grey card (and starts inside the window, or at its bottom edge). Every card index is
+  // assigned by matching its NAME against the ladder, never by its position on screen, so a
+  // window does not shift anyone's index. What has to be refused here is a window with a HOLE
+  // in it (a card OCR missed mid-run says the read is not trustworthy) and a window too small to
+  // have picked a ladder on more than one name.
+  const isWindow = best.cards.length >= 2
+    && best.cards.every((c, i) => i === 0 || c.rank === best!.cards[i - 1].rank + 1);
+  if (!isWindow) return { layout: null, refusal: "cards-incomplete", tried, factionRaw, sectionRaw, giver };
 
   return {
     layout: {
@@ -494,7 +507,8 @@ export interface RepBarRead {
 export type RepRankRefusal =
   | "bars-unreadable"     // one or more cards' bars could not be found
   | "no-rank-reached"     // nothing is green: the page is not showing this player's progress
-  | "rank-not-contiguous"; // green cards are not one unbroken run — not a ladder state
+  | "rank-not-contiguous" // green cards are not one unbroken run — not a ladder state
+  | "cards-incomplete";   // only part of the ladder is visible and the rank could be off screen
 
 export interface RepRankResult {
   rank: number | null;
@@ -518,19 +532,43 @@ export interface RepRankResult {
  * is that rank's own floor, which is already exactly the quantity `giverTrack()` reconciles as
  * `rankFloor`. Interpolating would turn an observed fact into an estimate while looking like an
  * improvement.
+ *
+ * 🔴 `ladderLength` IS REQUIRED, because the cards may be only a WINDOW onto the ladder (a page
+ * that needs scrolling — see `readRepPage`). A window is safe exactly when the player's rank is
+ * strictly inside it, and that is provable from what IS on screen:
+ *   · the top of the ladder is off screen → the highest visible card must be GREY. Then the green
+ *     run ends below it, and every rank above it, seen or not, is grey too.
+ *   · the bottom is off screen → a visible card must be GREEN. Then the rank is at or above the
+ *     window's bottom and the unseen ranks below it are all behind the player.
+ * Anything else could put the player's rank off screen, and since a scan OVERWRITES the stored
+ * standing that is refused, not guessed. Pass `undefined` only when the scope is unknown; the
+ * cards are then taken as the whole ladder, which is the pre-window contract.
  */
-export function repRankFromBars(bars: RepBarRead[]): RepRankResult {
+export function repRankFromBars(bars: RepBarRead[], ladderLength: number | undefined): RepRankResult {
   if (!bars.length || bars.some((b) => !b.found)) {
     return { rank: null, progress: null, refusal: "bars-unreadable" };
   }
+  const seen = bars.map((b) => b.rank).sort((a, b) => a - b);
+  for (let i = 1; i < seen.length; i++) {
+    // A hole in the window. `readRepPage` never produces one; refuse rather than trust a caller.
+    if (seen[i] !== seen[i - 1] + 1) return { rank: null, progress: null, refusal: "cards-incomplete" };
+  }
+  const lo = seen[0];
+  const hi = seen[seen.length - 1];
+  const top = (ladderLength ?? hi + 1) - 1;
   const green = bars.filter((b) => b.reached).map((b) => b.rank).sort((a, b) => a - b);
-  if (!green.length) return { rank: null, progress: null, refusal: "no-rank-reached" };
+  if (!green.length) {
+    // With the bottom of the ladder off screen, "nothing green" means the rank is below the window.
+    return { rank: null, progress: null, refusal: lo > 0 ? "cards-incomplete" : "no-rank-reached" };
+  }
   for (let i = 1; i < green.length; i++) {
     if (green[i] !== green[i - 1] + 1) {
       return { rank: null, progress: null, refusal: "rank-not-contiguous" };
     }
   }
   const rank = green[green.length - 1];
+  // Green right up to the last visible card, with more ladder above it: the rank may be off screen.
+  if (rank === hi && hi < top) return { rank: null, progress: null, refusal: "cards-incomplete" };
   return { rank, progress: bars.find((b) => b.rank === rank)?.fill ?? null, refusal: null };
 }
 

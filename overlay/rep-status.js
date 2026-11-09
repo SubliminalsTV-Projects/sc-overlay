@@ -24,8 +24,8 @@
 
   var WHY = {
     "cards-incomplete": {
-      long: "the rank list is scrolled — bring every rank into view and it will read",
-      short: "scroll the rank list until every rank is in view",
+      long: "your rank is off screen — scroll until your rank and the one after it are both in view and it will read",
+      short: "scroll the rank list so your rank and the next are in view",
     },
     "scope-ambiguous": {
       long: "could not tell which reputation track this page is showing",

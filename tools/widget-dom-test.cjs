@@ -1581,7 +1581,7 @@ const REPSTRIP = `(async () => {
   // is why" must never be reported by two things that disagree. The same argument applies to the
   // STRINGS, so no page may carry its own copy of the table. Both files are served by our own
   // sidecar, so this costs one same-origin fetch each and cannot trip the network check.
-  const PHRASE = "bring every rank into view";
+  const PHRASE = "the one after it are both in view";
   const owns = async (u) => { try { return (await (await fetch(u)).text()).indexOf(PHRASE) >= 0; } catch (e) { return "(fetch failed: " + e.message + ")"; } };
   const inShared = await owns("/rep-status.js");
   const inConfig = await owns("/config.html");

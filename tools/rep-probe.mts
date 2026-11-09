@@ -84,7 +84,7 @@ for (const img of images) {
     );
   }
 
-  const v = repRankFromBars(bars);
+  const v = repRankFromBars(bars, scopes[l.scope].ranks.length);
   if (v.refusal) { console.log(`  REFUSED: ${v.refusal}`); continue; }
   const floor = repFloorForRank(scopes[l.scope], v.rank!);
   console.log(

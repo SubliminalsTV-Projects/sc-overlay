@@ -231,10 +231,20 @@ const GIVERS: Record<string, string[]> = {
 
 // ── Refusals ─────────────────────────────────────────────────────────────────
 {
-  // A scrolled page: the last two cards are off screen.
-  const clipped = frame(SHOT1.lines.filter((l) => !(l.y > 980 && l.x > 2000)));
-  const r = readRepPage(clipped, SCOPES, GIVERS);
-  check("a partly-visible ladder is REFUSED, not read at the wrong index",
+  // 🔴 RE-POINTED 2026-11-09. This used to assert that a page with its last two cards off screen
+  // is refused — and that rule is what stopped standing-only factions ever saving on a screen too
+  // small to show their whole ladder at once. A window is read now; whether the RANK is safely
+  // inside it is the bar step's call (see "a window onto the ladder" below). What is still refused
+  // here is a window with a HOLE in it: a card OCR missed mid-run.
+  const scrolled = frame(SHOT1.lines.filter((l) => !(l.y > 980 && l.x > 2000)));
+  const w = readRepPage(scrolled, SCOPES, GIVERS);
+  check("a page with its last cards off screen is read as a WINDOW, not refused",
+    !!w.layout && w.layout.cards.map((c) => c.rank).join(",") === "0,1,2,3,4,5",
+    `[${w.refusal} / ${w.layout?.cards.map((c) => c.rank).join(",")}]`);
+  // A hole: JUNIOR GUILD MEMBER (rank 3) missing, everything either side of it present.
+  const holed = frame(SHOT1.lines.filter((l) => !(l.x > 2380 && l.y < 760)));
+  const r = readRepPage(holed, SCOPES, GIVERS);
+  check("a window with a HOLE in it is REFUSED, not read at the wrong index",
     r.layout === null && r.refusal === "cards-incomplete", `[${r.refusal}]`);
   // 🔴 A REFUSAL HAS TO SAY WHICH FACTION IT REFUSED. Sub reported "Covalex and Wikelo Emporium
   // don't seem to be working" and nothing anywhere said which page had been declined or why: the
@@ -338,7 +348,7 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
 {
   const r = repRankFromBars(bars([
     [false, 0], [true, 1.0], [true, 0.19], [false, 0], [false, 0], [false, 0], [false, 0], [false, 0],
-  ]));
+  ]), 8);
   check("shot1 bars: current rank is Probationary Guild Member (2)", r.rank === 2, `[${r.rank}]`);
   check("shot1 bars: progress is the CURRENT rank's own fill", r.progress === 0.19, `[${r.progress}]`);
   check("shot1: the floor that puts under the player is rank 2's minRep",
@@ -346,7 +356,7 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
     `[${repFloorForRank(SCOPES.BountyHunter_BountyHuntersGuild, 2)}]`);
 }
 {
-  const r = repRankFromBars(bars([[false, 0], [true, 0.08], [false, 0], [false, 0], [false, 0]]));
+  const r = repRankFromBars(bars([[false, 0], [true, 0.08], [false, 0], [false, 0], [false, 0]]), 5);
   check("shot2 bars: current rank is Applicant (1)", r.rank === 1, `[${r.rank}]`);
   check("shot2: Applicant's floor is 0, and 0 is a real answer",
     repFloorForRank(SCOPES.Emergency, 1) === 0, `[${repFloorForRank(SCOPES.Emergency, 1)}]`);
@@ -360,24 +370,24 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
     SCOPES.Emergency.ranks.find((x) => x.name === "Not Eligible")!.minRep < 0);
 }
 {
-  const r = repRankFromBars(bars([[false, 0], [false, 0], [false, 0]]));
+  const r = repRankFromBars(bars([[false, 0], [false, 0], [false, 0]]), 3);
   check("no green anywhere is refused, not read as rank 0",
     r.rank === null && r.refusal === "no-rank-reached", `[${r.refusal}]`);
 }
 {
-  const r = repRankFromBars(bars([[true, 1], [false, 0], [true, 0.4], [false, 0]]));
+  const r = repRankFromBars(bars([[true, 1], [false, 0], [true, 0.4], [false, 0]]), 4);
   check("a gap in the green run is refused", r.rank === null && r.refusal === "rank-not-contiguous",
     `[${r.refusal}]`);
 }
 {
   const spec = bars([[false, 0], [true, 1], [true, 0.19]]);
   spec[2].found = false;
-  const r = repRankFromBars(spec);
+  const r = repRankFromBars(spec, 3);
   check("one unreadable bar refuses the whole page",
     r.rank === null && r.refusal === "bars-unreadable", `[${r.refusal}]`);
 }
 {
-  check("no bars at all is refused", repRankFromBars([]).refusal === "bars-unreadable");
+  check("no bars at all is refused", repRankFromBars([], 8).refusal === "bars-unreadable");
 }
 
 // ── Normalisation ────────────────────────────────────────────────────────────
@@ -414,8 +424,10 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
     good.ok === true && !!good.scope && !!good.cards && good.giver === "Bounty Hunters Guild",
     `[${good.scope} / ${good.giver}]`);
 
-  const clipped = frame(SHOT1.lines.filter((l) => !(l.y > 980 && l.x > 2000)));
-  const bad = repReadPayload(readRepPage(clipped, SCOPES, GIVERS));
+  // A HOLED page (rank 3's card missing), because a page with its last row cut off is no longer a
+  // reader refusal — it is a window, and the bar step decides. See "a window onto the ladder".
+  const holed = frame(SHOT1.lines.filter((l) => !(l.x > 2380 && l.y < 760)));
+  const bad = repReadPayload(readRepPage(holed, SCOPES, GIVERS));
   check("a refusal is projected with the heading, the section and the giver",
     bad.ok === false && bad.faction === "BOUNTY HUNTERS GUILD"
       && bad.section === "BOUNTY HUNTING" && bad.giver === "Bounty Hunters Guild",
@@ -601,6 +613,121 @@ const bars = (spec: [boolean, number][]): RepBarRead[] =>
   // there). The heading must be the LARGE one, not the list copy — the same trap SHOT1 guards.
   check("shot3: the heading is the large one, not the left-list copy",
     (r.layout?.cards[0]?.label.x ?? 0) > 1200, `[card0 x=${r.layout?.cards[0]?.label.x}]`);
+}
+
+// ── A standing-only faction, and a page that needs scrolling ─────────────────
+//
+// Reported in Twitch chat by a viewer, 2026-11-08: factions like Adagio Holdings and Bit Zeros,
+// whose ONLY reputation is Standing, "want me to scroll down to read the other ranks too … and it
+// doesn't save it." Measured, not guessed:
+//   · the 4.10.2 datacore (scunpacked `faction_reputation_lawful_adagioholdings.json`) gives
+//     Adagio and Bit Zeros a PrimaryScope `FactionReputation` with 7 standings and NO additional
+//     scopes — the same 7-rank ladder `rep-scopes.json` ships, so no rank is missing from our data;
+//   · Sub's own sidecar.log has the Adagio page reading cleanly on his 3440x1440 screen
+//     ("page says rank 0 (Neutral) … stored 104 -> 799"), so the reader handles the page itself.
+// The difference is the SCREEN. Seven cards fit in two rows of four at 3440x1440; on a smaller
+// one the page scrolls and all seven are never in view at once, so "every rank on screen" could
+// never be satisfied. ⚠️ No still of a smaller screen exists, so this fixture is SYNTHETIC: it
+// reuses SHOT1's measured geometry (card columns, row pitch, label heights) with the Standing
+// ladder's names in place of the guild's. The window tests below cut rows off it the way a
+// scrolled page would.
+const ADAGIO_FULL = frame([
+  L(664, 151, 162, 27, "Q SEARCH"),
+  L(810, 296, 245, 19, "ADAGIO HOLDINGS"),
+  L(820, 449, 305, 18, "CIVILIAN DEFENSE FORCE"),
+  L(1404, 266, 470, 39, "ADAGIO HOLDINGS"),
+  L(1402, 326, 108, 18, "NEUTRAL"),
+  L(1419, 427, 165, 22, "STANDING"),
+  // Row 1 — the ranks a low-standing player is at.
+  L(1434, 669, 98, 14, "NEUTRAL"),
+  L(1751, 668, 170, 14, "JR. CONTRACTOR"),
+  L(2069, 666, 128, 14, "CONTRACTOR"),
+  L(2387, 665, 168, 15, "SR. CONTRACTOR"),
+  // Row 2 — wrapped onto two lines, so the second line of each is a bare "CONTRACTOR", the very
+  // word rank 2 is named. Rank 2's own card must not lose to one of these.
+  L(1427, 995, 96, 15, "VETERAN"),
+  L(1427, 1016, 128, 15, "CONTRACTOR"),
+  L(1753, 993, 58, 15, "HEAD"),
+  L(1753, 1014, 128, 15, "CONTRACTOR"),
+  L(2078, 993, 68, 15, "ELITE"),
+  L(2078, 1014, 128, 15, "CONTRACTOR"),
+  L(2225, 1329, 29, 13, "REP"),
+  L(1290, 1331, 41, 13, "HOME"),
+]);
+const ROW2_Y = 980;
+const topWindow = frame(ADAGIO_FULL.lines.filter((l) => !(l.y > ROW2_Y && l.y < 1300)));
+const STANDING_GIVERS: Record<string, string[]> = {
+  ...GIVERS,
+  // As the app derives them from 12519617 — Adagio awards FactionReputation and nothing else.
+  "Adagio Holdings": ["FactionReputation"],
+  "Bit Zeros": ["FactionReputation", "HiredMuscle", "Affinity"],
+};
+const ladderLen = SCOPES.FactionReputation.ranks.length;
+{
+  // Positive first: the ladder really is 7 long, or "a window of 4" proves nothing.
+  check("the Standing ladder really has 7 ranks", ladderLen === 7, `[${ladderLen}]`);
+  const full = readRepPage(ADAGIO_FULL, SCOPES, STANDING_GIVERS);
+  check("standing-only: the whole page reads, as it does on Sub's screen",
+    full.refusal === null && full.layout?.scope === "FactionReputation"
+      && full.layout.giver === "Adagio Holdings"
+      && full.layout.cards.map((c) => c.rank).join(",") === "0,1,2,3,4,5,6",
+    `[${full.refusal} / ${full.layout?.scope} / ${full.layout?.cards.map((c) => c.rank).join(",")}]`);
+  check("standing-only: rank 2's card is its own one-line CONTRACTOR, not a wrapped second line",
+    full.layout?.cards.find((c) => c.rank === 2)?.label.x === 2069,
+    `[x=${full.layout?.cards.find((c) => c.rank === 2)?.label.x}]`);
+
+  // THE VIEWER'S CASE: only the top row is on screen.
+  const w = readRepPage(topWindow, SCOPES, STANDING_GIVERS);
+  check("standing-only, top row only: the page is READ, not refused cards-incomplete",
+    w.refusal === null && w.layout?.cards.map((c) => c.rank).join(",") === "0,1,2,3",
+    `[${w.refusal} / ${w.layout?.cards.map((c) => c.rank).join(",")}]`);
+  // ...and a Neutral player saves after ONE read: Neutral green, Jr. Contractor grey.
+  const neutral = repRankFromBars(
+    (w.layout?.cards ?? []).map((c) => ({ rank: c.rank, found: true, reached: c.rank === 0, fill: c.rank === 0 ? 0.6 : 0 })),
+    ladderLen);
+  check("standing-only, top row only: a Neutral player's rank is read in one pass",
+    neutral.refusal === null && neutral.rank === 0 && neutral.progress === 0.6,
+    `[${neutral.refusal} / ${neutral.rank} / ${neutral.progress}]`);
+  // Bit Zeros: same ladder, a giver that also awards other scopes. The section still picks Standing.
+  const bz = frame(topWindow.lines.map((l) => (/ADAGIO/.test(l.text) ? { ...l, text: "BIT ZEROS" } : l)));
+  const b = readRepPage(bz, SCOPES, STANDING_GIVERS);
+  check("standing-only: Bit Zeros' top row reads the same way",
+    b.refusal === null && b.layout?.giver === "Bit Zeros" && b.layout.scope === "FactionReputation",
+    `[${b.refusal} / ${b.layout?.giver} / ${b.layout?.scope}]`);
+}
+
+// ── A window onto the ladder: when is the rank provably on screen? ────────────
+{
+  const win = (ranks: number[], green: number[]): RepBarRead[] =>
+    ranks.map((rank) => ({ rank, found: true, reached: green.includes(rank), fill: green.includes(rank) ? 0.5 : 0 }));
+  // Top of the ladder off screen, a grey card visible above the green run: safe.
+  let r = repRankFromBars(win([0, 1, 2, 3], [0, 1]), 7);
+  check("window 0-3, green to 1, card 2 grey: rank 1 is read", r.rank === 1 && r.refusal === null,
+    `[${r.rank} / ${r.refusal}]`);
+  // 🔴 Green all the way to the last visible card: the rank could be 3, or 5, or 6. Refused.
+  r = repRankFromBars(win([0, 1, 2, 3], [0, 1, 2, 3]), 7);
+  check("window 0-3, ALL green: refused, the rank may be off screen",
+    r.rank === null && r.refusal === "cards-incomplete", `[${r.rank} / ${r.refusal}]`);
+  // Bottom off screen, green inside the window: safe — the unseen ranks are behind the player.
+  r = repRankFromBars(win([3, 4, 5, 6], [3, 4]), 7);
+  check("window 3-6, green 3-4: rank 4 is read", r.rank === 4 && r.refusal === null,
+    `[${r.rank} / ${r.refusal}]`);
+  // Bottom off screen and nothing green: the rank is below the window.
+  r = repRankFromBars(win([3, 4, 5, 6], []), 7);
+  check("window 3-6, nothing green: refused cards-incomplete, not no-rank-reached",
+    r.rank === null && r.refusal === "cards-incomplete", `[${r.rank} / ${r.refusal}]`);
+  // The top of the ladder IS on screen and fully green: that is the top rank, and it is read.
+  r = repRankFromBars(win([3, 4, 5, 6], [3, 4, 5, 6]), 7);
+  check("window 3-6 reaching the top, all green: the top rank is read",
+    r.rank === 6 && r.refusal === null, `[${r.rank} / ${r.refusal}]`);
+  // A hole handed in by a caller is refused even though readRepPage never makes one.
+  r = repRankFromBars(win([0, 1, 3], [0]), 7);
+  check("bars with a hole in the window are refused", r.refusal === "cards-incomplete", `[${r.refusal}]`);
+  // A single visible card is not a window: too little to have picked a ladder on.
+  const one = frame(ADAGIO_FULL.lines.filter((l) => l.y < 660 || l.y > 1300 || l.text === "NEUTRAL"));
+  const o = readRepPage(one, SCOPES, STANDING_GIVERS);
+  check("a single visible card is refused, not read as a window",
+    o.layout === null && o.refusal === "cards-incomplete", `[${o.refusal}]`);
 }
 
 console.log(failed ? `\nFAILED (${failed})` : "\nall rep-page checks passed");
