@@ -1028,5 +1028,50 @@ check("Orison Relief's rewards are honestly UNKNOWN, not empty-as-none",
     l18.eventProgress("orison-relief")!.ladders.length === 0);
 }
 
+// ---- 19. "Closest to done" lists running events whose next tier pays a blueprint you need ----------
+//
+// Sub, 2026-11-09: add events to Closest to done, "just make sure that it doesn't keep events that
+// have ended". Orison's 15% tier (10,800 of 72,000) pays the S-38 "SecondWind" Pistol blueprint;
+// Discovery Month's tiers pay granted items, never blueprints, so it must not appear.
+{
+  const mk19 = (orisonStatus: string) => {
+    const d = mkdtempSync(join(tmpdir(), "ev-closest-"));
+    writeFileSync(join(d, "events.json"), JSON.stringify({
+      ...shipped,
+      events: shipped.events.map((e: { id: string }) =>
+        e.id === "orison-relief" ? { ...e, liveStart: null, status: orisonStatus }
+          : e.id === "rsi-discovery-month" ? { ...e, liveStart: null } : e),
+    }));
+    writeFileSync(join(d, "blueprints.latest.json"), JSON.stringify({
+      schema: "sc-blueprint-pools/2", version: `4.10.2-LIVE.12913470`, changelist: CL, missionCount: 1,
+      missions: {
+        SomePool_Mission: m("Some Contract", "SomeGen", {
+          "pool-1": [
+            { blueprint: 'S-38 "SecondWind" Pistol', chance: 1, item: "item-s38" },
+            { blueprint: "Other Blueprint", chance: 1, item: "item-other" },
+          ],
+        }),
+      },
+    }));
+    const tr = new MissionTracker({ dataDir: d, stateDir: mkdtempSync(join(tmpdir(), "ev-closest-st-")) });
+    tr.detectPatch(`<2026> ProductVersion: 4.10 Changelist: ${CL}`);
+    tr.detectPatch("<2026> Environment: PUB");
+    const cs = (tr as unknown as { eventContributions: Map<string, unknown[]> }).eventContributions;
+    cs.set("Orison Relief", [{ key: "ORS_SA", title: null, at: "2026-11-08T20:00:00.000Z", points: 4000, env: "PUB" }]);
+    cs.set("RSI Discovery Event", [{ key: "Iasi_Salvage_Small", title: null, at: "2026-11-08T20:00:00.000Z",
+      points: 183, env: "PUB", via: "complete", missionId: "m-x" }]);
+    return tr.view().closestEvents;
+  };
+  const cur = mk19("current");
+  check("a running event with a blueprint tier is listed", cur.length === 1 && cur[0].id === "orison-relief",
+    JSON.stringify(cur.map((c) => c.id)));
+  check("...naming the blueprint and the points still needed (10,800 - 4,000 = 6,800)",
+    cur[0]?.blueprints.join() === 'S-38 "SecondWind" Pistol' && cur[0]?.left === 6800 && cur[0]?.tierPct === 15,
+    JSON.stringify(cur[0]));
+  check("Discovery Month (items, not blueprints) is not listed", !cur.some((c) => c.id === "rsi-discovery-month"));
+  check("🔴 an ENDED event is not listed", mk19("past").length === 0, JSON.stringify(mk19("past")));
+  check("an upcoming event is not listed", mk19("upcoming").length === 0);
+}
+
 console.log(failed ? `\nFAILED (${failed})` : "\nevent-track tests passed");
 process.exit(failed ? 1 : 0);

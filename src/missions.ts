@@ -66,6 +66,22 @@ export interface RepEntry {
  *  without asking. Coverage over the 755 contracts: 748 carry a payout AND a run length, 726 a
  *  reputation award, 377 a re-accept cooldown. Where a pool's contracts disagree, the value is the
  *  representative contract's — these describe ONE run of ONE contract, never the pool as a whole. */
+/** A running event whose next tier pays a blueprint you still need — see `closestEvents()`. */
+export interface ClosestEvent {
+  id: string;
+  label: string;
+  /** Witnessed, priced points (a lower bound, like the Event Tracker's). */
+  points: number;
+  tierPct: number;
+  tierPoints: number;
+  /** Points still needed to reach that tier. */
+  left: number;
+  /** The tier's blueprints you do not own yet. */
+  blueprints: string[];
+  /** Completions seen but not priced; non-zero means `points` is low. */
+  unpriced: number;
+}
+
 export interface ClosestPool {
   /** The pool's own uuid — its identity, and the key the website's pool page uses. */
   poolUuid: string;
@@ -829,6 +845,9 @@ export interface TrackedView {
   /** Pools you have started and are nearest to finishing — the idle panel leads with these,
    *  because "no mission tracked" is exactly when the useful question is what to go do next. */
   closestPools: ClosestPool[];
+  /** Running events whose NEXT tier pays a blueprint you do not own, for the same "closest to
+   *  done" list. See `closestEvents()`. */
+  closestEvents: ClosestEvent[];
   /** Where you stand with the givers you have earned rep from — the idle panel’s standings
    *  segment. Best-progressed first; see standings(). */
   standings: FactionStanding[];
@@ -1805,6 +1824,7 @@ export class MissionTracker extends EventEmitter {
         // The name -> item/image cache is keyed to THIS dataset. Detecting a new build mid-session
         // swaps it under us, and a stale uuid would show the wrong picture for a renamed item.
         this.rewardCache.clear();
+        this.blueprintNameCache.clear();
         this.repPerContract.clear();
         // Follow the same changelist with the crafting-detail dataset (recipes/stats).
         this.detail.loadForChangelist(this.dataset.changelist);
@@ -2761,6 +2781,48 @@ export class MissionTracker extends EventEmitter {
     //  rank, locations and payout, so there is genuinely nothing to tell a player to look for.
     //  The pool NAME is what gets you there instead — pick the category, then the giver.)
     return top;
+  }
+
+  /**
+   * Events for the idle panel's "Closest to done" list (Sub, 2026-11-09: "make sure that it
+   * doesn't keep events that have ended"). One row per event that is:
+   *  - `status: "current"` — an ended (`past`) or not-yet-started (`upcoming`) event is left out;
+   *  - started — some points witnessed, same rule as a pool needing one blueprint owned;
+   *  - short of a tier whose reward includes a BLUEPRINT you do not own yet. A blueprint is a name
+   *    the dataset's pools know (`itemUuidsForName`); Discovery Month's components and liveries
+   *    are granted items, not blueprints, so that event never appears here.
+   * The row names the FIRST such tier, with the points still needed for it.
+   */
+  private closestEvents(): ClosestEvent[] {
+    const out: ClosestEvent[] = [];
+    for (const def of this.events) {
+      if ((def.status ?? "current") !== "current") continue;
+      const p = this.eventProgress(def.id);
+      if (!p || p.total == null || p.pct == null || p.points <= 0) continue;
+      const tier = p.tiers.find((t) => !t.reached && t.points != null &&
+        t.rewards.some((r) => !r.owned && this.isBlueprintName(r.name)));
+      if (!tier || tier.points == null) continue;
+      out.push({
+        id: p.id,
+        label: p.label,
+        points: p.points,
+        tierPct: tier.pct,
+        tierPoints: tier.points,
+        left: Math.max(0, tier.points - p.points),
+        blueprints: tier.rewards.filter((r) => !r.owned && this.isBlueprintName(r.name)).map((r) => r.name),
+        unpriced: p.unpriced,
+      });
+    }
+    return out.sort((a, b) => a.left - b.left);
+  }
+
+  /** True when a dataset pool hands out this name as a blueprint. Memoised: the view is rebuilt
+   *  on every tick and `itemUuidsForName` walks the whole dataset. Cleared on a dataset swap. */
+  private blueprintNameCache = new Map<string, boolean>();
+  private isBlueprintName(name: string): boolean {
+    let b = this.blueprintNameCache.get(name);
+    if (b === undefined) { b = this.itemUuidsForName(name).length > 0; this.blueprintNameCache.set(name, b); }
+    return b;
   }
 
   /** name -> the reward record (item uuid + image URLs).
@@ -5126,6 +5188,7 @@ export class MissionTracker extends EventEmitter {
       recentMissions: this.recentMissions(),
       recentBlueprints: this.recentBlueprints(),
       closestPools: this.closestPools(),
+      closestEvents: this.closestEvents(),
       standings: this.standings(),
       earnings: this.earningRates(),
       justReceived: this.justReceived,

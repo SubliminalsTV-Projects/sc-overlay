@@ -226,8 +226,25 @@
   // done" is a shortlist you scan, and four pools fit in the space two spent.
   //
   // Order is the view's own: fewest blueprints left first, which is what "closest" means.
-  function closestShortlist(closest) {
+  function closestShortlist(closest, events) {
     let html = '<div class="ra-sec"><div class="ra-h">Closest to done</div><div class="sl">';
+    // Running events whose next tier pays a blueprint you still need (view.closestEvents; ended
+    // events are filtered out server-side). Points, not blueprints, so the bar is toward that tier.
+    for (const ev of events || []) {
+      const pct = ev.tierPoints > 0 ? Math.min(100, Math.round((ev.points / ev.tierPoints) * 100)) : 0;
+      const bp = ev.blueprints || [];
+      html += '<div class="sl-r">'
+        + '<span class="sl-n">' + escapeHtml(ev.label) + "</span>"
+        + '<span class="sl-c">' + ev.tierPct + "% tier</span>"
+        + '<span class="sl-bar"><i style="width:' + pct + '%"></i></span>'
+        + '<span class="sl-left">' + Number(ev.left).toLocaleString() + " pts</span>"
+        + "</div>"
+        + '<div class="sl-sub">'
+        + (bp.length ? '<span class="cp-need">need ' + escapeHtml(bp[0])
+          + (bp.length > 1 ? ' <span class="cp-need-n">+' + (bp.length - 1) + "</span>" : "") + "</span>" : "<span></span>")
+        + '<span class="cp-w-p">Event' + (ev.unpriced > 0 ? " · estimate is low" : "") + "</span>"
+        + "</div>";
+    }
     for (const p of closest) {
       const { left, pct } = poolLeft(p);
       html += '<div class="sl-r">'
@@ -252,8 +269,9 @@
     const missions = v.recentMissions || [];
     const blueprints = v.recentBlueprints || [];
     const closest = v.closestPools || [];
+    const closestEv = v.closestEvents || [];
     const hasSession = !!(v.earnings && v.earnings.missions);
-    if (!missions.length && !blueprints.length && !hasSession && !closest.length) return "";
+    if (!missions.length && !blueprints.length && !hasSession && !closest.length && !closestEv.length) return "";
     function whenCell(iso) {
       const w = fmtWhen(iso);
       if (!w) return '<span class="ra-when"></span>';
@@ -264,7 +282,7 @@
     let html = '<div class="recent">';
 
     // ── Closest to done ────────────────────────────────────────────────────────────────────
-    if (closest.length) html += closestShortlist(closest);
+    if (closest.length || closestEv.length) html += closestShortlist(closest, closestEv);
 
     // ── Standing with your mission givers ──────────────────────────────────────────────────
     // Directly under "what to go do next", because it IS that question asked a second way: the
