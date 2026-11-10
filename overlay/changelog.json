@@ -1,4 +1,34 @@
 {
+  "0.1.50": {
+    "date": "2026-11-10T17:09:37Z",
+    "notes": [
+      {
+        "kind": "new",
+        "label": "Discovery Month's three ladders",
+        "text": "RSI Discovery Month has more than one ladder. Next to the overall one, Transport, Collection and Defense each have their own tiers and rewards, and the Event Tracker only showed the overall one. It now draws a bar and a reward list for each ladder, so you can see the tiers you have already earned and what is next.\n\nWe checked it against the game's own Journal, and the three totals matched."
+      },
+      {
+        "kind": "new",
+        "label": "Events in Closest to done",
+        "text": "The Mission & BP Tracker's Closest to done now lists events too. If an event is running and its next tier gives a blueprint you don't own, it shows that tier, how many points you still need, and the blueprint. Events that have ended or not started yet are left out."
+      },
+      {
+        "kind": "fixed",
+        "label": "Stow fits boxes turned the other way",
+        "text": "Stow put only 6 of ten 24 SCU boxes in the Constellation Mk V, and 4 of six 32 SCU boxes in the RAFT. It would not turn a box across the grid, so it ran out of room. It turns them now, and both ships take the full load, the same as in the game."
+      },
+      {
+        "kind": "fixed",
+        "label": "The Web Page widget comes back after F3",
+        "text": "If you hid the overlay with F3 and showed it again, the Web Page widget was an empty frame until you restarted the app. It now loads its page again when the overlay comes back."
+      },
+      {
+        "kind": "fixed",
+        "label": "The language warning shows once",
+        "text": "If your game language changes the text the app reads, Settings warns you. That warning repeated itself every time the page loaded or saved, so you could see the same line three times. It shows once now."
+      }
+    ]
+  },
   "0.1.48": {
     "date": "2026-11-08T02:48:11Z",
     "notes": [
