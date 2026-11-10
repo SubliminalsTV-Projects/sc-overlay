@@ -29,7 +29,7 @@
  * Pure functions only: grids come in as plain specs (from `data/ships.json` once the `foundations`
  * flight lands it), boxes come in as plain items. Nothing here reads a file or knows about a ship.
  */
-import type { BoxSpec } from "./cargo-boxes.js";
+import { withinBoxCap, type BoxSpec } from "./cargo-boxes.js";
 
 /** One cargo grid, in CELLS (1 cell = 1.25 m = 1 SCU). x = width, y = length, z = height. */
 export interface GridSpec {
@@ -178,7 +178,7 @@ function findSpot(g: GridSpec, occ: Occupancy, dims: readonly [number, number, n
   const cap = g.maxBox;
   let best: { x: number; y: number; z: number; dx: number; dy: number; dz: number } | null = null;
   for (const [dx, dy, dz] of orientations(dims as [number, number, number])) {
-    if (cap && (dx > cap.x || dy > cap.y || dz > cap.z)) continue;
+    if (!withinBoxCap([dx, dy, dz], cap)) continue;   // a box shape, not per-axis: see withinBoxCap
     for (let y = 0; y <= g.l - dy; y++) {
       for (let z = 0; z <= g.h - dz; z++) {
         for (let x = 0; x <= g.w - dx; x++) {

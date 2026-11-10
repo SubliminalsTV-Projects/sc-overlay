@@ -423,10 +423,9 @@ export interface HaulingPlan {
  * The canonical box table, straight off `hauling-orders.json`.
  *
  * 🔑 The dataset's footprints are Y-MAJOR (`32 → {x:2, y:8}`) while `DEFAULT_BOX_SET` wrote them
- * X-major. That is not cosmetic: `ships.json` grids carry ASYMMETRIC `maxBox` caps — the C2's
- * small grid is `{x:6, y:8}` — so a box's axes decide whether it is legal there. The packer yaws
- * boxes itself (`orientations`), so feeding it the dataset's own orientation is both correct and
- * the only version that matches the caps it is checked against.
+ * X-major. The packer yaws boxes itself (`orientations`) against the grid's own width and length,
+ * so feeding it the dataset's own orientation is correct. ⚠️ `maxBox` is a box SHAPE, not a
+ * per-axis cap (see `withinBoxCap` in cargo-boxes.ts): it never decides which way a box lies.
  */
 export function boxSetFrom(boxes: Record<string, BoxSize>): readonly BoxSpec[] {
   const set = Object.values(boxes ?? {})

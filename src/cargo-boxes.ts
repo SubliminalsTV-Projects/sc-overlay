@@ -115,8 +115,26 @@ export interface BoxFitGrid {
   w: number;
   l: number;
   h: number;
-  /** Per-axis `maxPermittedItemSize` in cells, when the grid states one. */
+  /** `maxPermittedItemSize` in cells, when the grid states one: the largest BOX SHAPE the grid
+   *  takes, not a per-axis limit (see `withinBoxCap`). */
   maxBox?: { x: number; y: number; z: number };
+}
+
+/**
+ * Is this box no bigger than the grid's `maxPermittedItemSize`?
+ *
+ * 🔴 THE CAP IS A BOX SHAPE, NOT A LIMIT PER GRID AXIS (measured 2026-11-10). Across the 545 capped
+ * grids in `ships.json` the values are box shapes: 2/4/2 (16 SCU) 144 times, 2/8/2 (32) 69 times,
+ * 2/6/2 (24) 18 times, and the Asgard's 2/2/8 has z=8 in a 4-high grid. Reading it per axis forbade
+ * turning a box across the grid: a player's Constellation Mk V Centaurus (6x10x4, cap 4/8/2) took
+ * 6 of 10 24 SCU boxes when all 10 fit, and the RAFT 4 of 6 32 SCU boxes. So compare the sorted
+ * sizes. The grid's own width, length and height still stop overhang and boxes on end.
+ */
+export function withinBoxCap(dims: readonly number[], cap?: { x: number; y: number; z: number }): boolean {
+  if (!cap) return true;
+  const d = [...dims].sort((a, b) => a - b);
+  const c = [cap.x, cap.y, cap.z].sort((a, b) => a - b);
+  return d[0] <= c[0] && d[1] <= c[1] && d[2] <= c[2];
 }
 
 /**
@@ -128,11 +146,7 @@ export function boxFitsGrid(box: BoxSpec, g: BoxFitGrid): boolean {
   if (dz > g.h) return false;
   const laysFlat = (x: number, y: number) => x <= g.w && y <= g.l;
   if (!laysFlat(dx, dy) && !laysFlat(dy, dx)) return false;
-  if (g.maxBox) {
-    if (dz > g.maxBox.z) return false;
-    const withinCap = (x: number, y: number) => x <= g.maxBox!.x && y <= g.maxBox!.y;
-    if (!withinCap(dx, dy) && !withinCap(dy, dx)) return false;
-  }
+  if (!withinBoxCap(box.dims, g.maxBox)) return false;
   return true;
 }
 

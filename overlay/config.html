@@ -1114,7 +1114,10 @@
         + names.slice(0, 12).map((u) => "<code>" + escapeHtml(u.name) + "</code>").join(" ")
         + (names.length > 12 ? " …and " + (names.length - 12) + " more" : "");
     } else {
+      // Empty it too, not just hide it: the drift line below APPENDS, and this runs on load, on
+      // every save and on Recalibrate, so a hidden box kept growing (a player saw it three times).
       unknown.style.display = "none";
+      unknown.innerHTML = "";
     }
 
     // Only reachable if a pack (or CIG) reworded the notification text itself. No pack does today
@@ -1123,7 +1126,7 @@
     if (r.formatDrift && r.formatDrift.length) {
       unknown.style.display = "";
       unknown.innerHTML += "<br />⚠ Your language file also changes the wording of the game's own"
-        + " notifications (" + escapeHtml(r.formatDrift.join(", ")) + "), which the app may not be"
+        + " notifications (" + escapeHtml(r.formatDrift.map((k) => String(k).replace(/,P$/, "")).join(", ")) + "), which the app may not be"
         + " able to read. Please report this.";
     }
   }

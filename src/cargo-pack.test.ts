@@ -155,6 +155,19 @@ const CAPPED: GridSpec[] = [{ name: "capped", w: 8, l: 15, h: 4, maxBox: { x: 4,
 check("maxPermittedItemSize wins over raw grid size",
   !packCargo(CAPPED, itemsFromBoxes([big], "z")).fits);
 
+// maxBox is the largest box SHAPE, not a per-axis cap (player report, 2026-11-10): turning a box
+// across the grid must stay allowed when the box itself is within the cap.
+const boxesOf = (n: number, scu: number, dims: [number, number, number]): BoxSpec[] =>
+  Array.from({ length: n }, () => ({ scu, dims, confidence: "confirmed" as BoxSpec["confidence"] }));
+const MK5: GridSpec[] = [{ name: "mk5", w: 6, l: 10, h: 4, maxBox: { x: 4, y: 8, z: 2 } }];
+const mk5 = packCargo(MK5, itemsFromBoxes(boxesOf(10, 24, [2, 6, 2]), "mk5"));
+check("Constellation Mk V grid takes all ten 24 SCU boxes", mk5.fits && mk5.placements.length === 10,
+  `${mk5.placements.length} placed, ${mk5.unplaced.length} left`);
+check("...with no overlaps", conflicts(MK5, mk5).length === 0);
+const RAFT: GridSpec[] = [{ name: "raft", w: 8, l: 12, h: 2, maxBox: { x: 2, y: 8, z: 2 } }];
+const raft = packCargo(RAFT, itemsFromBoxes(boxesOf(6, 32, [2, 8, 2]), "raft"));
+check("RAFT grid takes all six 32 SCU boxes", raft.fits && raft.placements.length === 6, `${raft.placements.length} placed`);
+
 // ── drop-off grouping ──────────────────────────────────────────────────────
 // Boxes for the first stop should sit nearest the entrance so they come off first.
 const twoStops = [...itemsFor("far", 64, 8, "LAST"), ...itemsFor("near", 64, 8, "FIRST")];

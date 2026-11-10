@@ -791,6 +791,10 @@ function createOverlay() {
   overlay.on("blur", () => { sendFocus(false); applyOverlayOpacity(); });
   applyOverlayOpacity();
   overlay.on("closed", () => {
+    // Same reason as setOverlayEnabled(false): the view and its masks belong to this window.
+    destroyWebView();
+    maskArrange = maskModal = maskChrome = false;
+    webViewMasked = false;
     overlay = null;
     overlayLoaded = false;
   });
@@ -1485,6 +1489,10 @@ function setOverlayEnabled(on) {
   } else {
     moveMode = false;
     if (overlay) {
+      // The Web Page view is a child of THIS window. Drop it with the window, or the next F3 builds
+      // a new window while `webView` still points at the orphan: ensureWebView() sees it and never
+      // attaches a view to the new window, so the widget shows an empty frame until a full restart.
+      destroyWebView();
       overlay.destroy();
       overlay = null;
     }
