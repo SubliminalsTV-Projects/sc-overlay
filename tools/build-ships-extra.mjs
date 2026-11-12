@@ -42,11 +42,21 @@ const ENTRIES = [
     modulePort: "hardpoint_module",
     module: "entities/scitem/ships/module/rsi/rsi_galaxy_module_cargo.xml",
   },
+  {
+    // Not modular. Its three grids hang straight off the hull, but its loadout is all
+    // entityClassReference (0 names, 131 refs), so build-ships.mjs sees none of them.
+    className: "ANVL_Liberator",
+    displayName: "Anvil Liberator",
+    hull: "entities/spaceships/anvl_liberator.xml",
+  },
 ];
 
 /** Hand-checked against the records on 4.10.3-LIVE.13165946 (2026-11-12). The build refuses to
- *  write if any of these moves, so a patch that changes the Galaxy says so loudly. */
-const EXPECT = { RSI_Galaxy: { totalScu: 720, grids: ["4x16x4", "4x16x4", "6x12x2", "2x4x4", "2x4x4"] } };
+ *  write if any of these moves, so a patch that changes one of these hulls says so loudly. */
+const EXPECT = {
+  RSI_Galaxy: { totalScu: 720, grids: ["4x16x4", "4x16x4", "6x12x2", "2x4x4", "2x4x4"] },
+  ANVL_Liberator: { totalScu: 400, grids: ["6x8x4", "4x8x4", "4x5x4"] },
+};
 
 if (!existsSync(records)) {
   console.error(`missing ${records}\n  (needs an unforged datacore — see the sc-data-mirror skill)`);
@@ -112,11 +122,10 @@ const ships = {};
 let bad = 0;
 for (const e of ENTRIES) {
   const hullXml = readFileSync(join(records, e.hull), "utf8");
-  const moduleXml = readFileSync(join(records, e.module), "utf8");
-  const mounts = [
-    ...loadout(hullXml).filter((m) => m.port !== e.modulePort),
-    ...loadout(moduleXml),
-  ];
+  const mounts = e.module
+    ? [...loadout(hullXml).filter((m) => m.port !== e.modulePort),
+       ...loadout(readFileSync(join(records, e.module), "utf8"))]
+    : loadout(hullXml);
   const grids = [];
   for (const m of mounts) {
     const g = gridOf(m.ref);
@@ -138,7 +147,7 @@ for (const e of ENTRIES) {
     totalScu,
     grids,
     source: "mirror-raw",
-    module: e.module.split("/").pop().replace(/\.xml$/, ""),
+    ...(e.module ? { module: e.module.split("/").pop().replace(/\.xml$/, "") } : {}),
   };
   const want = EXPECT[e.className];
   const shape = grids.map((g) => `${g.w}x${g.l}x${g.h}`).join(",");

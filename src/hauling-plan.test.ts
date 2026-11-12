@@ -689,8 +689,10 @@ check("an empty board quotes no rate at all",
   const liftScu = lift.reduce((n, g) => n + g.w * g.l * g.h, 0);
   check("...144 SCU of it is on the lift, 576 inside the ship",
     lift.length === 1 && liftScu === 144 && (gx?.totalScu ?? 0) - liftScu === 576, `${liftScu}`);
+  const extra = JSON.parse(readFileSync(join(DATA_DIR, "ships-extra.json"), "utf8"));
   check("...and the merge kept every ships.json hull",
-    data.counts().ships === Object.keys(raw.ships).length + 1, String(data.counts().ships));
+    data.counts().ships === Object.keys(raw.ships).length + Object.keys(extra.ships).length,
+    String(data.counts().ships));
   check("its display name resolves to the class",
     data.ship("RSI Galaxy (Cargo Module)")?.className === "RSI_Galaxy",
     String(data.ship("RSI Galaxy (Cargo Module)")?.className));
@@ -714,6 +716,36 @@ check("an empty board quotes no rate at all",
   check("flying one (from the log) plans against its 720 SCU hold",
     fromLog.ship?.className === "RSI_Galaxy" && fromLog.ship.totalScu === 720,
     JSON.stringify(fromLog.ship && { c: fromLog.ship.className, s: fromLog.ship.totalScu, src: fromLog.ship.source }));
+}
+
+// ── 4.10.3: the Anvil Liberator (Sub, 2026-11-12) ──
+// Three grids straight off the hull, all loadout-by-UUID, so build-ships.mjs sees none of them.
+// The odd one is the hangar: 5 cells long with a 16 SCU cap, so 16s fill 64 of its 80 SCU and the
+// last 1-cell strip only takes 2 SCU boxes or smaller.
+{
+  const raw = JSON.parse(readFileSync(join(DATA_DIR, "ships.json"), "utf8"));
+  check("ships.json alone has no Anvil Liberator (or the checks below are free)",
+    !raw.ships.ANVL_Liberator, Object.keys(raw.ships).filter((k) => /liberator/i.test(k)).join(","));
+  const lib = data.ship("ANVL_Liberator");
+  const shape = (lib?.grids ?? []).map((g) => `${g.port}:${g.w}x${g.l}x${g.h}:${g.maxBox?.x}x${g.maxBox?.y}x${g.maxBox?.z}`).join(",");
+  check("the Liberator is 400 SCU in three grids, with their box caps",
+    lib?.totalScu === 400 && shape ===
+      "hardpoint_cargo_garage_a:6x8x4:2x8x2,hardpoint_cargo_garage_b:4x8x4:2x8x2,hardpoint_cargo_hangar:4x5x4:2x4x2",
+    `${lib?.totalScu} ${shape}`);
+  check("its display name resolves to the class",
+    data.ship("Anvil Liberator")?.className === "ANVL_Liberator", String(data.ship("Anvil Liberator")?.className));
+  const G = (lib?.grids ?? []).map((g) => ({ name: String(g.port), w: g.w, l: g.l, h: g.h, maxBox: g.maxBox ?? undefined }));
+  const box = (n: number, scu: number, dims: [number, number, number]) =>
+    Array.from({ length: n }, () => ({ scu, dims, confidence: "confirmed" as const }));
+  const only32 = packCargo(G, itemsFromBoxes(box(14, 32, [2, 8, 2]), "lib"));
+  check("...takes at most ten 32 SCU boxes, none of them in the hangar",
+    only32.placements.length === 10 && !only32.placements.some((p) => p.grid === "hardpoint_cargo_hangar"),
+    `${only32.placements.length} placed`);
+  const only16 = packCargo(G, itemsFromBoxes(box(30, 16, [2, 4, 2]), "lib"));
+  const hangar16 = only16.placements.filter((p) => p.grid === "hardpoint_cargo_hangar").reduce((n, p) => n + p.scu, 0);
+  check("...the hangar takes only 64 SCU of 16s (a 1-cell strip is left over)", hangar16 === 64, String(hangar16));
+  const full = packCargo(G, itemsFromBoxes([...box(10, 32, [2, 8, 2]), ...box(4, 16, [2, 4, 2]), ...box(8, 2, [1, 2, 1])], "lib"));
+  check("...and 10 x 32 + 4 x 16 + 8 x 2 fills all 400", full.fits && full.unplaced.length === 0, `${full.unplaced.length} left`);
 }
 
 // The bundle really is on disk where the server will look for it.

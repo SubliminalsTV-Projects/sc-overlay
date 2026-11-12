@@ -2,7 +2,7 @@
  "schema": "sc-ships-extra/1",
  "version": "4.10.3-LIVE.13165946",
  "cellMetres": 1.25,
- "shipCount": 1,
+ "shipCount": 2,
  "ships": {
   "RSI_Galaxy": {
    "className": "RSI_Galaxy",
@@ -73,6 +73,51 @@
    ],
    "source": "mirror-raw",
    "module": "rsi_galaxy_module_cargo"
+  },
+  "ANVL_Liberator": {
+   "className": "ANVL_Liberator",
+   "displayName": "Anvil Liberator",
+   "isSpaceship": true,
+   "totalScu": 400,
+   "grids": [
+    {
+     "port": "hardpoint_cargo_garage_a",
+     "via": "loadout",
+     "w": 6,
+     "l": 8,
+     "h": 4,
+     "maxBox": {
+      "x": 2,
+      "y": 8,
+      "z": 2
+     }
+    },
+    {
+     "port": "hardpoint_cargo_garage_b",
+     "via": "loadout",
+     "w": 4,
+     "l": 8,
+     "h": 4,
+     "maxBox": {
+      "x": 2,
+      "y": 8,
+      "z": 2
+     }
+    },
+    {
+     "port": "hardpoint_cargo_hangar",
+     "via": "loadout",
+     "w": 4,
+     "l": 5,
+     "h": 4,
+     "maxBox": {
+      "x": 2,
+      "y": 4,
+      "z": 2
+     }
+    }
+   ],
+   "source": "mirror-raw"
   }
  }
 }
