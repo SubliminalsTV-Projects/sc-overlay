@@ -418,7 +418,7 @@ console.log(`[ships] -> ${outPath} (${(readFileSync(outPath).length / 1024).toFi
 // wrong before the upstream merge landed, and each would fail silently without a check.
 const EXPECT = {
   CRUS_Starlifter_C2: 696, CRUS_Starlifter_M2: 522, CRUS_Starlifter_A2: 216,
-  RSI_Constellation_Taurus: 174, RSI_Constellation_Andromeda: 96,
+  RSI_Constellation_Taurus: 174, RSI_Constellation_Andromeda_GS: 96, // pre-GS hull removed in 4.10.3
   MISC_Hull_A: 64, MISC_Hull_B: 512, MISC_Hull_C: 4608,
   DRAK_Caterpillar: 576, RSI_Polaris: 576, AEGS_Reclaimer: 420,
   MISC_Freelancer_MAX: 120, ANVL_Carrack: 456, DRAK_Cutlass_Black: 46,
