@@ -16,6 +16,7 @@ import { HaulingTracker } from "./hauling.js";
 import { HaulingDataStore } from "./hauling-data.js";
 import { HAUL_SCENARIOS, haulReplayLines, type HaulScenario } from "./dev-replay.js";
 import { boxSetFrom, buildHaulingPlan } from "./hauling-plan.js";
+import { packCargo, itemsFromBoxes } from "./cargo-pack.js";
 
 let failures = 0;
 const check = (name: string, ok: boolean, extra = "") => {
@@ -669,6 +670,50 @@ check("an empty board quotes no rate at all",
   check("picking it by name plans against its 240 SCU hold",
     picked.ship?.className === "RSI_Constellation_Mk5_Centaurus" && picked.ship.totalScu === 240 && picked.ship.source === "manual",
     JSON.stringify(picked.ship && { c: picked.ship.className, s: picked.ship.totalScu, src: picked.ship.source }));
+}
+
+// ── 4.10.3: the RSI Galaxy with its cargo module (Sub, 2026-11-12) ──
+// Measured from the 4.10.3-LIVE.13165946 datacore by tools/build-ships-extra.mjs, which lands in
+// data/ships-extra.json and is merged OVER ships.json. Hull: two 2x4x4 rear grids. Cargo module:
+// two 4x16x4 bays plus a lift whose own loadout carries a 6x12x2 grid.
+{
+  const raw = JSON.parse(readFileSync(join(DATA_DIR, "ships.json"), "utf8"));
+  check("ships.json alone has no Galaxy (or the merge checks below are free)",
+    !raw.ships.RSI_Galaxy, String(Object.keys(raw.ships).length));
+  const gx = data.ship("RSI_Galaxy");
+  check("the Galaxy is a hull, 720 SCU with the cargo module", gx?.totalScu === 720, String(gx?.totalScu));
+  const shape = (gx?.grids ?? []).map((g) => `${g.w}x${g.l}x${g.h}:${g.maxBox?.x}x${g.maxBox?.y}x${g.maxBox?.z}`).join(",");
+  check("...five grids: two module bays, the lift, two rear grids, with their box caps",
+    shape === "4x16x4:2x8x2,4x16x4:2x8x2,6x12x2:2x8x2,2x4x4:2x4x2,2x4x4:2x4x2", shape);
+  const lift = (gx?.grids ?? []).filter((g) => String(g.port).startsWith("hardpoint_lift"));
+  const liftScu = lift.reduce((n, g) => n + g.w * g.l * g.h, 0);
+  check("...144 SCU of it is on the lift, 576 inside the ship",
+    lift.length === 1 && liftScu === 144 && (gx?.totalScu ?? 0) - liftScu === 576, `${liftScu}`);
+  check("...and the merge kept every ships.json hull",
+    data.counts().ships === Object.keys(raw.ships).length + 1, String(data.counts().ships));
+  check("its display name resolves to the class",
+    data.ship("RSI Galaxy (Cargo Module)")?.className === "RSI_Galaxy",
+    String(data.ship("RSI Galaxy (Cargo Module)")?.className));
+  // The lift is 12 cells long, so a 32 SCU stick (2x8x2, Y only) fits once per row: 3 on the lift,
+  // 8 per module bay, none in the rear grids (capped at 16 SCU). 19 x 32 + 7 x 16 fills all 720.
+  const G = (gx?.grids ?? []).map((g) => ({ name: String(g.port), w: g.w, l: g.l, h: g.h, maxBox: g.maxBox ?? undefined }));
+  const box = (n: number, scu: number, dims: [number, number, number]) =>
+    Array.from({ length: n }, () => ({ scu, dims, confidence: "confirmed" as const }));
+  const only32 = packCargo(G, itemsFromBoxes(box(22, 32, [2, 8, 2]), "gx"));
+  check("...takes at most nineteen 32 SCU boxes (three on the lift)",
+    only32.placements.length === 19 && only32.placements.filter((p) => p.grid.startsWith("hardpoint_lift")).length === 3,
+    `${only32.placements.length} placed`);
+  const full = packCargo(G, itemsFromBoxes([...box(19, 32, [2, 8, 2]), ...box(7, 16, [2, 4, 2])], "gx"));
+  check("...and 19 x 32 + 7 x 16 fills all 720", full.fits && full.unplaced.length === 0, `${full.unplaced.length} left`);
+  // The log names the ship by class + entity id; the tracker strips the id.
+  const tracker = new HaulingTracker();
+  const ev = parseMissionEvent(parseLine(
+    "<2026-11-12T20:00:00.000Z> [Notice] <Vehicle Control Flow> CVehicleMovementBase::SetDriver: Local client node [1234] requesting control token for 'RSI_Galaxy_987654321' [987654321] [Team_CGP4][Vehicle]"));
+  if (ev) tracker.apply(ev);
+  const fromLog = buildHaulingPlan(tracker.view(), data);
+  check("flying one (from the log) plans against its 720 SCU hold",
+    fromLog.ship?.className === "RSI_Galaxy" && fromLog.ship.totalScu === 720,
+    JSON.stringify(fromLog.ship && { c: fromLog.ship.className, s: fromLog.ship.totalScu, src: fromLog.ship.source }));
 }
 
 // The bundle really is on disk where the server will look for it.

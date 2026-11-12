@@ -38,8 +38,10 @@ export interface Ship {
   displayName: string | null;
   isSpaceship: boolean;
   totalScu: number;
-  /** Which pipeline produced the geometry — see tools/build-ships.mjs. */
+  /** Which pipeline produced the geometry — see tools/build-ships.mjs (and build-ships-extra.mjs). */
   source: string;
+  /** Modular hulls only: the module record these grids assume is installed. */
+  module?: string;
   /** Largest grid first. */
   grids: CargoGrid[];
 }
@@ -104,6 +106,14 @@ export class HaulingDataStore {
   /** (Re)load all three datasets from the data dir. Non-fatal on any error. */
   load(): void {
     this.shipsFile = this.read<ShipsFile>("ships.json");
+    // Hulls build-ships.mjs cannot see yet (the 4.10.3 Galaxy), measured from the raw datacore by
+    // tools/build-ships-extra.mjs. Merged OVER ships.json so a later regeneration that adds a
+    // wrong row for the same class (build-ships would read the Galaxy as 500 SCU) cannot win.
+    const extra = this.read<ShipsFile>("ships-extra.json");
+    if (this.shipsFile && extra?.ships) {
+      this.shipsFile.ships = { ...this.shipsFile.ships, ...extra.ships };
+      this.shipsFile.shipCount = Object.keys(this.shipsFile.ships).length;
+    }
     this.ordersFile = this.read<OrdersFile>("hauling-orders.json");
     this.locationsFile = this.read<LocationsFile>("locations.json");
     this.shipByName.clear();

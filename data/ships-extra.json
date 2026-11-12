@@ -1,0 +1,78 @@
+{
+ "schema": "sc-ships-extra/1",
+ "version": "4.10.3-LIVE.13165946",
+ "cellMetres": 1.25,
+ "shipCount": 1,
+ "ships": {
+  "RSI_Galaxy": {
+   "className": "RSI_Galaxy",
+   "displayName": "RSI Galaxy (Cargo Module)",
+   "isSpaceship": true,
+   "totalScu": 720,
+   "grids": [
+    {
+     "port": "hardpoint_cargo_grid_left",
+     "via": "loadout",
+     "w": 4,
+     "l": 16,
+     "h": 4,
+     "maxBox": {
+      "x": 2,
+      "y": 8,
+      "z": 2
+     }
+    },
+    {
+     "port": "hardpoint_cargo_grid_right",
+     "via": "loadout",
+     "w": 4,
+     "l": 16,
+     "h": 4,
+     "maxBox": {
+      "x": 2,
+      "y": 8,
+      "z": 2
+     }
+    },
+    {
+     "port": "hardpoint_lift/cargo_grid",
+     "via": "loadout",
+     "w": 6,
+     "l": 12,
+     "h": 2,
+     "maxBox": {
+      "x": 2,
+      "y": 8,
+      "z": 2
+     }
+    },
+    {
+     "port": "hardpoint_cargo_rear_left",
+     "via": "loadout",
+     "w": 2,
+     "l": 4,
+     "h": 4,
+     "maxBox": {
+      "x": 2,
+      "y": 4,
+      "z": 2
+     }
+    },
+    {
+     "port": "hardpoint_cargo_rear_right",
+     "via": "loadout",
+     "w": 2,
+     "l": 4,
+     "h": 4,
+     "maxBox": {
+      "x": 2,
+      "y": 4,
+      "z": 2
+     }
+    }
+   ],
+   "source": "mirror-raw",
+   "module": "rsi_galaxy_module_cargo"
+  }
+ }
+}
