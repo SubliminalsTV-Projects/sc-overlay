@@ -407,6 +407,14 @@
   var GRID_POSITION_BY_HULL = {
     CRUS_Starlifter_C2: { hardpoint_cargo_large: "Rear", hardpoint_cargo_small: "Front" },
     CRUS_Starlifter_M2: { hardpoint_cargo_large: "Rear", hardpoint_cargo_small: "Front" },
+    /* Anvil Liberator: measured, not guessed — the three ports' positions in the 4.10.3 hull model
+       (anvl_liberator.cga), +y forward. garage_b sits 11 m ahead of garage_a, both starboard on the
+       lower deck; the hangar grid is 27 m further aft. "a"/"b" would otherwise print as-is. */
+    ANVL_Liberator: {
+      hardpoint_cargo_garage_b: "Garage front",
+      hardpoint_cargo_garage_a: "Garage rear",
+      hardpoint_cargo_hangar: "Hangar",
+    },
   };
 
   /** `hardpoint_cargo_large` on a C2 -> `Rear`. Falls back to the readable port name. */
