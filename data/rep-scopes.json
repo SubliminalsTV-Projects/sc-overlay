@@ -1,6 +1,6 @@
 {
   "schema": "sc-rep-scopes/1",
-  "source": "4.10.2-LIVE.12913470",
+  "source": "4.10.3-LIVE.13165946",
   "scopes": {
     "FactionReputation": {
       "displayName": "Standing",

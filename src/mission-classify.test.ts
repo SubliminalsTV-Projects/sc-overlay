@@ -122,13 +122,25 @@ for (const m of missions) {
 //   old + added - removed == new for all seven counters, no residue.
 // ⚠️ Coverage is now 55.9%, close to the 55% floor below. That floor is the guard against guessing,
 // so do not lower it to make room. A Discovery Month rule (31 missions) would add ~0.75 points.
-check("dataset size", missions.length, 4128);
-check("classified by generatorClass", byGenerator, 1276);
-check("classified by missionType", byType, 1030);
-check("needs the player to answer", unknown, 1822);
+// ⚠️ REBASELINED 2026-11-12 for 4.10.3 LIVE (13165946, flight pull4103). Reconciled the same way:
+//
+//   4,128 -> 4,141 is +15 ADDED and -2 REMOVED; re-bucketed = 0.
+//   gen  1276 -> 1285 (+9)  11 new Intersec_ShipWaveAttack Nyx records (3Way / DrawOutBoss /
+//                           ShipWaveAttack, mostly `_Van`) in, the two old
+//                           Intersec_ShipWaveAttack_DrawOutBoss_Nyx_{Super,VeryHard} out. All ship.
+//   ship  272 -> 281 (+9)   the same 11 in / 2 out.
+//   type 1030 -> 1031 (+1)  IDS_ResourceGathering_CryoP_Blue (missionType Collection -> none),
+//   none 1898 -> 1899 (+1)  which is also the whole no-combat delta.
+//   unk  1822 -> 1825 (+3)  InterSec_BoardShip, InterSec_DefendDestructibleEntities_Nyx_Hard and
+//                           Intersec_EliminateSpecific_Rank1 (generator InterSec_KillFPS, no rule).
+//   fps: unchanged. old + added - removed == new for all seven counters; coverage stays 55.9%.
+check("dataset size", missions.length, 4141);
+check("classified by generatorClass", byGenerator, 1285);
+check("classified by missionType", byType, 1031);
+check("needs the player to answer", unknown, 1825);
 check("fps count", profile.fps, 136);
-check("ship count", profile.ship, 272);
-check("no-combat count", profile.none, 1898);
+check("ship count", profile.ship, 281);
+check("no-combat count", profile.none, 1899);
 check("every mission accounted for", byGenerator + byType + unknown, missions.length);
 
 // A wrong auto-label is worse than none, so guard the ceiling: if a future edit pushes coverage
